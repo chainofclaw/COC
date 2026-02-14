@@ -80,7 +80,3 @@ bash scripts/quality-gate.sh
 ## License
 
 MIT License - See LICENSE file for details
-
----
-
-中文版本请见 [README.zh.md](./README.zh.md)
