@@ -79,7 +79,7 @@ Code:
 - `COC/node/src/p2p.ts`
 
 ## 4) Storage & Persistence
-**Status: Implemented (Phase 13.1 + 13.2 Complete)**
+**Status: Implemented (Phase 13.1 + 13.2 + 21 Complete)**
 
 Implemented:
 - Chain snapshot persistence (JSON, legacy)
@@ -92,11 +92,13 @@ Implemented:
 - **Phase 13.2**: Legacy chain.json auto-migration
 - **Phase 13.2**: Config-driven backend selection (memory/leveldb)
 - **Phase 13.2**: Graceful shutdown with LevelDB cleanup
+- **Phase 21**: Block/log pruning with configurable retention and batch processing
+- **Phase 21**: Pruning height persistence and storage statistics
 - IPFS-compatible blockstore + UnixFS file layout
 - IPFS HTTP API subset
 
 Missing/Partial:
-- Incremental compaction and pruning
+- Full incremental compaction (tx-level pruning)
 - Full IPFS feature parity (MFS, pubsub, tar archive for `get`)
 
 Code:
