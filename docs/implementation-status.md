@@ -57,15 +57,21 @@ Code:
 - `COC/node/src/consensus.ts`
 
 ## 3) P2P Networking
-**Status: Partial**
+**Status: Partial (Enhanced in Phase 16)**
 
 Implemented:
 - HTTP-based gossip for tx and blocks
 - Snapshot sync from peers
+- **Phase 16**: Peer discovery via peer exchange protocol
+- **Phase 16**: Reputation-based peer scoring (success/failure/invalid/timeout)
+- **Phase 16**: Automatic ban/unban with configurable thresholds
+- **Phase 16**: Periodic health checking and score decay
+- **Phase 16**: `/p2p/peers` endpoint for peer list exchange
+- **Phase 16**: Active peer selection for broadcasting
 
 Missing/Partial:
-- P2P discovery, DHT, peer scoring, anti‑spam
 - Binary wire protocol and streaming sync
+- DHT-based discovery for fully decentralized networks
 
 Code:
 - `COC/node/src/p2p.ts`

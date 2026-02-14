@@ -1,6 +1,8 @@
 import http from "node:http"
 import { request as httpRequest } from "node:http"
 import type { ChainBlock, ChainSnapshot, Hex, NodePeer } from "./blockchain-types.ts"
+import { PeerScoring } from "./peer-scoring.ts"
+import { PeerDiscovery } from "./peer-discovery.ts"
 import { createLogger } from "./logger.ts"
 
 const log = createLogger("p2p")
@@ -15,6 +17,9 @@ export interface P2PConfig {
   bind: string
   port: number
   peers: NodePeer[]
+  nodeId?: string
+  maxPeers?: number
+  enableDiscovery?: boolean
 }
 
 export class BoundedSet<T> {
@@ -52,10 +57,27 @@ export class P2PNode {
   private readonly handlers: P2PHandlers
   private readonly seenTx = new BoundedSet<Hex>(50_000)
   private readonly seenBlocks = new BoundedSet<Hex>(10_000)
+  readonly scoring: PeerScoring
+  readonly discovery: PeerDiscovery
 
   constructor(cfg: P2PConfig, handlers: P2PHandlers) {
     this.cfg = cfg
     this.handlers = handlers
+    this.scoring = new PeerScoring()
+    this.discovery = new PeerDiscovery(
+      cfg.peers,
+      this.scoring,
+      {
+        selfId: cfg.nodeId ?? "node-1",
+        selfUrl: `http://${cfg.bind}:${cfg.port}`,
+        maxPeers: cfg.maxPeers ?? 50,
+      },
+    )
+
+    // Register static peers in scoring
+    for (const peer of cfg.peers) {
+      this.scoring.addPeer(peer.id, peer.url)
+    }
   }
 
   start(): void {
@@ -69,6 +91,12 @@ export class P2PNode {
       if (req.method === "GET" && req.url === "/p2p/chain-snapshot") {
         res.writeHead(200, { "content-type": "application/json" })
         res.end(serializeJson(this.handlers.onSnapshotRequest()))
+        return
+      }
+
+      if (req.method === "GET" && req.url === "/p2p/peers") {
+        res.writeHead(200, { "content-type": "application/json" })
+        res.end(serializeJson({ peers: this.discovery.getPeerListForExchange() }))
         return
       }
 
@@ -112,6 +140,12 @@ export class P2PNode {
     server.listen(this.cfg.port, this.cfg.bind, () => {
       log.info("listening", { bind: this.cfg.bind, port: this.cfg.port })
     })
+
+    // Start peer discovery and scoring if enabled
+    if (this.cfg.enableDiscovery !== false) {
+      this.discovery.start()
+      this.scoring.startDecay()
+    }
   }
 
   async receiveTx(rawTx: Hex): Promise<void> {
@@ -142,11 +176,17 @@ export class P2PNode {
   }
 
   private async broadcast(path: string, payload: unknown): Promise<void> {
-    await Promise.all(this.cfg.peers.map(async (peer) => {
+    // Use discovered active peers if discovery is enabled, otherwise fall back to config
+    const peers = this.cfg.enableDiscovery !== false
+      ? this.discovery.getActivePeers()
+      : this.cfg.peers
+
+    await Promise.all(peers.map(async (peer) => {
       try {
         await requestJson(`${peer.url}${path}`, "POST", payload)
+        this.scoring.recordSuccess(peer.id)
       } catch {
-        // ignore per-peer failures
+        this.scoring.recordFailure(peer.id)
       }
     }))
   }
