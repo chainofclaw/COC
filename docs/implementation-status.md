@@ -39,7 +39,7 @@ Code:
 - `COC/node/src/storage/state-trie.ts`
 
 ## 2) Consensus & Block Production
-**Status: Partial (Enhanced in Phase 13.2)**
+**Status: Partial (Enhanced in Phase 13.2 + 22)**
 
 Implemented:
 - Deterministic round‑robin proposer rotation
@@ -47,10 +47,12 @@ Implemented:
 - Block hash calculation and link validation
 - **Phase 13.2**: ConsensusEngine works with both memory and persistent backends
 - **Phase 13.2**: Support for both snapshot-based and block-based sync
+- **Phase 22**: Validator governance with proposal-based set management
+- **Phase 22**: Stake-weighted voting and epoch-based transitions
 
 Missing/Partial:
 - BFT/PoA/PoS finality and slashing rules
-- Fork choice, reorg resolution, validator set management
+- Fork choice and reorg resolution
 
 Code:
 - `COC/node/src/chain-engine.ts`
