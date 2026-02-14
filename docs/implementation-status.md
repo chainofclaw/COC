@@ -8,33 +8,41 @@ This document maps the whitepaper scope to the current codebase and test coverag
 - **Missing**: not implemented
 
 ## 1) Execution Layer (EVM)
-**Status: Partial (Enhanced in Phase 13.1)**
+**Status: Partial (Enhanced in Phase 13.1 + 13.2)**
 
 Implemented:
 - In-memory EVM execution using `@ethereumjs/vm`
 - Transaction execution with receipts and basic logs
-- Minimal JSON-RPC subset for chain interaction
-- **NEW (Phase 13.1)**: Persistent state trie with Merkle Patricia Trie
-- **NEW (Phase 13.1)**: Account state and storage slots persistence
-- **NEW (Phase 13.1)**: Contract code storage
+- JSON-RPC methods: eth_call, eth_estimateGas, eth_getCode, eth_getStorageAt, eth_getLogs, eth_sendTransaction
+- **Phase 13.1**: Persistent state trie with Merkle Patricia Trie
+- **Phase 13.1**: Account state and storage slots persistence
+- **Phase 13.2**: `IChainEngine` interface for engine abstraction
+- **Phase 13.2**: Persistent event/log indexing with address/topic filtering
+- **Phase 13.2**: RPC transparent backend switching (memory ↔ LevelDB)
+- **Phase 13.2**: Transaction receipt persistence across restarts
 
 Missing/Partial:
-- Full EVM JSON-RPC parity (`eth_call`, subscriptions, trace/debug, ws)
-- Proper block header fields (difficulty, receiptsRoot, stateRoot, etc.)
+- WebSocket subscriptions (eth_subscribe)
+- Debug/trace APIs (trace_*, debug_*)
+- Proper block header fields (receiptsRoot, stateRoot from real state)
 - State trie checkpoint/revert optimization
 
 Code:
 - `COC/node/src/evm.ts`
 - `COC/node/src/rpc.ts`
-- `COC/node/src/storage/state-trie.ts` (NEW)
+- `COC/node/src/chain-engine-types.ts` (NEW - Phase 13.2)
+- `COC/node/src/chain-engine-persistent.ts`
+- `COC/node/src/storage/state-trie.ts`
 
 ## 2) Consensus & Block Production
-**Status: Partial**
+**Status: Partial (Enhanced in Phase 13.2)**
 
 Implemented:
 - Deterministic round‑robin proposer rotation
 - Simple finality depth marking
 - Block hash calculation and link validation
+- **Phase 13.2**: ConsensusEngine works with both memory and persistent backends
+- **Phase 13.2**: Support for both snapshot-based and block-based sync
 
 Missing/Partial:
 - BFT/PoA/PoS finality and slashing rules
@@ -42,6 +50,7 @@ Missing/Partial:
 
 Code:
 - `COC/node/src/chain-engine.ts`
+- `COC/node/src/chain-engine-persistent.ts`
 - `COC/node/src/hash.ts`
 - `COC/node/src/consensus.ts`
 
@@ -60,29 +69,34 @@ Code:
 - `COC/node/src/p2p.ts`
 
 ## 4) Storage & Persistence
-**Status: Implemented (Phase 13.1 Complete)**
+**Status: Implemented (Phase 13.1 + 13.2 Complete)**
 
 Implemented:
-- Chain snapshot persistence (JSON)
-- Rebuild from snapshot
-- **NEW (Phase 13.1)**: LevelDB-backed persistent storage
-- **NEW (Phase 13.1)**: Block and transaction indexing (by hash, by number)
-- **NEW (Phase 13.1)**: Nonce registry persistence (anti-replay)
-- **NEW (Phase 13.1)**: EVM state trie persistence
+- Chain snapshot persistence (JSON, legacy)
+- Rebuild from snapshot / persisted blocks
+- **Phase 13.1**: LevelDB-backed persistent storage
+- **Phase 13.1**: Block and transaction indexing (by hash, by number)
+- **Phase 13.1**: Nonce registry persistence (anti-replay)
+- **Phase 13.1**: EVM state trie persistence
+- **Phase 13.2**: Persistent event/log indexing with filtering
+- **Phase 13.2**: Legacy chain.json auto-migration
+- **Phase 13.2**: Config-driven backend selection (memory/leveldb)
+- **Phase 13.2**: Graceful shutdown with LevelDB cleanup
 - IPFS-compatible blockstore + UnixFS file layout
-- IPFS HTTP API subset (`/api/v0/add`, `cat`, `get`, `block/*`, `pin/*`, `ls`, `stat`, `id`, `version`, `object/stat`)
-- Gateway-style file fetch (`/ipfs/<cid>`)
+- IPFS HTTP API subset
 
 Missing/Partial:
 - Incremental compaction and pruning
 - Full IPFS feature parity (MFS, pubsub, tar archive for `get`)
 
 Code:
-- `COC/node/src/storage.ts`
-- `COC/node/src/storage/db.ts` (NEW)
-- `COC/node/src/storage/block-index.ts` (NEW)
-- `COC/node/src/storage/nonce-store.ts` (NEW)
-- `COC/node/src/storage/state-trie.ts` (NEW)
+- `COC/node/src/storage.ts` (legacy)
+- `COC/node/src/storage/db.ts`
+- `COC/node/src/storage/block-index.ts`
+- `COC/node/src/storage/nonce-store.ts`
+- `COC/node/src/storage/state-trie.ts`
+- `COC/node/src/storage/migrate-legacy.ts`
+- `COC/node/src/storage/snapshot-manager.ts`
 - `COC/node/src/ipfs-blockstore.ts`
 - `COC/node/src/ipfs-unixfs.ts`
 - `COC/node/src/ipfs-http.ts`
@@ -270,9 +284,35 @@ Documentation:
 - `COC/docs/phase-13.1-plan.en.md`
 - `COC/docs/phase-13.1-plan.zh.md`
 
-## 15) Whitepaper Gap Summary
+## 15) Phase 13.2: Node Integration & Event Indexing
+**Status: Implemented (2026-02-15)**
+
+Implemented:
+- `IChainEngine` interface abstracting memory and persistent backends
+- Node entry point supports config-driven backend selection
+- Auto-migration of legacy `chain.json` to LevelDB on startup
+- Persistent event/log indexing with address/topic filtering
+- RPC `eth_getLogs` uses persistent index when available
+- RPC `eth_getTransactionByHash` + `eth_getTransactionReceipt` fall back to persistent storage
+- ConsensusEngine works with both engine backends
+- Graceful shutdown with LevelDB cleanup
+- 5 new RPC-persistent integration tests
+
+Code:
+- `COC/node/src/chain-engine-types.ts` (NEW)
+- `COC/node/src/index.ts` (UPDATED)
+- `COC/node/src/rpc.ts` (UPDATED)
+- `COC/node/src/consensus.ts` (UPDATED)
+- `COC/node/src/storage/block-index.ts` (UPDATED - log indexing)
+- `COC/node/src/rpc-persistent.test.ts` (NEW)
+
+Documentation:
+- `COC/docs/phase-13.2-plan.en.md`
+- `COC/docs/phase-13.2-plan.zh.md`
+
+## 16) Whitepaper Gap Summary
 - Consensus security model and validator governance remain open.
-- Full P2P stack and state persistence are not production‑ready.
-- EVM JSON‑RPC compatibility is partial.
+- Full P2P stack needs DHT, peer scoring, binary wire protocol.
+- EVM JSON-RPC compatibility is partial (missing WebSocket subscriptions, debug/trace APIs).
 - PoSe dispute automation is still incomplete.
-- IPFS compatibility is limited to core HTTP APIs and does not cover full IPFS feature parity.
+- IPFS compatibility is limited to core HTTP APIs.

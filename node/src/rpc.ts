@@ -1,6 +1,6 @@
 import http from "node:http"
 import { SigningKey, keccak256, hashMessage, Transaction } from "ethers"
-import type { ChainEngine } from "./chain-engine.ts"
+import type { IChainEngine } from "./chain-engine-types.ts"
 import type { EvmChain } from "./evm.ts"
 import type { Hex, PendingFilter } from "./blockchain-types.ts"
 import type { P2PNode } from "./p2p.ts"
@@ -68,7 +68,7 @@ interface JsonRpcResponse {
   error?: { message: string }
 }
 
-export function startRpcServer(bind: string, port: number, chainId: number, evm: EvmChain, chain: ChainEngine, p2p: P2PNode, pose?: PoSeEngine) {
+export function startRpcServer(bind: string, port: number, chainId: number, evm: EvmChain, chain: IChainEngine, p2p: P2PNode, pose?: PoSeEngine) {
   initializeTestAccounts() // 初始化测试账户
 
   const filters = new Map<string, PendingFilter>()
@@ -130,7 +130,7 @@ async function handleOne(
   payload: JsonRpcRequest,
   chainId: number,
   evm: EvmChain,
-  chain: ChainEngine,
+  chain: IChainEngine,
   p2p: P2PNode,
   filters: Map<string, PendingFilter>,
 ): Promise<JsonRpcResponse> {
@@ -157,7 +157,7 @@ async function handleRpc(
   payload: JsonRpcRequest,
   chainId: number,
   evm: EvmChain,
-  chain: ChainEngine,
+  chain: IChainEngine,
   p2p: P2PNode,
   filters: Map<string, PendingFilter>,
 ) {
@@ -168,8 +168,10 @@ async function handleRpc(
       return String(chainId)
     case "eth_chainId":
       return `0x${chainId.toString(16)}`
-    case "eth_blockNumber":
-      return `0x${chain.getHeight().toString(16)}`
+    case "eth_blockNumber": {
+      const height = await Promise.resolve(chain.getHeight())
+      return `0x${height.toString(16)}`
+    }
     case "eth_getBalance": {
       const address = String((payload.params ?? [])[0] ?? "")
       const balance = await evm.getBalance(address)
@@ -182,23 +184,46 @@ async function handleRpc(
     }
     case "eth_getTransactionReceipt": {
       const hash = String((payload.params ?? [])[0] ?? "")
+      // Try persistent index first, then fall back to EVM memory
+      if (typeof chain.getTransactionByHash === "function") {
+        const tx = await chain.getTransactionByHash(hash as Hex)
+        if (tx?.receipt) return tx.receipt
+      }
       return evm.getReceipt(hash)
     }
     case "eth_getTransactionByHash": {
       const hash = String((payload.params ?? [])[0] ?? "")
+      // Try persistent index first, then fall back to EVM memory
+      if (typeof chain.getTransactionByHash === "function") {
+        const tx = await chain.getTransactionByHash(hash as Hex)
+        if (tx) {
+          return {
+            hash: tx.receipt.transactionHash,
+            from: tx.receipt.from,
+            to: tx.receipt.to,
+            blockNumber: `0x${tx.receipt.blockNumber.toString(16)}`,
+            blockHash: tx.receipt.blockHash,
+            input: tx.rawTx,
+          }
+        }
+      }
       return evm.getTransaction(hash)
     }
     case "eth_getBlockByNumber": {
       const tag = String((payload.params ?? [])[0] ?? "latest")
       const includeTx = Boolean((payload.params ?? [])[1])
-      const number = tag === "latest" ? chain.getHeight() : BigInt(tag)
-      const block = chain.getBlockByNumber(number)
+      const currentHeight = await Promise.resolve(chain.getHeight())
+      const number = tag === "latest" ? currentHeight
+        : tag === "earliest" ? 0n
+        : tag === "pending" ? currentHeight
+        : BigInt(tag)
+      const block = await Promise.resolve(chain.getBlockByNumber(number))
       return formatBlock(block, includeTx, chain, evm)
     }
     case "eth_getBlockByHash": {
       const hash = String((payload.params ?? [])[0] ?? "") as Hex
       const includeTx = Boolean((payload.params ?? [])[1])
-      const block = chain.getBlockByHash(hash)
+      const block = await Promise.resolve(chain.getBlockByHash(hash))
       return formatBlock(block, includeTx, chain, evm)
     }
     case "eth_gasPrice":
@@ -254,13 +279,14 @@ async function handleRpc(
     }
     case "eth_getLogs": {
       const query = ((payload.params ?? [])[0] ?? {}) as Record<string, unknown>
-      return queryLogs(chain, query)
+      return await queryLogs(chain, query)
     }
     case "eth_newFilter": {
       const query = ((payload.params ?? [])[0] ?? {}) as Record<string, unknown>
       const id = `0x${Math.floor(Math.random() * Number.MAX_SAFE_INTEGER).toString(16)}`
       const fromBlock = parseBlockTag(query.fromBlock, 0n)
-      const toBlock = query.toBlock !== undefined ? parseBlockTag(query.toBlock, chain.getHeight()) : undefined
+      const newFilterHeight = await Promise.resolve(chain.getHeight())
+      const toBlock = query.toBlock !== undefined ? parseBlockTag(query.toBlock, newFilterHeight) : undefined
       const filter: PendingFilter = {
         id,
         fromBlock,
@@ -277,8 +303,9 @@ async function handleRpc(
       const filter = filters.get(id)
       if (!filter) return []
       const start = filter.lastCursor + 1n
-      const logs = collectLogs(chain, start, filter.toBlock ?? chain.getHeight(), filter)
-      filter.lastCursor = chain.getHeight()
+      const filterHeight = await Promise.resolve(chain.getHeight())
+      const logs = await collectLogs(chain, start, filter.toBlock ?? filterHeight, filter)
+      filter.lastCursor = filterHeight
       return logs
     }
     case "eth_uninstallFilter": {
@@ -371,13 +398,13 @@ function parseBlockTag(input: unknown, fallback: bigint): bigint {
   return fallback
 }
 
-function formatBlock(block: ReturnType<ChainEngine["getBlockByNumber"]>, includeTx: boolean, chain?: ChainEngine, evm?: EvmChain) {
+async function formatBlock(block: Awaited<ReturnType<IChainEngine["getBlockByNumber"]>>, includeTx: boolean, chain?: IChainEngine, evm?: EvmChain) {
   if (!block) return null
 
   // Aggregate logsBloom from block receipts
   let aggregatedBloom = "0x" + "0".repeat(512)
   if (chain && evm) {
-    const receipts = chain.getReceiptsByBlock(block.number)
+    const receipts = await Promise.resolve(chain.getReceiptsByBlock(block.number))
     for (const receipt of receipts) {
       if (receipt.logsBloom && receipt.logsBloom !== "0x" + "0".repeat(512)) {
         aggregatedBloom = receipt.logsBloom
@@ -440,23 +467,40 @@ function formatBlock(block: ReturnType<ChainEngine["getBlockByNumber"]>, include
   }
 }
 
-function queryLogs(chain: ChainEngine, query: Record<string, unknown>): unknown[] {
+async function queryLogs(chain: IChainEngine, query: Record<string, unknown>): Promise<unknown[]> {
+  const height = await Promise.resolve(chain.getHeight())
   const fromBlock = parseBlockTag(query.fromBlock, 0n)
-  const toBlock = parseBlockTag(query.toBlock, chain.getHeight())
+  const toBlock = parseBlockTag(query.toBlock, height)
+  const address = query.address ? String(query.address).toLowerCase() as Hex : undefined
+  const topics = Array.isArray(query.topics)
+    ? query.topics.map((t) => (t ? String(t) as Hex : null))
+    : undefined
+
+  // Use persistent log index when available
+  if (typeof chain.getLogs === "function") {
+    return chain.getLogs({
+      fromBlock,
+      toBlock,
+      address,
+      topics: topics ?? undefined,
+    })
+  }
+
+  // Fallback to receipt-based log collection
   return collectLogs(chain, fromBlock, toBlock, {
     id: "inline",
     fromBlock,
     toBlock,
-    address: query.address ? String(query.address).toLowerCase() as Hex : undefined,
-    topics: Array.isArray(query.topics) ? query.topics.map((t) => (t ? String(t) as Hex : null)) : undefined,
+    address,
+    topics,
     lastCursor: fromBlock,
   })
 }
 
-function collectLogs(chain: ChainEngine, from: bigint, to: bigint, filter: PendingFilter): unknown[] {
+async function collectLogs(chain: IChainEngine, from: bigint, to: bigint, filter: PendingFilter): Promise<unknown[]> {
   const logs: unknown[] = []
   for (let n = from; n <= to; n += 1n) {
-    const receipts = chain.getReceiptsByBlock(n)
+    const receipts = await Promise.resolve(chain.getReceiptsByBlock(n))
     for (const receipt of receipts) {
       const recLogs = Array.isArray(receipt.logs) ? receipt.logs : []
       for (const log of recLogs as Array<Record<string, unknown>>) {
