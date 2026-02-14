@@ -11,6 +11,7 @@ import type { ChainBlock, Hex } from "../blockchain-types.ts"
 const BLOCK_BY_NUMBER_PREFIX = "b:"
 const BLOCK_BY_HASH_PREFIX = "h:"
 const TX_BY_HASH_PREFIX = "t:"
+const LOG_BY_BLOCK_PREFIX = "l:"
 const LATEST_BLOCK_KEY = "m:latest-block"
 
 const encoder = new TextEncoder()
@@ -47,6 +48,24 @@ export interface TxWithReceipt {
   receipt: TransactionReceipt
 }
 
+export interface IndexedLog {
+  address: Hex
+  topics: Hex[]
+  data: Hex
+  blockNumber: bigint
+  blockHash: Hex
+  transactionHash: Hex
+  transactionIndex: number
+  logIndex: number
+}
+
+export interface LogFilter {
+  fromBlock?: bigint
+  toBlock?: bigint
+  address?: Hex
+  topics?: Array<Hex | null>
+}
+
 export interface IBlockIndex {
   putBlock(block: ChainBlock): Promise<void>
   getBlockByNumber(num: bigint): Promise<ChainBlock | null>
@@ -54,6 +73,8 @@ export interface IBlockIndex {
   getLatestBlock(): Promise<ChainBlock | null>
   putTransaction(txHash: Hex, tx: TxWithReceipt): Promise<void>
   getTransactionByHash(hash: Hex): Promise<TxWithReceipt | null>
+  putLogs(blockNumber: bigint, logs: IndexedLog[]): Promise<void>
+  getLogs(filter: LogFilter): Promise<IndexedLog[]>
   close(): Promise<void>
 }
 
@@ -144,7 +165,52 @@ export class BlockIndex implements IBlockIndex {
     return tx
   }
 
+  async putLogs(blockNumber: bigint, logs: IndexedLog[]): Promise<void> {
+    if (logs.length === 0) return
+    const key = LOG_BY_BLOCK_PREFIX + blockNumber.toString()
+    const data = encoder.encode(serializeJSON(logs))
+    await this.db.put(key, data)
+  }
+
+  async getLogs(filter: LogFilter): Promise<IndexedLog[]> {
+    const from = filter.fromBlock ?? 0n
+    const to = filter.toBlock ?? (await this.getLatestBlock())?.number ?? 0n
+    const results: IndexedLog[] = []
+
+    for (let n = from; n <= to; n++) {
+      const key = LOG_BY_BLOCK_PREFIX + n.toString()
+      const data = await this.db.get(key)
+      if (!data) continue
+
+      const blockLogs: IndexedLog[] = deserializeJSON(decoder.decode(data))
+      for (const log of blockLogs) {
+        // Restore bigint fields
+        log.blockNumber = BigInt(log.blockNumber)
+
+        if (!matchLogFilter(log, filter)) continue
+        results.push(log)
+      }
+    }
+
+    return results
+  }
+
   async close(): Promise<void> {
     // Database close is handled by parent
   }
+}
+
+function matchLogFilter(log: IndexedLog, filter: LogFilter): boolean {
+  if (filter.address) {
+    if (log.address.toLowerCase() !== filter.address.toLowerCase()) return false
+  }
+  if (filter.topics && filter.topics.length > 0) {
+    for (let i = 0; i < filter.topics.length; i++) {
+      const expected = filter.topics[i]
+      if (!expected) continue
+      const actual = log.topics[i]
+      if (!actual || actual.toLowerCase() !== expected.toLowerCase()) return false
+    }
+  }
+  return true
 }

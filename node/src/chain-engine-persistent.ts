@@ -14,7 +14,7 @@ import type { ChainBlock, Hex, MempoolTx } from "./blockchain-types.ts"
 import { Transaction } from "ethers"
 import { LevelDatabase } from "./storage/db.ts"
 import { BlockIndex } from "./storage/block-index.ts"
-import type { TxWithReceipt } from "./storage/block-index.ts"
+import type { TxWithReceipt, IndexedLog, LogFilter } from "./storage/block-index.ts"
 import { PersistentNonceStore } from "./storage/nonce-store.ts"
 
 export interface PersistentChainEngineConfig {
@@ -81,6 +81,10 @@ export class PersistentChainEngine {
 
   async getTransactionByHash(hash: Hex): Promise<TxWithReceipt | null> {
     return this.blockIndex.getTransactionByHash(hash)
+  }
+
+  async getLogs(filter: LogFilter): Promise<IndexedLog[]> {
+    return this.blockIndex.getLogs(filter)
   }
 
   async getReceiptsByBlock(number: bigint): Promise<TxReceipt[]> {
@@ -156,13 +160,17 @@ export class PersistentChainEngine {
       throw new Error("invalid block hash")
     }
 
-    // Execute transactions and collect receipts
+    // Execute transactions and collect receipts + logs
+    const blockLogs: IndexedLog[] = []
+
     for (let i = 0; i < block.txs.length; i++) {
       const raw = block.txs[i]
       const result = await this.evm.executeRawTx(raw, block.number, i, block.hash)
       const receipt = this.evm.getReceipt(result.txHash)
 
       if (receipt) {
+        const receiptLogs = Array.isArray(receipt.logs) ? receipt.logs : []
+
         // Store transaction with receipt
         await this.blockIndex.putTransaction(result.txHash as Hex, {
           rawTx: raw,
@@ -174,13 +182,28 @@ export class PersistentChainEngine {
             to: (receipt.to as Hex) ?? ("0x0" as Hex),
             gasUsed: BigInt(receipt.gasUsed.toString()),
             status: BigInt(receipt.status ?? 1),
-            logs: receipt.logs.map((log) => ({
+            logs: receiptLogs.map((log: any) => ({
               address: log.address as Hex,
-              topics: log.topics as Hex[],
-              data: log.data as Hex,
+              topics: (log.topics ?? []) as Hex[],
+              data: (log.data ?? "0x") as Hex,
             })),
           },
         })
+
+        // Collect indexed logs
+        for (let logIdx = 0; logIdx < receiptLogs.length; logIdx++) {
+          const log = receiptLogs[logIdx] as any
+          blockLogs.push({
+            address: (log.address ?? "0x") as Hex,
+            topics: ((log.topics ?? []) as string[]).map((t) => t as Hex),
+            data: (log.data ?? "0x") as Hex,
+            blockNumber: block.number,
+            blockHash: block.hash,
+            transactionHash: result.txHash as Hex,
+            transactionIndex: i,
+            logIndex: logIdx,
+          })
+        }
 
         // Mark transaction as confirmed
         const nonce = `tx:${result.txHash}`
@@ -188,8 +211,9 @@ export class PersistentChainEngine {
       }
     }
 
-    // Store block
+    // Store block and logs
     await this.blockIndex.putBlock(block)
+    await this.blockIndex.putLogs(block.number, blockLogs)
 
     // Update finality flags for recent blocks
     await this.updateFinalityFlags()

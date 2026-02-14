@@ -4,6 +4,8 @@ import { startRpcServer } from "./rpc.ts"
 import { EvmChain } from "./evm.ts"
 import { PoSeEngine } from "./pose-engine.ts"
 import { ChainEngine } from "./chain-engine.ts"
+import { PersistentChainEngine } from "./chain-engine-persistent.ts"
+import type { IChainEngine } from "./chain-engine-types.ts"
 import { P2PNode } from "./p2p.ts"
 import { ConsensusEngine } from "./consensus.ts"
 import { IpfsBlockstore } from "./ipfs-blockstore.ts"
@@ -11,6 +13,10 @@ import { UnixFsBuilder } from "./ipfs-unixfs.ts"
 import { IpfsHttpServer } from "./ipfs-http.ts"
 import { createNodeSigner } from "./crypto/signer.ts"
 import { registerPoseRoutes } from "./pose-http.ts"
+import { migrateLegacySnapshot } from "./storage/migrate-legacy.ts"
+import { createLogger } from "./logger.ts"
+
+const log = createLogger("node")
 
 const config = await loadNodeConfig()
 const evm = await EvmChain.create(config.chainId)
@@ -20,20 +26,54 @@ const prefund = (config.prefund || []).map((entry) => ({
   balanceWei: parseEther(entry.balanceEth).toString(),
 }))
 
-await evm.prefund(prefund)
+const usePersistent = config.storage.backend === "leveldb"
 
-const chain = new ChainEngine(
-  {
-    dataDir: config.dataDir,
-    nodeId: config.nodeId,
-    validators: config.validators,
-    finalityDepth: config.finalityDepth,
-    maxTxPerBlock: config.maxTxPerBlock,
-    minGasPriceWei: BigInt(config.minGasPriceWei),
-  },
-  evm,
-)
-await chain.init()
+// Auto-migrate legacy chain.json if switching to persistent backend
+if (usePersistent) {
+  const migration = await migrateLegacySnapshot(config.dataDir)
+  if (migration.blocksImported > 0) {
+    log.info("legacy migration complete", {
+      blocks: migration.blocksImported,
+      nonces: migration.noncesMarked,
+    })
+  }
+}
+
+let chain: IChainEngine
+
+if (usePersistent) {
+  const persistentEngine = new PersistentChainEngine(
+    {
+      dataDir: config.dataDir,
+      nodeId: config.nodeId,
+      validators: config.validators,
+      finalityDepth: config.finalityDepth,
+      maxTxPerBlock: config.maxTxPerBlock,
+      minGasPriceWei: BigInt(config.minGasPriceWei),
+      prefundAccounts: prefund,
+    },
+    evm,
+  )
+  await persistentEngine.init()
+  chain = persistentEngine
+  log.info("using persistent storage backend (LevelDB)")
+} else {
+  await evm.prefund(prefund)
+  const memoryEngine = new ChainEngine(
+    {
+      dataDir: config.dataDir,
+      nodeId: config.nodeId,
+      validators: config.validators,
+      finalityDepth: config.finalityDepth,
+      maxTxPerBlock: config.maxTxPerBlock,
+      minGasPriceWei: BigInt(config.minGasPriceWei),
+    },
+    evm,
+  )
+  await memoryEngine.init()
+  chain = memoryEngine
+  log.info("using memory storage backend")
+}
 
 const p2p = new P2PNode(
   {
@@ -56,7 +96,14 @@ const p2p = new P2PNode(
         // ignore invalid/duplicate blocks from peers
       }
     },
-    onSnapshotRequest: () => chain.makeSnapshot(),
+    onSnapshotRequest: () => {
+      // Legacy snapshot support for in-memory engine
+      const snapshotEngine = chain as ChainEngine
+      if (typeof snapshotEngine.makeSnapshot === "function") {
+        return snapshotEngine.makeSnapshot()
+      }
+      return { blocks: [], updatedAtMs: Date.now() }
+    },
   },
 )
 p2p.start()
@@ -87,3 +134,13 @@ const nodeSigner = createNodeSigner(nodePrivateKey)
 const pose = new PoSeEngine(BigInt(Math.floor(Date.now() / config.poseEpochMs)), { signer: nodeSigner })
 
 startRpcServer(config.rpcBind, config.rpcPort, config.chainId, evm, chain, p2p, pose)
+
+// Graceful shutdown
+process.on("SIGINT", async () => {
+  log.info("shutting down...")
+  const closeable = chain as PersistentChainEngine
+  if (typeof closeable.close === "function") {
+    await closeable.close()
+  }
+  process.exit(0)
+})

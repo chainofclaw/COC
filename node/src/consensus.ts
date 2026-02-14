@@ -1,4 +1,4 @@
-import type { ChainEngine } from "./chain-engine.ts"
+import type { IChainEngine, ISnapshotSyncEngine, IBlockSyncEngine, resolveValue } from "./chain-engine-types.ts"
 import type { P2PNode } from "./p2p.ts"
 import { createLogger } from "./logger.ts"
 
@@ -10,11 +10,11 @@ export interface ConsensusConfig {
 }
 
 export class ConsensusEngine {
-  private readonly chain: ChainEngine
+  private readonly chain: IChainEngine
   private readonly p2p: P2PNode
   private readonly cfg: ConsensusConfig
 
-  constructor(chain: ChainEngine, p2p: P2PNode, cfg: ConsensusConfig) {
+  constructor(chain: IChainEngine, p2p: P2PNode, cfg: ConsensusConfig) {
     this.chain = chain
     this.p2p = p2p
     this.cfg = cfg
@@ -42,12 +42,24 @@ export class ConsensusEngine {
     try {
       const snapshots = await this.p2p.fetchSnapshots()
       let adopted = false
+
+      // Support both snapshot-based and block-based sync
+      const snapshotEngine = this.chain as ISnapshotSyncEngine
+      const blockEngine = this.chain as IBlockSyncEngine
+
       for (const snapshot of snapshots) {
-        const ok = await this.chain.maybeAdoptSnapshot(snapshot)
+        let ok = false
+        if (typeof snapshotEngine.makeSnapshot === "function" && Array.isArray(snapshot.blocks)) {
+          ok = await snapshotEngine.maybeAdoptSnapshot(snapshot)
+        } else if (typeof blockEngine.maybeAdoptSnapshot === "function" && Array.isArray(snapshot.blocks)) {
+          ok = await blockEngine.maybeAdoptSnapshot(snapshot.blocks)
+        }
         adopted = adopted || ok
       }
+
       if (adopted) {
-        log.info("sync adopted new tip", { height: this.chain.getHeight().toString() })
+        const height = await Promise.resolve(this.chain.getHeight())
+        log.info("sync adopted new tip", { height: height.toString() })
       }
     } catch (error) {
       log.error("sync failed", { error: String(error) })
