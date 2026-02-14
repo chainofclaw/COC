@@ -1,0 +1,54 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Build outputs
+dist/
+build/
+*.js
+*.js.map
+*.d.ts
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# Logs
+*.log
+logs/
+
+# Runtime data
+.run/
+data/
+*.db
+*.sqlite
+
+# Environment
+.env
+.env.local
+config.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Hardhat/Foundry
+cache/
+artifacts/
+out/
+
+# Next.js
+.next/
+out/
+
+# Temporary
+tmp/
+temp/
+*.tmp

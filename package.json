@@ -1,0 +1,30 @@
+{
+  "name": "coc-blockchain",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ChainOfClaw - EVM-compatible blockchain with PoSe settlement",
+  "workspaces": [
+    "node",
+    "contracts",
+    "services",
+    "runtime",
+    "wallet",
+    "tests",
+    "explorer",
+    "website"
+  ],
+  "scripts": {
+    "test": "echo \"Run tests in individual packages\"",
+    "build": "echo \"Build individual packages\"",
+    "clean": "rm -rf node_modules */node_modules"
+  },
+  "keywords": [
+    "blockchain",
+    "evm",
+    "pose",
+    "ipfs",
+    "storage"
+  ],
+  "author": "ChainOfClaw",
+  "license": "MIT"
+}
