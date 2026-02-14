@@ -11,15 +11,19 @@
     "test": "node --experimental-strip-types --test src/**/*.test.ts"
   },
   "dependencies": {
-    "@ethereumjs/vm": "^10.0.0",
     "@ethereumjs/common": "^10.0.0",
+    "@ethereumjs/trie": "^6.2.1",
     "@ethereumjs/tx": "^10.1.1",
     "@ethereumjs/util": "^9.0.1",
-    "@ethereumjs/trie": "^6.2.1",
+    "@ethereumjs/vm": "^10.0.0",
     "@ipld/dag-pb": "^4.1.0",
     "ethers": "^6.13.5",
     "ipfs-unixfs": "^9.0.0",
     "level": "^8.0.1",
-    "multiformats": "^13.3.2"
+    "multiformats": "^13.3.2",
+    "ws": "^8.19.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1"
   }
 }

@@ -16,6 +16,8 @@ export interface NodeConfig {
   chainId: number
   rpcBind: string
   rpcPort: number
+  wsBind: string
+  wsPort: number
   ipfsBind: string
   ipfsPort: number
   storageDir: string
@@ -62,6 +64,8 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     chainId: 18780,
     rpcBind: "127.0.0.1",
     rpcPort: 18780,
+    wsBind: "127.0.0.1",
+    wsPort: 18781,
     ipfsBind: "127.0.0.1",
     ipfsPort: 5001,
     storageDir: join(dataDir, "storage"),

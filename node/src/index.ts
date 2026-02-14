@@ -14,6 +14,9 @@ import { IpfsHttpServer } from "./ipfs-http.ts"
 import { createNodeSigner } from "./crypto/signer.ts"
 import { registerPoseRoutes } from "./pose-http.ts"
 import { migrateLegacySnapshot } from "./storage/migrate-legacy.ts"
+import { startWsRpcServer } from "./websocket-rpc.ts"
+import { handleRpcMethod } from "./rpc.ts"
+import { ChainEventEmitter } from "./chain-events.ts"
 import { createLogger } from "./logger.ts"
 
 const log = createLogger("node")
@@ -135,9 +138,22 @@ const pose = new PoSeEngine(BigInt(Math.floor(Date.now() / config.poseEpochMs)),
 
 startRpcServer(config.rpcBind, config.rpcPort, config.chainId, evm, chain, p2p, pose)
 
+// Start WebSocket RPC server for real-time subscriptions
+const wsServer = startWsRpcServer(
+  { port: config.wsPort, bind: config.wsBind },
+  config.chainId,
+  evm,
+  chain,
+  p2p,
+  chain.events,
+  handleRpcMethod,
+)
+log.info("WebSocket RPC configured", { bind: config.wsBind, port: config.wsPort })
+
 // Graceful shutdown
 process.on("SIGINT", async () => {
   log.info("shutting down...")
+  wsServer.stop()
   const closeable = chain as PersistentChainEngine
   if (typeof closeable.close === "function") {
     await closeable.close()

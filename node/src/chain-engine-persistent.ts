@@ -16,6 +16,8 @@ import { LevelDatabase } from "./storage/db.ts"
 import { BlockIndex } from "./storage/block-index.ts"
 import type { TxWithReceipt, IndexedLog, LogFilter } from "./storage/block-index.ts"
 import { PersistentNonceStore } from "./storage/nonce-store.ts"
+import { ChainEventEmitter } from "./chain-events.ts"
+import type { BlockEvent, PendingTxEvent } from "./chain-events.ts"
 
 export interface PersistentChainEngineConfig {
   dataDir: string
@@ -29,6 +31,7 @@ export interface PersistentChainEngineConfig {
 
 export class PersistentChainEngine {
   readonly mempool = new Mempool()
+  readonly events: ChainEventEmitter
   private readonly db: LevelDatabase
   private readonly blockIndex: BlockIndex
   private readonly txNonceStore: PersistentNonceStore
@@ -41,6 +44,7 @@ export class PersistentChainEngine {
     this.db = new LevelDatabase(cfg.dataDir, "chain")
     this.blockIndex = new BlockIndex(this.db)
     this.txNonceStore = new PersistentNonceStore(this.db)
+    this.events = new ChainEventEmitter()
   }
 
   async init(): Promise<void> {
@@ -119,6 +123,14 @@ export class PersistentChainEngine {
       this.mempool.remove(tx.hash)
       throw new Error("tx already confirmed")
     }
+
+    // Emit pending transaction event
+    this.events.emitPendingTx({
+      hash: tx.hash,
+      from: tx.from,
+      nonce: tx.nonce,
+      gasPrice: tx.gasPrice,
+    })
 
     return tx
   }
@@ -228,8 +240,18 @@ export class PersistentChainEngine {
       }
     }
 
-    if (locallyProposed) {
-      // no-op hook for metrics
+    // Emit events for subscribers
+    this.events.emitNewBlock({
+      block,
+      receipts: blockLogs.map((l) => ({
+        transactionHash: l.transactionHash,
+        status: "0x1",
+        gasUsed: "0x5208",
+      })),
+    })
+
+    for (const log of blockLogs) {
+      this.events.emitLog({ log })
     }
   }
 

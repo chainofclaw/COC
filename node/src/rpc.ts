@@ -153,6 +153,23 @@ function sendError(res: http.ServerResponse, id: string | number | null, message
   res.end(JSON.stringify({ jsonrpc: "2.0", id, error: { message } }))
 }
 
+/**
+ * Exported RPC method handler for reuse by WebSocket server.
+ * Handles all standard JSON-RPC methods except eth_subscribe/eth_unsubscribe.
+ */
+export async function handleRpcMethod(
+  method: string,
+  params: unknown[],
+  chainId: number,
+  evm: EvmChain,
+  chain: IChainEngine,
+  p2p: P2PNode,
+): Promise<unknown> {
+  const payload = { method, params, id: null, jsonrpc: "2.0" as const }
+  const filters = new Map<string, PendingFilter>()
+  return handleRpc(payload, chainId, evm, chain, p2p, filters)
+}
+
 async function handleRpc(
   payload: JsonRpcRequest,
   chainId: number,

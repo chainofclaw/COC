@@ -4,6 +4,7 @@ import { ChainStorage } from "./storage.ts"
 import { hashBlockPayload, validateBlockLink, zeroHash } from "./hash.ts"
 import type { ChainBlock, ChainSnapshot, Hex, MempoolTx } from "./blockchain-types.ts"
 import { Transaction } from "ethers"
+import { ChainEventEmitter } from "./chain-events.ts"
 
 export interface ChainEngineConfig {
   dataDir: string
@@ -16,6 +17,7 @@ export interface ChainEngineConfig {
 
 export class ChainEngine {
   readonly mempool = new Mempool()
+  readonly events: ChainEventEmitter
   private readonly storage: ChainStorage
   private readonly blocks: ChainBlock[] = []
   private readonly receiptsByBlock = new Map<bigint, TxReceipt[]>()
@@ -27,6 +29,7 @@ export class ChainEngine {
     this.cfg = cfg
     this.evm = evm
     this.storage = new ChainStorage(cfg.dataDir)
+    this.events = new ChainEventEmitter()
   }
 
   async init(): Promise<void> {
@@ -84,6 +87,14 @@ export class ChainEngine {
       this.mempool.remove(tx.hash)
       throw new Error("tx already confirmed")
     }
+
+    this.events.emitPendingTx({
+      hash: tx.hash,
+      from: tx.from,
+      nonce: tx.nonce,
+      gasPrice: tx.gasPrice,
+    })
+
     return tx
   }
 
@@ -150,8 +161,33 @@ export class ChainEngine {
     this.updateFinalityFlags()
     await this.storage.save(this.makeSnapshot())
 
-    if (locallyProposed) {
-      // no-op hook for metrics
+    // Emit new block event
+    this.events.emitNewBlock({
+      block,
+      receipts: receipts.map((r) => ({
+        transactionHash: (r.transactionHash ?? "0x") as Hex,
+        status: String(r.status ?? "0x1"),
+        gasUsed: String(r.gasUsed ?? "0x5208"),
+      })),
+    })
+
+    // Emit log events
+    for (const receipt of receipts) {
+      const recLogs = Array.isArray(receipt.logs) ? receipt.logs : []
+      for (const logEntry of recLogs as Array<Record<string, unknown>>) {
+        this.events.emitLog({
+          log: {
+            address: (logEntry.address ?? "0x") as Hex,
+            topics: ((logEntry.topics ?? []) as string[]).map((t) => t as Hex),
+            data: (logEntry.data ?? "0x") as Hex,
+            blockNumber: block.number,
+            blockHash: block.hash,
+            transactionHash: (receipt.transactionHash ?? "0x") as Hex,
+            transactionIndex: 0,
+            logIndex: 0,
+          },
+        })
+      }
     }
   }
 

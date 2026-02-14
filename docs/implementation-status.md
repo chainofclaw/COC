@@ -8,7 +8,7 @@ This document maps the whitepaper scope to the current codebase and test coverag
 - **Missing**: not implemented
 
 ## 1) Execution Layer (EVM)
-**Status: Partial (Enhanced in Phase 13.1 + 13.2)**
+**Status: Partial (Enhanced in Phase 13.1 + 13.2 + 14)**
 
 Implemented:
 - In-memory EVM execution using `@ethereumjs/vm`
@@ -20,9 +20,11 @@ Implemented:
 - **Phase 13.2**: Persistent event/log indexing with address/topic filtering
 - **Phase 13.2**: RPC transparent backend switching (memory ↔ LevelDB)
 - **Phase 13.2**: Transaction receipt persistence across restarts
+- **Phase 14**: WebSocket JSON-RPC server (eth_subscribe/eth_unsubscribe)
+- **Phase 14**: Real-time subscriptions: newHeads, newPendingTransactions, logs
+- **Phase 14**: Chain event emitter with typed event system
 
 Missing/Partial:
-- WebSocket subscriptions (eth_subscribe)
 - Debug/trace APIs (trace_*, debug_*)
 - Proper block header fields (receiptsRoot, stateRoot from real state)
 - State trie checkpoint/revert optimization
@@ -310,9 +312,38 @@ Documentation:
 - `COC/docs/phase-13.2-plan.en.md`
 - `COC/docs/phase-13.2-plan.zh.md`
 
-## 16) Whitepaper Gap Summary
+## 16) Phase 14: WebSocket Subscriptions & Real-time Events
+**Status: Implemented (2026-02-15)**
+
+Implemented:
+- `ChainEventEmitter` with typed event emission (newBlock, pendingTx, log)
+- WebSocket JSON-RPC server using `ws` package
+- `eth_subscribe` / `eth_unsubscribe` methods
+- Subscription types: newHeads, newPendingTransactions, logs (with address/topic filtering)
+- Per-client subscription management with automatic cleanup
+- Both ChainEngine and PersistentChainEngine emit events
+- `IChainEngine` interface includes `events` field
+- Standard RPC methods forwarded over WebSocket
+- Helper formatters for Ethereum-compatible notification format
+
+Code:
+- `COC/node/src/chain-events.ts` (NEW)
+- `COC/node/src/websocket-rpc.ts` (NEW)
+- `COC/node/src/chain-engine.ts` (UPDATED - events)
+- `COC/node/src/chain-engine-persistent.ts` (UPDATED - events)
+- `COC/node/src/chain-engine-types.ts` (UPDATED - events field)
+- `COC/node/src/index.ts` (UPDATED - WS server startup)
+- `COC/node/src/config.ts` (UPDATED - wsPort/wsBind)
+- `COC/node/src/rpc.ts` (UPDATED - exported handleRpcMethod)
+- `COC/node/src/websocket-rpc.test.ts` (NEW - 5 tests)
+
+Documentation:
+- `COC/docs/phase-14-plan.en.md`
+- `COC/docs/phase-14-plan.zh.md`
+
+## 17) Whitepaper Gap Summary
 - Consensus security model and validator governance remain open.
 - Full P2P stack needs DHT, peer scoring, binary wire protocol.
-- EVM JSON-RPC compatibility is partial (missing WebSocket subscriptions, debug/trace APIs).
+- EVM JSON-RPC compatibility is partial (missing debug/trace APIs).
 - PoSe dispute automation is still incomplete.
 - IPFS compatibility is limited to core HTTP APIs.

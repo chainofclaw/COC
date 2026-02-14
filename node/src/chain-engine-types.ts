@@ -10,9 +10,11 @@ import type { ChainBlock, ChainSnapshot, Hex, MempoolTx } from "./blockchain-typ
 import type { TxReceipt } from "./evm.ts"
 import type { TxWithReceipt, IndexedLog, LogFilter } from "./storage/block-index.ts"
 import type { Mempool } from "./mempool.ts"
+import type { ChainEventEmitter } from "./chain-events.ts"
 
 export interface IChainEngine {
   readonly mempool: Mempool
+  readonly events: ChainEventEmitter
 
   // Lifecycle
   init(): Promise<void>
