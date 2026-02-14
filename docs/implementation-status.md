@@ -206,7 +206,7 @@ Tests:
 - Unit tests distributed across all modules (`services/*`, `nodeops/*`, `node/src/*`)
 
 ## 11) Blockchain Explorer
-**Status: Implemented**
+**Status: Implemented (Enhanced in Phase 18)**
 
 Implemented:
 - Next.js 15 web application with React 19
@@ -215,11 +215,14 @@ Implemented:
 - Address explorer with balance and transaction history
 - Real-time data from JSON-RPC endpoint
 - Responsive UI with Tailwind CSS
+- **Phase 18**: WebSocket real-time block updates (newHeads subscription)
+- **Phase 18**: Live pending transactions display (newPendingTransactions subscription)
+- **Phase 18**: Connection status indicator with auto-reconnect
+- **Phase 18**: WebSocket hook for client-side subscriptions
 
 Missing/Partial:
 - Contract verification interface
 - Advanced search and filtering
-- Real-time updates via WebSocket
 - Historical analytics and charts
 
 Code:

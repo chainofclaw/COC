@@ -1,7 +1,8 @@
 import { JsonRpcProvider } from 'ethers'
 
-// COC 本地节点 RPC 端点
+// COC node RPC endpoints
 export const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL || 'http://127.0.0.1:28780'
+export const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://127.0.0.1:18781'
 
 // 创建 ethers.js Provider
 export const provider = new JsonRpcProvider(RPC_URL, {
