@@ -8,7 +8,7 @@ This document maps the whitepaper scope to the current codebase and test coverag
 - **Missing**: not implemented
 
 ## 1) Execution Layer (EVM)
-**Status: Partial (Enhanced in Phase 13.1 + 13.2 + 14)**
+**Status: Partial (Enhanced in Phase 13.1 + 13.2 + 14 + 17)**
 
 Implemented:
 - In-memory EVM execution using `@ethereumjs/vm`
@@ -23,15 +23,16 @@ Implemented:
 - **Phase 14**: WebSocket JSON-RPC server (eth_subscribe/eth_unsubscribe)
 - **Phase 14**: Real-time subscriptions: newHeads, newPendingTransactions, logs
 - **Phase 14**: Chain event emitter with typed event system
+- **Phase 17**: Debug/trace APIs (debug_traceTransaction, debug_traceBlockByNumber, trace_transaction)
 
 Missing/Partial:
-- Debug/trace APIs (trace_*, debug_*)
 - Proper block header fields (receiptsRoot, stateRoot from real state)
 - State trie checkpoint/revert optimization
 
 Code:
 - `COC/node/src/evm.ts`
 - `COC/node/src/rpc.ts`
+- `COC/node/src/debug-trace.ts`
 - `COC/node/src/chain-engine-types.ts` (NEW - Phase 13.2)
 - `COC/node/src/chain-engine-persistent.ts`
 - `COC/node/src/storage/state-trie.ts`
@@ -353,6 +354,6 @@ Documentation:
 ## 17) Whitepaper Gap Summary
 - Consensus security model and validator governance remain open.
 - Full P2P stack needs DHT, peer scoring, binary wire protocol.
-- EVM JSON-RPC compatibility is partial (missing debug/trace APIs).
+- EVM JSON-RPC compatibility is partial (debug/trace APIs simplified, no step-level tracing).
 - PoSe dispute automation is still incomplete.
 - IPFS compatibility is limited to core HTTP APIs.

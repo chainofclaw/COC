@@ -7,6 +7,7 @@ import type { P2PNode } from "./p2p.ts"
 import type { PoSeEngine } from "./pose-engine.ts"
 import { registerPoseRoutes, handlePoseRequest } from "./pose-http.ts"
 import { keccak256Hex } from "../../services/relayer/keccak256.ts"
+import { traceTransaction, traceBlockByNumber, traceTransactionCalls } from "./debug-trace.ts"
 import { createLogger } from "./logger.ts"
 
 const log = createLogger("rpc")
@@ -401,6 +402,31 @@ async function handleRpc(
         accessList: [],
         gasUsed: "0x0"
       }
+    }
+    case "debug_traceTransaction": {
+      const txHash = String((payload.params ?? [])[0] ?? "") as Hex
+      const traceOpts = ((payload.params ?? [])[1] ?? {}) as Record<string, unknown>
+      return await traceTransaction(txHash, chain, evm, {
+        disableStorage: Boolean(traceOpts.disableStorage),
+        disableMemory: Boolean(traceOpts.disableMemory),
+        disableStack: Boolean(traceOpts.disableStack),
+        tracer: traceOpts.tracer ? String(traceOpts.tracer) : undefined,
+      })
+    }
+    case "debug_traceBlockByNumber": {
+      const blockTag = String((payload.params ?? [])[0] ?? "latest")
+      const traceHeight = await Promise.resolve(chain.getHeight())
+      const traceBlockNum = blockTag === "latest" ? traceHeight : BigInt(blockTag)
+      const traceOpts2 = ((payload.params ?? [])[1] ?? {}) as Record<string, unknown>
+      return await traceBlockByNumber(traceBlockNum, chain, evm, {
+        disableStorage: Boolean(traceOpts2.disableStorage),
+        disableMemory: Boolean(traceOpts2.disableMemory),
+        disableStack: Boolean(traceOpts2.disableStack),
+      })
+    }
+    case "trace_transaction": {
+      const txHash = String((payload.params ?? [])[0] ?? "") as Hex
+      return await traceTransactionCalls(txHash, chain, evm)
     }
     default:
       throw new Error(`method not supported: ${payload.method}`)
