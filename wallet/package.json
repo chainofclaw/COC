@@ -1,0 +1,12 @@
+{
+  "name": "coc-wallet",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "bin": {
+    "coc-wallet": "bin/coc-wallet.js"
+  },
+  "dependencies": {
+    "ethers": "^6.13.5"
+  }
+}

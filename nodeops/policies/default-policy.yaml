@@ -1,0 +1,44 @@
+version: 1
+profile: default
+
+deploy:
+  strategy: rolling
+  max_parallel: 1
+  rollback_on_failure: true
+
+monitoring:
+  poll_interval_ms: 15000
+  thresholds:
+    cpu_pct: 85
+    mem_pct: 85
+    disk_pct: 90
+    p95_latency_ms: 2500
+    min_peer_count: 8
+
+self_heal:
+  restart_on_process_down: true
+  restart_cooldown_ms: 120000
+  reconnect_on_peer_drop: true
+  peer_reconnect_target: 12
+  switch_transport_on_high_latency: true
+  latency_switch_threshold_ms: 3500
+
+security:
+  least_privilege: true
+  firewall_profile: home-node
+  rpc_rate_limit_rps: 20
+  ssh_allowlist:
+    - 100.64.0.0/10
+
+audit:
+  enabled: true
+  redact_secrets: true
+  retain_days: 30
+
+key_management:
+  mode: local-hsm-preferred
+  rotate_every_days: 30
+  threshold_signing:
+    enabled: false
+    m: 2
+    n: 3

@@ -1,0 +1,16 @@
+version: 1
+channels:
+  - type: stdout
+    level: info
+  - type: webhook
+    level: warn
+    endpoint_env: NODEOPS_ALERT_WEBHOOK
+rules:
+  - code: PROCESS_DOWN
+    severity: critical
+  - code: PEER_COUNT_LOW
+    severity: warn
+  - code: LATENCY_HIGH
+    severity: warn
+  - code: DISK_NEAR_FULL
+    severity: critical

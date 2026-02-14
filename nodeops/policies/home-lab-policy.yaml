@@ -1,0 +1,15 @@
+version: 1
+profile: home-lab
+extends: default
+
+monitoring:
+  thresholds:
+    p95_latency_ms: 3000
+    min_peer_count: 6
+
+self_heal:
+  restart_cooldown_ms: 180000
+  peer_reconnect_target: 10
+
+security:
+  rpc_rate_limit_rps: 15

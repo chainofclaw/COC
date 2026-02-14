@@ -3,7 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "coc-node": "bin/coc-node.js"
+  },
   "scripts": {
+    "start": "node --experimental-strip-types src/index.ts",
     "test": "node --experimental-strip-types --test src/**/*.test.ts"
   },
   "dependencies": {
