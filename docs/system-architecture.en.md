@@ -30,12 +30,25 @@ COC is an EVM-compatible blockchain prototype that combines a lightweight execut
    - `coc-agent`: challenge issuance, batch submission, rewards calculation.
    - `coc-relayer`: epoch finalization and optional dispute/slash automation.
 
+7. **Node Operations Layer**
+   - YAML-based policy engine for evaluating node behavior rules.
+   - Policy loader with validation and error handling.
+   - Agent lifecycle hooks (onChallengeIssued, onReceiptVerified, onBatchSubmitted).
+
+8. **Blockchain Explorer**
+   - Next.js 15 + React 19 web application.
+   - Block, transaction, and address query with detail views.
+   - Real-time chain data via JSON-RPC.
+   - Responsive UI with Tailwind CSS.
+
 ## Core Components
 - **Node Runtime**: `COC/node/src/*`
 - **PoSe Contracts**: `COC/contracts/settlement/*`
 - **PoSe Services**: `COC/services/*`
 - **Runtime Services**: `COC/runtime/*`
+- **Node Operations**: `COC/nodeops/*`
 - **Wallet CLI**: `COC/wallet/bin/coc-wallet.js`
+- **Blockchain Explorer**: `COC/explorer/src/*`
 
 ## Data Flow (High-Level)
 1. Wallet sends signed transaction to JSON-RPC.

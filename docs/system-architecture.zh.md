@@ -30,12 +30,25 @@ COC 是一个 EVM 兼容的区块链原型，结合轻量执行层与 PoSe（Pro
    - `coc-agent`: 生成挑战、聚合批次、计算奖励。
    - `coc-relayer`: Epoch 结算与可选争议/惩罚自动化。
 
+7. **节点运维层**
+   - 基于 YAML 的策略引擎（policy-engine）。
+   - 策略加载器与验证（policy-loader）。
+   - Agent 生命周期钩子（onChallengeIssued、onReceiptVerified、onBatchSubmitted）。
+
+8. **区块链浏览器**
+   - Next.js 15 + React 19 Web 应用。
+   - 区块、交易、地址查询与详情展示。
+   - 通过 JSON-RPC 获取实时链数据。
+   - Tailwind CSS 响应式 UI。
+
 ## 核心组件
 - **节点运行时**：`COC/node/src/*`
 - **PoSe 合约**：`COC/contracts/settlement/*`
 - **PoSe 服务**：`COC/services/*`
 - **运行时服务**：`COC/runtime/*`
+- **节点运维**：`COC/nodeops/*`
 - **钱包 CLI**：`COC/wallet/bin/coc-wallet.js`
+- **区块链浏览器**：`COC/explorer/src/*`
 
 ## 数据流（高层）
 1. 钱包向 JSON-RPC 发送签名交易。
