@@ -1,5 +1,7 @@
 import type { Metadata } from "next"
+import Link from "next/link"
 import "./globals.css"
+import { ConnectionStatus } from "@/components/ConnectionStatus"
 
 export const metadata: Metadata = {
   title: "COC Explorer - ChainOfClaw Block Explorer",
@@ -18,10 +20,15 @@ export default function RootLayout({
           <header className="bg-blue-600 text-white shadow-lg">
             <div className="container mx-auto px-4 py-4">
               <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-4">
-                  <h1 className="text-2xl font-bold">COC Explorer</h1>
-                  <span className="text-sm opacity-75">ChainOfClaw Block Explorer</span>
+                <div className="flex items-center space-x-6">
+                  <Link href="/" className="text-2xl font-bold hover:text-blue-200">
+                    COC Explorer
+                  </Link>
+                  <nav className="hidden sm:flex items-center space-x-4 text-sm">
+                    <Link href="/" className="hover:text-blue-200">Blocks</Link>
+                  </nav>
                 </div>
+                <ConnectionStatus />
               </div>
             </div>
           </header>
@@ -30,7 +37,7 @@ export default function RootLayout({
           </main>
           <footer className="bg-gray-800 text-white py-4">
             <div className="container mx-auto px-4 text-center text-sm">
-              <p>© 2026 COC Explorer | ChainID: 18780</p>
+              <p>&copy; 2026 COC Explorer | ChainID: 18780</p>
             </div>
           </footer>
         </div>
