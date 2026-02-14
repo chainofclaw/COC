@@ -24,10 +24,11 @@ Implemented:
 - **Phase 14**: Real-time subscriptions: newHeads, newPendingTransactions, logs
 - **Phase 14**: Chain event emitter with typed event system
 - **Phase 17**: Debug/trace APIs (debug_traceTransaction, debug_traceBlockByNumber, trace_transaction)
+- **Phase 20**: State trie optimization (LRU cache, dirty tracking, account cache, root persistence)
 
 Missing/Partial:
 - Proper block header fields (receiptsRoot, stateRoot from real state)
-- State trie checkpoint/revert optimization
+- Cross-instance trie persistence (@ethereumjs/trie v6 compatibility)
 
 Code:
 - `COC/node/src/evm.ts`

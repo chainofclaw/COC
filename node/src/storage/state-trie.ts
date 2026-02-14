@@ -13,6 +13,7 @@ import { keccak256, toUtf8Bytes } from "ethers"
 
 const STATE_TRIE_PREFIX = "s:"
 const CODE_PREFIX = "c:"
+const STATE_ROOT_KEY = "meta:stateRoot"
 
 export interface AccountState {
   nonce: bigint
@@ -35,7 +36,8 @@ export interface IStateTrie {
 }
 
 /**
- * Adapter to make IDatabase compatible with @ethereumjs/trie DB interface
+ * Adapter to make IDatabase compatible with @ethereumjs/trie v6 DB interface.
+ * Trie v6 uses string keys (hex) and expects undefined for missing values.
  */
 class TrieDBAdapter {
   private db: IDatabase
@@ -46,75 +48,105 @@ class TrieDBAdapter {
     this.prefix = prefix
   }
 
-  async get(key: Uint8Array): Promise<Uint8Array | null> {
-    const prefixedKey = this.prefix + bytesToHex(key)
-    return this.db.get(prefixedKey)
+  async get(key: string | Uint8Array): Promise<Uint8Array | undefined> {
+    const keyStr = typeof key === "string" ? key : bytesToHex(key)
+    const prefixedKey = this.prefix + keyStr
+    const result = await this.db.get(prefixedKey)
+    // Trie v6 expects undefined (not null) for missing values
+    return result ?? undefined
   }
 
-  async put(key: Uint8Array, value: Uint8Array): Promise<void> {
-    const prefixedKey = this.prefix + bytesToHex(key)
+  async put(key: string | Uint8Array, value: Uint8Array): Promise<void> {
+    const keyStr = typeof key === "string" ? key : bytesToHex(key)
+    const prefixedKey = this.prefix + keyStr
     await this.db.put(prefixedKey, value)
   }
 
-  async del(key: Uint8Array): Promise<void> {
-    const prefixedKey = this.prefix + bytesToHex(key)
+  async del(key: string | Uint8Array): Promise<void> {
+    const keyStr = typeof key === "string" ? key : bytesToHex(key)
+    const prefixedKey = this.prefix + keyStr
     await this.db.del(prefixedKey)
   }
 
-  async batch(ops: Array<{ type: "put" | "del"; key: Uint8Array; value?: Uint8Array }>): Promise<void> {
-    const batchOps = ops.map((op) => ({
-      type: op.type,
-      key: this.prefix + bytesToHex(op.key),
-      value: op.value,
-    }))
+  async batch(ops: Array<{ type: "put" | "del"; key: string | Uint8Array; value?: Uint8Array }>): Promise<void> {
+    const batchOps = ops.map((op) => {
+      const keyStr = typeof op.key === "string" ? op.key : bytesToHex(op.key)
+      return { type: op.type, key: this.prefix + keyStr, value: op.value }
+    })
     await this.db.batch(batchOps)
   }
 
-  // Required by @ethereumjs/trie but not used in our case
   async open(): Promise<void> {}
   async close(): Promise<void> {}
-
-  // Support for iterator (optional, can be implemented later)
-  async *iterator(): AsyncIterable<[Uint8Array, Uint8Array]> {
-    // Not implemented for now
-    return
-  }
 }
+
+const DEFAULT_MAX_CACHED_TRIES = 128
 
 export class PersistentStateTrie implements IStateTrie {
   private trie: Trie
   private db: IDatabase
-  private storageTries = new Map<string, Trie>() // address -> storage trie
+  private storageTries = new Map<string, Trie>()
+  private storageTrieAccess: string[] = [] // LRU tracking
+  private dirtyAddresses = new Set<string>() // Dirty tracking for commit
+  private accountCache = new Map<string, AccountState | null>() // Read cache
+  private readonly maxCachedTries: number
+  private lastStateRoot: string | null = null
 
-  constructor(db: IDatabase) {
+  private trieDb: TrieDBAdapter
+
+  constructor(db: IDatabase, opts?: { maxCachedTries?: number }) {
     this.db = db
-    const trieDb = new TrieDBAdapter(db)
-    this.trie = new Trie({ db: trieDb as any })
+    this.maxCachedTries = opts?.maxCachedTries ?? DEFAULT_MAX_CACHED_TRIES
+    this.trieDb = new TrieDBAdapter(db)
+    this.trie = new Trie({ db: this.trieDb as any })
+  }
+
+  /**
+   * Initialize trie from persisted state root if available.
+   * Call after constructor for persistence across restarts.
+   */
+  async init(): Promise<void> {
+    const rootData = await this.db.get(STATE_ROOT_KEY)
+    if (rootData) {
+      const rootHex = new TextDecoder().decode(rootData)
+      if (rootHex.startsWith("0x") && rootHex.length === 66) {
+        const rootBytes = hexToBytes(rootHex)
+        this.trie = new Trie({ db: this.trieDb as any, root: rootBytes })
+        this.lastStateRoot = rootHex
+      }
+    }
   }
 
   async get(address: string): Promise<AccountState | null> {
+    // Check read cache first
+    if (this.accountCache.has(address)) {
+      return this.accountCache.get(address)!
+    }
+
     const addressBytes = hexToBytes(address)
     const encoded = await this.trie.get(addressBytes)
 
-    if (!encoded) return null
+    if (!encoded) {
+      this.accountCache.set(address, null)
+      return null
+    }
 
-    // Decode RLP-encoded account state
-    // Format: [nonce, balance, storageRoot, codeHash]
     const decoder = new TextDecoder()
     const json = JSON.parse(decoder.decode(encoded))
 
-    return {
+    const state: AccountState = {
       nonce: BigInt(json.nonce),
       balance: BigInt(json.balance),
       storageRoot: json.storageRoot,
       codeHash: json.codeHash,
     }
+    this.accountCache.set(address, state)
+    return state
   }
 
   async put(address: string, state: AccountState): Promise<void> {
     const addressBytes = hexToBytes(address)
 
-    // Encode account state as JSON (simple approach)
     const json = {
       nonce: state.nonce.toString(),
       balance: state.balance.toString(),
@@ -126,6 +158,9 @@ export class PersistentStateTrie implements IStateTrie {
     const encoded = encoder.encode(JSON.stringify(json))
 
     await this.trie.put(addressBytes, encoded)
+    this.accountCache.set(address, state)
+    this.dirtyAddresses.add(address)
+    this.lastStateRoot = null // Invalidate cached root
   }
 
   async getStorageAt(address: string, slot: string): Promise<string> {
@@ -144,7 +179,6 @@ export class PersistentStateTrie implements IStateTrie {
   async putStorageAt(address: string, slot: string, value: string): Promise<void> {
     let account = await this.get(address)
 
-    // Create account if it doesn't exist
     if (!account) {
       account = {
         nonce: 0n,
@@ -161,8 +195,12 @@ export class PersistentStateTrie implements IStateTrie {
     await storageTrie.put(slotBytes, valueBytes)
 
     // Update storage root in account
-    account.storageRoot = bytesToHex(storageTrie.root())
-    await this.put(address, account)
+    const updatedAccount: AccountState = {
+      ...account,
+      storageRoot: bytesToHex(storageTrie.root()),
+    }
+    await this.put(address, updatedAccount)
+    this.dirtyAddresses.add(address)
   }
 
   async getCode(codeHash: string): Promise<Uint8Array | null> {
@@ -179,17 +217,36 @@ export class PersistentStateTrie implements IStateTrie {
   }
 
   async commit(): Promise<string> {
-    // Commit all storage tries
-    for (const [address, storageTrie] of this.storageTries.entries()) {
-      const account = await this.get(address)
-      if (account) {
-        account.storageRoot = bytesToHex(storageTrie.root())
-        await this.put(address, account)
+    // Only commit dirty storage tries
+    for (const address of this.dirtyAddresses) {
+      const storageTrie = this.storageTries.get(address)
+      if (storageTrie) {
+        const account = await this.get(address)
+        if (account) {
+          const updatedAccount: AccountState = {
+            ...account,
+            storageRoot: bytesToHex(storageTrie.root()),
+          }
+          await this.put(address, updatedAccount)
+        }
       }
     }
 
-    // Return main state root
-    return bytesToHex(this.trie.root())
+    this.dirtyAddresses.clear()
+    this.lastStateRoot = bytesToHex(this.trie.root())
+
+    // Persist state root for recovery across restarts
+    const encoder = new TextEncoder()
+    await this.db.put(STATE_ROOT_KEY, encoder.encode(this.lastStateRoot))
+
+    return this.lastStateRoot
+  }
+
+  /**
+   * Get the last committed state root without recomputing.
+   */
+  stateRoot(): string | null {
+    return this.lastStateRoot
   }
 
   async checkpoint(): Promise<void> {
@@ -204,26 +261,58 @@ export class PersistentStateTrie implements IStateTrie {
     for (const storageTrie of this.storageTries.values()) {
       await storageTrie.revert()
     }
+    // Invalidate caches on revert
+    this.accountCache.clear()
+    this.lastStateRoot = null
   }
 
   async close(): Promise<void> {
-    // Clear storage tries cache
     this.storageTries.clear()
+    this.storageTrieAccess.length = 0
+    this.accountCache.clear()
+    this.dirtyAddresses.clear()
   }
 
   private async getStorageTrie(address: string, storageRoot: string): Promise<Trie> {
-    // Check cache first
     let storageTrie = this.storageTries.get(address)
 
-    if (!storageTrie) {
-      const trieDb = new TrieDBAdapter(this.db, `ss:${address}:`)
-      const rootBytes = storageRoot !== "0x" + "0".repeat(64) ? hexToBytes(storageRoot) : undefined
-
-      storageTrie = new Trie({ db: trieDb as any, root: rootBytes })
-      this.storageTries.set(address, storageTrie)
+    if (storageTrie) {
+      // Update LRU order
+      this.touchLru(address)
+      return storageTrie
     }
 
+    // Evict if over limit
+    this.evictLru()
+
+    const trieDb = new TrieDBAdapter(this.db, `ss:${address}:`)
+    const rootBytes = storageRoot !== "0x" + "0".repeat(64) ? hexToBytes(storageRoot) : undefined
+
+    storageTrie = new Trie({ db: trieDb as any, root: rootBytes })
+    this.storageTries.set(address, storageTrie)
+    this.storageTrieAccess.push(address)
+
     return storageTrie
+  }
+
+  private touchLru(address: string): void {
+    const idx = this.storageTrieAccess.indexOf(address)
+    if (idx >= 0) {
+      this.storageTrieAccess.splice(idx, 1)
+    }
+    this.storageTrieAccess.push(address)
+  }
+
+  private evictLru(): void {
+    while (this.storageTries.size >= this.maxCachedTries && this.storageTrieAccess.length > 0) {
+      const oldest = this.storageTrieAccess.shift()!
+      // Don't evict dirty tries
+      if (this.dirtyAddresses.has(oldest)) {
+        this.storageTrieAccess.push(oldest)
+        break
+      }
+      this.storageTries.delete(oldest)
+    }
   }
 }
 

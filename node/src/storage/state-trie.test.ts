@@ -161,6 +161,7 @@ test("PersistentStateTrie: persistence across instances", async () => {
       const db2 = new LevelDatabase(tmpDir, "state")
       await db2.open()
       const trie2 = new PersistentStateTrie(db2)
+      await trie2.init() // Restore from persisted state root
 
       // Should retrieve the account
       const retrieved = await trie2.get("0xbeef")
