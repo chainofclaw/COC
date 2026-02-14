@@ -98,10 +98,16 @@ export class PersistentChainEngine {
     if (!block) return []
 
     const receipts: TxReceipt[] = []
-    for (const txHash of block.txs) {
-      const tx = await this.blockIndex.getTransactionByHash(txHash)
-      if (tx?.receipt) {
-        receipts.push(tx.receipt)
+    for (const rawTx of block.txs) {
+      try {
+        const parsed = Transaction.from(rawTx)
+        const txHash = parsed.hash as Hex
+        const tx = await this.blockIndex.getTransactionByHash(txHash)
+        if (tx?.receipt) {
+          receipts.push(tx.receipt)
+        }
+      } catch {
+        // skip unparseable txs
       }
     }
     return receipts
