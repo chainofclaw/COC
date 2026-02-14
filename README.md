@@ -19,14 +19,24 @@ COC is an EVM-compatible blockchain prototype with PoSe (Proof-of-Service) settl
 
 ## Current Progress
 
-- Chain engine: block production, mempool, snapshots, basic finality
-- P2P: HTTP gossip + snapshot sync
-- EVM: in-memory execution with minimal JSON-RPC
-- PoSe: challenge/receipt pipeline, batch aggregation, on-chain PoSeManager
-- Storage: IPFS-compatible add/cat/get/block/pin/ls/stat/id/version + gateway
-- Runtime: coc-node endpoints + coc-agent/relayer automation
-- Tooling: wallet CLI and 3/5/7 node devnet scripts
-- Explorer: Next.js blockchain explorer with block/tx/address views
+- **Chain Engine**: block production, mempool, snapshots, deterministic proposer rotation, basic finality
+- **P2P Networking**: HTTP-based gossip for tx/blocks, snapshot sync between peers
+- **EVM Execution**: in-memory execution with `@ethereumjs/vm`, minimal JSON-RPC support
+- **PoSe Protocol**:
+  - Off-chain: challenge factory, receipt verification, batch aggregation, epoch scoring
+  - On-chain: PoSeManager contract with registration, batch submission, challenge, finalize, slash
+- **Storage Layer**: IPFS-compatible HTTP APIs (add/cat/get/block/pin/ls/stat/id/version) + `/ipfs/<cid>` gateway
+- **Runtime Services**:
+  - `coc-node`: PoSe challenge/receipt HTTP endpoints
+  - `coc-agent`: challenge generation, batch submission, node registration
+  - `coc-relayer`: epoch finalization and slash automation
+- **Node Operations**: YAML-based policy engine with agent lifecycle hooks
+- **Tooling**:
+  - CLI wallet (create address, transfer, query balance)
+  - Devnet scripts for 3/5/7 node networks
+  - Quality gate script (unit + integration + e2e tests)
+- **Blockchain Explorer**: Next.js app with block/tx/address views and real-time data
+- **Testing**: 32 test files covering contracts, services, runtime, and node operations
 
 ## Quick Start
 
@@ -80,3 +90,4 @@ bash scripts/quality-gate.sh
 ## License
 
 MIT License - See LICENSE file for details
+

@@ -19,14 +19,24 @@ COC 是一个 EVM 兼容的区块链原型，包含 PoSe（Proof-of-Service）�
 
 ## 当前进展
 
-- 链引擎：出块、mempool、快照、基础最终性
-- P2P：HTTP gossip + 快照同步
-- EVM：内存执行与最小 RPC
-- PoSe：挑战/回执流水线、批次聚合、链上 PoSeManager
-- 存储：IPFS 兼容 add/cat/get/block/pin/ls/stat/id/version + 网关
-- 运行时：coc-node 端点 + coc-agent/relayer 自动化
-- 工具：钱包 CLI 与 3/5/7 节点 devnet 脚本
-- 浏览器：Next.js 区块链浏览器，支持区块/交易/地址查看
+- **链引擎**：出块、mempool、快照、确定性提议者轮换、基础最终性
+- **P2P 网络**：基于 HTTP 的 tx/块 gossip、节点间快照同步
+- **EVM 执行**：基于 `@ethereumjs/vm` 的内存执行、最小 JSON-RPC 支持
+- **PoSe 协议**：
+  - 链下：挑战工厂、回执验证、批次聚合、epoch 评分
+  - 链上：PoSeManager 合约（注册、批次提交、挑战、最终化、惩罚）
+- **存储层**：IPFS 兼容 HTTP APIs（add/cat/get/block/pin/ls/stat/id/version）+ `/ipfs/<cid>` 网关
+- **运行时服务**：
+  - `coc-node`：PoSe 挑战/回执 HTTP 端点
+  - `coc-agent`：挑战生成、批次提交、节点注册
+  - `coc-relayer`：epoch 最终化与惩罚自动化
+- **节点运维**：基于 YAML 的策略引擎与 agent 生命周期钩子
+- **工具集**：
+  - CLI 钱包（创建地址、转账、查询余额）
+  - 3/5/7 节点 devnet 脚本
+  - 质量门禁脚本（单元 + 集成 + e2e 测试）
+- **区块链浏览器**：Next.js 应用，支持区块/交易/地址查看与实时数据
+- **测试覆盖**：32 个测试文件，覆盖合约、服务、运行时和节点运维
 
 ## 快速开始
 

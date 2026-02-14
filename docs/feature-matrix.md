@@ -24,10 +24,14 @@ This matrix lists features by domain, with current status and primary code refer
 
 ## Storage
 - **Chain snapshot persistence** — Implemented — `COC/node/src/storage.ts`
+- **LevelDB persistent storage** — Implemented (Phase 13.1) — `COC/node/src/storage/db.ts`
+- **Block/transaction indexing** — Implemented (Phase 13.1) — `COC/node/src/storage/block-index.ts`
+- **EVM state trie** — Implemented (Phase 13.1) — `COC/node/src/storage/state-trie.ts`
+- **Nonce registry persistence** — Implemented (Phase 13.1) — `COC/node/src/storage/nonce-store.ts`
 - **User file storage (IPFS-compatible)** — Implemented (core APIs) — `COC/node/src/ipfs-http.ts`
 - **IPFS gateway** — Implemented (basic) — `COC/node/src/ipfs-http.ts`
-- **Block DB / state DB** — Missing
-- **Log indexing** — Missing
+- **Log indexing** — Partial
+- **Pruning / archival modes** — Missing
 
 ## Mempool
 - **Gas‑price ordering** — Implemented — `COC/node/src/mempool.ts`
@@ -54,3 +58,24 @@ This matrix lists features by domain, with current status and primary code refer
 ## Tooling
 - **Wallet CLI** — Implemented — `COC/wallet/bin/coc-wallet.js`
 - **Devnet scripts (3/5/7)** — Implemented — `COC/scripts/*.sh`
+- **Quality gate script** — Implemented — `COC/scripts/quality-gate.sh`
+
+## Blockchain Explorer
+- **Block explorer** — Implemented — `COC/explorer/src/app/block/[id]/page.tsx`
+- **Transaction viewer** — Implemented — `COC/explorer/src/app/tx/[hash]/page.tsx`
+- **Address explorer** — Implemented — `COC/explorer/src/app/address/[address]/page.tsx`
+- **Latest blocks feed** — Implemented — `COC/explorer/src/app/page.tsx`
+- **Real-time updates** — Missing
+- **Contract verification** — Missing
+
+## Node Operations
+- **Policy engine** — Implemented — `COC/nodeops/policy-engine.ts`
+- **Policy loader (YAML)** — Implemented — `COC/nodeops/policy-loader.ts`
+- **Agent hooks** — Implemented — `COC/nodeops/agent-hooks.ts`
+- **Policy hot-reload** — Missing
+
+## Performance & Benchmarking
+- **EVM benchmarks** — Implemented — `COC/node/src/benchmarks/evm-benchmark.test.ts`
+- **P2P benchmarks** — Missing
+- **Storage I/O benchmarks** — Missing
+- **Load testing** — Missing
