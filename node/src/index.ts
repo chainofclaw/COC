@@ -49,6 +49,7 @@ if (usePersistent) {
     {
       dataDir: config.dataDir,
       nodeId: config.nodeId,
+      chainId: config.chainId,
       validators: config.validators,
       finalityDepth: config.finalityDepth,
       maxTxPerBlock: config.maxTxPerBlock,
@@ -66,6 +67,7 @@ if (usePersistent) {
     {
       dataDir: config.dataDir,
       nodeId: config.nodeId,
+      chainId: config.chainId,
       validators: config.validators,
       finalityDepth: config.finalityDepth,
       maxTxPerBlock: config.maxTxPerBlock,

@@ -9,6 +9,7 @@ import { ChainEventEmitter } from "./chain-events.ts"
 export interface ChainEngineConfig {
   dataDir: string
   nodeId: string
+  chainId?: number
   validators: string[]
   finalityDepth: number
   maxTxPerBlock: number
@@ -16,7 +17,7 @@ export interface ChainEngineConfig {
 }
 
 export class ChainEngine {
-  readonly mempool = new Mempool()
+  readonly mempool: Mempool
   readonly events: ChainEventEmitter
   private readonly storage: ChainStorage
   private readonly blocks: ChainBlock[] = []
@@ -28,6 +29,7 @@ export class ChainEngine {
   constructor(cfg: ChainEngineConfig, evm: EvmChain) {
     this.cfg = cfg
     this.evm = evm
+    this.mempool = new Mempool({ chainId: cfg.chainId ?? 18780 })
     this.storage = new ChainStorage(cfg.dataDir)
     this.events = new ChainEventEmitter()
   }

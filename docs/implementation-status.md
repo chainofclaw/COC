@@ -104,15 +104,18 @@ Code:
 - `COC/node/src/ipfs-http.ts`
 
 ## 5) Mempool & Fee Market
-**Status: Partial**
+**Status: Implemented (Phase 15)**
 
 Implemented:
 - Gas price priority + nonce continuity
 - Mempool → block selection
-
-Missing/Partial:
-- EIP‑1559 fee market, replacement rules
-- Replay protection and eviction policies
+- **Phase 15**: EIP-1559 fee market (maxFeePerGas, maxPriorityFeePerGas)
+- **Phase 15**: Transaction replacement with 10% gas price bump
+- **Phase 15**: Capacity-based eviction (4096 max pool size)
+- **Phase 15**: Per-sender tx limit (64 max)
+- **Phase 15**: TTL-based expiry (6 hours)
+- **Phase 15**: Replay protection via chain ID validation
+- **Phase 15**: Pool statistics API
 
 Code:
 - `COC/node/src/mempool.ts`

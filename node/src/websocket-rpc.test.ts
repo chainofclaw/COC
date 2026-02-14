@@ -113,6 +113,7 @@ describe("WebSocket RPC", () => {
       {
         dataDir: tmpDir,
         nodeId: "node-1",
+        chainId: CHAIN_ID,
         validators: ["node-1"],
         finalityDepth: 2,
         maxTxPerBlock: 50,

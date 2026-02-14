@@ -22,6 +22,7 @@ import type { BlockEvent, PendingTxEvent } from "./chain-events.ts"
 export interface PersistentChainEngineConfig {
   dataDir: string
   nodeId: string
+  chainId?: number
   validators: string[]
   finalityDepth: number
   maxTxPerBlock: number
@@ -30,7 +31,7 @@ export interface PersistentChainEngineConfig {
 }
 
 export class PersistentChainEngine {
-  readonly mempool = new Mempool()
+  readonly mempool: Mempool
   readonly events: ChainEventEmitter
   private readonly db: LevelDatabase
   private readonly blockIndex: BlockIndex
@@ -41,6 +42,7 @@ export class PersistentChainEngine {
   constructor(cfg: PersistentChainEngineConfig, evm: EvmChain) {
     this.cfg = cfg
     this.evm = evm
+    this.mempool = new Mempool({ chainId: cfg.chainId ?? 18780 })
     this.db = new LevelDatabase(cfg.dataDir, "chain")
     this.blockIndex = new BlockIndex(this.db)
     this.txNonceStore = new PersistentNonceStore(this.db)

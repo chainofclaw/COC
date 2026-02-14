@@ -6,6 +6,9 @@ export interface MempoolTx {
   from: Hex
   nonce: bigint
   gasPrice: bigint
+  maxFeePerGas: bigint
+  maxPriorityFeePerGas: bigint
+  gasLimit: bigint
   receivedAtMs: number
 }
 

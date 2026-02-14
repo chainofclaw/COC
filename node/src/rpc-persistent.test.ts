@@ -66,6 +66,7 @@ async function setupTestEnv(): Promise<{
     {
       dataDir: tmpDir,
       nodeId: "node-1",
+      chainId: CHAIN_ID,
       validators: ["node-1"],
       finalityDepth: 3,
       maxTxPerBlock: 50,
@@ -131,6 +132,7 @@ test("RPC+Persistent: eth_blockNumber starts at 0", async () => {
     {
       dataDir: tmpDir,
       nodeId: "node-1",
+      chainId: CHAIN_ID,
       validators: ["node-1"],
       finalityDepth: 3,
       maxTxPerBlock: 50,
@@ -158,6 +160,7 @@ test("RPC+Persistent: propose block and query", async () => {
       {
         dataDir: tmpDir,
         nodeId: "node-1",
+        chainId: CHAIN_ID,
         validators: ["node-1"],
         finalityDepth: 3,
         maxTxPerBlock: 50,
@@ -222,6 +225,7 @@ test("RPC+Persistent: log indexing end-to-end", async () => {
       {
         dataDir: tmpDir,
         nodeId: "node-1",
+        chainId: CHAIN_ID,
         validators: ["node-1"],
         finalityDepth: 3,
         maxTxPerBlock: 50,
@@ -276,6 +280,7 @@ test("RPC+Persistent: receipts survive restart", async () => {
         {
           dataDir: tmpDir,
           nodeId: "node-1",
+          chainId: CHAIN_ID,
           validators: ["node-1"],
           finalityDepth: 3,
           maxTxPerBlock: 50,
@@ -312,6 +317,7 @@ test("RPC+Persistent: receipts survive restart", async () => {
         {
           dataDir: tmpDir,
           nodeId: "node-1",
+          chainId: CHAIN_ID,
           validators: ["node-1"],
           finalityDepth: 3,
           maxTxPerBlock: 50,
@@ -351,6 +357,7 @@ test("RPC+Persistent: multiple blocks with receipts", async () => {
       {
         dataDir: tmpDir,
         nodeId: "node-1",
+        chainId: CHAIN_ID,
         validators: ["node-1"],
         finalityDepth: 3,
         maxTxPerBlock: 50,

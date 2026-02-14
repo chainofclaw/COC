@@ -20,6 +20,7 @@ test("PersistentChainEngine: init and close", async () => {
       {
         dataDir: tmpDir,
         nodeId: "node1",
+        chainId: 2077,
         validators: [],
         finalityDepth: 3,
         maxTxPerBlock: 100,
@@ -58,6 +59,7 @@ test("PersistentChainEngine: propose and apply block", async () => {
       {
         dataDir: tmpDir,
         nodeId: "node1",
+        chainId: 2077,
         validators: [],
         finalityDepth: 3,
         maxTxPerBlock: 100,
@@ -123,6 +125,7 @@ test("PersistentChainEngine: persistence across restarts", async () => {
         {
           dataDir: tmpDir,
           nodeId: "node1",
+          chainId: 2077,
           validators: [],
           finalityDepth: 3,
           maxTxPerBlock: 100,
@@ -163,6 +166,7 @@ test("PersistentChainEngine: persistence across restarts", async () => {
         {
           dataDir: tmpDir,
           nodeId: "node1",
+          chainId: 2077,
           validators: [],
           finalityDepth: 3,
           maxTxPerBlock: 100,
@@ -212,6 +216,7 @@ test("PersistentChainEngine: transaction deduplication", async () => {
       {
         dataDir: tmpDir,
         nodeId: "node1",
+        chainId: 2077,
         validators: [],
         finalityDepth: 3,
         maxTxPerBlock: 100,
@@ -266,6 +271,7 @@ test("PersistentChainEngine: get transaction by hash", async () => {
       {
         dataDir: tmpDir,
         nodeId: "node1",
+        chainId: 2077,
         validators: [],
         finalityDepth: 3,
         maxTxPerBlock: 100,
