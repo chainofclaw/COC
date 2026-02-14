@@ -128,7 +128,7 @@ Code:
 - `COC/node/src/mempool.ts`
 
 ## 6) PoSe Protocol (Off‑chain)
-**Status: Partial**
+**Status: Partial (Enhanced in Phase 19)**
 
 Implemented:
 - Challenge/Receipt types + nonce registry
@@ -136,9 +136,13 @@ Implemented:
 - Batch aggregation (Merkle root + sample proofs)
 - Epoch scoring and reward calculation
 - Storage proof generation from IPFS file metadata
+- **Phase 19**: Automated batch validation (DisputeMonitor)
+- **Phase 19**: Cumulative penalty tracking with suspend/eject (PenaltyTracker)
+- **Phase 19**: Dispute event logging and query API (DisputeLogger)
 
 Missing/Partial:
-- Full dispute pipeline and evidence automation
+- Batch challenge on-chain automation (agent → contract integration)
+- Challenger reward mechanism
 
 Code:
 - `COC/services/challenger/*`
