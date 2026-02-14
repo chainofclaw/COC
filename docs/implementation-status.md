@@ -365,9 +365,27 @@ Documentation:
 - `COC/docs/phase-14-plan.en.md`
 - `COC/docs/phase-14-plan.zh.md`
 
-## 17) Whitepaper Gap Summary
-- Consensus security model and validator governance remain open.
-- Full P2P stack needs DHT, peer scoring, binary wire protocol.
+## 17) Production Hardening
+**Status: Implemented (Phase 24)**
+
+Implemented:
+- Health check probes (healthy/degraded/unhealthy) with chain, block freshness, peer, mempool checks
+- Configuration validator with field validation and severity levels
+- Token bucket rate limiter for RPC endpoints with per-client isolation
+- Latency measurement per health check
+- Stale bucket cleanup for memory efficiency
+
+Code:
+- `COC/node/src/health.ts`
+- `COC/node/src/health.test.ts` (21 tests)
+
+Documentation:
+- `COC/docs/phase-24-plan.en.md`
+- `COC/docs/phase-24-plan.zh.md`
+
+## 18) Whitepaper Gap Summary
+- Consensus security model partially addressed (validator governance with stake-weighted voting added in Phase 22).
+- Full P2P stack needs DHT, binary wire protocol (peer scoring added in Phase 16).
 - EVM JSON-RPC compatibility is partial (debug/trace APIs simplified, no step-level tracing).
-- PoSe dispute automation is still incomplete.
+- PoSe dispute automation partially addressed (DisputeMonitor, PenaltyTracker added in Phase 19).
 - IPFS compatibility is limited to core HTTP APIs.
