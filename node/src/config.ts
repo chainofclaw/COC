@@ -2,6 +2,14 @@ import { readFile, mkdir } from "node:fs/promises"
 import { join } from "node:path"
 import { homedir } from "node:os"
 
+export interface StorageConfig {
+  backend: "memory" | "leveldb"
+  leveldbDir: string
+  cacheSize: number // LRU cache entries
+  enablePruning: boolean
+  nonceRetentionDays: number
+}
+
 export interface NodeConfig {
   dataDir: string
   nodeId: string
@@ -11,6 +19,7 @@ export interface NodeConfig {
   ipfsBind: string
   ipfsPort: number
   storageDir: string
+  storage: StorageConfig
   p2pBind: string
   p2pPort: number
   peers: Array<{ id: string; url: string }>
@@ -37,6 +46,16 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     user = {}
   }
 
+  const storageDefaults: StorageConfig = {
+    backend: "leveldb",
+    leveldbDir: join(dataDir, "leveldb"),
+    cacheSize: 1000,
+    enablePruning: false,
+    nonceRetentionDays: 7,
+  }
+
+  const userStorage = (user as Record<string, unknown>).storage as Partial<StorageConfig> | undefined
+
   return {
     dataDir,
     nodeId: "node-1",
@@ -46,6 +65,7 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     ipfsBind: "127.0.0.1",
     ipfsPort: 5001,
     storageDir: join(dataDir, "storage"),
+    storage: { ...storageDefaults, ...userStorage },
     p2pBind: "127.0.0.1",
     p2pPort: 19780,
     peers: [],
@@ -59,7 +79,8 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
       { address: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", balanceEth: "10000" }
     ],
     poseEpochMs: 60 * 60 * 1000,
-    ...user
+    ...user,
+    storage: { ...storageDefaults, ...userStorage },
   }
 }
 

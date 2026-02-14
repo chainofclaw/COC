@@ -15,9 +15,11 @@
     "@ethereumjs/common": "^10.0.0",
     "@ethereumjs/tx": "^10.1.1",
     "@ethereumjs/util": "^9.0.1",
+    "@ethereumjs/trie": "^6.2.1",
     "@ipld/dag-pb": "^4.1.0",
     "ethers": "^6.13.5",
     "ipfs-unixfs": "^9.0.0",
+    "level": "^8.0.1",
     "multiformats": "^13.3.2"
   }
 }
