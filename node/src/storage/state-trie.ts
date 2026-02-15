@@ -37,7 +37,8 @@ export interface IStateTrie {
 
 /**
  * Adapter to make IDatabase compatible with @ethereumjs/trie v6 DB interface.
- * Trie v6 uses string keys (hex) and expects undefined for missing values.
+ * Trie v6 passes unprefixed hex strings for both keys AND values (not Uint8Array).
+ * We convert hex string values to/from binary for LevelDB storage.
  */
 class TrieDBAdapter {
   private db: IDatabase
@@ -48,31 +49,48 @@ class TrieDBAdapter {
     this.prefix = prefix
   }
 
-  async get(key: string | Uint8Array): Promise<Uint8Array | undefined> {
-    const keyStr = typeof key === "string" ? key : bytesToHex(key)
-    const prefixedKey = this.prefix + keyStr
-    const result = await this.db.get(prefixedKey)
-    // Trie v6 expects undefined (not null) for missing values
-    return result ?? undefined
+  private toKeyStr(key: string | Uint8Array): string {
+    return typeof key === "string" ? key : bytesToHex(key)
   }
 
-  async put(key: string | Uint8Array, value: Uint8Array): Promise<void> {
-    const keyStr = typeof key === "string" ? key : bytesToHex(key)
-    const prefixedKey = this.prefix + keyStr
-    await this.db.put(prefixedKey, value)
+  // Convert value from trie (hex string or Uint8Array) to bytes for storage
+  private toBytes(value: Uint8Array | string): Uint8Array {
+    if (typeof value === "string") {
+      // Trie v6 passes unprefixed hex strings
+      return hexToBytes(value.startsWith("0x") ? value : `0x${value}`)
+    }
+    return value
+  }
+
+  // Convert stored bytes back to unprefixed hex string for trie consumption
+  private fromBytes(data: Uint8Array): string {
+    const hex = bytesToHex(data)
+    return hex.startsWith("0x") ? hex.slice(2) : hex
+  }
+
+  async get(key: string | Uint8Array): Promise<string | undefined> {
+    const prefixedKey = this.prefix + this.toKeyStr(key)
+    const result = await this.db.get(prefixedKey)
+    if (!result) return undefined
+    return this.fromBytes(result)
+  }
+
+  async put(key: string | Uint8Array, value: Uint8Array | string): Promise<void> {
+    const prefixedKey = this.prefix + this.toKeyStr(key)
+    await this.db.put(prefixedKey, this.toBytes(value))
   }
 
   async del(key: string | Uint8Array): Promise<void> {
-    const keyStr = typeof key === "string" ? key : bytesToHex(key)
-    const prefixedKey = this.prefix + keyStr
+    const prefixedKey = this.prefix + this.toKeyStr(key)
     await this.db.del(prefixedKey)
   }
 
-  async batch(ops: Array<{ type: "put" | "del"; key: string | Uint8Array; value?: Uint8Array }>): Promise<void> {
-    const batchOps = ops.map((op) => {
-      const keyStr = typeof op.key === "string" ? op.key : bytesToHex(op.key)
-      return { type: op.type, key: this.prefix + keyStr, value: op.value }
-    })
+  async batch(ops: Array<{ type: "put" | "del"; key: string | Uint8Array; value?: Uint8Array | string }>): Promise<void> {
+    const batchOps = ops.map((op) => ({
+      type: op.type,
+      key: this.prefix + this.toKeyStr(op.key),
+      value: op.value ? this.toBytes(op.value) : undefined,
+    }))
     await this.db.batch(batchOps)
   }
 
