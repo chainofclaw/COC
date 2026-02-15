@@ -230,7 +230,7 @@ export async function traceTransactionCalls(
   }
 
   const traces: CallTrace[] = [{
-    type: txInfo.to ? "CALL" : "CREATE",
+    type: txInfo.to ? "call" : "create",
     from: txInfo.from,
     to: txInfo.to ?? "0x0000000000000000000000000000000000000000",
     value: txValue,
