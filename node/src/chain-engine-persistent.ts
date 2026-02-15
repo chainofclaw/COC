@@ -288,6 +288,12 @@ export class PersistentChainEngine {
       }
     }
 
+    // Commit state trie and attach stateRoot to block header
+    if (this.stateTrie) {
+      const root = await this.stateTrie.commit()
+      block.stateRoot = root as Hex
+    }
+
     // Store block and logs
     await this.blockIndex.putBlock(block)
     await this.blockIndex.putLogs(block.number, blockLogs)
@@ -317,11 +323,6 @@ export class PersistentChainEngine {
 
     for (const log of blockLogs) {
       this.events.emitLog({ log })
-    }
-
-    // Commit state trie after block execution for persistence
-    if (this.stateTrie) {
-      await this.stateTrie.commit()
     }
   }
 
