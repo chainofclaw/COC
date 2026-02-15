@@ -130,6 +130,8 @@ const p2p = new P2PNode(
     onTx: async (rawTx) => {
       try {
         await chain.addRawTx(rawTx)
+        // Relay to wire-connected peers (if wire protocol enabled)
+        wireTxRelayFn?.(rawTx)
       } catch {
         // ignore duplicate or invalid gossip tx
       }
@@ -270,8 +272,9 @@ if (stateTrie && config.enableSnapSync) {
   }
 }
 
-// Wire broadcast function — will be bound after wire server setup
+// Wire broadcast functions — will be bound after wire server setup
 let wireBroadcastFn: ((block: ChainBlock) => void) | undefined
+let wireTxRelayFn: ((rawTx: Hex) => void) | undefined
 
 const consensus = new ConsensusEngine(chain, p2p, {
   blockTimeMs: config.blockTimeMs,
@@ -329,15 +332,28 @@ if (config.enableWireProtocol) {
     onBftMessage: bftCoordinator
       ? async (msg) => { await bftCoordinator!.handleMessage(msg) }
       : undefined,
+    onFindNode: (targetId: string) => {
+      if (dhtNetwork) {
+        return dhtNetwork.routingTable.findClosest(targetId, 20).map((p) => ({
+          id: p.id,
+          address: p.address,
+        }))
+      }
+      return []
+    },
     getHeight: () => Promise.resolve(chain.getHeight()),
   })
   wireServer.start()
   log.info("wire protocol TCP server started", { port: config.wirePort })
 
-  // Bind wire broadcast for dual HTTP+TCP block propagation
+  // Bind wire broadcast for dual HTTP+TCP block and transaction propagation
   const ws = wireServer
   wireBroadcastFn = (block) => {
     const data = encodeJsonPayload(MessageType.Block, block)
+    ws.broadcastFrame(data)
+  }
+  wireTxRelayFn = (rawTx: Hex) => {
+    const data = encodeJsonPayload(MessageType.Transaction, { rawTx })
     ws.broadcastFrame(data)
   }
 
