@@ -69,6 +69,7 @@ export interface LogFilter {
 
 export interface AddressTxQuery {
   limit?: number
+  offset?: number     // skip first N results for pagination
   reverse?: boolean   // true = newest first (default)
 }
 
@@ -81,6 +82,7 @@ export interface IBlockIndex {
   putTransaction(txHash: Hex, tx: TxWithReceipt): Promise<void>
   getTransactionByHash(hash: Hex): Promise<TxWithReceipt | null>
   getTransactionsByAddress(address: Hex, opts?: AddressTxQuery): Promise<TxWithReceipt[]>
+  countTransactionsByAddress(address: Hex): Promise<number>
   putLogs(blockNumber: bigint, logs: IndexedLog[]): Promise<void>
   getLogs(filter: LogFilter): Promise<IndexedLog[]>
   close(): Promise<void>
@@ -213,12 +215,16 @@ export class BlockIndex implements IBlockIndex {
 
   async getTransactionsByAddress(address: Hex, opts?: AddressTxQuery): Promise<TxWithReceipt[]> {
     const prefix = ADDR_TX_PREFIX + address.toLowerCase() + ":"
+    const offset = opts?.offset ?? 0
     const limit = opts?.limit ?? 50
     const reverse = opts?.reverse ?? true
-    const keys = await this.db.getKeysWithPrefix(prefix, { limit, reverse })
+    // Fetch extra keys to handle offset
+    const fetchLimit = offset + limit
+    const keys = await this.db.getKeysWithPrefix(prefix, { limit: fetchLimit, reverse })
+    const paged = keys.slice(offset, offset + limit)
 
     const results: TxWithReceipt[] = []
-    for (const key of keys) {
+    for (const key of paged) {
       const data = await this.db.get(key)
       if (!data) continue
       const txHash = decoder.decode(data) as Hex
@@ -226,6 +232,12 @@ export class BlockIndex implements IBlockIndex {
       if (tx) results.push(tx)
     }
     return results
+  }
+
+  async countTransactionsByAddress(address: Hex): Promise<number> {
+    const prefix = ADDR_TX_PREFIX + address.toLowerCase() + ":"
+    const keys = await this.db.getKeysWithPrefix(prefix, { limit: 100_000, reverse: false })
+    return keys.length
   }
 
   async putLogs(blockNumber: bigint, logs: IndexedLog[]): Promise<void> {
