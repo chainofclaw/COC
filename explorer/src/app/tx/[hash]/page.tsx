@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { provider, formatAddress, formatEther } from '@/lib/provider'
+import { rpcCall } from '@/lib/rpc'
 import { decodeMethodSelector, decodeTransferLog, formatTokenAmount } from '@/lib/decoder'
 import { notFound } from 'next/navigation'
 
@@ -9,12 +10,25 @@ interface TxPageProps {
   params: Promise<{ hash: string }>
 }
 
+interface CallTrace {
+  type: string
+  from: string
+  to: string
+  value: string
+  gas: string
+  gasUsed: string
+  input: string
+  output: string
+  error?: string
+}
+
 export default async function TxPage({ params }: TxPageProps) {
   const { hash } = await params
 
-  const [tx, receipt] = await Promise.all([
+  const [tx, receipt, traces] = await Promise.all([
     provider.getTransaction(hash),
-    provider.getTransactionReceipt(hash)
+    provider.getTransactionReceipt(hash),
+    rpcCall<CallTrace[]>('trace_transaction', [hash]).catch(() => [] as CallTrace[]),
   ])
 
   if (!tx) {
@@ -161,6 +175,66 @@ export default async function TxPage({ params }: TxPageProps) {
                 </span>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Internal Transactions (call trace) */}
+      {traces.length > 0 && (
+        <div className="bg-white rounded-lg shadow p-6">
+          <h3 className="text-xl font-bold mb-4">Internal Transactions ({traces.length})</h3>
+          <div className="overflow-x-auto">
+            <table className="min-w-full">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">From</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">To</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Value</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Gas Used</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {traces.map((trace, i) => {
+                  const traceValue = BigInt(trace.value || '0x0')
+                  return (
+                    <tr key={i} className="hover:bg-gray-50">
+                      <td className="px-3 py-2 text-sm">
+                        <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                          trace.type === 'CREATE' ? 'bg-indigo-100 text-indigo-700' : 'bg-blue-100 text-blue-700'
+                        }`}>
+                          {trace.type}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 text-sm">
+                        <Link href={`/address/${trace.from}`} className="text-blue-600 hover:text-blue-800 font-mono text-xs">
+                          {formatAddress(trace.from)}
+                        </Link>
+                      </td>
+                      <td className="px-3 py-2 text-sm">
+                        <Link href={`/address/${trace.to}`} className="text-blue-600 hover:text-blue-800 font-mono text-xs">
+                          {formatAddress(trace.to)}
+                        </Link>
+                      </td>
+                      <td className="px-3 py-2 text-sm font-mono text-xs">
+                        {traceValue > 0n ? formatEther(traceValue) : '0'}
+                      </td>
+                      <td className="px-3 py-2 text-sm font-mono text-xs">
+                        {parseInt(trace.gasUsed, 16).toLocaleString()}
+                      </td>
+                      <td className="px-3 py-2 text-sm">
+                        {trace.error ? (
+                          <span className="text-red-600 text-xs">{trace.error}</span>
+                        ) : (
+                          <span className="text-green-600 text-xs">OK</span>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
           </div>
         </div>
       )}

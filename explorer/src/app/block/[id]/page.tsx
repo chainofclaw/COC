@@ -35,6 +35,14 @@ export default async function BlockPage({ params }: BlockPageProps) {
     notFound()
   }
 
+  // Fetch raw block data for extra fields (stateRoot, miner, baseFeePerGas)
+  const rawBlock = await rpcCall<{
+    stateRoot?: string
+    miner?: string
+    baseFeePerGas?: string
+    extraData?: string
+  }>('eth_getBlockByNumber', [`0x${blockNumber.toString(16)}`, false]).catch(() => null)
+
   // Fetch full transaction details for each tx in the block
   const [txDetails, receipts] = await Promise.all([
     Promise.all(
@@ -108,14 +116,34 @@ export default async function BlockPage({ params }: BlockPageProps) {
           </div>
 
           <div>
-            <dt className="text-sm font-medium text-gray-500">Nonce</dt>
-            <dd className="mt-1 text-sm font-mono">{block.nonce}</dd>
-          </div>
-
-          <div>
             <dt className="text-sm font-medium text-gray-500">Transactions</dt>
             <dd className="mt-1 text-sm">{block.transactions.length}</dd>
           </div>
+
+          {rawBlock?.miner && rawBlock.miner !== '0x0000000000000000000000000000000000000000' && (
+            <div>
+              <dt className="text-sm font-medium text-gray-500">Proposer</dt>
+              <dd className="mt-1 text-sm">
+                <Link href={`/address/${rawBlock.miner}`} className="text-blue-600 hover:text-blue-800 font-mono">
+                  {formatAddress(rawBlock.miner)}
+                </Link>
+              </dd>
+            </div>
+          )}
+
+          {rawBlock?.stateRoot && rawBlock.stateRoot !== '0x' + '0'.repeat(64) && (
+            <div>
+              <dt className="text-sm font-medium text-gray-500">State Root</dt>
+              <dd className="mt-1 text-sm font-mono break-all text-xs">{rawBlock.stateRoot}</dd>
+            </div>
+          )}
+
+          {rawBlock?.baseFeePerGas && (
+            <div>
+              <dt className="text-sm font-medium text-gray-500">Base Fee</dt>
+              <dd className="mt-1 text-sm font-mono">{(parseInt(rawBlock.baseFeePerGas, 16) / 1e9).toFixed(2)} Gwei</dd>
+            </div>
+          )}
         </div>
       </div>
 
