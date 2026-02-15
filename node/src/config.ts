@@ -47,6 +47,13 @@ export interface NodeConfig {
   p2pRequireInboundAuth: boolean
   p2pInboundAuthMode: "off" | "monitor" | "enforce"
   p2pAuthMaxClockSkewMs: number
+  p2pAuthNonceRegistryPath: string
+  p2pAuthNonceTtlMs: number
+  p2pAuthNonceMaxEntries: number
+  poseRequireInboundAuth: boolean
+  poseInboundAuthMode: "off" | "monitor" | "enforce"
+  poseAuthMaxClockSkewMs: number
+  poseAllowedChallengers: string[]
   // BFT consensus
   enableBft: boolean
   bftPrepareTimeoutMs: number
@@ -109,12 +116,58 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
       ? (p2pRequireInboundAuthFromEnv ? "enforce" : "off")
       : p2pRequireInboundAuthFromUser !== undefined
         ? (p2pRequireInboundAuthFromUser ? "enforce" : "off")
-        : "monitor")
+        : "enforce")
   const p2pRequireInboundAuth = p2pInboundAuthMode === "enforce"
   const p2pAuthMaxClockSkewMsEnv = process.env.COC_P2P_AUTH_MAX_CLOCK_SKEW_MS
   const p2pAuthMaxClockSkewMs = p2pAuthMaxClockSkewMsEnv !== undefined
     ? Number(p2pAuthMaxClockSkewMsEnv)
     : Number((user as Record<string, unknown>).p2pAuthMaxClockSkewMs ?? 120_000)
+  const userP2PAuthNonceRegistryPath = typeof (user as Record<string, unknown>).p2pAuthNonceRegistryPath === "string"
+    ? ((user as Record<string, unknown>).p2pAuthNonceRegistryPath as string)
+    : undefined
+  const p2pAuthNonceRegistryPath = process.env.COC_P2P_AUTH_NONCE_REGISTRY_PATH
+    || userP2PAuthNonceRegistryPath
+    || join(dataDir, "p2p-auth-nonce.log")
+  const p2pAuthNonceTtlMsEnv = process.env.COC_P2P_AUTH_NONCE_TTL_MS
+  const p2pAuthNonceTtlMs = p2pAuthNonceTtlMsEnv !== undefined
+    ? Number(p2pAuthNonceTtlMsEnv)
+    : Number((user as Record<string, unknown>).p2pAuthNonceTtlMs ?? (24 * 60 * 60 * 1000))
+  const p2pAuthNonceMaxEntriesEnv = process.env.COC_P2P_AUTH_NONCE_MAX_ENTRIES
+  const p2pAuthNonceMaxEntries = p2pAuthNonceMaxEntriesEnv !== undefined
+    ? Number(p2pAuthNonceMaxEntriesEnv)
+    : Number((user as Record<string, unknown>).p2pAuthNonceMaxEntries ?? 100_000)
+  const poseRequireInboundAuthEnv = process.env.COC_POSE_REQUIRE_INBOUND_AUTH
+  const poseRequireInboundAuthFromEnv = poseRequireInboundAuthEnv !== undefined
+    ? (poseRequireInboundAuthEnv === "1" || poseRequireInboundAuthEnv.toLowerCase() === "true")
+    : undefined
+  const userPoseRequireInboundAuthRaw = (user as Record<string, unknown>).poseRequireInboundAuth
+  const poseRequireInboundAuthFromUser = typeof userPoseRequireInboundAuthRaw === "boolean"
+    ? userPoseRequireInboundAuthRaw
+    : undefined
+  const poseInboundAuthModeEnv = process.env.COC_POSE_AUTH_MODE
+  const poseInboundAuthModeRaw = poseInboundAuthModeEnv
+    ?? (user as Record<string, unknown>).poseInboundAuthMode
+  const poseInboundAuthMode = normalizeInboundAuthMode(poseInboundAuthModeRaw)
+    ?? (poseRequireInboundAuthFromEnv !== undefined
+      ? (poseRequireInboundAuthFromEnv ? "enforce" : "off")
+      : poseRequireInboundAuthFromUser !== undefined
+        ? (poseRequireInboundAuthFromUser ? "enforce" : "off")
+        : "monitor")
+  const poseRequireInboundAuth = poseInboundAuthMode === "enforce"
+  const poseAuthMaxClockSkewMsEnv = process.env.COC_POSE_AUTH_MAX_CLOCK_SKEW_MS
+  const poseAuthMaxClockSkewMs = poseAuthMaxClockSkewMsEnv !== undefined
+    ? Number(poseAuthMaxClockSkewMsEnv)
+    : Number((user as Record<string, unknown>).poseAuthMaxClockSkewMs ?? 120_000)
+  const userPoseAllowedChallengers = (user as Record<string, unknown>).poseAllowedChallengers
+  const poseAllowedChallengersFromUser = Array.isArray(userPoseAllowedChallengers)
+    ? userPoseAllowedChallengers.filter((x): x is string => typeof x === "string")
+    : []
+  const poseAllowedChallengers = process.env.COC_POSE_ALLOWED_CHALLENGERS
+    ? process.env.COC_POSE_ALLOWED_CHALLENGERS
+      .split(",")
+      .map((x) => x.trim())
+      .filter((x) => x.length > 0)
+    : poseAllowedChallengersFromUser
 
   // Resolve node private key: env var → file → auto-generate
   const nodePrivateKey = await resolveNodeKey(dataDir)
@@ -156,6 +209,13 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     p2pRequireInboundAuth,
     p2pInboundAuthMode,
     p2pAuthMaxClockSkewMs,
+    p2pAuthNonceRegistryPath,
+    p2pAuthNonceTtlMs,
+    p2pAuthNonceMaxEntries,
+    poseRequireInboundAuth,
+    poseInboundAuthMode,
+    poseAuthMaxClockSkewMs,
+    poseAllowedChallengers,
     enableBft: false,
     bftPrepareTimeoutMs: 5000,
     bftCommitTimeoutMs: 5000,
@@ -171,6 +231,13 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     p2pRequireInboundAuth,
     p2pInboundAuthMode,
     p2pAuthMaxClockSkewMs,
+    p2pAuthNonceRegistryPath,
+    p2pAuthNonceTtlMs,
+    p2pAuthNonceMaxEntries,
+    poseRequireInboundAuth,
+    poseInboundAuthMode,
+    poseAuthMaxClockSkewMs,
+    poseAllowedChallengers,
     storage: { ...storageDefaults, ...userStorage },
   }
 }
@@ -279,6 +346,53 @@ export function validateConfig(cfg: Partial<NodeConfig>): string[] {
   if (cfg.p2pAuthMaxClockSkewMs !== undefined) {
     if (!Number.isInteger(cfg.p2pAuthMaxClockSkewMs) || cfg.p2pAuthMaxClockSkewMs < 1000) {
       errors.push("p2pAuthMaxClockSkewMs must be >= 1000")
+    }
+  }
+
+  if (cfg.p2pAuthNonceRegistryPath !== undefined) {
+    if (typeof cfg.p2pAuthNonceRegistryPath !== "string" || cfg.p2pAuthNonceRegistryPath.trim().length === 0) {
+      errors.push("p2pAuthNonceRegistryPath must be a non-empty string")
+    }
+  }
+
+  if (cfg.p2pAuthNonceTtlMs !== undefined) {
+    if (!Number.isInteger(cfg.p2pAuthNonceTtlMs) || cfg.p2pAuthNonceTtlMs < 60_000) {
+      errors.push("p2pAuthNonceTtlMs must be >= 60000")
+    }
+  }
+
+  if (cfg.p2pAuthNonceMaxEntries !== undefined) {
+    if (!Number.isInteger(cfg.p2pAuthNonceMaxEntries) || cfg.p2pAuthNonceMaxEntries < 1) {
+      errors.push("p2pAuthNonceMaxEntries must be a positive integer")
+    }
+  }
+
+  if (cfg.poseRequireInboundAuth !== undefined && typeof cfg.poseRequireInboundAuth !== "boolean") {
+    errors.push("poseRequireInboundAuth must be a boolean")
+  }
+
+  if (cfg.poseInboundAuthMode !== undefined) {
+    if (cfg.poseInboundAuthMode !== "off" && cfg.poseInboundAuthMode !== "monitor" && cfg.poseInboundAuthMode !== "enforce") {
+      errors.push("poseInboundAuthMode must be one of: off, monitor, enforce")
+    }
+  }
+
+  if (cfg.poseAuthMaxClockSkewMs !== undefined) {
+    if (!Number.isInteger(cfg.poseAuthMaxClockSkewMs) || cfg.poseAuthMaxClockSkewMs < 1000) {
+      errors.push("poseAuthMaxClockSkewMs must be >= 1000")
+    }
+  }
+
+  if (cfg.poseAllowedChallengers !== undefined) {
+    if (!Array.isArray(cfg.poseAllowedChallengers)) {
+      errors.push("poseAllowedChallengers must be an array")
+    } else {
+      const addrRe = /^0x[0-9a-fA-F]{40}$/
+      for (const challenger of cfg.poseAllowedChallengers) {
+        if (typeof challenger !== "string" || !addrRe.test(challenger)) {
+          errors.push(`poseAllowedChallengers contains invalid address: ${String(challenger)}`)
+        }
+      }
     }
   }
 

@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import http from "node:http"
 import { PoSeEngine } from "./pose-engine.ts"
 import { buildReceiptSignMessage, createNodeSigner } from "./crypto/signer.ts"
-import { registerPoseRoutes, handlePoseRequest } from "./pose-http.ts"
+import { buildSignedPosePayload, registerPoseRoutes, handlePoseRequest } from "./pose-http.ts"
 import { keccak256Hex } from "../../services/relayer/keccak256.ts"
 
 const TEST_PK = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
@@ -13,10 +13,19 @@ function createTestEngine(): PoSeEngine {
   return new PoSeEngine(1n, { signer })
 }
 
-async function startTestServer(pose: PoSeEngine): Promise<{ port: number; close: () => void }> {
+async function startTestServer(
+  pose: PoSeEngine,
+  authOptions?: {
+    enableInboundAuth?: boolean
+    inboundAuthMode?: "off" | "monitor" | "enforce"
+    authMaxClockSkewMs?: number
+    verifier?: ReturnType<typeof createNodeSigner>
+    allowedChallengers?: string[]
+  },
+): Promise<{ port: number; close: () => void }> {
   const routes = registerPoseRoutes(pose)
   const server = http.createServer((req, res) => {
-    if (!handlePoseRequest(routes, req, res)) {
+    if (!handlePoseRequest(routes, req, res, authOptions)) {
       res.writeHead(404)
       res.end(JSON.stringify({ error: "not found" }))
     }
@@ -80,6 +89,17 @@ test("POST /pose/challenge rejects missing nodeId", async () => {
   const { port, close } = await startTestServer(pose)
   try {
     const { status } = await fetchJson(port, "POST", "/pose/challenge", {})
+    assert.equal(status, 400)
+  } finally {
+    close()
+  }
+})
+
+test("POST /pose/challenge rejects invalid nodeId format", async () => {
+  const pose = createTestEngine()
+  const { port, close } = await startTestServer(pose)
+  try {
+    const { status } = await fetchJson(port, "POST", "/pose/challenge", { nodeId: "0x1234" })
     assert.equal(status, 400)
   } finally {
     close()
@@ -165,6 +185,62 @@ test("unmatched route returns false from handlePoseRequest", () => {
   const res = {} as http.ServerResponse
   const handled = handlePoseRequest(routes, req, res)
   assert.equal(handled, false)
+})
+
+test("POST /pose/challenge rejects missing auth envelope in enforce mode", async () => {
+  const pose = createTestEngine()
+  const verifier = createNodeSigner(TEST_PK)
+  const { port, close } = await startTestServer(pose, {
+    inboundAuthMode: "enforce",
+    verifier,
+  })
+  try {
+    const { status } = await fetchJson(port, "POST", "/pose/challenge", {
+      nodeId: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    })
+    assert.equal(status, 401)
+  } finally {
+    close()
+  }
+})
+
+test("POST /pose/challenge accepts signed payload in enforce mode", async () => {
+  const pose = createTestEngine()
+  const challenger = createNodeSigner(TEST_PK)
+  const { port, close } = await startTestServer(pose, {
+    inboundAuthMode: "enforce",
+    verifier: challenger,
+    allowedChallengers: [challenger.nodeId],
+  })
+  try {
+    const signed = buildSignedPosePayload("/pose/challenge", {
+      nodeId: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    }, challenger, Date.now())
+    const { status, data } = await fetchJson(port, "POST", "/pose/challenge", signed)
+    assert.equal(status, 200)
+    assert.ok(data.challengeId)
+  } finally {
+    close()
+  }
+})
+
+test("POST /pose/challenge rejects signer not in allowlist", async () => {
+  const pose = createTestEngine()
+  const challenger = createNodeSigner(TEST_PK)
+  const { port, close } = await startTestServer(pose, {
+    inboundAuthMode: "enforce",
+    verifier: challenger,
+    allowedChallengers: ["0x1111111111111111111111111111111111111111"],
+  })
+  try {
+    const signed = buildSignedPosePayload("/pose/challenge", {
+      nodeId: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    }, challenger, Date.now())
+    const { status } = await fetchJson(port, "POST", "/pose/challenge", signed)
+    assert.equal(status, 403)
+  } finally {
+    close()
+  }
 })
 
 function hashStable(value: unknown): `0x${string}` {

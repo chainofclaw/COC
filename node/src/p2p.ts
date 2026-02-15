@@ -1,6 +1,8 @@
 import http from "node:http"
 import { request as httpRequest } from "node:http"
 import crypto from "node:crypto"
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { dirname } from "node:path"
 import type { ChainBlock, ChainSnapshot, Hex, NodePeer } from "./blockchain-types.ts"
 import { PeerScoring } from "./peer-scoring.ts"
 import { PeerDiscovery } from "./peer-discovery.ts"
@@ -60,6 +62,9 @@ export interface P2PConfig {
   enableInboundAuth?: boolean
   inboundAuthMode?: "off" | "monitor" | "enforce"
   authMaxClockSkewMs?: number
+  authNonceRegistryPath?: string
+  authNonceTtlMs?: number
+  authNonceMaxEntries?: number
   signer?: NodeSigner
   verifier?: SignatureVerifier
 }
@@ -169,11 +174,138 @@ export class BoundedSet<T> {
   }
 }
 
+export interface PersistentAuthNonceTrackerOptions {
+  maxSize: number
+  ttlMs: number
+  persistencePath?: string
+  nowFn?: () => number
+}
+
+export class PersistentAuthNonceTracker implements AuthNonceTracker {
+  private readonly maxSize: number
+  private readonly ttlMs: number
+  private readonly persistencePath?: string
+  private readonly nowFn: () => number
+  private readonly items = new Map<string, number>()
+
+  constructor(options: PersistentAuthNonceTrackerOptions) {
+    this.maxSize = options.maxSize
+    this.ttlMs = options.ttlMs
+    this.persistencePath = options.persistencePath
+    this.nowFn = options.nowFn ?? (() => Date.now())
+    this.loadPersisted()
+    this.cleanup()
+  }
+
+  has(value: string): boolean {
+    const now = this.nowFn()
+    this.pruneExpired(now)
+    const ts = this.items.get(value)
+    if (ts === undefined) return false
+    if (this.isExpired(ts, now)) {
+      this.items.delete(value)
+      return false
+    }
+    return true
+  }
+
+  add(value: string): void {
+    const now = this.nowFn()
+    this.pruneExpired(now)
+    if (this.items.has(value)) return
+
+    while (this.items.size >= this.maxSize) {
+      const oldestKey = this.items.keys().next().value
+      if (oldestKey === undefined) break
+      this.items.delete(oldestKey)
+    }
+
+    this.items.set(value, now)
+    this.persistEntry(value, now)
+  }
+
+  cleanup(): void {
+    this.pruneExpired(this.nowFn())
+  }
+
+  compact(): void {
+    if (!this.persistencePath) return
+    this.cleanup()
+    try {
+      mkdirSync(dirname(this.persistencePath), { recursive: true })
+      const lines = [...this.items.entries()].map(([key, ts]) => `${ts}\t${key}`)
+      writeFileSync(this.persistencePath, lines.join("\n") + (lines.length > 0 ? "\n" : ""), "utf8")
+    } catch {
+      // keep in-memory safety even if compaction fails
+    }
+  }
+
+  get size(): number {
+    return this.items.size
+  }
+
+  private loadPersisted(): void {
+    if (!this.persistencePath || !existsSync(this.persistencePath)) return
+    try {
+      const now = this.nowFn()
+      const raw = readFileSync(this.persistencePath, "utf8")
+      for (const line of raw.split("\n")) {
+        const trimmed = line.trim()
+        if (!trimmed) continue
+        const tab = trimmed.indexOf("\t")
+        let ts = now
+        let key = trimmed
+        if (tab > 0) {
+          const parsedTs = Number(trimmed.slice(0, tab))
+          if (Number.isFinite(parsedTs) && parsedTs > 0) {
+            ts = parsedTs
+          }
+          key = trimmed.slice(tab + 1)
+        }
+        if (!key) continue
+        if (this.isExpired(ts, now)) continue
+        this.items.set(key, ts)
+      }
+      while (this.items.size > this.maxSize) {
+        const oldestKey = this.items.keys().next().value
+        if (oldestKey === undefined) break
+        this.items.delete(oldestKey)
+      }
+    } catch {
+      // fall back to in-memory if persisted file is unreadable
+    }
+  }
+
+  private persistEntry(key: string, ts: number): void {
+    if (!this.persistencePath) return
+    try {
+      mkdirSync(dirname(this.persistencePath), { recursive: true })
+      appendFileSync(this.persistencePath, `${ts}\t${key}\n`, "utf8")
+    } catch {
+      // fail-open: in-memory replay protection remains active
+    }
+  }
+
+  private pruneExpired(now: number): void {
+    if (this.ttlMs <= 0) return
+    const cutoff = now - this.ttlMs
+    for (const [key, ts] of this.items.entries()) {
+      if (ts < cutoff) {
+        this.items.delete(key)
+      }
+    }
+  }
+
+  private isExpired(ts: number, now: number): boolean {
+    return this.ttlMs > 0 && ts < (now - this.ttlMs)
+  }
+}
+
 export class P2PNode {
   private readonly cfg: P2PConfig
   private readonly handlers: P2PHandlers
   private readonly inboundRateLimiter: RateLimiter
-  private readonly authNonceTracker = new BoundedSet<string>(100_000)
+  private readonly authNonceTracker: PersistentAuthNonceTracker
   private readonly seenTx = new BoundedSet<Hex>(50_000)
   private readonly seenBlocks = new BoundedSet<Hex>(10_000)
   private rateLimitedRequests = 0
@@ -197,11 +329,20 @@ export class P2PNode {
   constructor(cfg: P2PConfig, handlers: P2PHandlers) {
     this.cfg = cfg
     this.handlers = handlers
+    this.authNonceTracker = new PersistentAuthNonceTracker({
+      maxSize: cfg.authNonceMaxEntries ?? 100_000,
+      ttlMs: cfg.authNonceTtlMs ?? (24 * 60 * 60 * 1000),
+      persistencePath: cfg.authNonceRegistryPath,
+    })
     this.inboundRateLimiter = new RateLimiter(
       cfg.inboundRateLimitWindowMs ?? 60_000,
       cfg.inboundRateLimitMaxRequests ?? 240,
     )
     setInterval(() => this.inboundRateLimiter.cleanup(), 300_000).unref()
+    setInterval(() => this.authNonceTracker.cleanup(), 300_000).unref()
+    if (cfg.authNonceRegistryPath) {
+      setInterval(() => this.authNonceTracker.compact(), 60 * 60 * 1000).unref()
+    }
     this.scoring = new PeerScoring()
     this.discovery = new PeerDiscovery(
       cfg.peers,
@@ -214,6 +355,7 @@ export class P2PNode {
         peerStorePath: cfg.peerStorePath,
         dnsSeeds: cfg.dnsSeeds,
         peerMaxAgeMs: cfg.peerMaxAgeMs,
+        verifyPeerIdentity: async (peer) => await this.verifyDiscoveredPeerIdentity(peer),
       },
     )
 
@@ -299,6 +441,7 @@ export class P2PNode {
             authMissingRequests: stats.authMissingRequests,
             authInvalidRequests: stats.authInvalidRequests,
             authRejectedRequests: stats.authRejectedRequests,
+            authNonceTrackerSize: stats.authNonceTrackerSize,
             inboundAuthMode: stats.inboundAuthMode,
           },
         }))
@@ -500,6 +643,7 @@ export class P2PNode {
     authMissingRequests: number
     authInvalidRequests: number
     authRejectedRequests: number
+    authNonceTrackerSize: number
     inboundAuthMode: "off" | "monitor" | "enforce"
   } {
     return {
@@ -517,6 +661,7 @@ export class P2PNode {
       authMissingRequests: this.authMissingRequests,
       authInvalidRequests: this.authInvalidRequests,
       authRejectedRequests: this.authRejectedRequests,
+      authNonceTrackerSize: this.authNonceTracker.size,
       inboundAuthMode: resolveInboundAuthMode(this.cfg),
     }
   }
@@ -561,6 +706,25 @@ export class P2PNode {
           this.scoring.recordFailure(peer.id)
         }
       }))
+    }
+  }
+
+  private async verifyDiscoveredPeerIdentity(peer: NodePeer): Promise<boolean> {
+    try {
+      const info = await requestJson<{ nodeId?: string }>(`${peer.url}/p2p/node-info`, "GET")
+      const claimed = peer.id.toLowerCase()
+      const reported = String(info?.nodeId ?? "").toLowerCase()
+      if (!reported || reported !== claimed) {
+        log.warn("peer identity mismatch during discovery verification", {
+          claimed: peer.id,
+          reported: info?.nodeId,
+          url: peer.url,
+        })
+        return false
+      }
+      return true
+    } catch {
+      return false
     }
   }
 }

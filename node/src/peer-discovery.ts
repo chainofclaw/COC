@@ -28,6 +28,7 @@ export interface DiscoveryConfig {
   peerStorePath?: string
   dnsSeeds?: string[]
   peerMaxAgeMs?: number
+  verifyPeerIdentity?: (peer: NodePeer) => Promise<boolean>
 }
 
 const DEFAULT_CONFIG: DiscoveryConfig = {
@@ -42,6 +43,8 @@ const DEFAULT_CONFIG: DiscoveryConfig = {
 
 export class PeerDiscovery {
   private readonly peers = new Map<string, NodePeer>()
+  private readonly pendingPeers = new Map<string, NodePeer>()
+  private readonly verifyingPeers = new Set<string>()
   private readonly scoring: PeerScoring
   private readonly cfg: DiscoveryConfig
   private readonly peerStore: PeerStore | null
@@ -111,6 +114,7 @@ export class PeerDiscovery {
       maxPeers: this.cfg.maxPeers,
       hasPeerStore: !!this.peerStore,
       hasDnsSeeds: !!this.dnsResolver,
+      hasIdentityVerification: !!this.cfg.verifyPeerIdentity,
     })
   }
 
@@ -130,6 +134,8 @@ export class PeerDiscovery {
       this.peerStore.stopAutoSave()
       this.peerStore.save().catch(() => {})
     }
+    this.pendingPeers.clear()
+    this.verifyingPeers.clear()
   }
 
   /**
@@ -146,6 +152,13 @@ export class PeerDiscovery {
    */
   getAllPeers(): NodePeer[] {
     return [...this.peers.values()]
+  }
+
+  /**
+   * Get peers waiting for identity verification.
+   */
+  getPendingPeers(): NodePeer[] {
+    return [...this.pendingPeers.values()]
   }
 
   /**
@@ -171,12 +184,14 @@ export class PeerDiscovery {
       if (!normalized) continue
       if (normalized.id === this.cfg.selfId) continue
       if (this.peers.has(normalized.id)) continue
-      if (this.peers.size >= this.cfg.maxPeers) break
+      if (this.pendingPeers.has(normalized.id)) continue
+      if (this.peers.size + this.pendingPeers.size >= this.cfg.maxPeers) break
 
-      this.peers.set(normalized.id, normalized)
-      this.scoring.addPeer(normalized.id, normalized.url)
-      if (this.peerStore) {
-        this.peerStore.addPeer(normalized)
+      if (this.cfg.verifyPeerIdentity) {
+        this.pendingPeers.set(normalized.id, normalized)
+        void this.verifyAndPromotePeer(normalized.id)
+      } else {
+        this.promotePeer(normalized)
       }
       added++
     }
@@ -184,6 +199,39 @@ export class PeerDiscovery {
       log.info("discovered new peers", { count: added })
     }
     return added
+  }
+
+  private promotePeer(peer: NodePeer): void {
+    this.peers.set(peer.id, peer)
+    this.scoring.addPeer(peer.id, peer.url)
+    if (this.peerStore) {
+      this.peerStore.addPeer(peer)
+    }
+  }
+
+  private async verifyAndPromotePeer(peerId: string): Promise<void> {
+    if (!this.cfg.verifyPeerIdentity) return
+    if (this.verifyingPeers.has(peerId)) return
+    const peer = this.pendingPeers.get(peerId)
+    if (!peer) return
+
+    this.verifyingPeers.add(peerId)
+    try {
+      const ok = await this.cfg.verifyPeerIdentity(peer)
+      if (ok) {
+        // Re-check capacity/state after async verification.
+        if (!this.peers.has(peer.id) && this.peers.size < this.cfg.maxPeers) {
+          this.promotePeer(peer)
+        }
+      } else {
+        log.warn("peer identity verification failed", { id: peer.id, url: peer.url })
+      }
+    } catch (err) {
+      log.warn("peer identity verification error", { id: peer.id, error: String(err) })
+    } finally {
+      this.pendingPeers.delete(peerId)
+      this.verifyingPeers.delete(peerId)
+    }
   }
 
   /**

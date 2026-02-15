@@ -19,6 +19,7 @@ import { hashPair } from "../node/src/ipfs-merkle.ts";
 import type { UnixFsFileMeta, Hex } from "../node/src/ipfs-types.ts";
 import { createLogger } from "../node/src/logger.ts";
 import { createNodeSigner, buildReceiptSignMessage } from "../node/src/crypto/signer.ts";
+import { buildSignedPosePayload } from "../node/src/pose-http.ts";
 
 const log = createLogger("coc-agent");
 
@@ -29,6 +30,9 @@ const batchSize = normalizeInt(process.env.COC_AGENT_BATCH_SIZE || config.agentB
 const sampleSize = normalizeInt(process.env.COC_AGENT_SAMPLE_SIZE || config.agentSampleSize, 2);
 const storageDir = resolveStorageDir(config.dataDir, config.storageDir);
 const nonceRegistryPath = process.env.COC_NONCE_REGISTRY_PATH || config.nonceRegistryPath || join(config.dataDir, "nonce-registry.log");
+const endpointFingerprintMode = resolveEndpointFingerprintMode(
+  process.env.COC_ENDPOINT_FINGERPRINT_MODE || config.endpointFingerprintMode,
+);
 
 const l1RpcUrl = process.env.COC_L1_RPC_URL || config.l1RpcUrl || "http://127.0.0.1:8545";
 const poseManagerAddress = process.env.COC_POSE_MANAGER || config.poseManagerAddress;
@@ -60,7 +64,12 @@ function computeMachineFingerprint(pubkey: string): string {
       break;
     }
   }
-  return `machine:${host}:${mac}:${pubkey}`;
+  if (endpointFingerprintMode === "legacy") {
+    // Legacy mode keeps pubkey in fingerprint; retained only for migration.
+    return `machine:${host}:${mac}:${pubkey}`;
+  }
+  // Strict mode binds endpoint commitment to machine identity only.
+  return `machine:${host}:${mac}`;
 }
 
 function addressToHex32(address: string): `0x${string}` {
@@ -175,6 +184,7 @@ const trackedNodeIds = normalizeNodeIds(config.nodeIds);
 const nodeScores = new Map<string, { uptimeOk: number; uptimeTotal: number; storageOk: number; storageTotal: number; relayOk: number; relayTotal: number; verifiedStorageBytes: number }>();
 let pending: Array<any> = [];
 let currentEpoch = currentEpochId();
+log.info("endpoint fingerprint mode", { mode: endpointFingerprintMode });
 
 // Evidence pipeline: agent writes, relayer consumes
 export const evidenceStore = new EvidenceStore();
@@ -291,12 +301,20 @@ async function tryChallenge(nodeId: string, kind: keyof typeof ChallengeType): P
 
   let receiptPayload: any | undefined;
   try {
-    await requestJson(`${nodeUrl}/pose/challenge`, "POST", challenge);
-    const receiptResp = await requestJson(`${nodeUrl}/pose/receipt`, "POST", {
-      challengeId: challenge.challengeId,
-      challengeType: code,
-      payload: { nodeId, kind },
-    });
+    await requestJson(
+      `${nodeUrl}/pose/challenge`,
+      "POST",
+      buildSignedPosePayload("/pose/challenge", challenge as unknown as Record<string, unknown>, agentSigner),
+    );
+    const receiptResp = await requestJson(
+      `${nodeUrl}/pose/receipt`,
+      "POST",
+      buildSignedPosePayload("/pose/receipt", {
+        challengeId: challenge.challengeId,
+        challengeType: code,
+        payload: { nodeId, kind },
+      }, agentSigner),
+    );
     receiptPayload = receiptResp.json;
   } catch (networkError) {
     log.warn("node unreachable, recording timeout", { nodeId, kind, error: String(networkError) });
@@ -556,6 +574,16 @@ function normalizeInt(raw: unknown, fallback: number): number {
     return fallback;
   }
   return Math.floor(value);
+}
+
+function resolveEndpointFingerprintMode(input: unknown): "strict" | "legacy" {
+  if (typeof input === "string") {
+    const normalized = input.trim().toLowerCase();
+    if (normalized === "legacy" || normalized === "strict") {
+      return normalized;
+    }
+  }
+  return "strict";
 }
 
 setInterval(() => void tick(), intervalMs);

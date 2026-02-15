@@ -7,6 +7,7 @@ import type { Hex, PendingFilter } from "./blockchain-types.ts"
 import type { P2PNode } from "./p2p.ts"
 import type { PoSeEngine } from "./pose-engine.ts"
 import { registerPoseRoutes, handlePoseRequest } from "./pose-http.ts"
+import type { PoseInboundAuthOptions } from "./pose-http.ts"
 import { keccak256Hex } from "../../services/relayer/keccak256.ts"
 import { calculateBaseFee, genesisBaseFee } from "./base-fee.ts"
 import { traceTransaction, traceBlockByNumber, traceTransactionCalls } from "./debug-trace.ts"
@@ -109,7 +110,18 @@ interface JsonRpcResponse {
   error?: { message: string }
 }
 
-export function startRpcServer(bind: string, port: number, chainId: number, evm: EvmChain, chain: IChainEngine, p2p: P2PNode, pose?: PoSeEngine, bftCoordinator?: BftCoordinator, nodeId?: string) {
+export function startRpcServer(
+  bind: string,
+  port: number,
+  chainId: number,
+  evm: EvmChain,
+  chain: IChainEngine,
+  p2p: P2PNode,
+  pose?: PoSeEngine,
+  bftCoordinator?: BftCoordinator,
+  nodeId?: string,
+  poseAuthOptions?: PoseInboundAuthOptions,
+) {
   if (DEV_ACCOUNTS_ENABLED) {
     initializeTestAccounts()
   }
@@ -138,7 +150,7 @@ export function startRpcServer(bind: string, port: number, chainId: number, evm:
     }
 
     // Handle PoSe routes first
-    if (pose && handlePoseRequest(poseRoutes, req, res)) {
+    if (pose && handlePoseRequest(poseRoutes, req, res, poseAuthOptions)) {
       return
     }
 

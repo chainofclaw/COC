@@ -121,6 +121,28 @@ describe("PeerDiscovery", () => {
     assert.equal(discovery.getAllPeers().length, 3)
   })
 
+  it("quarantines peers until identity verification passes", async () => {
+    const scoring = makeScoring()
+    const discovery = new PeerDiscovery([], scoring, {
+      selfId: "node-0",
+      selfUrl: "http://127.0.0.1:19000",
+      maxPeers: 10,
+      verifyPeerIdentity: async (peer) => peer.id === "node-1",
+    })
+
+    const added = discovery.addDiscoveredPeers([makePeer("node-1"), makePeer("node-2")])
+    assert.equal(added, 2)
+    assert.equal(discovery.getAllPeers().length, 0)
+    assert.equal(discovery.getPendingPeers().length, 2)
+
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    const all = discovery.getAllPeers()
+    assert.equal(all.length, 1)
+    assert.equal(all[0].id, "node-1")
+    assert.equal(discovery.getPendingPeers().length, 0)
+  })
+
   it("stop clears timers without error", () => {
     const scoring = makeScoring()
     const discovery = new PeerDiscovery(

@@ -6,6 +6,9 @@ import os from "node:os"
 import { DhtNetwork } from "./dht-network.ts"
 import type { DhtPeer } from "./dht.ts"
 import type { WireClient } from "./wire-client.ts"
+import { createNodeSigner } from "./crypto/signer.ts"
+
+const TEST_KEY = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
 
 describe("DhtNetwork", () => {
   it("should add bootstrap peers to routing table", () => {
@@ -286,5 +289,74 @@ describe("DhtNetwork", () => {
     network.stop()
 
     assert.ok(result.length > 0, "should return peers from local routing table fallback")
+  })
+
+  it("should verify discovered peer via authenticated handshake probe", async () => {
+    const signer = createNodeSigner(TEST_KEY)
+    let probeCalled = false
+    const network = new DhtNetwork({
+      localId: signer.nodeId,
+      localAddress: "127.0.0.1:19780",
+      chainId: 18780,
+      bootstrapPeers: [],
+      wireClients: [],
+      signer,
+      verifier: signer,
+      wireProbeFactory: (cfg) => {
+        probeCalled = true
+        return {
+          connect() {
+            cfg.onConnected?.()
+          },
+          disconnect() {},
+          getRemoteNodeId() {
+            return "0xbbb"
+          },
+        } as WireClient
+      },
+      onPeerDiscovered: () => {},
+    })
+
+    const ok = await network.verifyPeer({
+      id: "0xbbb",
+      address: "127.0.0.1:19781",
+      lastSeenMs: Date.now(),
+    })
+
+    assert.equal(ok, true)
+    assert.equal(probeCalled, true)
+  })
+
+  it("should reject handshake probe when claimed ID mismatches remote ID", async () => {
+    const signer = createNodeSigner(TEST_KEY)
+    const network = new DhtNetwork({
+      localId: signer.nodeId,
+      localAddress: "127.0.0.1:19780",
+      chainId: 18780,
+      bootstrapPeers: [],
+      wireClients: [],
+      signer,
+      verifier: signer,
+      wireProbeFactory: (cfg) => {
+        return {
+          connect() {
+            cfg.onConnected?.()
+          },
+          disconnect() {},
+          getRemoteNodeId() {
+            return "0xccc"
+          },
+        } as WireClient
+      },
+      onPeerDiscovered: () => {},
+    })
+
+    const ok = await network.verifyPeer({
+      id: "0xbbb",
+      address: "127.0.0.1:19781",
+      lastSeenMs: Date.now(),
+    })
+
+    assert.equal(ok, false)
   })
 })

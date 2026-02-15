@@ -39,6 +39,9 @@ describe("validateConfig", () => {
     assert.ok(validateConfig({ p2pRequireInboundAuth: "true" as any }).length > 0)
     assert.ok(validateConfig({ p2pInboundAuthMode: "strict" as any }).length > 0)
     assert.ok(validateConfig({ p2pAuthMaxClockSkewMs: 999 }).length > 0)
+    assert.ok(validateConfig({ p2pAuthNonceRegistryPath: "" }).length > 0)
+    assert.ok(validateConfig({ p2pAuthNonceTtlMs: 59_999 }).length > 0)
+    assert.ok(validateConfig({ p2pAuthNonceMaxEntries: 0 }).length > 0)
     assert.equal(
       validateConfig({
         p2pMaxPeers: 50,
@@ -48,6 +51,26 @@ describe("validateConfig", () => {
         p2pRequireInboundAuth: true,
         p2pInboundAuthMode: "enforce",
         p2pAuthMaxClockSkewMs: 120_000,
+        p2pAuthNonceRegistryPath: "/tmp/p2p-auth-nonce.log",
+        p2pAuthNonceTtlMs: 86_400_000,
+        p2pAuthNonceMaxEntries: 100_000,
+      }).length,
+      0,
+    )
+  })
+
+  it("validates pose route auth settings", () => {
+    assert.ok(validateConfig({ poseRequireInboundAuth: "true" as any }).length > 0)
+    assert.ok(validateConfig({ poseInboundAuthMode: "strict" as any }).length > 0)
+    assert.ok(validateConfig({ poseAuthMaxClockSkewMs: 999 }).length > 0)
+    assert.ok(validateConfig({ poseAllowedChallengers: "0x1234" as any }).length > 0)
+    assert.ok(validateConfig({ poseAllowedChallengers: ["0x1234"] }).length > 0)
+    assert.equal(
+      validateConfig({
+        poseRequireInboundAuth: true,
+        poseInboundAuthMode: "enforce",
+        poseAuthMaxClockSkewMs: 120_000,
+        poseAllowedChallengers: ["0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"],
       }).length,
       0,
     )

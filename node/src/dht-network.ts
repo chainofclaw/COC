@@ -13,7 +13,9 @@ import path from "node:path"
 import net from "node:net"
 import { RoutingTable, ALPHA, K } from "./dht.ts"
 import type { DhtPeer } from "./dht.ts"
-import type { WireClient } from "./wire-client.ts"
+import { WireClient } from "./wire-client.ts"
+import type { WireClientConfig } from "./wire-client.ts"
+import type { NodeSigner, SignatureVerifier } from "./crypto/signer.ts"
 import { createLogger } from "./logger.ts"
 
 const log = createLogger("dht-network")
@@ -26,11 +28,17 @@ const STALE_PEER_THRESHOLD_MS = 24 * 60 * 60 * 1000 // 24 hours
 
 export interface DhtNetworkConfig {
   localId: string
-  localAddress: string
+  localAddress?: string
+  chainId?: number
   bootstrapPeers: Array<{ id: string; address: string; port: number }>
   wireClients: WireClient[]
+  signer?: NodeSigner
+  verifier?: SignatureVerifier
   /** Direct peer ID → WireClient mapping for efficient lookup */
   wireClientByPeerId?: Map<string, WireClient>
+  wireProbeFactory?: (
+    cfg: WireClientConfig,
+  ) => Pick<WireClient, "connect" | "disconnect" | "getRemoteNodeId">
   onPeerDiscovered: (peer: DhtPeer) => void
   /** Path to save/load routing table peers (optional) */
   peerStorePath?: string
@@ -166,7 +174,13 @@ export class DhtNetwork {
       return true
     }
 
-    // Try a lightweight TCP connect probe with timeout
+    // Prefer authenticated wire handshake when crypto config is available.
+    const handshakeVerified = await this.verifyPeerByHandshake(peer)
+    if (handshakeVerified !== null) {
+      return handshakeVerified
+    }
+
+    // Fallback: lightweight TCP connect probe when handshake config is unavailable.
     const [host, portStr] = peer.address.split(":")
     const port = parseInt(portStr, 10)
     if (!host || !port || isNaN(port)) return false
@@ -187,6 +201,59 @@ export class DhtNetwork {
         clearTimeout(timer)
         resolve(false)
       })
+    })
+  }
+
+  private async verifyPeerByHandshake(peer: DhtPeer): Promise<boolean | null> {
+    if (!this.cfg.chainId || !this.cfg.signer || !this.cfg.verifier) {
+      return null
+    }
+
+    const [host, portStr] = peer.address.split(":")
+    const port = parseInt(portStr, 10)
+    if (!host || !port || isNaN(port)) return false
+
+    return await new Promise<boolean>((resolve) => {
+      let settled = false
+      let probe: WireClient | null = null
+      const settle = (ok: boolean) => {
+        if (settled) return
+        settled = true
+        if (timer) clearTimeout(timer)
+        probe?.disconnect()
+        resolve(ok)
+      }
+
+      const timer = setTimeout(() => {
+        settle(false)
+      }, PEER_VERIFY_TIMEOUT_MS)
+
+      const probeCfg: WireClientConfig = {
+        host,
+        port,
+        nodeId: this.cfg.localId,
+        chainId: this.cfg.chainId!,
+        signer: this.cfg.signer,
+        verifier: this.cfg.verifier,
+        onConnected: () => {
+          const remote = probe?.getRemoteNodeId()?.toLowerCase()
+          if (!remote) {
+            settle(false)
+            return
+          }
+          if (remote !== peer.id.toLowerCase()) {
+            log.warn("DHT probe handshake node ID mismatch", { claimed: peer.id, remote })
+            settle(false)
+            return
+          }
+          settle(true)
+        },
+      }
+      probe = this.cfg.wireProbeFactory
+        ? this.cfg.wireProbeFactory(probeCfg)
+        : new WireClient(probeCfg)
+
+      probe.connect()
     })
   }
 
@@ -239,12 +306,6 @@ export class DhtNetwork {
   /** Announce our presence to all connected peers */
   announce(): void {
     if (this.stopped) return
-
-    const localPeer: DhtPeer = {
-      id: this.cfg.localId,
-      address: this.cfg.localAddress,
-      lastSeenMs: Date.now(),
-    }
 
     // Add ourselves to routing table (for consistency)
     // and notify each connected wire client

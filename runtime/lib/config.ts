@@ -22,6 +22,7 @@ export interface CocRuntimeConfig {
   nodeIds?: string[];
   rewardPoolWei?: string;
   slasherPrivateKey?: string;
+  endpointFingerprintMode?: "strict" | "legacy";
 }
 
 export function resolveDataDir(): string {
