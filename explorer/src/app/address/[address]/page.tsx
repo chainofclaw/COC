@@ -1,5 +1,6 @@
-import { provider, formatEther } from '@/lib/provider'
-import { getTransactionsByAddress } from '@/lib/rpc'
+import Link from 'next/link'
+import { provider, formatEther, formatAddress } from '@/lib/provider'
+import { rpcCall, getTransactionsByAddress } from '@/lib/rpc'
 import { TxHistory } from '@/components/TxHistory'
 import { ContractView } from '@/components/ContractView'
 import { notFound } from 'next/navigation'
@@ -8,6 +9,14 @@ export const dynamic = 'force-dynamic'
 
 interface AddressPageProps {
   params: Promise<{ address: string }>
+}
+
+interface ContractMeta {
+  address: string
+  creator: string
+  blockNumber: string
+  txHash: string
+  deployedAt: number
 }
 
 export default async function AddressPage({ params }: AddressPageProps) {
@@ -25,6 +34,12 @@ export default async function AddressPage({ params }: AddressPageProps) {
   ])
 
   const isContract = code !== '0x'
+
+  // Fetch contract deployment info if this is a contract
+  let contractMeta: ContractMeta | null = null
+  if (isContract) {
+    contractMeta = await rpcCall<ContractMeta | null>('coc_getContractInfo', [address]).catch(() => null)
+  }
 
   return (
     <div className="space-y-6">
@@ -63,6 +78,43 @@ export default async function AddressPage({ params }: AddressPageProps) {
           </div>
         </div>
       </div>
+
+      {/* Contract deployment info */}
+      {isContract && contractMeta && (
+        <div className="bg-white rounded-lg shadow p-6">
+          <h3 className="text-lg font-bold mb-4">Contract Info</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+            <div>
+              <dt className="font-medium text-gray-500">Creator</dt>
+              <dd className="mt-1 font-mono">
+                <Link href={`/address/${contractMeta.creator}`} className="text-blue-600 hover:text-blue-800">
+                  {formatAddress(contractMeta.creator)}
+                </Link>
+              </dd>
+            </div>
+            <div>
+              <dt className="font-medium text-gray-500">Deploy Tx</dt>
+              <dd className="mt-1 font-mono">
+                <Link href={`/tx/${contractMeta.txHash}`} className="text-blue-600 hover:text-blue-800">
+                  {contractMeta.txHash.slice(0, 18)}...
+                </Link>
+              </dd>
+            </div>
+            <div>
+              <dt className="font-medium text-gray-500">Deploy Block</dt>
+              <dd className="mt-1">
+                <Link href={`/block/${parseInt(contractMeta.blockNumber, 16)}`} className="text-blue-600 hover:text-blue-800">
+                  #{parseInt(contractMeta.blockNumber, 16).toLocaleString()}
+                </Link>
+              </dd>
+            </div>
+            <div>
+              <dt className="font-medium text-gray-500">Bytecode Size</dt>
+              <dd className="mt-1 font-mono">{((code.length - 2) / 2).toLocaleString()} bytes</dd>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Transaction history */}
       <TxHistory address={address} initialTxs={txs} />
