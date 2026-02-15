@@ -7,6 +7,7 @@ import type { P2PNode } from "./p2p.ts"
 import type { PoSeEngine } from "./pose-engine.ts"
 import { registerPoseRoutes, handlePoseRequest } from "./pose-http.ts"
 import { keccak256Hex } from "../../services/relayer/keccak256.ts"
+import { calculateBaseFee, genesisBaseFee } from "./base-fee.ts"
 import { traceTransaction, traceBlockByNumber, traceTransactionCalls } from "./debug-trace.ts"
 import { createLogger } from "./logger.ts"
 
@@ -344,8 +345,12 @@ async function handleRpc(
       const block = await Promise.resolve(chain.getBlockByHash(hash))
       return formatBlock(block, includeTx, chain, evm)
     }
-    case "eth_gasPrice":
-      return "0x3b9aca00"
+    case "eth_gasPrice": {
+      const baseFee = await computeCurrentBaseFee(chain)
+      // Gas price = baseFee + suggested tip (1 gwei)
+      const suggestedPrice = baseFee + 1_000_000_000n
+      return `0x${suggestedPrice.toString(16)}`
+    }
     case "eth_estimateGas": {
       const estParams = ((payload.params ?? [])[0] ?? {}) as Record<string, string>
       const estimated = await evm.estimateGas({
@@ -892,7 +897,7 @@ async function formatBlock(block: Awaited<ReturnType<IChainEngine["getBlockByNum
     gasLimit: "0x1c9c380",
     gasUsed: `0x${totalGasUsed.toString(16)}`,
     timestamp: `0x${Math.floor(block.timestampMs / 1000).toString(16)}`,
-    baseFeePerGas: "0x3b9aca00",
+    baseFeePerGas: `0x${(await computeBaseFeeForBlock(block.number, chain)).toString(16)}`,
     finalized: block.finalized,
     transactions,
   }
@@ -973,6 +978,30 @@ async function collectLogs(
     }
   }
   return logs
+}
+
+/**
+ * Compute the current base fee from the latest block's gas usage.
+ */
+async function computeCurrentBaseFee(chain: IChainEngine): Promise<bigint> {
+  const height = await Promise.resolve(chain.getHeight())
+  return computeBaseFeeForBlock(height, chain)
+}
+
+async function computeBaseFeeForBlock(blockNum: bigint, chain: IChainEngine): Promise<bigint> {
+  if (blockNum <= 1n) return genesisBaseFee()
+
+  const parentNum = blockNum - 1n
+  const receipts = await Promise.resolve(chain.getReceiptsByBlock(parentNum))
+  let parentGasUsed = 0n
+  for (const r of receipts) {
+    parentGasUsed += r.gasUsed ?? 0n
+  }
+
+  // For simplicity, use recursive formula from genesis base fee
+  // In production, baseFee would be stored per block
+  const parentBaseFee = genesisBaseFee()
+  return calculateBaseFee({ parentBaseFee, parentGasUsed })
 }
 
 /**
