@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { provider, formatAddress, formatEther } from '@/lib/provider'
+import { decodeMethodSelector, decodeTransferLog, formatTokenAmount } from '@/lib/decoder'
 import { notFound } from 'next/navigation'
 
 export const dynamic = 'force-dynamic'
@@ -20,35 +21,46 @@ export default async function TxPage({ params }: TxPageProps) {
     notFound()
   }
 
+  const decoded = decodeMethodSelector(tx.data)
+  const tokenTransfers = receipt
+    ? receipt.logs
+        .map((log) => decodeTransferLog({
+          address: log.address,
+          topics: log.topics as string[],
+          data: log.data,
+        }))
+        .filter((t): t is NonNullable<typeof t> => t !== null)
+    : []
+
   return (
     <div className="space-y-6">
       <div className="bg-white rounded-lg shadow p-6">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-2xl font-bold">交易详情</h2>
+          <h2 className="text-2xl font-bold">Transaction Details</h2>
           {receipt && (
             <span className={`px-3 py-1 rounded text-sm font-medium ${
               receipt.status === 1 ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
             }`}>
-              {receipt.status === 1 ? '✅ 成功' : '❌ 失败'}
+              {receipt.status === 1 ? 'Success' : 'Failed'}
             </span>
           )}
         </div>
 
         <div className="space-y-4">
           <div>
-            <dt className="text-sm font-medium text-gray-500">交易哈希</dt>
+            <dt className="text-sm font-medium text-gray-500">Transaction Hash</dt>
             <dd className="mt-1 text-sm font-mono break-all">{tx.hash}</dd>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <dt className="text-sm font-medium text-gray-500">区块号</dt>
+              <dt className="text-sm font-medium text-gray-500">Block</dt>
               <dd className="mt-1 text-sm">
                 {tx.blockNumber ? (
                   <Link href={`/block/${tx.blockNumber}`} className="text-blue-600 hover:text-blue-800">
                     #{tx.blockNumber}
                   </Link>
-                ) : '待确认'}
+                ) : 'Pending'}
               </dd>
             </div>
 
@@ -75,7 +87,7 @@ export default async function TxPage({ params }: TxPageProps) {
                   <Link href={`/address/${tx.to}`} className="text-blue-600 hover:text-blue-800 font-mono">
                     {formatAddress(tx.to)}
                   </Link>
-                ) : <span className="text-gray-500">[合约创建]</span>}
+                ) : <span className="text-gray-500">[Contract Creation]</span>}
               </dd>
             </div>
           </div>
@@ -104,6 +116,18 @@ export default async function TxPage({ params }: TxPageProps) {
             )}
           </div>
 
+          {/* Decoded method */}
+          {decoded && (
+            <div>
+              <dt className="text-sm font-medium text-gray-500">Method</dt>
+              <dd className="mt-1">
+                <span className="px-2 py-1 bg-purple-100 text-purple-700 rounded text-sm font-mono">
+                  {decoded.name}
+                </span>
+              </dd>
+            </div>
+          )}
+
           {tx.data && tx.data !== '0x' && (
             <div>
               <dt className="text-sm font-medium text-gray-500">Input Data</dt>
@@ -113,16 +137,47 @@ export default async function TxPage({ params }: TxPageProps) {
         </div>
       </div>
 
+      {/* Token transfers */}
+      {tokenTransfers.length > 0 && (
+        <div className="bg-white rounded-lg shadow p-6">
+          <h3 className="text-xl font-bold mb-4">Token Transfers ({tokenTransfers.length})</h3>
+          <div className="space-y-3">
+            {tokenTransfers.map((t, i) => (
+              <div key={i} className="flex items-center gap-3 bg-yellow-50 border border-yellow-200 p-3 rounded text-sm">
+                <span className="px-2 py-0.5 bg-yellow-200 text-yellow-800 rounded text-xs font-medium">
+                  {t.type === 'ERC20-Transfer' ? 'Transfer' : 'Approval'}
+                </span>
+                <span className="font-mono font-medium">{formatTokenAmount(t.value)}</span>
+                <span className="text-gray-500">from</span>
+                <Link href={`/address/${t.from}`} className="text-blue-600 font-mono text-xs">
+                  {formatAddress(t.from)}
+                </Link>
+                <span className="text-gray-500">to</span>
+                <Link href={`/address/${t.to}`} className="text-blue-600 font-mono text-xs">
+                  {formatAddress(t.to)}
+                </Link>
+                <span className="text-gray-400 text-xs">
+                  via <Link href={`/address/${t.contractAddress}`} className="text-blue-600">{formatAddress(t.contractAddress)}</Link>
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Event logs */}
       {receipt && receipt.logs.length > 0 && (
         <div className="bg-white rounded-lg shadow p-6">
-          <h3 className="text-xl font-bold mb-4">事件日志 ({receipt.logs.length})</h3>
+          <h3 className="text-xl font-bold mb-4">Event Logs ({receipt.logs.length})</h3>
           <div className="space-y-3">
             {receipt.logs.map((log, i) => (
               <div key={i} className="bg-gray-50 p-4 rounded">
                 <div className="text-sm space-y-2">
                   <div>
                     <span className="font-medium">Address:</span>{' '}
-                    <code className="text-xs">{log.address}</code>
+                    <Link href={`/address/${log.address}`} className="text-blue-600 font-mono text-xs">
+                      {log.address}
+                    </Link>
                   </div>
                   <div>
                     <span className="font-medium">Topics:</span>
