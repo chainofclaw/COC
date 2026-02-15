@@ -1,5 +1,6 @@
 import type http from "node:http"
 import type { PoSeEngine } from "./pose-engine.ts"
+import type { ChallengeMessage, ReceiptMessage } from "../../services/common/pose-types.ts"
 
 interface PoseRouteHandler {
   method: string
@@ -34,8 +35,28 @@ export function registerPoseRoutes(
         if (!payload.challenge || !payload.receipt) {
           return jsonResponse(res, 400, { error: "missing challenge or receipt" })
         }
+        // Validate required fields on challenge and receipt
+        const ch = payload.challenge as Record<string, unknown>
+        const rc = payload.receipt as Record<string, unknown>
+        if (!ch.challengeId || !ch.epochId || !ch.nodeId) {
+          return jsonResponse(res, 400, { error: "invalid challenge: missing challengeId, epochId, or nodeId" })
+        }
+        if (!rc.challengeId || !rc.nodeId || !rc.nodeSig) {
+          return jsonResponse(res, 400, { error: "invalid receipt: missing challengeId, nodeId, or nodeSig" })
+        }
         try {
-          pose.submitReceipt(payload.challenge as any, payload.receipt as any)
+          // Convert epochId and timestamp bigints from string/number
+          const challenge: ChallengeMessage = {
+            ...ch,
+            epochId: BigInt(String(ch.epochId)),
+            issuedAtMs: BigInt(String(ch.issuedAtMs ?? 0)),
+          } as ChallengeMessage
+          const receipt: ReceiptMessage = {
+            ...rc,
+            responseAtMs: BigInt(String(rc.responseAtMs ?? 0)),
+            responseBody: (rc.responseBody ?? {}) as Record<string, unknown>,
+          } as ReceiptMessage
+          pose.submitReceipt(challenge, receipt)
           return jsonResponse(res, 200, { accepted: true })
         } catch (error) {
           return jsonResponse(res, 400, { error: `receipt rejected: ${String(error)}` })
