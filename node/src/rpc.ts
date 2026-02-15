@@ -663,6 +663,17 @@ async function handleRpc(
     }
     case "eth_maxPriorityFeePerGas":
       return "0x3b9aca00" // 1 gwei
+    case "eth_mining":
+      return false
+    case "eth_hashrate":
+      return "0x0"
+    case "eth_coinbase":
+      return "0x0000000000000000000000000000000000000000"
+    case "eth_compileSolidity":
+    case "eth_compileLLL":
+    case "eth_compileSerpent":
+    case "eth_getCompilers":
+      throw new Error("compilation methods are not supported")
     case "eth_getBlockReceipts": {
       const tag = String((payload.params ?? [])[0] ?? "latest")
       const height = await Promise.resolve(chain.getHeight())
