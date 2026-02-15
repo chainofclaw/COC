@@ -6,14 +6,33 @@ let rpcId = 1
  * Send a raw JSON-RPC call to the COC node.
  */
 export async function rpcCall<T = unknown>(method: string, params: unknown[] = []): Promise<T> {
-  const res = await fetch(RPC_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ jsonrpc: '2.0', id: rpcId++, method, params }),
-    cache: 'no-store',
-  })
-  const json = await res.json()
-  if (json.error) throw new Error(json.error.message)
+  let res: Response
+  try {
+    res = await fetch(RPC_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: rpcId++, method, params }),
+      cache: 'no-store',
+    })
+  } catch (err) {
+    throw new Error(`RPC connection failed: ${err instanceof Error ? err.message : 'network error'}`)
+  }
+
+  if (!res.ok) {
+    throw new Error(`RPC HTTP error ${res.status}: ${res.statusText}`)
+  }
+
+  let json: { result?: T; error?: { code: number; message: string } }
+  try {
+    json = await res.json()
+  } catch {
+    throw new Error('RPC returned invalid JSON')
+  }
+
+  if (json.error) {
+    throw new Error(`RPC error ${json.error.code}: ${json.error.message}`)
+  }
+
   return json.result as T
 }
 
