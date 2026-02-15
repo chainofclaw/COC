@@ -673,6 +673,20 @@ async function handleRpc(
       }
       return []
     }
+    case "coc_nodeInfo": {
+      const height = await Promise.resolve(chain.getHeight())
+      const mempoolStats = chain.mempool.stats()
+      return {
+        clientVersion: "COC/0.2",
+        chainId,
+        blockHeight: height,
+        mempool: mempoolStats,
+        uptime: Math.floor(process.uptime()),
+        nodeVersion: process.version,
+        platform: process.platform,
+        arch: process.arch,
+      }
+    }
     default:
       throw new Error(`method not supported: ${payload.method}`)
   }
