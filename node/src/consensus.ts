@@ -47,8 +47,8 @@ export class ConsensusEngine {
   }
 
   private async tryPropose(): Promise<void> {
-    // Skip proposing in degraded/recovering mode
-    if (this.status !== "healthy") {
+    // Skip proposing in degraded mode (recovering is allowed as a test)
+    if (this.status === "degraded") {
       return
     }
 
@@ -59,11 +59,20 @@ export class ConsensusEngine {
       }
       await this.p2p.receiveBlock(block)
       this.proposeFailures = 0
+
+      // Successful propose during recovery -> healthy
+      if (this.status === "recovering") {
+        this.status = "healthy"
+        log.info("recovered from degraded mode via successful propose")
+      }
     } catch (error) {
       this.proposeFailures++
       log.error("propose failed", { error: String(error), consecutive: this.proposeFailures })
 
-      if (this.proposeFailures >= MAX_CONSECUTIVE_FAILURES) {
+      if (this.status === "recovering") {
+        // Failed propose during recovery -> back to degraded
+        this.enterDegradedMode("recovery-propose")
+      } else if (this.proposeFailures >= MAX_CONSECUTIVE_FAILURES) {
         this.enterDegradedMode("propose")
       }
     }
@@ -120,7 +129,6 @@ export class ConsensusEngine {
     this.status = "recovering"
     this.proposeFailures = 0
     this.syncFailures = 0
-    this.status = "healthy"
-    log.info("recovered from degraded mode")
+    log.info("entering recovery mode, next propose will determine health")
   }
 }
