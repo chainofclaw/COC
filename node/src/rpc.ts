@@ -1,6 +1,7 @@
 import http from "node:http"
 import { SigningKey, keccak256, hashMessage, Transaction, TypedDataEncoder } from "ethers"
 import type { IChainEngine } from "./chain-engine-types.ts"
+import { hasGovernance, hasConfig, hasBlockIndex } from "./chain-engine-types.ts"
 import type { EvmChain } from "./evm.ts"
 import type { Hex, PendingFilter } from "./blockchain-types.ts"
 import type { P2PNode } from "./p2p.ts"
@@ -810,10 +811,9 @@ async function handleRpc(
       return { latestBlock: 0, pruningHeight: 0, retainedBlocks: 0 }
     }
     case "coc_getValidators": {
-      const engine = chain as any
-      if (engine.governance) {
-        const validators = engine.governance.getActiveValidators()
-        return validators.map((v: any) => ({
+      if (hasGovernance(chain)) {
+        const validators = chain.governance.getActiveValidators()
+        return validators.map((v) => ({
           id: v.id,
           address: v.address,
           stake: `0x${v.stake.toString(16)}`,
@@ -827,10 +827,9 @@ async function handleRpc(
       return chain.expectedProposer(height + 1n)
     }
     case "coc_submitProposal": {
-      const engine = chain as any
-      if (!engine.governance) throw new Error("governance not enabled")
+      if (!hasGovernance(chain)) throw new Error("governance not enabled")
       const proposalParams = (payload.params ?? [])[0] as Record<string, string>
-      const proposal = engine.governance.submitProposal(
+      const proposal = chain.governance.submitProposal(
         proposalParams.type,
         proposalParams.targetId,
         proposalParams.proposer,
@@ -847,15 +846,14 @@ async function handleRpc(
       }
     }
     case "coc_voteProposal": {
-      const engine = chain as any
-      if (!engine.governance) throw new Error("governance not enabled")
+      if (!hasGovernance(chain)) throw new Error("governance not enabled")
       const voteParams = (payload.params ?? [])[0] as Record<string, unknown>
-      engine.governance.vote(
+      chain.governance.vote(
         String(voteParams.proposalId),
         String(voteParams.voterId),
         Boolean(voteParams.approve),
       )
-      const updated = engine.governance.getProposal(String(voteParams.proposalId))
+      const updated = chain.governance.getProposal(String(voteParams.proposalId))
       return {
         id: updated?.id,
         status: updated?.status,
@@ -866,7 +864,7 @@ async function handleRpc(
       const height = await Promise.resolve(chain.getHeight())
       const latest = await Promise.resolve(chain.getBlockByNumber(height))
       const poolStats = chain.mempool.stats()
-      const validators = (chain as any).cfg?.validators ?? []
+      const validators = hasConfig(chain) ? chain.cfg.validators : []
 
       // Calculate blocks per minute from last 10 blocks
       let blocksPerMin = 0
@@ -894,19 +892,18 @@ async function handleRpc(
         pendingTxCount: poolStats.size,
         recentTxCount,
         validatorCount: validators.length,
-        chainId: `0x${(chain as any).cfg?.chainId?.toString(16) ?? "1"}`,
+        chainId: `0x${hasConfig(chain) ? chain.cfg.chainId.toString(16) : "1"}`,
       }
     }
     case "coc_getContracts": {
-      const engine = chain as any
-      if (engine.blockIndex?.getContracts) {
+      if (hasBlockIndex(chain)) {
         const opts = (payload.params ?? [])[0] as Record<string, unknown> | undefined
-        const contracts = await engine.blockIndex.getContracts({
+        const contracts = await chain.blockIndex.getContracts({
           limit: Number(opts?.limit ?? 50),
           offset: Number(opts?.offset ?? 0),
           reverse: opts?.reverse !== false,
         })
-        return contracts.map((c: any) => ({
+        return contracts.map((c) => ({
           address: c.address,
           blockNumber: `0x${c.blockNumber.toString(16)}`,
           txHash: c.txHash,
@@ -917,11 +914,10 @@ async function handleRpc(
       return []
     }
     case "coc_getContractInfo": {
-      const engine = chain as any
       const addr = (payload.params ?? [])[0] as string
       if (!addr) throw new Error("address required")
-      if (engine.blockIndex?.getContractInfo) {
-        const info = await engine.blockIndex.getContractInfo(addr as Hex)
+      if (hasBlockIndex(chain)) {
+        const info = await chain.blockIndex.getContractInfo(addr as Hex)
         if (!info) return null
         return {
           address: info.address,

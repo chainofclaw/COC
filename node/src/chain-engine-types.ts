@@ -63,6 +63,72 @@ export interface IBlockSyncEngine extends IChainEngine {
 }
 
 /**
+ * Engines with governance support (ValidatorGovernance)
+ */
+export interface IGovernanceEngine extends IChainEngine {
+  governance: {
+    getActiveValidators(): Array<{
+      id: string
+      address: string
+      stake: bigint
+      votingPower: number
+      active: boolean
+      joinedAtEpoch: bigint
+    }>
+    submitProposal(
+      type: string,
+      targetId: string,
+      proposer: string,
+      opts?: { targetAddress?: string; stakeAmount?: bigint },
+    ): { id: string; type: string; targetId: string; status: string }
+    vote(proposalId: string, voterId: string, approve: boolean): void
+    getProposal(proposalId: string): { id: string; status: string; votes: Map<string, boolean> } | null
+  }
+}
+
+/**
+ * Engines with config access
+ */
+export interface IConfigEngine extends IChainEngine {
+  cfg: { validators: string[]; chainId: number }
+}
+
+/**
+ * Engines with block index access (persistent engines)
+ */
+export interface IBlockIndexEngine extends IChainEngine {
+  blockIndex: {
+    getContracts(opts?: { limit?: number; offset?: number; reverse?: boolean }): Promise<Array<{
+      address: string
+      blockNumber: bigint
+      txHash: string
+      creator: string
+      deployedAt: number
+    }>>
+    getContractInfo(address: Hex): Promise<{
+      address: string
+      blockNumber: bigint
+      txHash: string
+      creator: string
+      deployedAt: number
+    } | null>
+  }
+}
+
+// Type guards
+export function hasGovernance(engine: IChainEngine): engine is IGovernanceEngine {
+  return "governance" in engine && !!(engine as IGovernanceEngine).governance
+}
+
+export function hasConfig(engine: IChainEngine): engine is IConfigEngine {
+  return "cfg" in engine && !!(engine as IConfigEngine).cfg
+}
+
+export function hasBlockIndex(engine: IChainEngine): engine is IBlockIndexEngine {
+  return "blockIndex" in engine && !!(engine as IBlockIndexEngine).blockIndex
+}
+
+/**
  * Helper to await a possibly sync value
  */
 export async function resolveValue<T>(value: T | Promise<T>): Promise<T> {
