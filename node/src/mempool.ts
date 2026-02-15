@@ -160,24 +160,31 @@ export class Mempool {
     maxTx: number,
     getOnchainNonce: (address: Hex) => Promise<bigint>,
     minGasPriceWei: bigint,
+    baseFeePerGas: bigint = 1000000000n, // default 1 gwei
   ): Promise<MempoolTx[]> {
     if (maxTx <= 0 || this.txs.size === 0) {
       return []
     }
 
-    // Evict expired txs before selection
     this.evictExpired()
 
-    // EIP-1559 aware sorting: effective gas price = min(maxFeePerGas, baseFee + maxPriorityFeePerGas)
-    // For simplicity, we use gasPrice (already the effective price from ethers)
+    // EIP-1559 effective gas price: min(maxFeePerGas, baseFee + maxPriorityFeePerGas)
+    // For legacy txs (no maxFeePerGas), gasPrice is used directly
+    const effectivePrice = (tx: MempoolTx): bigint => {
+      if (tx.maxFeePerGas > 0n && tx.maxPriorityFeePerGas > 0n) {
+        const dynamic = baseFeePerGas + tx.maxPriorityFeePerGas
+        return tx.maxFeePerGas < dynamic ? tx.maxFeePerGas : dynamic
+      }
+      return tx.gasPrice
+    }
+
     const sorted = [...this.txs.values()]
-      .filter((tx) => tx.gasPrice >= minGasPriceWei)
+      .filter((tx) => effectivePrice(tx) >= minGasPriceWei)
       .sort((a, b) => {
-        // Higher gas price first
-        if (a.gasPrice !== b.gasPrice) return a.gasPrice > b.gasPrice ? -1 : 1
-        // Lower nonce first (for same sender ordering)
+        const aPrice = effectivePrice(a)
+        const bPrice = effectivePrice(b)
+        if (aPrice !== bPrice) return aPrice > bPrice ? -1 : 1
         if (a.nonce !== b.nonce) return a.nonce < b.nonce ? -1 : 1
-        // Earlier arrival first
         return a.receivedAtMs - b.receivedAtMs
       })
 
@@ -216,9 +223,6 @@ export class Mempool {
     return maxNonce + 1n
   }
 
-  /**
-   * Get pool statistics
-   */
   /**
    * Get all pending transactions in the pool, sorted by gas price desc
    */
