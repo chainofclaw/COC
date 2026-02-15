@@ -8,7 +8,7 @@ This document maps the whitepaper scope to the current codebase and test coverag
 - **Missing**: not implemented
 
 ## 1) Execution Layer (EVM)
-**Status: Partial (Enhanced in Phase 13.1 + 13.2 + 14 + 17)**
+**Status: Partial (Enhanced in Phase 13.1 + 13.2 + 14 + 17 + 26)**
 
 Implemented:
 - In-memory EVM execution using `@ethereumjs/vm`
@@ -25,10 +25,12 @@ Implemented:
 - **Phase 14**: Chain event emitter with typed event system
 - **Phase 17**: Debug/trace APIs (debug_traceTransaction, debug_traceBlockByNumber, trace_transaction)
 - **Phase 20**: State trie optimization (LRU cache, dirty tracking, account cache, root persistence)
+- **Phase 26**: EVM state persistence via PersistentStateManager adapter
+- **Phase 26**: State survives node restart (no replay needed when state root exists)
+- **Phase 26**: Snapshot restore via setStateRoot
 
 Missing/Partial:
 - Proper block header fields (receiptsRoot, stateRoot from real state)
-- Cross-instance trie persistence (@ethereumjs/trie v6 compatibility)
 
 Code:
 - `COC/node/src/evm.ts`
@@ -37,9 +39,10 @@ Code:
 - `COC/node/src/chain-engine-types.ts` (NEW - Phase 13.2)
 - `COC/node/src/chain-engine-persistent.ts`
 - `COC/node/src/storage/state-trie.ts`
+- `COC/node/src/storage/persistent-state-manager.ts` (NEW - Phase 26)
 
 ## 2) Consensus & Block Production
-**Status: Partial (Enhanced in Phase 13.2 + 22)**
+**Status: Partial (Enhanced in Phase 13.2 + 22 + 26)**
 
 Implemented:
 - Deterministic round‑robin proposer rotation
@@ -49,6 +52,10 @@ Implemented:
 - **Phase 13.2**: Support for both snapshot-based and block-based sync
 - **Phase 22**: Validator governance with proposal-based set management
 - **Phase 22**: Stake-weighted voting and epoch-based transitions
+- **Phase 26**: ValidatorGovernance connected to PersistentChainEngine
+- **Phase 26**: Stake-weighted proposer selection (cumulative threshold algorithm)
+- **Phase 26**: Block signature and stateRoot fields in ChainBlock
+- **Phase 26**: Governance RPC methods (coc_getValidators, coc_submitProposal, coc_voteProposal)
 
 Missing/Partial:
 - BFT/PoA/PoS finality and slashing rules
@@ -61,7 +68,7 @@ Code:
 - `COC/node/src/consensus.ts`
 
 ## 3) P2P Networking
-**Status: Partial (Enhanced in Phase 16)**
+**Status: Partial (Enhanced in Phase 16 + 26)**
 
 Implemented:
 - HTTP-based gossip for tx and blocks
@@ -72,6 +79,11 @@ Implemented:
 - **Phase 16**: Periodic health checking and score decay
 - **Phase 16**: `/p2p/peers` endpoint for peer list exchange
 - **Phase 16**: Active peer selection for broadcasting
+- **Phase 26**: Peer persistence to disk (peers.json with auto-save)
+- **Phase 26**: DNS seed discovery (TXT record resolution)
+- **Phase 26**: Peer expiration filtering (configurable TTL, default 7 days)
+- **Phase 26**: Failure tracking with auto-removal after threshold
+- **Phase 26**: Pubsub message forwarding via `/p2p/pubsub-message`
 
 Missing/Partial:
 - Binary wire protocol and streaming sync
@@ -79,9 +91,12 @@ Missing/Partial:
 
 Code:
 - `COC/node/src/p2p.ts`
+- `COC/node/src/peer-store.ts` (NEW - Phase 26)
+- `COC/node/src/dns-seeds.ts` (NEW - Phase 26)
+- `COC/node/src/peer-discovery.ts`
 
 ## 4) Storage & Persistence
-**Status: Implemented (Phase 13.1 + 13.2 + 21 Complete)**
+**Status: Implemented (Phase 13.1 + 13.2 + 21 + 26 Complete)**
 
 Implemented:
 - Chain snapshot persistence (JSON, legacy)
@@ -99,9 +114,14 @@ Implemented:
 - IPFS-compatible blockstore + UnixFS file layout
 - IPFS HTTP API subset
 
+- **Phase 26**: IPFS MFS (Mutable File System) - mkdir/write/read/ls/rm/mv/cp/stat/flush
+- **Phase 26**: IPFS Pubsub - topic-based messaging with deduplication and P2P forwarding
+- **Phase 26**: MFS HTTP routes (`/api/v0/files/*`)
+- **Phase 26**: Pubsub HTTP routes (`/api/v0/pubsub/*`) with ndjson streaming
+
 Missing/Partial:
 - Full incremental compaction (tx-level pruning)
-- Full IPFS feature parity (MFS, pubsub, tar archive for `get`)
+- IPFS tar archive for `get`
 
 Code:
 - `COC/node/src/storage.ts` (legacy)
@@ -114,6 +134,8 @@ Code:
 - `COC/node/src/ipfs-blockstore.ts`
 - `COC/node/src/ipfs-unixfs.ts`
 - `COC/node/src/ipfs-http.ts`
+- `COC/node/src/ipfs-mfs.ts` (NEW - Phase 26)
+- `COC/node/src/ipfs-pubsub.ts` (NEW - Phase 26)
 
 ## 5) Mempool & Fee Market
 **Status: Implemented (Phase 15)**
@@ -391,9 +413,60 @@ Documentation:
 - `COC/docs/phase-24-plan.en.md`
 - `COC/docs/phase-24-plan.zh.md`
 
-## 18) Whitepaper Gap Summary
-- Consensus security model partially addressed (validator governance with stake-weighted voting added in Phase 22).
-- Full P2P stack needs DHT, binary wire protocol (peer scoring added in Phase 16).
-- EVM JSON-RPC compatibility is partial (debug/trace APIs simplified, no step-level tracing).
-- PoSe dispute automation partially addressed (DisputeMonitor, PenaltyTracker added in Phase 19).
-- IPFS compatibility is limited to core HTTP APIs.
+## 18) Phase 26: Four Limitations Resolution
+**Status: Implemented (2026-02-15)**
+
+### 26.1 EVM State Persistence
+- `PersistentStateManager` adapts `IStateTrie` to EthereumJS `StateManagerInterface`
+- EVM state (accounts, storage, code) persists across node restarts
+- `PersistentChainEngine` skips block replay when valid state root exists
+- Snapshot restore via `setStateRoot()`
+
+### 26.2 P2P Enhancement
+- `PeerStore` saves/loads peers to `peers.json` with auto-save (5 min interval)
+- `DnsSeedResolver` resolves TXT records (`coc-peer:<id>:<url>` format)
+- Peer expiration filtering (configurable TTL, default 7 days)
+- Failure tracking with auto-removal after threshold (10 failures)
+
+### 26.3 Consensus Enhancement
+- `ValidatorGovernance` connected to `PersistentChainEngine`
+- Stake-weighted proposer selection (cumulative threshold algorithm)
+- `signature` and `stateRoot` fields added to `ChainBlock`
+- Governance RPC: `coc_getValidators`, `coc_submitProposal`, `coc_voteProposal`
+
+### 26.4 IPFS Enhancement
+- MFS (Mutable File System): mkdir/write/read/ls/rm/mv/cp/stat/flush
+- Pubsub: topic-based messaging with deduplication, P2P forwarding, max topics/message size limits
+- HTTP routes: `/api/v0/files/*` (MFS), `/api/v0/pubsub/*` (Pubsub with ndjson streaming)
+
+Code:
+- `COC/node/src/storage/persistent-state-manager.ts` (NEW)
+- `COC/node/src/peer-store.ts` (NEW)
+- `COC/node/src/dns-seeds.ts` (NEW)
+- `COC/node/src/ipfs-mfs.ts` (NEW)
+- `COC/node/src/ipfs-pubsub.ts` (NEW)
+- `COC/node/src/evm.ts` (UPDATED)
+- `COC/node/src/chain-engine-persistent.ts` (UPDATED)
+- `COC/node/src/blockchain-types.ts` (UPDATED)
+- `COC/node/src/peer-discovery.ts` (UPDATED)
+- `COC/node/src/p2p.ts` (UPDATED)
+- `COC/node/src/ipfs-http.ts` (UPDATED)
+- `COC/node/src/rpc.ts` (UPDATED)
+- `COC/node/src/config.ts` (UPDATED)
+- `COC/node/src/index.ts` (UPDATED)
+- `COC/node/src/storage/state-trie.ts` (UPDATED)
+- `COC/node/src/storage/snapshot-manager.ts` (UPDATED)
+
+Tests (49 new tests):
+- `COC/node/src/storage/persistent-state-manager.test.ts` (10 tests)
+- `COC/node/src/peer-store.test.ts` (9 tests)
+- `COC/node/src/dns-seeds.test.ts` (5 tests)
+- `COC/node/src/ipfs-mfs.test.ts` (13 tests)
+- `COC/node/src/ipfs-pubsub.test.ts` (12 tests)
+
+## 19) Whitepaper Gap Summary
+- Consensus: validator governance with stake-weighted proposer selection connected (Phase 22 + 26). BFT finality still missing.
+- P2P: peer scoring (Phase 16), peer persistence and DNS seed discovery (Phase 26). DHT and binary wire protocol still missing.
+- EVM: state persistence connected (Phase 26). JSON-RPC compatibility partial (no step-level tracing).
+- PoSe: dispute automation partially addressed (Phase 19).
+- IPFS: MFS and Pubsub implemented (Phase 26). Tar archive for `get` still missing.

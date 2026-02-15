@@ -5,21 +5,26 @@ COC 是一个 EVM 兼容的区块链原型，结合轻量执行层与 PoSe（Pro
 
 ## 分层架构
 1. **执行层（EVM）**
-   - 执行交易并维护内存状态。
+   - 执行交易，通过 `PersistentStateManager` 持久化 EVM 状态。
    - 通过 JSON-RPC 提供钱包与工具访问。
 
 2. **共识与链层**
-   - 通过确定性的出块者轮转产生区块。
+   - 通过权益加权的出块者选择产生区块（支持轮转降级）。
    - 跟踪最终性深度并做基础链校验。
    - 通过快照持久化实现重启恢复。
+   - ValidatorGovernance 实现提案制验证者集合管理。
 
 3. **P2P 网络层**
-   - 采用 HTTP gossip 传播交易与区块。
+   - 采用 HTTP gossip 传播交易、区块与 pubsub 消息。
    - 通过链快照同步进行对等节点对齐。
+   - 节点持久化存储与 DNS 种子发现。
+   - 基于声誉的节点评分与自动封禁/解封。
 
 4. **存储层（兼容 IPFS）**
    - Blockstore + UnixFS 文件布局。
    - HTTP API 子集与 `/ipfs/<cid>` 网关。
+   - MFS（可变文件系统）提供 POSIX 风格文件操作。
+   - Pubsub 基于主题的消息发布/订阅与 P2P 转发。
 
 5. **PoSe 服务层**
    - 链下挑战/验证/聚合流水线。
@@ -60,7 +65,7 @@ COC 是一个 EVM 兼容的区块链原型，结合轻量执行层与 PoSe（Pro
 7. 聚合批次提交到 PoSeManager，relayer 触发最终结算。
 
 ## 当前边界
-- 共识为确定性轮转（尚未实现 BFT/PoS）。
-- P2P 为 HTTP gossip（尚未完成节点发现与评分）。
-- EVM 状态为内存存储，仅快照持久化。
-- IPFS 兼容性目前集中在核心 HTTP API 与网关行为。
+- 共识采用 ValidatorGovernance 权益加权出块（尚未实现 BFT 最终性）。
+- P2P 采用 HTTP gossip + 节点持久化 + DNS 种子发现（尚未实现 DHT 或二进制线协议）。
+- EVM 状态通过 PersistentStateManager + LevelDB 跨重启持久化。
+- IPFS 支持核心 HTTP API、网关、MFS 和 Pubsub（尚未支持 tar archive `get`）。

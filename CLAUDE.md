@@ -2,220 +2,229 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## 项目概述
+## Project Overview
 
-COC (ChainOfClaw) 是一个 EVM 兼容的区块链原型，集成了 PoSe (Proof-of-Service) 结算机制和 IPFS 兼容的存储接口。
+COC (ChainOfClaw) is an EVM-compatible blockchain prototype integrating a PoSe (Proof-of-Service) settlement mechanism and an IPFS-compatible storage interface.
 
-## 工作区结构
+## Workspace Structure
 
-项目使用 npm workspaces 管理多个包：
+The project uses npm workspaces to manage multiple packages:
 
-- `node/`: 区块链核心引擎（ChainEngine, EVM, P2P, RPC, IPFS）
-- `contracts/`: Solidity 智能合约（PoSeManager 结算合约）
-- `services/`: PoSe 离线服务（challenger, verifier, aggregator, relayer）
-- `runtime/`: 运行时可执行文件（coc-node, coc-agent, coc-relayer）
-- `nodeops/`: 节点操作和策略引擎
-- `wallet/`: CLI 钱包工具
-- `tests/`: 集成和端到端测试
-- `explorer/`: Next.js 区块链浏览器
-- `website/`: 项目网站
+- `node/`: Blockchain core engine (ChainEngine, EVM, P2P, RPC, IPFS)
+- `contracts/`: Solidity smart contracts (PoSeManager settlement contract)
+- `services/`: PoSe off-chain services (challenger, verifier, aggregator, relayer)
+- `runtime/`: Runtime executables (coc-node, coc-agent, coc-relayer)
+- `nodeops/`: Node operations and policy engine
+- `wallet/`: CLI wallet tool
+- `tests/`: Integration and end-to-end tests
+- `explorer/`: Next.js blockchain explorer
+- `website/`: Project website
 
-## 运行时要求
+## Runtime Requirements
 
-- **Node.js 22+** (使用 `--experimental-strip-types` 直接运行 TypeScript)
-- npm 用于包管理和工作区
+- **Node.js 22+** (uses `--experimental-strip-types` to run TypeScript directly)
+- npm for package management and workspaces
 
-## 核心开发命令
+## Core Development Commands
 
-### 运行本地节点
+### Run Local Node
 ```bash
 cd node
 npm install
-npm start  # 使用 node --experimental-strip-types
+npm start  # uses node --experimental-strip-types
 ```
 
-### 智能合约开发
+### Smart Contract Development
 ```bash
 cd contracts
 npm install
-npm run compile          # 编译合约
-npm test                 # Hardhat 测试
-npm run coverage         # 覆盖率检查
-npm run coverage:check   # 验证覆盖率阈值
-npm run deploy:local     # 部署到本地网络
-npm run verify:pose      # 验证 PoSe 合约
+npm run compile          # Compile contracts
+npm test                 # Hardhat tests
+npm run coverage         # Coverage check
+npm run coverage:check   # Verify coverage thresholds
+npm run deploy:local     # Deploy to local network
+npm run verify:pose      # Verify PoSe contract
 ```
 
-### 运行 Devnet
+### Run Devnet
 ```bash
-bash scripts/devnet-3.sh  # 3 节点网络
-bash scripts/devnet-5.sh  # 5 节点网络
-bash scripts/devnet-7.sh  # 7 节点网络
-bash scripts/stop-devnet.sh    # 停止 devnet
-bash scripts/verify-devnet.sh  # 验证 devnet 运行状态
+bash scripts/devnet-3.sh  # 3-node network
+bash scripts/devnet-5.sh  # 5-node network
+bash scripts/devnet-7.sh  # 7-node network
+bash scripts/stop-devnet.sh    # Stop devnet
+bash scripts/verify-devnet.sh  # Verify devnet status
 ```
 
-### 区块链浏览器
+### Blockchain Explorer
 ```bash
 cd explorer
 npm install
-npm run dev    # 开发模式 http://localhost:3000
-npm run build  # 生产构建
-npm start      # 生产模式启动
+npm run dev    # Development mode http://localhost:3000
+npm run build  # Production build
+npm start      # Production mode
 ```
 
-### 质量检查
+### Quality Gate
 ```bash
-bash scripts/quality-gate.sh  # 运行所有单元、集成和 e2e 测试
+bash scripts/quality-gate.sh  # Run all unit, integration, and e2e tests
 ```
 
-### 节点运维策略
-策略文件位于 `nodeops/policies/*.yaml`，可以通过策略引擎加载和评估。
+### Node Operations Policies
+Policy files are located at `nodeops/policies/*.yaml` and can be loaded and evaluated by the policy engine.
 
-## 测试策略
+## Test Strategy
 
-使用 Node.js 内置测试框架（190 测试，83+97+10 分布）：
-- **节点层测试**: `node/src/**/*.test.ts` (83 tests) - 链引擎、EVM、RPC、WebSocket、P2P、mempool、存储
-- **服务层测试**: `services/**/*.test.ts` + `nodeops/*.test.ts` + `tests/**/*.test.ts` (97 tests)
-- **合约测试**: `contracts/` (52 tests via Hardhat)
-- **存储层测试**: `node/src/storage/*.test.ts` (26 tests, 包含在节点层中)
+Uses Node.js built-in test framework (239 tests, 132+97+10 distribution):
+- **Node layer tests**: `node/src/**/*.test.ts` (132 tests) - chain engine, EVM, RPC, WebSocket, P2P, mempool, storage, MFS, Pubsub
+- **Service layer tests**: `services/**/*.test.ts` + `nodeops/*.test.ts` + `tests/**/*.test.ts` (97 tests)
+- **Contract tests**: `contracts/` (52 tests via Hardhat)
+- **Storage layer tests**: `node/src/storage/*.test.ts` (36 tests, included in node layer)
 
-运行测试：
+Running tests:
 ```bash
-# 节点层测试
+# Node layer tests
 cd node && node --experimental-strip-types --test --test-force-exit src/**/*.test.ts
 
-# 服务层测试
+# Service layer tests
 cd /path/to/COC && node --experimental-strip-types --test --test-force-exit services/**/*.test.ts nodeops/*.test.ts tests/**/*.test.ts
 
-# 合约测试
+# Contract tests
 cd contracts && npm test
 ```
 
-## 核心架构概念
+## Core Architecture
 
-### 节点核心组件 (node/src/)
-- `chain-engine.ts`: 区块链引擎，管理区块生产、持久化和最终性
-- `evm.ts`: EVM 执行层（基于 @ethereumjs/vm）
-- `consensus.ts`: 共识引擎（确定性轮换 + 降级模式 + 自动恢复）
-- `p2p.ts`: HTTP gossip 网络（每 peer 去重、请求体限制、广播并发控制）
-- `rpc.ts`: JSON-RPC 接口（57+ 方法）
-- `websocket-rpc.ts`: WebSocket RPC（eth_subscribe，订阅验证与限制）
-- `mempool.ts`: 交易内存池（EIP-1559 effective gas price 排序）
-- `base-fee.ts`: EIP-1559 动态 baseFee 计算
-- `health.ts`: 健康检查（内存/WS/存储/共识诊断）
-- `debug-trace.ts`: 交易追踪（debug_traceTransaction、trace_transaction）
-- `storage.ts`: 链快照持久化
-- `ipfs-*.ts`: IPFS 兼容存储层
-  - `ipfs-blockstore.ts`: 内容寻址块存储
-  - `ipfs-unixfs.ts`: UnixFS 文件布局
-  - `ipfs-http.ts`: IPFS HTTP API 子集 + `/ipfs/<cid>` 网关
-- `pose-engine.ts`: PoSe 挑战/收据管道
-- `pose-http.ts`: PoSe HTTP 端点
+### Node Core Components (node/src/)
+- `chain-engine.ts`: Blockchain engine, manages block production, persistence, and finality
+- `evm.ts`: EVM execution layer (based on @ethereumjs/vm)
+- `consensus.ts`: Consensus engine (deterministic rotation + degraded mode + auto-recovery)
+- `p2p.ts`: HTTP gossip network (per-peer dedup, request body limits, broadcast concurrency control)
+- `rpc.ts`: JSON-RPC interface (57+ methods)
+- `websocket-rpc.ts`: WebSocket RPC (eth_subscribe, subscription validation and limits)
+- `mempool.ts`: Transaction mempool (EIP-1559 effective gas price sorting)
+- `base-fee.ts`: EIP-1559 dynamic baseFee calculation
+- `health.ts`: Health checks (memory/WS/storage/consensus diagnostics)
+- `debug-trace.ts`: Transaction tracing (debug_traceTransaction, trace_transaction)
+- `storage.ts`: Chain snapshot persistence
+- `ipfs-*.ts`: IPFS-compatible storage layer
+  - `ipfs-blockstore.ts`: Content-addressed block storage
+  - `ipfs-unixfs.ts`: UnixFS file layout
+  - `ipfs-http.ts`: IPFS HTTP API subset + `/ipfs/<cid>` gateway + MFS/Pubsub routes
+  - `ipfs-mfs.ts`: Mutable File System (mkdir/write/read/ls/rm/mv/cp/stat/flush)
+  - `ipfs-pubsub.ts`: Topic-based pub/sub messaging (dedup, P2P forwarding)
+- `peer-store.ts`: Peer persistence storage (peers.json, auto-save)
+- `dns-seeds.ts`: DNS seed discovery (TXT record resolution)
+- `pose-engine.ts`: PoSe challenge/receipt pipeline
+- `pose-http.ts`: PoSe HTTP endpoints
 
-### PoSe 服务层 (services/)
-- `challenger/`: 挑战生成和配额管理
-- `verifier/`: 收据验证、评分和奖励计算
-- `aggregator/`: 批处理聚合（Merkle root + 样本证明）
-- `relayer/`: epoch 最终化和 slash 自动化
-- `common/`: 共享类型、Merkle 树和角色注册表
+### PoSe Service Layer (services/)
+- `challenger/`: Challenge generation and quota management
+- `verifier/`: Receipt verification, scoring, and reward calculation
+- `aggregator/`: Batch aggregation (Merkle root + sample proofs)
+- `relayer/`: Epoch finalization and slash automation
+- `common/`: Shared types, Merkle tree, and role registry
 
-### 运行时服务 (runtime/)
-- `coc-node.ts`: PoSe 挑战/收据 HTTP 端点
-- `coc-agent.ts`: 挑战生成、批量提交、节点注册
-- `coc-relayer.ts`: epoch 最终化和 slash hooks
+### Runtime Services (runtime/)
+- `coc-node.ts`: PoSe challenge/receipt HTTP endpoints
+- `coc-agent.ts`: Challenge generation, batch submission, node registration
+- `coc-relayer.ts`: Epoch finalization and slash hooks
 
-### 节点运维 (nodeops/)
-- `policy-engine.ts`: 策略评估引擎
-- `policy-loader.ts`: 策略加载和验证（支持 YAML）
-- `agent-hooks.ts`: agent 生命周期钩子
-  - `onChallengeIssued`: 挑战发起时触发
-  - `onReceiptVerified`: 收据验证后触发
-  - `onBatchSubmitted`: 批次提交后触发
-- `policy-types.ts`: 策略类型定义
-- `policies/*.yaml`: 示例策略配置
-  - `default-policy.yaml`: 默认策略
-  - `home-lab-policy.yaml`: 家庭实验室策略
-  - `alerts-policy.yaml`: 告警策略
+### Node Operations (nodeops/)
+- `policy-engine.ts`: Policy evaluation engine
+- `policy-loader.ts`: Policy loading and validation (YAML support)
+- `agent-hooks.ts`: Agent lifecycle hooks
+  - `onChallengeIssued`: Triggered on challenge issuance
+  - `onReceiptVerified`: Triggered after receipt verification
+  - `onBatchSubmitted`: Triggered after batch submission
+- `policy-types.ts`: Policy type definitions
+- `policies/*.yaml`: Example policy configurations
+  - `default-policy.yaml`: Default policy
+  - `home-lab-policy.yaml`: Home lab policy
+  - `alerts-policy.yaml`: Alerts policy
 
-### 区块链浏览器 (explorer/)
-- `src/app/page.tsx`: 首页 - 链统计仪表盘 + 最新区块 + WebSocket 实时更新
-- `src/app/block/[id]/page.tsx`: 区块详情页面（完整交易表、方法解码、Gas 利用率）
-- `src/app/tx/[hash]/page.tsx`: 交易详情页面（包含 receipt、logs、Token 转账）
-- `src/app/address/[address]/page.tsx`: 地址页面（余额、交易历史、合约检测）
-- `src/app/mempool/page.tsx`: Mempool 页面（池统计、待处理交易流）
-- `src/app/validators/page.tsx`: 验证者页面（验证者列表与状态）
-- `src/app/stats/page.tsx`: 统计页面（链活动、TPS、Gas 使用可视化）
-- `src/app/contracts/page.tsx`: 合约页面（已部署合约列表扫描）
-- `src/app/network/page.tsx`: 网络页面（节点运行信息、连接端点）
-- `src/components/ContractView.tsx`: 合约视图（字节码反汇编、eth_call、存储扫描）
-- `src/lib/provider.ts`: ethers.js provider 配置
-- `src/lib/rpc.ts`: RPC 调用工具
+### Blockchain Explorer (explorer/)
+- `src/app/page.tsx`: Home - chain stats dashboard + latest blocks + WebSocket real-time updates
+- `src/app/block/[id]/page.tsx`: Block detail page (full tx table, method decoding, gas utilization)
+- `src/app/tx/[hash]/page.tsx`: Transaction detail page (receipt, logs, token transfers)
+- `src/app/address/[address]/page.tsx`: Address page (balance, tx history, contract detection)
+- `src/app/mempool/page.tsx`: Mempool page (pool stats, pending tx stream)
+- `src/app/validators/page.tsx`: Validators page (validator list and status)
+- `src/app/stats/page.tsx`: Stats page (chain activity, TPS, gas usage visualization)
+- `src/app/contracts/page.tsx`: Contracts page (deployed contract listing scan)
+- `src/app/network/page.tsx`: Network page (node info, connection endpoints)
+- `src/components/ContractView.tsx`: Contract view (bytecode disassembly, eth_call, storage scan)
+- `src/lib/provider.ts`: ethers.js provider configuration
+- `src/lib/rpc.ts`: RPC call utilities
 
-### 智能合约 (contracts/)
-- `settlement/PoSeManager.sol`: PoSe 结算合约
-  - 节点注册和承诺更新
-  - 批量提交和挑战
-  - epoch 最终化和 slash
+### Smart Contracts (contracts/)
+- `settlement/PoSeManager.sol`: PoSe settlement contract
+  - Node registration and commitment updates
+  - Batch submission and challenges
+  - Epoch finalization and slashing
 
-### 性能基准测试 (node/src/benchmarks/)
-- `evm-benchmark.test.ts`: EVM 执行性能基准测试
-  - 测试常见操作的 gas 消耗
-  - 测量执行时间
+### Performance Benchmarks (node/src/benchmarks/)
+- `evm-benchmark.test.ts`: EVM execution performance benchmarks
+  - Gas consumption profiling for common operations
+  - Execution time measurement
 
-### 持久化存储层 (node/src/storage/) - Phase 13.1
-- `db.ts`: LevelDB 存储抽象层
-  - IDatabase 接口定义
-  - LevelDatabase: 生产环境实现
-  - MemoryDatabase: 测试用内存实现
-  - 批量操作支持
-- `block-index.ts`: 区块和交易索引
-  - 按编号查询区块
-  - 按哈希查询区块和交易
-  - 最新区块指针
-  - BigInt 序列化处理
-- `nonce-store.ts`: Nonce 注册表持久化
-  - 防止重放攻击（跨重启）
-  - 自动清理（7 天阈值）
-  - PersistentNonceStore: LevelDB 后端
-  - InMemoryNonceStore: 测试用
-- `state-trie.ts`: EVM 状态树持久化
-  - Merkle Patricia Trie 集成
-  - 账户状态（nonce, balance, storageRoot, codeHash）
-  - 存储槽管理（address -> slot -> value）
-  - 合约代码存储（code -> codeHash）
-  - Checkpoint/revert 支持
+### Persistent Storage Layer (node/src/storage/) - Phase 13.1
+- `db.ts`: LevelDB storage abstraction
+  - IDatabase interface definition
+  - LevelDatabase: Production implementation
+  - MemoryDatabase: In-memory implementation for testing
+  - Batch operation support
+- `block-index.ts`: Block and transaction indexing
+  - Query blocks by number
+  - Query blocks and transactions by hash
+  - Latest block pointer
+  - BigInt serialization handling
+- `nonce-store.ts`: Nonce registry persistence
+  - Replay attack prevention (across restarts)
+  - Automatic cleanup (7-day threshold)
+  - PersistentNonceStore: LevelDB backend
+  - InMemoryNonceStore: For testing
+- `state-trie.ts`: EVM state trie persistence
+  - Merkle Patricia Trie integration
+  - Account state (nonce, balance, storageRoot, codeHash)
+  - Storage slot management (address -> slot -> value)
+  - Contract code storage (code -> codeHash)
+  - Checkpoint/revert support
+  - `setStateRoot`/`hasStateRoot` for snapshot restore
+- `persistent-state-manager.ts`: EVM state persistence adapter
+  - Adapts IStateTrie to EthereumJS StateManagerInterface
+  - Persistent read/write for accounts, storage, and code
+  - Checkpoint/commit/revert support
 
-## 数据流概览
+## Data Flow Overview
 
-1. 钱包通过 JSON-RPC 发送签名交易
-2. 节点内存池验证并 gossip 交易
-3. 提议者构建区块并通过 EVM 执行
-4. 区块被 gossip 并被 peers 接受
-5. 存储 API 接受文件并生成 CIDs（用于 PoSe 存储挑战）
-6. PoSe agent 发起挑战、验证收据、聚合批次
-7. 聚合的批次提交到 PoSeManager，稍后由 relayer 最终化
+1. Wallet sends signed transactions via JSON-RPC
+2. Node mempool validates and gossips transactions
+3. Proposer builds block and executes via EVM
+4. Block is gossiped to and accepted by peers
+5. Storage API accepts files and generates CIDs (for PoSe storage challenges)
+6. PoSe agent issues challenges, verifies receipts, aggregates batches
+7. Aggregated batches are submitted to PoSeManager, later finalized by relayer
 
-## 当前限制
+## Current Limitations
 
-- 共识采用确定性轮换 + 降级恢复（尚未实现 BFT/PoS）
-- P2P 使用 HTTP gossip（非完整的 peer discovery 协议）
-- EVM 状态支持 LevelDB 持久化和内存快照
-- IPFS 兼容性聚焦于核心 HTTP APIs 和网关行为，不支持完整的 IPFS 功能（如 MFS、pubsub）
+- Consensus uses ValidatorGovernance stake-weighted block production + rotation fallback (BFT finality not yet implemented)
+- P2P uses HTTP gossip + peer persistence + DNS seed discovery (DHT and binary wire protocol not yet implemented)
+- EVM state persists across restarts via PersistentStateManager + LevelDB
+- IPFS supports core HTTP APIs, gateway, MFS, and Pubsub (tar archive `get` not yet supported)
 
-## 配置文件位置
+## Configuration File Locations
 
-- 节点配置：通过环境变量或 `node/src/config.ts` 加载
-- 合约配置：`contracts/hardhat.config.cjs`
+- Node config: loaded via environment variables or `node/src/config.ts`
+- Contract config: `contracts/hardhat.config.cjs`
 
-## 文档参考
+## Documentation Reference
 
-- 实现状态：`docs/implementation-status.md`
-- 系统架构：`docs/system-architecture.en.md`
-- 核心算法：`docs/core-algorithms.en.md`
-- 功能矩阵：`docs/feature-matrix.md`
+- Implementation status: `docs/implementation-status.md`
+- System architecture: `docs/system-architecture.en.md`
+- Core algorithms: `docs/core-algorithms.en.md`
+- Feature matrix: `docs/feature-matrix.md`
 
-## 代码及文档语言要求
+## Code and Documentation Language Requirements
 
-- 代码中的注释采用英文
-- 文档分为中英文两个独立版本，同步更新
+- Code comments in English
+- Documentation maintained in both Chinese and English versions, updated in sync

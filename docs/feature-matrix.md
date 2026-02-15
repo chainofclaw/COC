@@ -14,13 +14,18 @@ This matrix lists features by domain, with current status and primary code refer
 - **Proposer rotation** — Implemented — `COC/node/src/chain-engine.ts`
 - **Finality depth** — Implemented (simple) — `COC/node/src/chain-engine.ts`
 - **Fork choice / reorg** — Partial — `COC/node/src/chain-engine.ts`
-- **Validator governance** — Missing
+- **Validator governance** — Implemented (Phase 22 + 26) — `COC/node/src/validator-governance.ts`, `COC/node/src/chain-engine-persistent.ts`
+- **Stake-weighted proposer** — Implemented (Phase 26) — `COC/node/src/chain-engine-persistent.ts`
+- **Block signature/stateRoot** — Implemented (Phase 26) — `COC/node/src/blockchain-types.ts`
+- **Governance RPC** — Implemented (Phase 26) — `COC/node/src/rpc.ts`
 
 ## Networking
 - **Tx gossip** — Implemented — `COC/node/src/p2p.ts`
 - **Block gossip** — Implemented — `COC/node/src/p2p.ts`
 - **Snapshot sync** — Implemented — `COC/node/src/p2p.ts`
-- **Peer discovery / scoring** — Missing
+- **Peer discovery / scoring** — Implemented (Phase 16 + 26) — `COC/node/src/peer-discovery.ts`
+- **Peer persistence** — Implemented (Phase 26) — `COC/node/src/peer-store.ts`
+- **DNS seed discovery** — Implemented (Phase 26) — `COC/node/src/dns-seeds.ts`
 
 ## Storage
 - **Chain snapshot persistence** — Implemented — `COC/node/src/storage.ts`
@@ -28,9 +33,12 @@ This matrix lists features by domain, with current status and primary code refer
 - **Block/transaction indexing** — Implemented (Phase 13.1) — `COC/node/src/storage/block-index.ts`
 - **Address tx pagination** — Implemented — `COC/node/src/storage/block-index.ts`
 - **EVM state trie** — Implemented (Phase 13.1) — `COC/node/src/storage/state-trie.ts`
+- **EVM state persistence** — Implemented (Phase 26) — `COC/node/src/storage/persistent-state-manager.ts`
 - **Nonce registry persistence** — Implemented (Phase 13.1) — `COC/node/src/storage/nonce-store.ts`
 - **User file storage (IPFS-compatible)** — Implemented (core APIs) — `COC/node/src/ipfs-http.ts`
 - **IPFS gateway** — Implemented (basic) — `COC/node/src/ipfs-http.ts`
+- **IPFS MFS** — Implemented (Phase 26) — `COC/node/src/ipfs-mfs.ts`
+- **IPFS Pubsub** — Implemented (Phase 26) — `COC/node/src/ipfs-pubsub.ts`
 - **Log indexing** — Partial
 - **Pruning / archival modes** — Missing
 

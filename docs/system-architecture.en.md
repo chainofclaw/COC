@@ -5,21 +5,26 @@ COC is an EVM-compatible blockchain prototype that combines a lightweight execut
 
 ## Layered Architecture
 1. **Execution Layer (EVM)**
-   - Executes transactions and maintains in-memory state.
+   - Executes transactions with persistent state via `PersistentStateManager`.
    - Exposes JSON-RPC for wallet and tooling integration.
 
 2. **Consensus & Chain Layer**
-   - Produces blocks via deterministic proposer rotation.
+   - Produces blocks via stake-weighted proposer selection (with round-robin fallback).
    - Tracks finality depth and performs basic chain validation.
    - Persists chain snapshots for restart recovery.
+   - ValidatorGovernance for proposal-based validator set management.
 
 3. **P2P Networking Layer**
-   - HTTP-based gossip for transactions and blocks.
+   - HTTP-based gossip for transactions, blocks, and pubsub messages.
    - Snapshot-based sync to reconcile peers.
+   - Peer persistence to disk with DNS seed discovery.
+   - Reputation-based peer scoring with auto-ban/unban.
 
 4. **Storage Layer (IPFS-Compatible)**
    - Blockstore + UnixFS layout for user files.
    - HTTP API subset and `/ipfs/<cid>` gateway.
+   - MFS (Mutable File System) for POSIX-like file operations.
+   - Pubsub for topic-based messaging with P2P forwarding.
 
 5. **PoSe Service Layer**
    - Off-chain challenger/verifier/aggregator pipeline.
@@ -60,7 +65,7 @@ COC is an EVM-compatible blockchain prototype that combines a lightweight execut
 7. Aggregated batch is submitted to PoSeManager and finalized later by relayer.
 
 ## Current Boundaries
-- Consensus is a deterministic rotation (not yet BFT/PoS).
-- P2P uses HTTP gossip (not a full peer discovery protocol).
-- EVM state is in-memory with snapshot persistence only.
-- IPFS compatibility is focused on core HTTP APIs and gateway behavior.
+- Consensus uses stake-weighted proposer rotation via ValidatorGovernance (not yet BFT finality).
+- P2P uses HTTP gossip with peer persistence and DNS seeds (not yet DHT or binary wire protocol).
+- EVM state persists across restarts via PersistentStateManager + LevelDB.
+- IPFS supports core HTTP APIs, gateway, MFS, and Pubsub (tar archive for `get` not yet supported).
