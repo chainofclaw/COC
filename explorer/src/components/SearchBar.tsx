@@ -3,6 +3,19 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 
+const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL || 'http://127.0.0.1:18780'
+
+async function rpcCheck(method: string, params: unknown[]): Promise<unknown> {
+  const res = await fetch(RPC_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+    cache: 'no-store',
+  })
+  const json = await res.json()
+  return json.result
+}
+
 export function SearchBar() {
   const [query, setQuery] = useState('')
   const [searching, setSearching] = useState(false)
@@ -13,7 +26,7 @@ export function SearchBar() {
     const q = query.trim()
     if (!q || searching) return
 
-    // Block number
+    // Block number (decimal)
     if (/^\d+$/.test(q)) {
       router.push(`/block/${q}`)
       setQuery('')
@@ -27,11 +40,31 @@ export function SearchBar() {
       return
     }
 
-    // 0x + 64 hex: could be tx hash or block hash
+    // 0x + 64 hex: could be tx hash or block hash — disambiguate via RPC
     if (/^0x[a-fA-F0-9]{64}$/.test(q)) {
-      // Try tx first (most common search)
-      router.push(`/tx/${q}`)
-      setQuery('')
+      setSearching(true)
+      try {
+        // Try tx first (most common search)
+        const tx = await rpcCheck('eth_getTransactionByHash', [q])
+        if (tx) {
+          router.push(`/tx/${q}`)
+          setQuery('')
+          return
+        }
+        // Try block hash
+        const block = await rpcCheck('eth_getBlockByHash', [q, false])
+        if (block) {
+          const blockNum = parseInt((block as Record<string, string>).number, 16)
+          router.push(`/block/${blockNum}`)
+          setQuery('')
+          return
+        }
+        // Not found — default to tx page (will show not found)
+        router.push(`/tx/${q}`)
+        setQuery('')
+      } finally {
+        setSearching(false)
+      }
       return
     }
 
@@ -61,9 +94,16 @@ export function SearchBar() {
           disabled={searching}
           className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
         >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
+          {searching ? (
+            <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+          ) : (
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+          )}
         </button>
       </div>
     </form>
