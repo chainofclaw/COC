@@ -746,9 +746,10 @@ async function handleRpc(
       const addr = String((payload.params ?? [])[0] ?? "").toLowerCase() as Hex
       const limit = Number((payload.params ?? [])[1] ?? 50)
       const reverse = (payload.params ?? [])[2] !== false
+      const offset = Number((payload.params ?? [])[3] ?? 0)
 
       if (typeof chain.getTransactionsByAddress === "function") {
-        const txs = await chain.getTransactionsByAddress(addr, { limit, reverse })
+        const txs = await chain.getTransactionsByAddress(addr, { limit, reverse, offset })
         return txs.map((tx) => ({
           hash: tx.receipt.transactionHash,
           from: tx.receipt.from,
