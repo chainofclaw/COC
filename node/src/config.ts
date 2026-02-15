@@ -102,3 +102,96 @@ function resolveDataDir(): string {
   }
   return raw
 }
+
+/**
+ * Validate a node config object. Returns an array of error messages (empty = valid).
+ */
+export function validateConfig(cfg: Partial<NodeConfig>): string[] {
+  const errors: string[] = []
+
+  if (cfg.chainId !== undefined) {
+    if (!Number.isInteger(cfg.chainId) || cfg.chainId < 1) {
+      errors.push("chainId must be a positive integer")
+    }
+  }
+
+  if (cfg.rpcPort !== undefined) {
+    if (!Number.isInteger(cfg.rpcPort) || cfg.rpcPort < 1 || cfg.rpcPort > 65535) {
+      errors.push("rpcPort must be between 1 and 65535")
+    }
+  }
+
+  if (cfg.wsPort !== undefined) {
+    if (!Number.isInteger(cfg.wsPort) || cfg.wsPort < 1 || cfg.wsPort > 65535) {
+      errors.push("wsPort must be between 1 and 65535")
+    }
+  }
+
+  if (cfg.p2pPort !== undefined) {
+    if (!Number.isInteger(cfg.p2pPort) || cfg.p2pPort < 1 || cfg.p2pPort > 65535) {
+      errors.push("p2pPort must be between 1 and 65535")
+    }
+  }
+
+  if (cfg.ipfsPort !== undefined) {
+    if (!Number.isInteger(cfg.ipfsPort) || cfg.ipfsPort < 1 || cfg.ipfsPort > 65535) {
+      errors.push("ipfsPort must be between 1 and 65535")
+    }
+  }
+
+  if (cfg.blockTimeMs !== undefined) {
+    if (!Number.isInteger(cfg.blockTimeMs) || cfg.blockTimeMs < 100) {
+      errors.push("blockTimeMs must be >= 100")
+    }
+  }
+
+  if (cfg.syncIntervalMs !== undefined) {
+    if (!Number.isInteger(cfg.syncIntervalMs) || cfg.syncIntervalMs < 100) {
+      errors.push("syncIntervalMs must be >= 100")
+    }
+  }
+
+  if (cfg.finalityDepth !== undefined) {
+    if (!Number.isInteger(cfg.finalityDepth) || cfg.finalityDepth < 1) {
+      errors.push("finalityDepth must be a positive integer")
+    }
+  }
+
+  if (cfg.maxTxPerBlock !== undefined) {
+    if (!Number.isInteger(cfg.maxTxPerBlock) || cfg.maxTxPerBlock < 1) {
+      errors.push("maxTxPerBlock must be a positive integer")
+    }
+  }
+
+  if (cfg.validators !== undefined) {
+    if (!Array.isArray(cfg.validators) || cfg.validators.length === 0) {
+      errors.push("validators must be a non-empty array")
+    }
+  }
+
+  if (cfg.prefund !== undefined) {
+    if (!Array.isArray(cfg.prefund)) {
+      errors.push("prefund must be an array")
+    } else {
+      for (const entry of cfg.prefund) {
+        if (!entry.address || !entry.address.startsWith("0x")) {
+          errors.push(`prefund address invalid: ${entry.address}`)
+        }
+      }
+    }
+  }
+
+  if (cfg.storage !== undefined) {
+    if (cfg.storage.backend && cfg.storage.backend !== "memory" && cfg.storage.backend !== "leveldb") {
+      errors.push("storage.backend must be 'memory' or 'leveldb'")
+    }
+    if (cfg.storage.cacheSize !== undefined && cfg.storage.cacheSize < 0) {
+      errors.push("storage.cacheSize must be >= 0")
+    }
+    if (cfg.storage.nonceRetentionDays !== undefined && cfg.storage.nonceRetentionDays < 1) {
+      errors.push("storage.nonceRetentionDays must be >= 1")
+    }
+  }
+
+  return errors
+}
