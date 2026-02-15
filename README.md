@@ -13,8 +13,8 @@ COC is an EVM-compatible blockchain prototype with PoSe (Proof-of-Service) settl
 - `wallet/`: minimal CLI wallet
 - `tests/`: integration and e2e tests
 - `scripts/`: devnet and verification scripts
-- `explorer/`: blockchain explorer frontend
-- `website/`: project website
+- `explorer/`: blockchain explorer frontend (Next.js, port 3000)
+- `website/`: project website (Next.js, port 3001)
 - `nodeops/`: node operations and policy engine
 
 ## Current Progress
@@ -22,7 +22,7 @@ COC is an EVM-compatible blockchain prototype with PoSe (Proof-of-Service) settl
 - **Chain Engine**: block production, mempool (EIP-1559, replacement, eviction), snapshots, deterministic proposer rotation, basic finality
 - **P2P Networking**: HTTP-based gossip for tx/blocks, snapshot sync between peers
 - **EVM Execution**: in-memory + persistent state via `@ethereumjs/vm` and LevelDB-backed trie
-- **JSON-RPC**: 40+ standard Ethereum methods + custom `coc_*` / `txpool_*` methods, BigInt-safe serialization
+- **JSON-RPC**: 57+ standard Ethereum methods + custom `coc_*` / `txpool_*` methods, BigInt-safe serialization, parameter validation with structured error codes
 - **WebSocket RPC**: `eth_subscribe` / `eth_unsubscribe` for newHeads, newPendingTransactions, logs
 - **PoSe Protocol**:
   - Off-chain: challenge factory, receipt verification, batch aggregation, epoch scoring
@@ -38,7 +38,7 @@ COC is an EVM-compatible blockchain prototype with PoSe (Proof-of-Service) settl
   - Devnet scripts for 3/5/7 node networks
   - Quality gate script (unit + integration + e2e tests)
 - **Blockchain Explorer**: Full-featured Next.js app (see below)
-- **Testing**: 190 tests across 9 suites, covering chain engine, EVM, mempool, RPC, WebSocket, P2P, and storage
+- **Testing**: 191 tests across 66 test files, covering chain engine, EVM, mempool, RPC, WebSocket, P2P, storage, IPFS, PoSe, and configuration
 
 ### Blockchain Explorer Features
 
@@ -94,6 +94,21 @@ The explorer (`explorer/`) is a Next.js 15 App Router application providing:
 | 24 | `92eb984` | Debug trace improvement with log-derived events and tx input data |
 | 25 | `cce7281` | Contracts listing page scanning recent blocks for deployments |
 
+### Production Hardening & Test Coverage (Cycles 26–35)
+
+| Cycle | Commit | Summary |
+|-------|--------|---------|
+| 26 | `a8f70eb` | Contract registry index with `coc_getContractsByPage` RPC + contract call history component |
+| 27 | `dc3796f` | Address tx history with operation type classification (transfer/contract_call/token_transfer) |
+| 28 | `d09409d` | Populate real stateRoot in block headers + internal transactions trace display |
+| 29 | `c64c2d6` | Enhanced validators page with governance stake/voting + coc_chainStats RPC |
+| 30 | `f429d4c` | Error boundaries, loading state, mempool sorting/filtering, WebSocket reconnecting indicator |
+| 31 | `edff796` | Homepage optimization + exponential backoff + as-any elimination + 6 new test suites |
+| 32 | `5ef183f` | Config validation + consensus recovery fix + PoSe engine tests + peer discovery tests |
+| 33 | `b73cd00` | RPC parameter validation + structured error responses + hash/storage/blockstore tests |
+| 34 | `3f15127` | Consensus broadcast isolation + silent catch logging + PoSe HTTP validation |
+| 35 | `aab48a9` | Merkle path bounds check + snapshot-manager logging + IPFS HTTP/UnixFS/Merkle tests |
+
 ## Quick Start
 
 ### Run a local node
@@ -128,6 +143,15 @@ cd explorer
 npm install
 npm run dev
 # Open http://localhost:3000
+```
+
+### Start website
+
+```bash
+cd website
+npm install
+npm run dev
+# Open http://localhost:3001
 ```
 
 ## Quality Gate

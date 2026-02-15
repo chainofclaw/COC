@@ -221,7 +221,7 @@ Implemented:
 - 3/5/7 node devnet scripts
 - End‑to‑end verify script: block production + tx propagation
 - Quality gate script for automated testing (unit + integration + e2e)
-- Comprehensive test coverage (32 test files across all modules)
+- Comprehensive test coverage (66 test files, 191 tests across all modules)
 
 Code:
 - `COC/scripts/start-devnet.sh`
@@ -237,7 +237,7 @@ Tests:
 - Unit tests distributed across all modules (`services/*`, `nodeops/*`, `node/src/*`)
 
 ## 11) Blockchain Explorer
-**Status: Implemented (Enhanced in Phase 18 + 25)**
+**Status: Implemented (Enhanced in Phase 18 + 25 + 27)**
 
 Implemented:
 - Next.js 15 web application with React 19
@@ -255,6 +255,18 @@ Implemented:
 - **Phase 25**: Global search bar (address/tx hash/block number)
 - **Phase 25**: Address-to-transaction index in BlockIndex (backend)
 - **Phase 25**: `coc_getTransactionsByAddress` custom RPC method
+- **Phase 27**: Contract registry index with `coc_getContractsByPage` RPC
+- **Phase 27**: Contract call history component (incoming transactions to contract)
+- **Phase 27**: Address tx history with operation type classification (transfer/contract_call/contract_creation/token_transfer)
+- **Phase 27**: Contract deployment metadata on address page
+- **Phase 27**: Internal transactions trace display in tx detail
+- **Phase 27**: Validators page with governance stake and voting power
+- **Phase 27**: Enhanced stats page with `coc_chainStats` RPC
+- **Phase 27**: Mempool page sorting/filtering with pending/queued tabs
+- **Phase 27**: WebSocket exponential backoff with jitter and reconnecting state indicator
+- **Phase 27**: Error boundaries and loading states
+- **Phase 27**: Homepage optimization using `coc_chainStats`
+- **Phase 27**: RPC error handling (HTTP status checks, network error catch)
 
 Missing/Partial:
 - Contract ABI verification and decoding
@@ -262,14 +274,18 @@ Missing/Partial:
 
 Code:
 - `COC/explorer/src/app/page.tsx` (home with latest blocks)
-- `COC/explorer/src/app/block/[id]/page.tsx` (block details)
-- `COC/explorer/src/app/tx/[hash]/page.tsx` (transaction details)
-- `COC/explorer/src/app/address/[address]/page.tsx` (address explorer)
+- `COC/explorer/src/app/block/[id]/page.tsx` (block details with proposer/stateRoot)
+- `COC/explorer/src/app/tx/[hash]/page.tsx` (transaction details with internal traces)
+- `COC/explorer/src/app/address/[address]/page.tsx` (address explorer with tx type classification)
+- `COC/explorer/src/app/contracts/page.tsx` (indexed contract listing with pagination)
 - `COC/explorer/src/lib/provider.ts` (ethers.js provider)
-- `COC/explorer/src/lib/rpc.ts` (custom RPC calls)
-- `COC/explorer/src/components/SearchBar.tsx` (global search)
+- `COC/explorer/src/lib/rpc.ts` (custom RPC calls with error handling)
+- `COC/explorer/src/lib/use-websocket.ts` (WebSocket hook with exponential backoff)
+- `COC/explorer/src/components/SearchBar.tsx` (global search with tx/block disambiguation)
 - `COC/explorer/src/components/TxHistory.tsx` (transaction history)
 - `COC/explorer/src/components/ContractView.tsx` (contract viewer)
+- `COC/explorer/src/components/ContractCallHistory.tsx` (contract call history)
+- `COC/explorer/src/components/ConnectionStatus.tsx` (live/reconnecting/offline indicator)
 
 ## 12) Node Operations & Policy Engine
 **Status: Implemented**
@@ -323,7 +339,7 @@ Implemented:
 - Account state and storage slot persistence
 - Contract code storage with hash-based indexing
 - Batch operations for atomic writes
-- Comprehensive test coverage (26 tests, 92.3% pass rate)
+- Comprehensive test coverage across storage test files
 
 Missing/Partial:
 - State trie checkpoint/revert optimization
@@ -396,7 +412,7 @@ Documentation:
 - `COC/docs/phase-14-plan.zh.md`
 
 ## 17) Production Hardening
-**Status: Implemented (Phase 24)**
+**Status: Implemented (Phase 24 + 27)**
 
 Implemented:
 - Health check probes (healthy/degraded/unhealthy) with chain, block freshness, peer, mempool checks
@@ -404,10 +420,20 @@ Implemented:
 - Token bucket rate limiter for RPC endpoints with per-client isolation
 - Latency measurement per health check
 - Stale bucket cleanup for memory efficiency
+- **Phase 27**: Config validation function (`validateConfig`) with comprehensive field checks
+- **Phase 27**: RPC parameter validation (hex format, required params)
+- **Phase 27**: Structured JSON-RPC error codes (-32602, -32603)
+- **Phase 27**: PoSe HTTP endpoint field validation
+- **Phase 27**: Snapshot JSON import validation
+- **Phase 27**: Merkle path index bounds checking
 
 Code:
 - `COC/node/src/health.ts`
-- `COC/node/src/health.test.ts` (21 tests)
+- `COC/node/src/config.ts` (UPDATED - validateConfig)
+- `COC/node/src/rpc.ts` (UPDATED - parameter validation)
+- `COC/node/src/pose-http.ts` (UPDATED - field validation)
+- `COC/node/src/storage/snapshot-manager.ts` (UPDATED - JSON validation)
+- `COC/node/src/ipfs-merkle.ts` (UPDATED - bounds check)
 
 Documentation:
 - `COC/docs/phase-24-plan.en.md`
@@ -464,9 +490,83 @@ Tests (49 new tests):
 - `COC/node/src/ipfs-mfs.test.ts` (13 tests)
 - `COC/node/src/ipfs-pubsub.test.ts` (12 tests)
 
-## 19) Whitepaper Gap Summary
-- Consensus: validator governance with stake-weighted proposer selection connected (Phase 22 + 26). BFT finality still missing.
+## 19) Phase 27: Production Hardening & Test Coverage
+**Status: Implemented (2026-02-15)**
+
+### 27.1 RPC & Input Validation
+- RPC parameter validation with `requireHexParam`/`optionalHexParam` helpers
+- Structured JSON-RPC error responses (codes -32602 invalid params, -32603 internal error)
+- PoSe HTTP endpoint field validation (challengeId, epochId, nodeId, nodeSig)
+- BigInt conversion for epoch and timestamp fields in PoSe routes
+- Config validation function with comprehensive field checks
+
+### 27.2 Consensus & Reliability
+- Fixed consensus recovery state transitions (degraded → recovering → healthy)
+- Isolated block production from P2P broadcast failures (block applied regardless of broadcast)
+- Replaced 3 silent catch blocks in PersistentChainEngine with structured diagnostic logging
+- Replaced `console.warn` with structured logging in snapshot-manager
+
+### 27.3 Type Safety & Code Quality
+- Eliminated `as any` casts from evm.ts, pruner.ts, index.ts, chain-engine-persistent.ts, health.ts
+- Added `EvmLog` type definition for typed receipt log handling
+- Used `Parameters<typeof fn>[0]` pattern for external API type compatibility
+- Imported `BatchOp`, `PubsubMessage` types for proper typing
+
+### 27.4 IPFS & Merkle Robustness
+- Merkle path index bounds validation (throws on out-of-bounds index)
+- Snapshot JSON import validation (rejects malformed/missing-field JSON)
+
+### 27.5 Explorer Enhancement
+- Contract registry index with `coc_getContractsByPage` RPC method
+- Contract call history component
+- Address tx history with operation type classification
+- Contract deployment metadata display
+- Real stateRoot in block headers after EVM execution
+- Internal transactions trace display
+- Validators page with governance stake and voting power
+- coc_chainStats RPC method and enhanced stats page
+- Mempool page sorting/filtering with pending/queued tabs
+- Error boundaries and loading states
+- Homepage optimization using coc_chainStats (reduced block fetches)
+- WebSocket exponential backoff with jitter
+- Reconnecting state indicator (live/reconnecting/offline)
+- Explorer RPC error handling (HTTP status checks, network error catch)
+- SearchBar tx/block hash disambiguation
+- WebSocket subscription cleanup on component unmount
+
+### 27.6 Test Coverage (12 new test files, ~90 new tests)
+- `chain-events.test.ts` - ChainEventEmitter typed events
+- `base-fee.test.ts` - EIP-1559 base fee calculator
+- `peer-discovery.test.ts` (8 tests) - bootstrap, banning, peer exchange
+- `pose-engine.test.ts` (5 tests) - challenge issuance, quota, receipt verification
+- `config.test.ts` (13 tests) - config validation
+- `ipfs-blockstore.test.ts` (10 tests) - blockstore CRUD, pinning
+- `storage.test.ts` (7 tests) - ChainStorage integration
+- `hash.test.ts` (12 tests) - hash functions and block validation
+- `ipfs-unixfs.test.ts` (8 tests) - UnixFS builder, Merkle proofs
+- `ipfs-merkle.test.ts` (16 tests) - Merkle tree, root, path, bounds
+- `ipfs-http.test.ts` (11 tests) - IPFS HTTP API integration
+- Health test fixes (mempool stats mock, timestampMs, boundary conditions)
+
+Code:
+- `COC/node/src/rpc.ts` (UPDATED - parameter validation)
+- `COC/node/src/pose-http.ts` (UPDATED - field validation)
+- `COC/node/src/config.ts` (UPDATED - validateConfig function)
+- `COC/node/src/consensus.ts` (UPDATED - recovery logic, broadcast isolation)
+- `COC/node/src/chain-engine-persistent.ts` (UPDATED - diagnostic logging)
+- `COC/node/src/evm.ts` (UPDATED - type safety)
+- `COC/node/src/storage/pruner.ts` (UPDATED - BatchOp type)
+- `COC/node/src/storage/snapshot-manager.ts` (UPDATED - structured logging, JSON validation)
+- `COC/node/src/ipfs-merkle.ts` (UPDATED - index bounds check)
+- `COC/node/src/index.ts` (UPDATED - PubsubMessage type)
+- `COC/explorer/src/` (multiple files updated)
+
+## 20) Whitepaper Gap Summary
+- Consensus: validator governance with stake-weighted proposer selection (Phase 22 + 26), consensus recovery state machine (Phase 27). BFT finality still missing.
 - P2P: peer scoring (Phase 16), peer persistence and DNS seed discovery (Phase 26). DHT and binary wire protocol still missing.
-- EVM: state persistence connected (Phase 26). JSON-RPC compatibility partial (no step-level tracing).
-- PoSe: dispute automation partially addressed (Phase 19).
-- IPFS: MFS and Pubsub implemented (Phase 26). Tar archive for `get` still missing.
+- EVM: state persistence connected (Phase 26), real stateRoot in block headers (Phase 27). JSON-RPC compatibility partial (no step-level tracing).
+- RPC: 57+ methods with parameter validation and structured error codes (Phase 27).
+- PoSe: dispute automation partially addressed (Phase 19), HTTP input validation (Phase 27).
+- IPFS: MFS and Pubsub implemented (Phase 26), Merkle path bounds validation (Phase 27). Tar archive for `get` still missing.
+- Explorer: contract registry, call history, tx type classification, internal traces, governance display (Phase 27).
+- Testing: 191 tests across 66 files covering all major modules (Phase 27).

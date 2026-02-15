@@ -125,3 +125,32 @@
 
 代码：
 - `COC/node/src/chain-engine-persistent.ts`（`stakeWeightedProposer`）
+
+## 12) EIP-1559 动态 Base Fee
+**目标**：根据 Gas 利用率按区块调整 base fee。
+
+算法：
+- 维持 50% 区块 Gas 上限的目标利用率。
+- 实际 Gas > 目标：base fee 最多上调 12.5%。
+- 实际 Gas < 目标：base fee 最多下调 12.5%。
+- 最低 1 gwei（永不降至零）。
+- `changeRatio = (gasUsed - targetGas) / targetGas`。
+- `newBaseFee = parentBaseFee * (1 + changeRatio * 0.125)`。
+
+代码：
+- `COC/node/src/base-fee.ts`
+
+## 13) 共识恢复状态机
+**目标**：区块生产或同步失败时优雅降级并恢复。
+
+算法：
+- 状态：`healthy` → `degraded` → `recovering` → `healthy`。
+- 跟踪 `proposeFailures` 和 `syncFailures`（连续计数）。
+- 连续 5 次出块失败 → 进入 `degraded` 模式（停止出块）。
+- 降级模式下同步成功 → 进入 `recovering`（允许一次出块尝试）。
+- 恢复出块成功 → 回到 `healthy`。
+- 恢复出块失败 → 回到 `degraded`。
+- 恢复冷却：两次恢复尝试间隔 30 秒。
+
+代码：
+- `COC/node/src/consensus.ts`

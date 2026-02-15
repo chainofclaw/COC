@@ -125,3 +125,32 @@ Algorithm:
 
 Code:
 - `COC/node/src/chain-engine-persistent.ts` (`stakeWeightedProposer`)
+
+## 12) EIP-1559 Dynamic Base Fee
+**Goal**: adjust base fee per block based on gas utilization.
+
+Algorithm:
+- Maintain target gas utilization at 50% of block gas limit.
+- If actual gas > target: increase base fee by up to 12.5%.
+- If actual gas < target: decrease base fee by up to 12.5%.
+- Floor at 1 gwei minimum (never drops to zero).
+- `changeRatio = (gasUsed - targetGas) / targetGas`.
+- `newBaseFee = parentBaseFee * (1 + changeRatio * 0.125)`.
+
+Code:
+- `COC/node/src/base-fee.ts`
+
+## 13) Consensus Recovery State Machine
+**Goal**: graceful degradation and recovery when block production or sync fails.
+
+Algorithm:
+- States: `healthy` → `degraded` → `recovering` → `healthy`.
+- Track `proposeFailures` and `syncFailures` (consecutive counts).
+- After 5 consecutive propose failures → enter `degraded` mode (stop proposing).
+- After successful sync in degraded mode → enter `recovering` (allow one propose attempt).
+- If recovering propose succeeds → back to `healthy`.
+- If recovering propose fails → back to `degraded`.
+- Recovery cooldown: 30 seconds between recovery attempts.
+
+Code:
+- `COC/node/src/consensus.ts`

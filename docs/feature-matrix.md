@@ -39,8 +39,8 @@ This matrix lists features by domain, with current status and primary code refer
 - **IPFS gateway** — Implemented (basic) — `COC/node/src/ipfs-http.ts`
 - **IPFS MFS** — Implemented (Phase 26) — `COC/node/src/ipfs-mfs.ts`
 - **IPFS Pubsub** — Implemented (Phase 26) — `COC/node/src/ipfs-pubsub.ts`
-- **Log indexing** — Partial
-- **Pruning / archival modes** — Missing
+- **Log indexing** — Implemented (Phase 13.2) — `COC/node/src/storage/block-index.ts`
+- **Block/log pruning** — Implemented (Phase 21) — `COC/node/src/storage/pruner.ts`
 
 ## Mempool
 - **Gas‑price ordering** — Implemented — `COC/node/src/mempool.ts`
@@ -82,6 +82,11 @@ This matrix lists features by domain, with current status and primary code refer
 - **Contracts listing** — Implemented — `COC/explorer/src/app/contracts/page.tsx`
 - **Network page** — Implemented — `COC/explorer/src/app/network/page.tsx`
 - **Real-time updates** — Implemented (WebSocket) — `COC/explorer/src/app/page.tsx`
+- **Contract call history** — Implemented (Phase 27) — `COC/explorer/src/components/ContractCallHistory.tsx`
+- **Address tx type classification** — Implemented (Phase 27) — `COC/explorer/src/app/address/[address]/page.tsx`
+- **Internal transactions trace** — Implemented (Phase 27) — `COC/explorer/src/app/tx/[hash]/page.tsx`
+- **WebSocket reconnection** — Implemented (exponential backoff) — `COC/explorer/src/lib/use-websocket.ts`
+- **Error boundaries** — Implemented (Phase 27) — `COC/explorer/src/app/`
 - **Contract verification** — Missing
 
 ## Node Operations
@@ -111,9 +116,15 @@ This matrix lists features by domain, with current status and primary code refer
 - **debug_traceBlockByNumber** — Implemented — `COC/node/src/debug-trace.ts`
 - **trace_transaction** — Implemented (OpenEthereum format) — `COC/node/src/debug-trace.ts`
 
+## Input Validation & Error Handling
+- **RPC parameter validation** — Implemented (Phase 27) — `COC/node/src/rpc.ts`
+- **Structured RPC error codes** — Implemented (-32602/-32603) — `COC/node/src/rpc.ts`
+- **PoSe HTTP field validation** — Implemented (Phase 27) — `COC/node/src/pose-http.ts`
+- **Config validation** — Implemented (Phase 27) — `COC/node/src/config.ts`
+- **Merkle path bounds check** — Implemented (Phase 27) — `COC/node/src/ipfs-merkle.ts`
+- **Snapshot JSON validation** — Implemented (Phase 27) — `COC/node/src/storage/snapshot-manager.ts`
+
 ## Performance & Benchmarking
 - **EVM benchmarks** — Implemented — `COC/node/src/benchmarks/evm-benchmark.test.ts`
+- **Load testing** — Implemented (Phase 23) — `COC/node/src/benchmarks/load-test.test.ts`
 - **formatBlock optimization** — Implemented (O(n) via Transaction.from) — `COC/node/src/rpc.ts`
-- **P2P benchmarks** — Missing
-- **Storage I/O benchmarks** — Missing
-- **Load testing** — Missing

@@ -74,11 +74,10 @@ Policy files are located at `nodeops/policies/*.yaml` and can be loaded and eval
 
 ## Test Strategy
 
-Uses Node.js built-in test framework (239 tests, 132+97+10 distribution):
-- **Node layer tests**: `node/src/**/*.test.ts` (132 tests) - chain engine, EVM, RPC, WebSocket, P2P, mempool, storage, MFS, Pubsub
-- **Service layer tests**: `services/**/*.test.ts` + `nodeops/*.test.ts` + `tests/**/*.test.ts` (97 tests)
-- **Contract tests**: `contracts/` (52 tests via Hardhat)
-- **Storage layer tests**: `node/src/storage/*.test.ts` (36 tests, included in node layer)
+Uses Node.js built-in test framework (191 tests, 94+97 distribution across 66 test files):
+- **Node layer tests**: `node/src/**/*.test.ts` (94 tests, 45 files) - chain engine, EVM, RPC, WebSocket, P2P, mempool, storage, IPFS, PoSe, config, hash, Merkle
+- **Service layer tests**: `services/**/*.test.ts` + `nodeops/*.test.ts` + `tests/**/*.test.ts` (97 tests, 21 files)
+- **Storage layer tests**: `node/src/storage/*.test.ts` (included in node layer)
 
 Running tests:
 ```bash
@@ -99,8 +98,9 @@ cd contracts && npm test
 - `evm.ts`: EVM execution layer (based on @ethereumjs/vm)
 - `consensus.ts`: Consensus engine (deterministic rotation + degraded mode + auto-recovery)
 - `p2p.ts`: HTTP gossip network (per-peer dedup, request body limits, broadcast concurrency control)
-- `rpc.ts`: JSON-RPC interface (57+ methods)
+- `rpc.ts`: JSON-RPC interface (57+ methods, parameter validation, structured error codes)
 - `websocket-rpc.ts`: WebSocket RPC (eth_subscribe, subscription validation and limits)
+- `config.ts`: Node configuration with validation (chainId, ports, validators, storage)
 - `mempool.ts`: Transaction mempool (EIP-1559 effective gas price sorting)
 - `base-fee.ts`: EIP-1559 dynamic baseFee calculation
 - `health.ts`: Health checks (memory/WS/storage/consensus diagnostics)
@@ -114,8 +114,9 @@ cd contracts && npm test
   - `ipfs-pubsub.ts`: Topic-based pub/sub messaging (dedup, P2P forwarding)
 - `peer-store.ts`: Peer persistence storage (peers.json, auto-save)
 - `dns-seeds.ts`: DNS seed discovery (TXT record resolution)
+- `ipfs-merkle.ts`: Merkle tree construction and proof generation (with index bounds validation)
 - `pose-engine.ts`: PoSe challenge/receipt pipeline
-- `pose-http.ts`: PoSe HTTP endpoints
+- `pose-http.ts`: PoSe HTTP endpoints (field validation for challenge/receipt)
 
 ### PoSe Service Layer (services/)
 - `challenger/`: Challenge generation and quota management
@@ -143,18 +144,21 @@ cd contracts && npm test
   - `alerts-policy.yaml`: Alerts policy
 
 ### Blockchain Explorer (explorer/)
-- `src/app/page.tsx`: Home - chain stats dashboard + latest blocks + WebSocket real-time updates
-- `src/app/block/[id]/page.tsx`: Block detail page (full tx table, method decoding, gas utilization)
-- `src/app/tx/[hash]/page.tsx`: Transaction detail page (receipt, logs, token transfers)
-- `src/app/address/[address]/page.tsx`: Address page (balance, tx history, contract detection)
-- `src/app/mempool/page.tsx`: Mempool page (pool stats, pending tx stream)
-- `src/app/validators/page.tsx`: Validators page (validator list and status)
-- `src/app/stats/page.tsx`: Stats page (chain activity, TPS, gas usage visualization)
-- `src/app/contracts/page.tsx`: Contracts page (deployed contract listing scan)
+- `src/app/page.tsx`: Home - chain stats dashboard (coc_chainStats) + latest blocks + WebSocket real-time updates
+- `src/app/block/[id]/page.tsx`: Block detail page (full tx table, method decoding, gas utilization, proposer, stateRoot)
+- `src/app/tx/[hash]/page.tsx`: Transaction detail page (receipt, logs, token transfers, internal transactions trace)
+- `src/app/address/[address]/page.tsx`: Address page (balance, tx history with type classification, contract deployment metadata)
+- `src/app/mempool/page.tsx`: Mempool page (pool stats, pending/queued tabs, sorting, filtering)
+- `src/app/validators/page.tsx`: Validators page (governance stake, voting power, validator status)
+- `src/app/stats/page.tsx`: Stats page (chain activity, TPS, gas usage visualization, coc_chainStats)
+- `src/app/contracts/page.tsx`: Contracts page (indexed lookup via contract registry, pagination)
 - `src/app/network/page.tsx`: Network page (node info, connection endpoints)
 - `src/components/ContractView.tsx`: Contract view (bytecode disassembly, eth_call, storage scan)
+- `src/components/ContractCallHistory.tsx`: Contract call history (incoming transactions to contract)
+- `src/components/ConnectionStatus.tsx`: WebSocket status indicator (live/reconnecting/offline)
 - `src/lib/provider.ts`: ethers.js provider configuration
-- `src/lib/rpc.ts`: RPC call utilities
+- `src/lib/rpc.ts`: RPC call utilities (HTTP status checks, network error handling)
+- `src/lib/use-websocket.ts`: WebSocket hook (exponential backoff with jitter, reconnecting state)
 
 ### Smart Contracts (contracts/)
 - `settlement/PoSeManager.sol`: PoSe settlement contract

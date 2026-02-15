@@ -51,7 +51,8 @@ COC 是一个 EVM 兼容的区块链原型，包含 PoSe（Proof-of-Service）�
   - 统计页面：链活动、TPS、Gas 使用可视化
   - 合约页面：已部署合约列表
   - 网络页面：节点运行状态
-- **测试覆盖**：190 个测试，覆盖链引擎、EVM、mempool、RPC、WebSocket、P2P、存储等 9 个套件
+- **测试覆盖**：191 个测试，66 个测试文件，覆盖链引擎、EVM、mempool、RPC、WebSocket、P2P、存储、IPFS、PoSe、配置等模块
+- **生产加固**：RPC 参数验证（结构化错误码）、共识广播隔离、PoSe HTTP 输入验证、配置校验、Merkle 路径边界检查、结构化日志替代 console.warn
 
 ## 快速开始
 
