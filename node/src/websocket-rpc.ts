@@ -196,6 +196,14 @@ export class WsRpcServer {
     return this.clients.size
   }
 
+  getSubscriptionCount(): number {
+    let total = 0
+    for (const client of this.clients.values()) {
+      total += client.subscriptions.size
+    }
+    return total
+  }
+
   private async handleMessage(ws: WebSocket, raw: string): Promise<void> {
     let payload: {
       id: string | number | null
@@ -252,6 +260,9 @@ export class WsRpcServer {
   }
 
   private handleSubscribe(ws: WebSocket, params: unknown[]): string {
+    if (ws.readyState !== WebSocket.OPEN) {
+      throw new Error("connection not open")
+    }
     const type = String(params[0] ?? "")
     const subId = generateSubscriptionId()
 
@@ -362,12 +373,13 @@ export class WsRpcServer {
     if (ws.readyState !== WebSocket.OPEN) return
 
     try {
-      // Use BigInt-safe serializer to avoid "Do not know how to serialize a BigInt"
       ws.send(JSON.stringify(data, (_key, value) =>
         typeof value === "bigint" ? `0x${value.toString(16)}` : value
       ))
     } catch (err) {
-      log.error("send failed", { error: String(err) })
+      log.error("send failed, terminating client", { error: String(err) })
+      try { ws.terminate() } catch { /* ignore */ }
+      this.cleanupClient(ws)
     }
   }
 }
