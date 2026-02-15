@@ -584,6 +584,47 @@ async function handleRpc(
     }
     case "eth_maxPriorityFeePerGas":
       return "0x3b9aca00" // 1 gwei
+    case "eth_getBlockReceipts": {
+      const tag = String((payload.params ?? [])[0] ?? "latest")
+      const height = await Promise.resolve(chain.getHeight())
+      const num = tag === "latest" ? height : tag === "earliest" ? 0n : tag === "pending" ? height : BigInt(tag)
+      const block = await Promise.resolve(chain.getBlockByNumber(num))
+      if (!block) return null
+      const receipts: unknown[] = []
+      for (let i = 0; i < block.txs.length; i++) {
+        try {
+          const parsed = Transaction.from(block.txs[i])
+          if (typeof chain.getTransactionByHash === "function") {
+            const tx = await chain.getTransactionByHash(parsed.hash as Hex)
+            if (tx?.receipt) {
+              const r = tx.receipt
+              receipts.push({
+                transactionHash: r.transactionHash,
+                transactionIndex: `0x${i.toString(16)}`,
+                blockNumber: `0x${block.number.toString(16)}`,
+                blockHash: block.hash,
+                from: r.from,
+                to: r.to,
+                gasUsed: `0x${r.gasUsed.toString(16)}`,
+                status: r.status === 1n ? "0x1" : "0x0",
+                logs: (r.logs ?? []).map((log: any, idx: number) => ({
+                  address: log.address,
+                  topics: log.topics,
+                  data: log.data,
+                  blockNumber: `0x${block.number.toString(16)}`,
+                  blockHash: block.hash,
+                  transactionHash: r.transactionHash,
+                  transactionIndex: `0x${i.toString(16)}`,
+                  logIndex: `0x${idx.toString(16)}`,
+                  removed: false,
+                })),
+              })
+            }
+          }
+        } catch { /* skip unparseable */ }
+      }
+      return receipts
+    }
     case "coc_getTransactionsByAddress": {
       const addr = String((payload.params ?? [])[0] ?? "").toLowerCase() as Hex
       const limit = Number((payload.params ?? [])[1] ?? 50)
