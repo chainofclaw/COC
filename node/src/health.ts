@@ -55,18 +55,20 @@ export class HealthChecker {
    */
   async check(
     engine: IChainEngine,
-    opts?: { peerCount?: number },
+    opts?: { peerCount?: number; wsClients?: number; wsSubscriptions?: number },
   ): Promise<HealthStatus> {
     const checks: Record<string, CheckResult> = {}
+    const height = await Promise.resolve(engine.getHeight())
 
     // Chain engine check
     const chainStart = performance.now()
+    let latestBlock: Awaited<ReturnType<typeof engine.getBlockByNumber>> = null
     try {
-      const block = await Promise.resolve(engine.getBlockByNumber(engine.height - 1n))
+      latestBlock = height > 0n ? await Promise.resolve(engine.getBlockByNumber(height)) : null
       const chainLatency = performance.now() - chainStart
       checks.chain = {
-        ok: block !== null,
-        message: block ? `latest block #${engine.height - 1n}` : "no blocks",
+        ok: height === 0n || latestBlock !== null,
+        message: latestBlock ? `latest block #${height}` : "no blocks",
         latencyMs: Math.round(chainLatency),
       }
     } catch (err) {
@@ -78,14 +80,11 @@ export class HealthChecker {
     }
 
     // Block freshness check
-    let block: Awaited<ReturnType<typeof engine.getBlockByNumber>> = null
-    try {
-      block = await Promise.resolve(engine.getBlockByNumber(engine.height - 1n))
-    } catch {
-      // If chain is already failed, skip freshness check
-    }
-    if (block) {
-      const ageSec = Math.floor(Date.now() / 1000) - block.timestamp
+    if (latestBlock) {
+      const blockTimestamp = latestBlock.timestampMs
+        ? Math.floor(latestBlock.timestampMs / 1000)
+        : (latestBlock as any).timestamp ?? 0
+      const ageSec = Math.floor(Date.now() / 1000) - blockTimestamp
       checks.blockFreshness = {
         ok: ageSec < this.config.maxBlockAge,
         message: ageSec < this.config.maxBlockAge
@@ -105,14 +104,44 @@ export class HealthChecker {
 
     // Mempool check
     const mempoolSize = engine.mempool.size()
+    const mempoolStats = engine.mempool.stats()
     checks.mempool = {
       ok: true,
-      message: `${mempoolSize} pending txs`,
+      message: `${mempoolSize} pending txs, ${mempoolStats.senders} senders`,
+    }
+
+    // Process memory check
+    const mem = process.memoryUsage()
+    const heapUsedMB = Math.round(mem.heapUsed / 1024 / 1024)
+    const heapTotalMB = Math.round(mem.heapTotal / 1024 / 1024)
+    const rssMB = Math.round(mem.rss / 1024 / 1024)
+    const heapPct = Math.round((mem.heapUsed / mem.heapTotal) * 100)
+    checks.memory = {
+      ok: heapPct < 90,
+      message: `heap ${heapUsedMB}/${heapTotalMB}MB (${heapPct}%), RSS ${rssMB}MB`,
+    }
+
+    // WebSocket connections check
+    if (opts?.wsClients !== undefined) {
+      checks.websocket = {
+        ok: true,
+        message: `${opts.wsClients} clients, ${opts.wsSubscriptions ?? 0} subscriptions`,
+      }
+    }
+
+    // Pruner stats
+    if (typeof engine.getPrunerStats === "function") {
+      try {
+        const pruner = await engine.getPrunerStats()
+        checks.storage = {
+          ok: true,
+          message: `retained ${pruner.retainedBlocks} blocks, pruned to ${pruner.pruningHeight}`,
+        }
+      } catch { /* optional */ }
     }
 
     // Determine overall status
     const allOk = Object.values(checks).every((c) => c.ok)
-    const anyFailed = Object.values(checks).some((c) => !c.ok)
 
     let status: "healthy" | "degraded" | "unhealthy"
     if (allOk) {
@@ -129,7 +158,7 @@ export class HealthChecker {
       version: this.config.version,
       chainId: this.config.chainId,
       nodeId: this.config.nodeId,
-      latestBlock: engine.height - 1n,
+      latestBlock: height,
       peerCount,
       mempoolSize,
       checks,
