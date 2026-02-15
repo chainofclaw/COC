@@ -2,6 +2,7 @@ import { describe, it, afterEach } from "node:test"
 import assert from "node:assert/strict"
 import net from "node:net"
 import { WireServer } from "./wire-server.ts"
+import { WireClient } from "./wire-client.ts"
 import { FrameDecoder, MessageType, encodeJsonPayload, decodeJsonPayload } from "./wire-protocol.ts"
 import type { ChainBlock, Hex } from "./blockchain-types.ts"
 
@@ -315,6 +316,106 @@ describe("WireServer", () => {
     await new Promise((r) => setTimeout(r, 50))
 
     assert.deepEqual(server.getConnectedPeers(), ["peer-42"])
+  })
+})
+
+describe("WireClient ping/pong latency", () => {
+  let server: WireServer | null = null
+  const clients: WireClient[] = []
+
+  afterEach(() => {
+    for (const c of clients) c.disconnect()
+    clients.length = 0
+    if (server) { server.stop(); server = null }
+  })
+
+  it("should measure latency via ping/pong", async () => {
+    const port = getRandomPort()
+
+    server = new WireServer({
+      port,
+      nodeId: "server-1",
+      chainId: 18780,
+      onBlock: async () => {},
+      onTx: async () => {},
+      getHeight: () => Promise.resolve(0n),
+    })
+    server.start()
+    await new Promise((r) => setTimeout(r, 100))
+
+    const client = new WireClient({
+      host: "127.0.0.1",
+      port,
+      nodeId: "client-1",
+      chainId: 18780,
+    })
+    clients.push(client)
+    client.connect()
+
+    // Wait for handshake
+    await new Promise((r) => setTimeout(r, 300))
+    assert.ok(client.isConnected(), "client should be connected")
+
+    // Initial state
+    assert.equal(client.getLatencyMs(), -1)
+    assert.equal(client.getAvgLatencyMs(), -1)
+
+    // Send ping
+    const sent = client.ping()
+    assert.ok(sent, "ping should be sent")
+
+    // Wait for pong
+    await new Promise((r) => setTimeout(r, 200))
+
+    assert.ok(client.getLatencyMs() >= 0, "latency should be measured")
+    assert.ok(client.getAvgLatencyMs() >= 0, "average latency should be calculated")
+  })
+
+  it("should track latency history", async () => {
+    const port = getRandomPort()
+
+    server = new WireServer({
+      port,
+      nodeId: "server-1",
+      chainId: 18780,
+      onBlock: async () => {},
+      onTx: async () => {},
+      getHeight: () => Promise.resolve(0n),
+    })
+    server.start()
+    await new Promise((r) => setTimeout(r, 100))
+
+    const client = new WireClient({
+      host: "127.0.0.1",
+      port,
+      nodeId: "client-1",
+      chainId: 18780,
+    })
+    clients.push(client)
+    client.connect()
+    await new Promise((r) => setTimeout(r, 300))
+
+    // Send multiple pings
+    for (let i = 0; i < 3; i++) {
+      client.ping()
+      await new Promise((r) => setTimeout(r, 100))
+    }
+
+    assert.ok(client.getLatencyMs() >= 0)
+    assert.ok(client.getAvgLatencyMs() >= 0)
+  })
+
+  it("should return false for ping when not connected", () => {
+    const client = new WireClient({
+      host: "127.0.0.1",
+      port: 1,
+      nodeId: "client-1",
+      chainId: 18780,
+    })
+    clients.push(client)
+
+    assert.equal(client.ping(), false)
+    assert.equal(client.getLatencyMs(), -1)
   })
 })
 

@@ -46,6 +46,13 @@ export class WireClient {
     timer: ReturnType<typeof setTimeout>
   }>()
 
+  // Ping/pong latency tracking
+  private lastPingSentMs = 0
+  private lastLatencyMs = -1
+  private latencyHistory: number[] = []
+  private readonly maxLatencySamples = 20
+  private pingTimer: ReturnType<typeof setInterval> | null = null
+
   constructor(cfg: WireClientConfig) {
     this.cfg = cfg
   }
@@ -57,6 +64,7 @@ export class WireClient {
 
   disconnect(): void {
     this.stopped = true
+    this.stopPing()
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null
@@ -87,6 +95,39 @@ export class WireClient {
 
   getRemoteNodeId(): string | null {
     return this.remoteNodeId
+  }
+
+  /** Send a ping and measure round-trip latency */
+  ping(): boolean {
+    if (!this.isConnected()) return false
+    this.lastPingSentMs = Date.now()
+    return this.sendMessage(MessageType.Ping, { ts: this.lastPingSentMs })
+  }
+
+  /** Get last measured latency in ms (-1 if no measurement yet) */
+  getLatencyMs(): number {
+    return this.lastLatencyMs
+  }
+
+  /** Get average latency from recent samples */
+  getAvgLatencyMs(): number {
+    if (this.latencyHistory.length === 0) return -1
+    const sum = this.latencyHistory.reduce((a, b) => a + b, 0)
+    return Math.round(sum / this.latencyHistory.length)
+  }
+
+  /** Start periodic ping (default every 30s) */
+  startPing(intervalMs = 30_000): void {
+    this.stopPing()
+    this.pingTimer = setInterval(() => { this.ping() }, intervalMs)
+  }
+
+  /** Stop periodic ping */
+  stopPing(): void {
+    if (this.pingTimer) {
+      clearInterval(this.pingTimer)
+      this.pingTimer = null
+    }
   }
 
   /** Send a FIND_NODE request and await the response */
@@ -193,6 +234,14 @@ export class WireClient {
       }
 
       case MessageType.Pong: {
+        if (this.lastPingSentMs > 0) {
+          this.lastLatencyMs = Date.now() - this.lastPingSentMs
+          this.latencyHistory.push(this.lastLatencyMs)
+          if (this.latencyHistory.length > this.maxLatencySamples) {
+            this.latencyHistory.shift()
+          }
+          this.lastPingSentMs = 0
+        }
         break
       }
     }
