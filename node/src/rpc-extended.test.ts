@@ -18,14 +18,27 @@ async function rpcCall(port: number, method: string, params?: unknown[]) {
 
 test("RPC Extended Methods", async (t) => {
   const chainId = 18780
-  const chain = await ChainEngine.create(chainId)
   const evm = await EvmChain.create(chainId)
+  await evm.prefund([
+    { address: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", balanceWei: "10000000000000000000000" },
+  ])
+  const chain = new ChainEngine(
+    {
+      dataDir: "/tmp/coc-rpc-ext-test-" + Date.now(),
+      nodeId: "node-1",
+      validators: ["node-1"],
+      finalityDepth: 3,
+      maxTxPerBlock: 50,
+      minGasPriceWei: 1n,
+    },
+    evm,
+  )
   const p2p = { receiveTx: async () => {} } as P2PNode
   const port = 18790 + Math.floor(Math.random() * 100)
 
   startRpcServer("127.0.0.1", port, chainId, evm, chain, p2p)
 
-  // 等待服务器启动
+  // Wait for server startup
   await new Promise((resolve) => setTimeout(resolve, 100))
 
   await t.test("eth_accounts returns test accounts", async () => {
@@ -93,5 +106,48 @@ test("RPC Extended Methods", async (t) => {
     assert.ok(typeof txHash === "string")
     assert.ok(txHash.startsWith("0x"))
     assert.ok(txHash.length === 66) // 32 bytes * 2 + 0x
+  })
+
+  await t.test("eth_getBlockTransactionCountByNumber returns count", async () => {
+    const count = await rpcCall(port, "eth_getBlockTransactionCountByNumber", ["0x0"])
+    // Genesis block or early block may have 0 txs
+    assert.ok(count === null || count.startsWith("0x"))
+  })
+
+  await t.test("eth_getUncleCountByBlockNumber returns zero", async () => {
+    const count = await rpcCall(port, "eth_getUncleCountByBlockNumber", ["0x0"])
+    assert.strictEqual(count, "0x0")
+  })
+
+  await t.test("eth_protocolVersion returns version", async () => {
+    const version = await rpcCall(port, "eth_protocolVersion")
+    assert.ok(typeof version === "string")
+    assert.ok(version.startsWith("0x"))
+  })
+
+  await t.test("eth_feeHistory returns fee data", async () => {
+    const result = await rpcCall(port, "eth_feeHistory", [4, "latest", [25, 75]])
+    assert.ok(typeof result === "object")
+    assert.ok(Array.isArray(result.baseFeePerGas))
+    assert.ok(Array.isArray(result.gasUsedRatio))
+    assert.ok(result.oldestBlock.startsWith("0x"))
+  })
+
+  await t.test("eth_maxPriorityFeePerGas returns fee", async () => {
+    const fee = await rpcCall(port, "eth_maxPriorityFeePerGas")
+    assert.ok(typeof fee === "string")
+    assert.ok(fee.startsWith("0x"))
+  })
+
+  await t.test("eth_newBlockFilter returns filter id", async () => {
+    const id = await rpcCall(port, "eth_newBlockFilter")
+    assert.ok(typeof id === "string")
+    assert.ok(id.startsWith("0x"))
+  })
+
+  await t.test("eth_getFilterLogs returns array", async () => {
+    const filterId = await rpcCall(port, "eth_newFilter", [{ fromBlock: "0x0" }])
+    const logs = await rpcCall(port, "eth_getFilterLogs", [filterId])
+    assert.ok(Array.isArray(logs))
   })
 })
