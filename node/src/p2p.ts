@@ -10,10 +10,18 @@ const log = createLogger("p2p")
 const MAX_REQUEST_BODY = 2 * 1024 * 1024 // 2 MB max request body
 const BROADCAST_CONCURRENCY = 5 // max concurrent peer broadcasts
 
+export interface BftMessagePayload {
+  type: "prepare" | "commit"
+  height: string
+  blockHash: Hex
+  senderId: string
+}
+
 export interface P2PHandlers {
   onTx: (rawTx: Hex) => Promise<void>
   onBlock: (block: ChainBlock) => Promise<void>
   onSnapshotRequest: () => ChainSnapshot
+  onBftMessage?: (msg: BftMessagePayload) => Promise<void>
 }
 
 export interface P2PConfig {
@@ -169,6 +177,19 @@ export class P2PNode {
             return
           }
 
+          if (req.url === "/p2p/bft-message") {
+            const payload = JSON.parse(body || "{}") as BftMessagePayload
+            if (!payload.type || !payload.blockHash || !payload.senderId) {
+              throw new Error("missing BFT message fields")
+            }
+            if (this.handlers.onBftMessage) {
+              await this.handlers.onBftMessage(payload)
+            }
+            res.writeHead(200)
+            res.end(serializeJson({ ok: true }))
+            return
+          }
+
           res.writeHead(404)
           res.end(serializeJson({ error: "not found" }))
         } catch (error) {
@@ -231,6 +252,14 @@ export class P2PNode {
    */
   async broadcastPubsub(topic: string, message: unknown): Promise<void> {
     await this.broadcast("/p2p/pubsub-message", { topic, message })
+  }
+
+  /**
+   * Broadcast a BFT consensus message to all peers.
+   */
+  async broadcastBft(msg: BftMessagePayload): Promise<void> {
+    const dedupeKey = `bft:${msg.type}:${msg.height}:${msg.senderId}`
+    await this.broadcast("/p2p/bft-message", msg, dedupeKey)
   }
 
   getStats(): { txReceived: number; txBroadcast: number; blocksReceived: number; blocksBroadcast: number; seenTxSize: number; seenBlocksSize: number } {
