@@ -29,6 +29,7 @@ export default function RootLayout({
                     <Link href="/" className="hover:text-blue-200">Blocks</Link>
                     <Link href="/mempool" className="hover:text-blue-200">Mempool</Link>
                     <Link href="/validators" className="hover:text-blue-200">Validators</Link>
+                    <Link href="/stats" className="hover:text-blue-200">Stats</Link>
                     <Link href="/network" className="hover:text-blue-200">Network</Link>
                   </nav>
                 </div>
