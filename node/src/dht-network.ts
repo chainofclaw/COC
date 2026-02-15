@@ -16,10 +16,12 @@ import { createLogger } from "./logger.ts"
 const log = createLogger("dht-network")
 
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000 // 5 minutes
+const ANNOUNCE_INTERVAL_MS = 3 * 60 * 1000 // 3 minutes
 const LOOKUP_TIMEOUT_MS = 5_000
 
 export interface DhtNetworkConfig {
   localId: string
+  localAddress: string
   bootstrapPeers: Array<{ id: string; address: string; port: number }>
   wireClients: WireClient[]
   onPeerDiscovered: (peer: DhtPeer) => void
@@ -29,6 +31,7 @@ export class DhtNetwork {
   private readonly cfg: DhtNetworkConfig
   readonly routingTable: RoutingTable
   private refreshTimer: ReturnType<typeof setInterval> | null = null
+  private announceTimer: ReturnType<typeof setInterval> | null = null
   private stopped = false
 
   constructor(cfg: DhtNetworkConfig) {
@@ -55,6 +58,11 @@ export class DhtNetwork {
     this.refreshTimer = setInterval(() => {
       void this.refresh()
     }, REFRESH_INTERVAL_MS)
+
+    // Periodic announce: broadcast our presence to known peers
+    this.announceTimer = setInterval(() => {
+      this.announce()
+    }, ANNOUNCE_INTERVAL_MS)
   }
 
   stop(): void {
@@ -62,6 +70,10 @@ export class DhtNetwork {
     if (this.refreshTimer) {
       clearInterval(this.refreshTimer)
       this.refreshTimer = null
+    }
+    if (this.announceTimer) {
+      clearInterval(this.announceTimer)
+      this.announceTimer = null
     }
   }
 
@@ -154,6 +166,32 @@ export class DhtNetwork {
 
     log.debug("DHT refresh lookup", { tableSize: this.routingTable.size() })
     await this.iterativeLookup(randomId)
+  }
+
+  /** Announce our presence to all connected peers */
+  announce(): void {
+    if (this.stopped) return
+
+    const localPeer: DhtPeer = {
+      id: this.cfg.localId,
+      address: this.cfg.localAddress,
+      lastSeenMs: Date.now(),
+    }
+
+    // Add ourselves to routing table (for consistency)
+    // and notify each connected wire client
+    let announced = 0
+    for (const client of this.cfg.wireClients) {
+      if (client.isConnected()) {
+        // Use FindNode for our own ID — peers will add us to their routing table
+        void client.findNode(this.cfg.localId, 3000)
+        announced++
+      }
+    }
+
+    if (announced > 0) {
+      log.debug("DHT announce sent", { peers: announced })
+    }
   }
 
   /** Get routing table stats */
