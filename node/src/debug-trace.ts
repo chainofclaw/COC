@@ -11,6 +11,7 @@
  * state with instrumentation hooks.
  */
 
+import { Transaction } from "ethers"
 import type { EvmChain, TxReceipt } from "./evm.ts"
 import type { IChainEngine } from "./chain-engine-types.ts"
 import type { Hex } from "./blockchain-types.ts"
@@ -95,23 +96,42 @@ export async function traceTransaction(
   const gasUsed = parseInt(receipt.gasUsed, 16)
   const failed = receipt.status === "0x0"
 
-  // Build a simplified trace from receipt data
-  // Full step-by-step tracing would require EVM hooks
-  const structLogs: TraceStep[] = [{
-    pc: 0,
+  // Build trace from receipt data with log events as synthetic steps
+  const structLogs: TraceStep[] = []
+  const logs = Array.isArray(receipt.logs) ? receipt.logs : []
+
+  // Add LOG entries derived from receipt logs
+  for (let i = 0; i < logs.length; i++) {
+    const logEntry = logs[i] as Record<string, unknown>
+    const topics = Array.isArray(logEntry.topics) ? logEntry.topics as string[] : []
+    structLogs.push({
+      pc: i,
+      op: `LOG${topics.length}`,
+      gas: `0x${gasUsed.toString(16)}`,
+      gasCost: `0x${(375 + 375 * topics.length).toString(16)}`,
+      depth: 1,
+      stack: _options?.disableStack ? [] : topics,
+      memory: _options?.disableMemory ? [] : (logEntry.data ? [String(logEntry.data)] : []),
+      storage: {},
+    })
+  }
+
+  // Final STOP or REVERT
+  structLogs.push({
+    pc: logs.length,
     op: failed ? "REVERT" : "STOP",
-    gas: `0x${gasUsed.toString(16)}`,
+    gas: "0x0",
     gasCost: "0x0",
     depth: 1,
     stack: [],
     memory: [],
     storage: {},
-  }]
+  })
 
   return {
     gas: gasUsed,
     failed,
-    returnValue: "0x",
+    returnValue: failed ? "0x" : "0x0000000000000000000000000000000000000000000000000000000000000001",
     structLogs,
   }
 }
@@ -195,15 +215,31 @@ export async function traceTransactionCalls(
 
   const failed = receipt.status === "0x0"
 
-  return [{
-    type: "call",
+  // Extract input data from raw tx if available
+  let inputData = "0x"
+  let txValue = txInfo.value ?? "0x0"
+  if (typeof chain.getTransactionByHash === "function") {
+    const stored = await chain.getTransactionByHash(txHash)
+    if (stored?.rawTx) {
+      try {
+        const parsed = Transaction.from(stored.rawTx)
+        inputData = parsed.data ?? "0x"
+        txValue = `0x${(parsed.value ?? 0n).toString(16)}`
+      } catch { /* use defaults */ }
+    }
+  }
+
+  const traces: CallTrace[] = [{
+    type: txInfo.to ? "CALL" : "CREATE",
     from: txInfo.from,
     to: txInfo.to ?? "0x0000000000000000000000000000000000000000",
-    value: txInfo.value ?? "0x0",
+    value: txValue,
     gas: txInfo.gas,
     gasUsed: receipt.gasUsed,
-    input: "0x",
-    output: "0x",
+    input: inputData,
+    output: failed ? "0x" : "0x",
     error: failed ? "execution reverted" : undefined,
   }]
+
+  return traces
 }
