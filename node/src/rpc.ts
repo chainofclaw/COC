@@ -21,6 +21,22 @@ function jsonStringify(obj: unknown): string {
   )
 }
 
+// RPC parameter validation helpers
+function requireHexParam(params: unknown[], index: number, name: string): Hex {
+  const value = (params ?? [])[index]
+  if (typeof value !== "string" || !value.startsWith("0x")) {
+    throw { code: -32602, message: `invalid ${name}: expected hex string` }
+  }
+  return value as Hex
+}
+
+function optionalHexParam(params: unknown[], index: number): Hex | undefined {
+  const value = (params ?? [])[index]
+  if (value === undefined || value === null) return undefined
+  if (typeof value !== "string" || !value.startsWith("0x")) return undefined
+  return value as Hex
+}
+
 /**
  * Simple sliding-window rate limiter per IP address.
  * Tracks request counts within a configurable time window.
@@ -223,8 +239,13 @@ async function handleOne(
   try {
     const result = await handleRpc(payload, chainId, evm, chain, p2p, filters)
     return { jsonrpc: "2.0", id: payload.id ?? null, result }
-  } catch (error) {
-    return { jsonrpc: "2.0", id: payload.id ?? null, error: { message: String(error) } }
+  } catch (error: unknown) {
+    // Support structured RPC errors (e.g. { code, message } from param validation)
+    if (error && typeof error === "object" && "code" in error && "message" in error) {
+      const rpcErr = error as { code: number; message: string }
+      return { jsonrpc: "2.0", id: payload.id ?? null, error: { code: rpcErr.code, message: rpcErr.message } }
+    }
+    return { jsonrpc: "2.0", id: payload.id ?? null, error: { code: -32603, message: String(error) } }
   }
 }
 
@@ -282,7 +303,7 @@ async function handleRpc(
       return `0x${nonce.toString(16)}`
     }
     case "eth_getTransactionReceipt": {
-      const hash = String((payload.params ?? [])[0] ?? "")
+      const hash = requireHexParam(payload.params ?? [], 0, "transaction hash")
       // Try persistent index first, then fall back to EVM memory
       if (typeof chain.getTransactionByHash === "function") {
         const tx = await chain.getTransactionByHash(hash as Hex)
@@ -296,7 +317,7 @@ async function handleRpc(
             to: r.to,
             gasUsed: `0x${r.gasUsed.toString(16)}`,
             status: r.status === 1n ? "0x1" : "0x0",
-            logs: (r.logs ?? []).map((log: any, idx: number) => ({
+            logs: (r.logs ?? []).map((log, idx) => ({
               address: log.address,
               topics: log.topics,
               data: log.data,
@@ -312,7 +333,7 @@ async function handleRpc(
       return evm.getReceipt(hash)
     }
     case "eth_getTransactionByHash": {
-      const hash = String((payload.params ?? [])[0] ?? "")
+      const hash = requireHexParam(payload.params ?? [], 0, "transaction hash")
       // Try persistent index first, then fall back to EVM memory
       if (typeof chain.getTransactionByHash === "function") {
         const tx = await chain.getTransactionByHash(hash as Hex)
