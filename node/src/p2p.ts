@@ -78,6 +78,9 @@ export class P2PNode {
   private txBroadcast = 0
   private blocksReceived = 0
   private blocksBroadcast = 0
+  private bytesReceived = 0
+  private bytesSent = 0
+  private startedAtMs = 0
   readonly scoring: PeerScoring
   readonly discovery: PeerDiscovery
   private pubsubHandler: ((topic: string, message: unknown) => void) | null = null
@@ -106,6 +109,7 @@ export class P2PNode {
   }
 
   start(): void {
+    this.startedAtMs = Date.now()
     const server = http.createServer(async (req, res) => {
       if (req.method === "GET" && req.url === "/health") {
         res.writeHead(200, { "content-type": "application/json" })
@@ -170,6 +174,7 @@ export class P2PNode {
       })
       req.on("end", async () => {
         if (aborted) return
+        this.bytesReceived += bodySize
         try {
           if (req.url === "/p2p/gossip-tx") {
             const payload = JSON.parse(body || "{}") as { rawTx?: Hex }
@@ -285,7 +290,12 @@ export class P2PNode {
     await this.broadcast("/p2p/bft-message", msg, dedupeKey)
   }
 
-  getStats(): { txReceived: number; txBroadcast: number; blocksReceived: number; blocksBroadcast: number; seenTxSize: number; seenBlocksSize: number } {
+  getStats(): {
+    txReceived: number; txBroadcast: number
+    blocksReceived: number; blocksBroadcast: number
+    seenTxSize: number; seenBlocksSize: number
+    bytesReceived: number; bytesSent: number; uptimeMs: number
+  } {
     return {
       txReceived: this.txReceived,
       txBroadcast: this.txBroadcast,
@@ -293,6 +303,9 @@ export class P2PNode {
       blocksBroadcast: this.blocksBroadcast,
       seenTxSize: this.seenTx.size,
       seenBlocksSize: this.seenBlocks.size,
+      bytesReceived: this.bytesReceived,
+      bytesSent: this.bytesSent,
+      uptimeMs: this.startedAtMs > 0 ? Date.now() - this.startedAtMs : 0,
     }
   }
 
@@ -310,6 +323,8 @@ export class P2PNode {
       ? this.discovery.getActivePeers()
       : this.cfg.peers
 
+    const payloadSize = serializeJson(payload).length
+
     for (let i = 0; i < peers.length; i += BROADCAST_CONCURRENCY) {
       const batch = peers.slice(i, i + BROADCAST_CONCURRENCY)
       await Promise.all(batch.map(async (peer) => {
@@ -323,6 +338,7 @@ export class P2PNode {
         try {
           await requestJson(`${peer.url}${path}`, "POST", payload)
           this.scoring.recordSuccess(peer.id)
+          this.bytesSent += payloadSize
           if (path.includes("tx")) this.txBroadcast++
           else this.blocksBroadcast++
         } catch {
