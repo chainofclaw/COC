@@ -42,7 +42,7 @@ Code:
 - `COC/node/src/storage/persistent-state-manager.ts` (NEW - Phase 26)
 
 ## 2) Consensus & Block Production
-**Status: Partial (Enhanced in Phase 13.2 + 22 + 26)**
+**Status: Partial (Enhanced in Phase 13.2 + 22 + 26 + 28)**
 
 Implemented:
 - Deterministic round‑robin proposer rotation
@@ -56,19 +56,28 @@ Implemented:
 - **Phase 26**: Stake-weighted proposer selection (cumulative threshold algorithm)
 - **Phase 26**: Block signature and stateRoot fields in ChainBlock
 - **Phase 26**: Governance RPC methods (coc_getValidators, coc_submitProposal, coc_voteProposal)
+- **Phase 28**: BFT-lite consensus round state machine (three-phase commit: propose/prepare/commit)
+- **Phase 28**: Stake-weighted quorum threshold (`floor(2/3 * totalStake) + 1`)
+- **Phase 28**: BFT coordinator lifecycle management (round start, message handling, timeout)
+- **Phase 28**: `coc_getBftStatus` RPC endpoint
+- **Phase 28**: GHOST-inspired fork choice rule (BFT finality > chain length > cumulative weight > hash)
+- **Phase 28**: `shouldSwitchFork()` for deterministic chain selection
 
 Missing/Partial:
-- BFT/PoA/PoS finality and slashing rules
-- Fork choice and reorg resolution
+- BFT round integration with live block production (modules ready, not yet wired into ConsensusEngine main loop)
+- Slashing rules for BFT misbehavior
 
 Code:
 - `COC/node/src/chain-engine.ts`
 - `COC/node/src/chain-engine-persistent.ts`
 - `COC/node/src/hash.ts`
 - `COC/node/src/consensus.ts`
+- `COC/node/src/bft.ts` (NEW - Phase 28)
+- `COC/node/src/bft-coordinator.ts` (NEW - Phase 28)
+- `COC/node/src/fork-choice.ts` (NEW - Phase 28)
 
 ## 3) P2P Networking
-**Status: Partial (Enhanced in Phase 16 + 26)**
+**Status: Partial (Enhanced in Phase 16 + 26 + 28)**
 
 Implemented:
 - HTTP-based gossip for tx and blocks
@@ -84,16 +93,23 @@ Implemented:
 - **Phase 26**: Peer expiration filtering (configurable TTL, default 7 days)
 - **Phase 26**: Failure tracking with auto-removal after threshold
 - **Phase 26**: Pubsub message forwarding via `/p2p/pubsub-message`
+- **Phase 28**: Binary wire protocol with frame encoding/decoding (Magic 0xC0C1, type/length/payload)
+- **Phase 28**: `FrameDecoder` streaming accumulator for TCP partial reads
+- **Phase 28**: Kademlia DHT routing table with XOR distance metric and 256 K-buckets (K=20)
+- **Phase 28**: `findClosest(target, K)` for nearest-peer lookup
+- **Phase 28**: BFT message routing via `/p2p/bft-message` endpoint + `broadcastBft()`
 
 Missing/Partial:
-- Binary wire protocol and streaming sync
-- DHT-based discovery for fully decentralized networks
+- Wire protocol integration with live TCP transport (module ready, HTTP gossip still primary)
+- DHT integration with peer discovery (module ready, static + DNS seeds still primary)
 
 Code:
 - `COC/node/src/p2p.ts`
 - `COC/node/src/peer-store.ts` (NEW - Phase 26)
 - `COC/node/src/dns-seeds.ts` (NEW - Phase 26)
 - `COC/node/src/peer-discovery.ts`
+- `COC/node/src/wire-protocol.ts` (NEW - Phase 28)
+- `COC/node/src/dht.ts` (NEW - Phase 28)
 
 ## 4) Storage & Persistence
 **Status: Implemented (Phase 13.1 + 13.2 + 21 + 26 Complete)**
@@ -118,10 +134,11 @@ Implemented:
 - **Phase 26**: IPFS Pubsub - topic-based messaging with deduplication and P2P forwarding
 - **Phase 26**: MFS HTTP routes (`/api/v0/files/*`)
 - **Phase 26**: Pubsub HTTP routes (`/api/v0/pubsub/*`) with ndjson streaming
+- **Phase 28**: IPFS tar archive for `/api/v0/get` (POSIX USTAR format)
+- **Phase 28**: EVM state snapshot export/import for fast sync
 
 Missing/Partial:
 - Full incremental compaction (tx-level pruning)
-- IPFS tar archive for `get`
 
 Code:
 - `COC/node/src/storage.ts` (legacy)
@@ -136,6 +153,8 @@ Code:
 - `COC/node/src/ipfs-http.ts`
 - `COC/node/src/ipfs-mfs.ts` (NEW - Phase 26)
 - `COC/node/src/ipfs-pubsub.ts` (NEW - Phase 26)
+- `COC/node/src/ipfs-tar.ts` (NEW - Phase 28)
+- `COC/node/src/state-snapshot.ts` (NEW - Phase 28)
 
 ## 5) Mempool & Fee Market
 **Status: Implemented (Phase 15)**
@@ -221,7 +240,7 @@ Implemented:
 - 3/5/7 node devnet scripts
 - End‑to‑end verify script: block production + tx propagation
 - Quality gate script for automated testing (unit + integration + e2e)
-- Comprehensive test coverage (66 test files, 191 tests across all modules)
+- Comprehensive test coverage (73 test files, 640 tests across all modules)
 
 Code:
 - `COC/scripts/start-devnet.sh`
@@ -561,12 +580,72 @@ Code:
 - `COC/node/src/index.ts` (UPDATED - PubsubMessage type)
 - `COC/explorer/src/` (multiple files updated)
 
-## 20) Whitepaper Gap Summary
-- Consensus: validator governance with stake-weighted proposer selection (Phase 22 + 26), consensus recovery state machine (Phase 27). BFT finality still missing.
-- P2P: peer scoring (Phase 16), peer persistence and DNS seed discovery (Phase 26). DHT and binary wire protocol still missing.
-- EVM: state persistence connected (Phase 26), real stateRoot in block headers (Phase 27). JSON-RPC compatibility partial (no step-level tracing).
-- RPC: 57+ methods with parameter validation and structured error codes (Phase 27).
+## 20) Phase 28: Core Protocol Modules
+**Status: Implemented (2026-02-15)**
+
+### 28.1 BFT-lite Consensus
+- `BftRound` state machine: propose → prepare → commit → finalized
+- Stake-weighted quorum: `floor(2/3 * totalStake) + 1`
+- `BftCoordinator` lifecycle management with timeout handling
+- `coc_getBftStatus` RPC endpoint for round inspection
+
+### 28.2 Binary Wire Protocol
+- Frame format: `[Magic 0xC0C1] [Type 1B] [Length 4B BE] [Payload NB]`
+- Max payload: 16 MiB
+- `FrameDecoder` streaming accumulator for TCP partial reads
+- Message types: Handshake, Block, Transaction, BFT, Ping/Pong
+
+### 28.3 Kademlia DHT
+- 256-bit node IDs with XOR distance metric
+- 256 K-buckets (K=20) with LRU eviction
+- `findClosest(target, K)` nearest-peer lookup
+
+### 28.4 Fork Choice
+- GHOST-inspired deterministic selection: BFT finality > chain length > cumulative weight > hash
+- `shouldSwitchFork()` for sync chain adoption
+
+### 28.5 EVM State Snapshot
+- `exportStateSnapshot()` / `importStateSnapshot()` for accounts, storage, code
+- `validateSnapshot()` with structural verification
+- BigInt-safe serialization for cross-node transfer
+
+### 28.6 IPFS Tar Archive
+- POSIX USTAR tar format for `/api/v0/get` endpoint
+- Proper header checksums, 512-byte block alignment, EOF markers
+
+### 28.7 P2P BFT Integration
+- `/p2p/bft-message` POST endpoint for consensus message routing
+- `broadcastBft()` with per-peer deduplication
+- `BftMessagePayload` type (prepare/commit votes)
+
+Code:
+- `COC/node/src/bft.ts` (NEW)
+- `COC/node/src/bft-coordinator.ts` (NEW)
+- `COC/node/src/wire-protocol.ts` (NEW)
+- `COC/node/src/dht.ts` (NEW)
+- `COC/node/src/fork-choice.ts` (NEW)
+- `COC/node/src/state-snapshot.ts` (NEW)
+- `COC/node/src/ipfs-tar.ts` (NEW)
+- `COC/node/src/p2p.ts` (UPDATED - BFT routing)
+- `COC/node/src/rpc.ts` (UPDATED - BFT status)
+- `COC/node/src/ipfs-http.ts` (UPDATED - tar archive)
+
+Tests (114 new tests across 7 files):
+- `COC/node/src/bft.test.ts` (20 tests)
+- `COC/node/src/wire-protocol.test.ts` (18 tests)
+- `COC/node/src/dht.test.ts` (22 tests)
+- `COC/node/src/fork-choice.test.ts` (14 tests)
+- `COC/node/src/bft-coordinator.test.ts` (7 tests)
+- `COC/node/src/state-snapshot.test.ts` (13 tests)
+- `COC/node/src/ipfs-tar.test.ts` (13 tests)
+- `COC/node/src/debug-trace.test.ts` (7 tests, updated)
+
+## 21) Whitepaper Gap Summary
+- Consensus: validator governance with stake-weighted proposer selection (Phase 22 + 26), BFT-lite round state machine with coordinator (Phase 28), GHOST fork choice (Phase 28). BFT not yet wired into live block production loop.
+- P2P: peer scoring (Phase 16), peer persistence and DNS seed discovery (Phase 26), binary wire protocol and Kademlia DHT (Phase 28). Wire/DHT modules ready but not yet integrated with live transport.
+- EVM: state persistence connected (Phase 26), real stateRoot in block headers (Phase 27), state snapshot export/import (Phase 28).
+- RPC: 57+ methods with parameter validation and structured error codes (Phase 27), BFT status endpoint (Phase 28).
 - PoSe: dispute automation partially addressed (Phase 19), HTTP input validation (Phase 27).
-- IPFS: MFS and Pubsub implemented (Phase 26), Merkle path bounds validation (Phase 27). Tar archive for `get` still missing.
+- IPFS: MFS and Pubsub (Phase 26), tar archive for `get` (Phase 28), Merkle path bounds validation (Phase 27).
 - Explorer: contract registry, call history, tx type classification, internal traces, governance display (Phase 27).
-- Testing: 191 tests across 66 files covering all major modules (Phase 27).
+- Testing: 640 tests across 73 files covering all major modules (Phase 28).

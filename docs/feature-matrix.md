@@ -13,7 +13,10 @@ This matrix lists features by domain, with current status and primary code refer
 ## Consensus & Chain
 - **Proposer rotation** — Implemented — `COC/node/src/chain-engine.ts`
 - **Finality depth** — Implemented (simple) — `COC/node/src/chain-engine.ts`
-- **Fork choice / reorg** — Partial — `COC/node/src/chain-engine.ts`
+- **Fork choice (GHOST-inspired)** — Implemented (Phase 28) — `COC/node/src/fork-choice.ts`
+- **BFT-lite consensus rounds** — Implemented (Phase 28) — `COC/node/src/bft.ts`
+- **BFT coordinator** — Implemented (Phase 28) — `COC/node/src/bft-coordinator.ts`
+- **BFT status RPC** — Implemented (Phase 28) — `COC/node/src/rpc.ts`
 - **Validator governance** — Implemented (Phase 22 + 26) — `COC/node/src/validator-governance.ts`, `COC/node/src/chain-engine-persistent.ts`
 - **Stake-weighted proposer** — Implemented (Phase 26) — `COC/node/src/chain-engine-persistent.ts`
 - **Block signature/stateRoot** — Implemented (Phase 26) — `COC/node/src/blockchain-types.ts`
@@ -26,6 +29,9 @@ This matrix lists features by domain, with current status and primary code refer
 - **Peer discovery / scoring** — Implemented (Phase 16 + 26) — `COC/node/src/peer-discovery.ts`
 - **Peer persistence** — Implemented (Phase 26) — `COC/node/src/peer-store.ts`
 - **DNS seed discovery** — Implemented (Phase 26) — `COC/node/src/dns-seeds.ts`
+- **BFT message routing** — Implemented (Phase 28) — `COC/node/src/p2p.ts`
+- **Kademlia DHT routing** — Implemented (Phase 28) — `COC/node/src/dht.ts`
+- **Binary wire protocol** — Implemented (Phase 28) — `COC/node/src/wire-protocol.ts`
 
 ## Storage
 - **Chain snapshot persistence** — Implemented — `COC/node/src/storage.ts`
@@ -39,6 +45,8 @@ This matrix lists features by domain, with current status and primary code refer
 - **IPFS gateway** — Implemented (basic) — `COC/node/src/ipfs-http.ts`
 - **IPFS MFS** — Implemented (Phase 26) — `COC/node/src/ipfs-mfs.ts`
 - **IPFS Pubsub** — Implemented (Phase 26) — `COC/node/src/ipfs-pubsub.ts`
+- **IPFS tar archive** — Implemented (Phase 28) — `COC/node/src/ipfs-tar.ts`
+- **EVM state snapshot** — Implemented (Phase 28) — `COC/node/src/state-snapshot.ts`
 - **Log indexing** — Implemented (Phase 13.2) — `COC/node/src/storage/block-index.ts`
 - **Block/log pruning** — Implemented (Phase 21) — `COC/node/src/storage/pruner.ts`
 

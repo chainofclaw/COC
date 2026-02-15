@@ -30,7 +30,7 @@ COC 是一个 EVM 兼容的区块链原型，包含 PoSe（Proof-of-Service）�
   - 链上：PoSeManager 合约（注册、批次提交、挑战、最终化、惩罚）
 - **存储层**：
   - LevelDB 持久化（区块索引、EVM 状态树、Nonce 注册表）
-  - IPFS 兼容 HTTP APIs（add/cat/get/block/pin/ls/stat/id/version）+ `/ipfs/<cid>` 网关
+  - IPFS 兼容 HTTP APIs（add/cat/get/block/pin/ls/stat/id/version）+ `/ipfs/<cid>` 网关 + tar 归档
 - **运行时服务**：
   - `coc-node`：PoSe 挑战/回执 HTTP 端点
   - `coc-agent`：挑战生成、批次提交、节点注册
@@ -51,7 +51,13 @@ COC 是一个 EVM 兼容的区块链原型，包含 PoSe（Proof-of-Service）�
   - 统计页面：链活动、TPS、Gas 使用可视化
   - 合约页面：已部署合约列表
   - 网络页面：节点运行状态
-- **测试覆盖**：191 个测试，66 个测试文件，覆盖链引擎、EVM、mempool、RPC、WebSocket、P2P、存储、IPFS、PoSe、配置等模块
+- **BFT 共识**：BFT-lite 三阶段提交（propose/prepare/commit）+ 权益加权法定人数，协调器生命周期管理
+- **分叉选择**：GHOST 式确定性分叉选择（BFT 最终性 > 链长度 > 累积权重 > 哈希决胜）
+- **DHT 路由**：Kademlia DHT，XOR 距离度量，256 个 K-Bucket（K=20），findClosest 查找
+- **线协议**：二进制帧格式（Magic 0xC0C1, 类型字节, 4B 大端长度, 载荷）+ 流式 FrameDecoder
+- **状态快照**：EVM 状态导出/导入，支持快速同步（账户、存储、代码）
+- **IPFS Tar**：`/api/v0/get` 端点支持 POSIX USTAR tar 归档格式
+- **测试覆盖**：640 个测试，73 个测试文件，覆盖链引擎、EVM、mempool、RPC、WebSocket、P2P、存储、IPFS、PoSe、BFT、DHT、线协议、分叉选择、配置等模块
 - **生产加固**：RPC 参数验证（结构化错误码）、共识广播隔离、PoSe HTTP 输入验证、配置校验、Merkle 路径边界检查、结构化日志替代 console.warn
 
 ## 快速开始

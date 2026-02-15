@@ -10,21 +10,27 @@ COC is an EVM-compatible blockchain prototype that combines a lightweight execut
 
 2. **Consensus & Chain Layer**
    - Produces blocks via stake-weighted proposer selection (with round-robin fallback).
+   - BFT-lite three-phase commit (propose/prepare/commit) with stake-weighted quorum.
+   - GHOST-inspired fork choice rule for deterministic chain selection.
+   - BFT coordinator bridging consensus engine and P2P layer.
    - Tracks finality depth and performs basic chain validation.
    - Persists chain snapshots for restart recovery.
    - ValidatorGovernance for proposal-based validator set management.
 
 3. **P2P Networking Layer**
-   - HTTP-based gossip for transactions, blocks, and pubsub messages.
+   - HTTP-based gossip for transactions, blocks, BFT messages, and pubsub messages.
+   - Binary wire protocol with frame encoding/decoding for future TCP transport.
+   - Kademlia DHT routing table for decentralized peer discovery.
    - Snapshot-based sync to reconcile peers.
    - Peer persistence to disk with DNS seed discovery.
    - Reputation-based peer scoring with auto-ban/unban.
 
 4. **Storage Layer (IPFS-Compatible)**
    - Blockstore + UnixFS layout for user files.
-   - HTTP API subset and `/ipfs/<cid>` gateway.
+   - HTTP API subset and `/ipfs/<cid>` gateway with tar archive support.
    - MFS (Mutable File System) for POSIX-like file operations.
    - Pubsub for topic-based messaging with P2P forwarding.
+   - EVM state snapshot export/import for fast sync.
 
 5. **PoSe Service Layer**
    - Off-chain challenger/verifier/aggregator pipeline.
@@ -65,7 +71,7 @@ COC is an EVM-compatible blockchain prototype that combines a lightweight execut
 7. Aggregated batch is submitted to PoSeManager and finalized later by relayer.
 
 ## Current Boundaries
-- Consensus uses stake-weighted proposer rotation via ValidatorGovernance (not yet BFT finality).
-- P2P uses HTTP gossip with peer persistence and DNS seeds (not yet DHT or binary wire protocol).
-- EVM state persists across restarts via PersistentStateManager + LevelDB.
-- IPFS supports core HTTP APIs, gateway, MFS, and Pubsub (tar archive for `get` not yet supported).
+- Consensus uses ValidatorGovernance stake-weighted block production + rotation fallback. BFT-lite round state machine and fork choice rule implemented but not yet wired into live block production loop.
+- P2P uses HTTP gossip + peer persistence + DNS seed discovery. Kademlia DHT and binary wire protocol implemented as standalone modules, not yet integrated with live transport.
+- EVM state persists across restarts via PersistentStateManager + LevelDB. State snapshot export/import available for fast sync.
+- IPFS supports core HTTP APIs, gateway, MFS, Pubsub, and tar archive for `get`.
