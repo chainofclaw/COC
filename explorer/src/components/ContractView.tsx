@@ -61,6 +61,9 @@ export function ContractView({ address, code }: ContractViewProps) {
         </div>
       </div>
 
+      {/* Contract Call History */}
+      <ContractCallHistory address={address} />
+
       {/* Contract Call Interface */}
       <ContractCall address={address} />
 
@@ -69,6 +72,128 @@ export function ContractView({ address, code }: ContractViewProps) {
 
       {/* Contract Events */}
       <ContractEvents address={address} />
+    </div>
+  )
+}
+
+// Contract transaction (call) history
+function ContractCallHistory({ address }: { address: string }) {
+  const [txs, setTxs] = useState<Array<{
+    hash: string; from: string; to: string | null
+    blockNumber: string; gasUsed: string; status: string; input: string
+  }>>([])
+  const [loaded, setLoaded] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [page, setPage] = useState(0)
+  const pageSize = 20
+
+  async function loadHistory(offset = 0) {
+    setLoading(true)
+    try {
+      const result = await rpcCall<typeof txs>('coc_getTransactionsByAddress', [
+        address, pageSize, true, offset,
+      ])
+      setTxs(Array.isArray(result) ? result : [])
+      setPage(offset)
+      setLoaded(true)
+    } catch {
+      setTxs([])
+      setLoaded(true)
+    }
+    setLoading(false)
+  }
+
+  return (
+    <div className="bg-white rounded-lg shadow p-6">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-xl font-bold">Call History</h3>
+        {!loaded && (
+          <button
+            onClick={() => loadHistory(0)}
+            disabled={loading}
+            className="px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50"
+          >
+            {loading ? 'Loading...' : 'Load History'}
+          </button>
+        )}
+      </div>
+
+      {loaded && txs.length === 0 && (
+        <p className="text-gray-500 text-sm">No transactions found for this contract.</p>
+      )}
+
+      {txs.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b text-left text-xs text-gray-500">
+                <th className="pb-2 pr-4">Tx Hash</th>
+                <th className="pb-2 pr-4">Block</th>
+                <th className="pb-2 pr-4">From</th>
+                <th className="pb-2 pr-4">Method</th>
+                <th className="pb-2 pr-4">Status</th>
+                <th className="pb-2">Gas Used</th>
+              </tr>
+            </thead>
+            <tbody>
+              {txs.map((tx) => {
+                const method = decodeMethodSelector(tx.input)
+                const blockNum = typeof tx.blockNumber === 'string' && tx.blockNumber.startsWith('0x')
+                  ? parseInt(tx.blockNumber, 16) : Number(tx.blockNumber)
+                const gasUsed = typeof tx.gasUsed === 'string' && tx.gasUsed.startsWith('0x')
+                  ? parseInt(tx.gasUsed, 16) : Number(tx.gasUsed)
+                const success = tx.status === '0x1' || tx.status === '1'
+                return (
+                  <tr key={tx.hash} className="border-b hover:bg-gray-50">
+                    <td className="py-2 pr-4">
+                      <Link href={`/tx/${tx.hash}`} className="text-blue-600 hover:text-blue-800 font-mono text-xs">
+                        {tx.hash.slice(0, 14)}...
+                      </Link>
+                    </td>
+                    <td className="py-2 pr-4">
+                      <Link href={`/block/${blockNum}`} className="text-blue-600 hover:text-blue-800 text-xs">
+                        #{blockNum}
+                      </Link>
+                    </td>
+                    <td className="py-2 pr-4 font-mono text-xs">
+                      <Link href={`/address/${tx.from}`} className="text-blue-600 hover:text-blue-800">
+                        {formatAddress(tx.from)}
+                      </Link>
+                    </td>
+                    <td className="py-2 pr-4">
+                      <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-xs">
+                        {method?.name?.split('(')[0] ?? (tx.input === '0x' ? 'transfer' : tx.input.slice(0, 10))}
+                      </span>
+                    </td>
+                    <td className="py-2 pr-4">
+                      <span className={`text-xs ${success ? 'text-green-600' : 'text-red-600'}`}>
+                        {success ? 'Success' : 'Failed'}
+                      </span>
+                    </td>
+                    <td className="py-2 text-xs text-gray-600">{gasUsed.toLocaleString()}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+          <div className="flex justify-between mt-4">
+            <button
+              onClick={() => loadHistory(Math.max(0, page - pageSize))}
+              disabled={loading || page === 0}
+              className="px-3 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded disabled:opacity-50"
+            >
+              Previous
+            </button>
+            <button
+              onClick={() => loadHistory(page + pageSize)}
+              disabled={loading || txs.length < pageSize}
+              className="px-3 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded disabled:opacity-50"
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
