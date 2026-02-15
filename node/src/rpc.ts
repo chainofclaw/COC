@@ -827,23 +827,48 @@ async function formatBlock(block: Awaited<ReturnType<IChainEngine["getBlockByNum
   }
 }
 
+const MAX_LOG_BLOCK_RANGE = 10_000n
+const MAX_LOG_RESULTS = 10_000
+
 async function queryLogs(chain: IChainEngine, query: Record<string, unknown>): Promise<unknown[]> {
   const height = await Promise.resolve(chain.getHeight())
   const fromBlock = parseBlockTag(query.fromBlock, 0n)
   const toBlock = parseBlockTag(query.toBlock, height)
-  const address = query.address ? String(query.address).toLowerCase() as Hex : undefined
+
+  // Enforce block range limit to prevent resource exhaustion
+  if (toBlock - fromBlock > MAX_LOG_BLOCK_RANGE) {
+    throw new Error(`block range too large: max ${MAX_LOG_BLOCK_RANGE} blocks, got ${toBlock - fromBlock}`)
+  }
+
+  // Normalize address filter: single string or array of strings
+  let address: Hex | undefined
+  let addresses: Hex[] | undefined
+  if (query.address) {
+    if (Array.isArray(query.address)) {
+      addresses = (query.address as string[]).map((a) => a.toLowerCase() as Hex)
+    } else {
+      address = String(query.address).toLowerCase() as Hex
+    }
+  }
+
+  // Normalize topics: each position can be null, single topic, or array of topics (OR)
   const topics = Array.isArray(query.topics)
-    ? query.topics.map((t) => (t ? String(t) as Hex : null))
+    ? query.topics.map((t) => {
+        if (t === null || t === undefined) return null
+        if (Array.isArray(t)) return (t as string[]).map((s) => s.toLowerCase() as Hex)
+        return String(t).toLowerCase() as Hex
+      })
     : undefined
 
   // Use persistent log index when available
   if (typeof chain.getLogs === "function") {
-    return chain.getLogs({
+    const results = await chain.getLogs({
       fromBlock,
       toBlock,
-      address,
-      topics: topics ?? undefined,
+      address: address ?? (addresses?.[0]),
+      topics: topics as Array<Hex | null> | undefined,
     })
+    return results.slice(0, MAX_LOG_RESULTS)
   }
 
   // Fallback to receipt-based log collection
@@ -852,12 +877,18 @@ async function queryLogs(chain: IChainEngine, query: Record<string, unknown>): P
     fromBlock,
     toBlock,
     address,
+    addresses,
     topics,
     lastCursor: fromBlock,
   })
 }
 
-async function collectLogs(chain: IChainEngine, from: bigint, to: bigint, filter: PendingFilter): Promise<unknown[]> {
+async function collectLogs(
+  chain: IChainEngine,
+  from: bigint,
+  to: bigint,
+  filter: PendingFilter & { addresses?: Hex[] },
+): Promise<unknown[]> {
   const logs: unknown[] = []
   for (let n = from; n <= to; n += 1n) {
     const receipts = await Promise.resolve(chain.getReceiptsByBlock(n))
@@ -866,24 +897,43 @@ async function collectLogs(chain: IChainEngine, from: bigint, to: bigint, filter
       for (const log of recLogs as Array<Record<string, unknown>>) {
         if (!matchesFilter(log, filter)) continue
         logs.push(log)
+        if (logs.length >= MAX_LOG_RESULTS) return logs
       }
     }
   }
   return logs
 }
 
-function matchesFilter(log: Record<string, unknown>, filter: PendingFilter): boolean {
-  if (filter.address) {
-    const addr = String(log.address ?? "").toLowerCase()
-    if (addr !== filter.address.toLowerCase()) return false
+/**
+ * Match a log entry against filter criteria.
+ * Supports: single/multi address, null/single/OR-array per topic position.
+ */
+function matchesFilter(
+  log: Record<string, unknown>,
+  filter: PendingFilter & { addresses?: Hex[] },
+): boolean {
+  const logAddr = String(log.address ?? "").toLowerCase()
+
+  // Address filter: single or array
+  if (filter.address && logAddr !== filter.address.toLowerCase()) return false
+  if (filter.addresses && filter.addresses.length > 0) {
+    if (!filter.addresses.some((a) => a === logAddr)) return false
   }
+
   if (!filter.topics || filter.topics.length === 0) return true
-  const topics = Array.isArray(log.topics) ? (log.topics as string[]) : []
+
+  const logTopics = Array.isArray(log.topics) ? (log.topics as string[]) : []
   for (let i = 0; i < filter.topics.length; i++) {
     const expected = filter.topics[i]
-    if (!expected) continue
-    if ((topics[i] ?? "").toLowerCase() !== expected.toLowerCase()) {
-      return false
+    if (expected === null || expected === undefined) continue
+
+    const logTopic = (logTopics[i] ?? "").toLowerCase()
+
+    // OR-array: log topic must match any one
+    if (Array.isArray(expected)) {
+      if (!expected.some((e: string) => e.toLowerCase() === logTopic)) return false
+    } else {
+      if (String(expected).toLowerCase() !== logTopic) return false
     }
   }
   return true
