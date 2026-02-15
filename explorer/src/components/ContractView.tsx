@@ -2,8 +2,9 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { RPC_URL, formatAddress } from '@/lib/provider'
+import { formatAddress } from '@/lib/provider'
 import { rpcCall } from '@/lib/rpc'
+import { decodeMethodSelector } from '@/lib/decoder'
 
 interface ContractViewProps {
   address: string
@@ -43,11 +44,130 @@ export function ContractView({ address, code }: ContractViewProps) {
         </div>
       </div>
 
+      {/* Contract Call Interface */}
+      <ContractCall address={address} />
+
       {/* Storage Reader */}
       <StorageReader address={address} />
 
       {/* Contract Events */}
       <ContractEvents address={address} />
+    </div>
+  )
+}
+
+// Read-only contract call interface
+function ContractCall({ address }: { address: string }) {
+  const [callData, setCallData] = useState('')
+  const [from, setFrom] = useState('')
+  const [result, setResult] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  // Quick-call presets for common view functions
+  const presets = [
+    { label: 'name()', data: '0x06fdde03' },
+    { label: 'symbol()', data: '0x95d89b41' },
+    { label: 'decimals()', data: '0x313ce567' },
+    { label: 'totalSupply()', data: '0x18160ddd' },
+    { label: 'owner()', data: '0x8da5cb5b' },
+    { label: 'paused()', data: '0x5c975abb' },
+  ]
+
+  async function executeCall() {
+    if (!callData) return
+    setLoading(true)
+    setError(null)
+    setResult(null)
+    try {
+      const params: Record<string, string> = { to: address, data: callData }
+      if (from) params.from = from
+      const res = await rpcCall<string>('eth_call', [params, 'latest'])
+      setResult(res)
+    } catch (err) {
+      setError(String(err))
+    }
+    setLoading(false)
+  }
+
+  const decoded = decodeMethodSelector(callData)
+
+  return (
+    <div className="bg-white rounded-lg shadow p-6">
+      <h3 className="text-xl font-bold mb-4">Contract Read (eth_call)</h3>
+
+      {/* Quick presets */}
+      <div className="mb-4">
+        <div className="text-xs text-gray-500 mb-2">Quick call:</div>
+        <div className="flex flex-wrap gap-2">
+          {presets.map((p) => (
+            <button
+              key={p.data}
+              onClick={() => { setCallData(p.data); setResult(null); setError(null) }}
+              className="px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded font-mono"
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        <div>
+          <label className="block text-sm font-medium text-gray-600 mb-1">From (optional)</label>
+          <input
+            type="text"
+            value={from}
+            onChange={(e) => setFrom(e.target.value)}
+            placeholder="0x..."
+            className="w-full px-3 py-2 border rounded text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-300"
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-600 mb-1">
+            Call Data (hex)
+            {decoded && (
+              <span className="ml-2 px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-xs">
+                {decoded.name}
+              </span>
+            )}
+          </label>
+          <input
+            type="text"
+            value={callData}
+            onChange={(e) => setCallData(e.target.value)}
+            placeholder="0x06fdde03"
+            className="w-full px-3 py-2 border rounded text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-300"
+          />
+        </div>
+        <button
+          onClick={executeCall}
+          disabled={loading || !callData}
+          className="px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50"
+        >
+          {loading ? 'Calling...' : 'Execute Call'}
+        </button>
+      </div>
+
+      {result !== null && (
+        <div className="mt-4 bg-green-50 border border-green-200 p-4 rounded">
+          <div className="text-xs text-green-700 font-medium mb-1">Result:</div>
+          <code className="text-sm font-mono break-all">{result}</code>
+          {result.length === 66 && result !== '0x' + '0'.repeat(64) && (
+            <div className="mt-2 text-xs text-gray-500">
+              As address: {formatAddress('0x' + result.slice(26))} |
+              As uint256: {BigInt(result).toString()}
+            </div>
+          )}
+        </div>
+      )}
+
+      {error && (
+        <div className="mt-4 bg-red-50 border border-red-200 p-4 rounded">
+          <div className="text-xs text-red-700 font-medium mb-1">Error:</div>
+          <code className="text-sm font-mono break-all text-red-600">{error}</code>
+        </div>
+      )}
     </div>
   )
 }

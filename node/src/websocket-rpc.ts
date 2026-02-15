@@ -323,7 +323,10 @@ export class WsRpcServer {
     if (ws.readyState !== WebSocket.OPEN) return
 
     try {
-      ws.send(JSON.stringify(data))
+      // Use BigInt-safe serializer to avoid "Do not know how to serialize a BigInt"
+      ws.send(JSON.stringify(data, (_key, value) =>
+        typeof value === "bigint" ? `0x${value.toString(16)}` : value
+      ))
     } catch (err) {
       log.error("send failed", { error: String(err) })
     }
