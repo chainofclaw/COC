@@ -11,7 +11,21 @@ interface TxHistoryProps {
   initialTxs: AddressTx[]
 }
 
-type TxFilter = 'all' | 'sent' | 'received' | 'contract' | 'token'
+type TxFilter = 'all' | 'sent' | 'received' | 'contract' | 'create' | 'token'
+
+function classifyTx(tx: AddressTx, addrLower: string): 'create' | 'contract' | 'sent' | 'received' {
+  if (!tx.to || tx.to === '0x' || tx.to === '0x0') return 'create'
+  if (tx.input && tx.input.length > 10) return 'contract'
+  if (tx.from?.toLowerCase() === addrLower) return 'sent'
+  return 'received'
+}
+
+const TYPE_BADGE: Record<string, { label: string; bg: string; text: string }> = {
+  create: { label: 'Create', bg: 'bg-indigo-100', text: 'text-indigo-700' },
+  contract: { label: 'Call', bg: 'bg-purple-100', text: 'text-purple-700' },
+  sent: { label: 'Send', bg: 'bg-red-100', text: 'text-red-700' },
+  received: { label: 'Receive', bg: 'bg-green-100', text: 'text-green-700' },
+}
 
 export function TxHistory({ address, initialTxs }: TxHistoryProps) {
   const [filter, setFilter] = useState<TxFilter>('all')
@@ -21,25 +35,35 @@ export function TxHistory({ address, initialTxs }: TxHistoryProps) {
     const transfers = (tx.logs ?? [])
       .map((log) => decodeTransferLog(log))
       .filter((t): t is NonNullable<typeof t> => t !== null)
-    return { ...tx, tokenTransfers: transfers }
+    const txType = classifyTx(tx, addrLower)
+    return { ...tx, tokenTransfers: transfers, txType }
   })
 
   const filtered = txsWithTokens.filter((tx) => {
-    if (filter === 'sent') return tx.from?.toLowerCase() === addrLower
-    if (filter === 'received') return tx.to?.toLowerCase() === addrLower
-    if (filter === 'contract') return tx.input && tx.input.length > 10
+    if (filter === 'sent') return tx.txType === 'sent'
+    if (filter === 'received') return tx.txType === 'received'
+    if (filter === 'contract') return tx.txType === 'contract'
+    if (filter === 'create') return tx.txType === 'create'
     if (filter === 'token') return tx.tokenTransfers.length > 0
     return true
   })
 
-  const tokenTxCount = txsWithTokens.filter((tx) => tx.tokenTransfers.length > 0).length
+  const counts = txsWithTokens.reduce(
+    (acc, tx) => {
+      acc[tx.txType] = (acc[tx.txType] ?? 0) + 1
+      if (tx.tokenTransfers.length > 0) acc.token = (acc.token ?? 0) + 1
+      return acc
+    },
+    {} as Record<string, number>,
+  )
 
   const filters: { key: TxFilter; label: string; count?: number }[] = [
     { key: 'all', label: 'All' },
-    { key: 'sent', label: 'Sent' },
-    { key: 'received', label: 'Received' },
-    { key: 'contract', label: 'Contract' },
-    { key: 'token', label: 'Token', count: tokenTxCount },
+    { key: 'sent', label: 'Sent', count: counts.sent },
+    { key: 'received', label: 'Received', count: counts.received },
+    { key: 'contract', label: 'Call', count: counts.contract },
+    { key: 'create', label: 'Create', count: counts.create },
+    { key: 'token', label: 'Token', count: counts.token },
   ]
 
   return (
@@ -72,7 +96,7 @@ export function TxHistory({ address, initialTxs }: TxHistoryProps) {
               <tr>
                 <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Hash</th>
                 <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Block</th>
-                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Dir</th>
+                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
                 <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">From / To</th>
                 <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Method</th>
                 <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Gas</th>
@@ -87,6 +111,7 @@ export function TxHistory({ address, initialTxs }: TxHistoryProps) {
                 const blockNum = parseInt(tx.blockNumber, 16)
                 const success = tx.status === '0x1'
                 const gasUsed = parseInt(tx.gasUsed, 16)
+                const badge = TYPE_BADGE[tx.txType]
 
                 return (
                   <tr key={tx.hash} className="hover:bg-gray-50">
@@ -101,10 +126,8 @@ export function TxHistory({ address, initialTxs }: TxHistoryProps) {
                       </Link>
                     </td>
                     <td className="px-3 py-2 text-sm">
-                      <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                        isSent ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
-                      }`}>
-                        {isSent ? 'OUT' : 'IN'}
+                      <span className={`px-2 py-0.5 rounded text-xs font-medium ${badge.bg} ${badge.text}`}>
+                        {badge.label}
                       </span>
                     </td>
                     <td className="px-3 py-2 text-sm font-mono">
