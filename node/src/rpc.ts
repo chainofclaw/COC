@@ -1065,7 +1065,8 @@ async function queryLogs(chain: IChainEngine, query: Record<string, unknown>): P
     const results = await chain.getLogs({
       fromBlock,
       toBlock,
-      address: address ?? (addresses?.[0]),
+      address,
+      addresses,
       topics: topics as Array<Hex | null> | undefined,
     })
     return results.slice(0, MAX_LOG_RESULTS)
