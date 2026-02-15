@@ -215,7 +215,7 @@ Tests:
 - Unit tests distributed across all modules (`services/*`, `nodeops/*`, `node/src/*`)
 
 ## 11) Blockchain Explorer
-**Status: Implemented (Enhanced in Phase 18)**
+**Status: Implemented (Enhanced in Phase 18 + 25)**
 
 Implemented:
 - Next.js 15 web application with React 19
@@ -228,10 +228,14 @@ Implemented:
 - **Phase 18**: Live pending transactions display (newPendingTransactions subscription)
 - **Phase 18**: Connection status indicator with auto-reconnect
 - **Phase 18**: WebSocket hook for client-side subscriptions
+- **Phase 25**: Address transaction history with direction/type filtering
+- **Phase 25**: Contract view with bytecode, storage reader, event logs
+- **Phase 25**: Global search bar (address/tx hash/block number)
+- **Phase 25**: Address-to-transaction index in BlockIndex (backend)
+- **Phase 25**: `coc_getTransactionsByAddress` custom RPC method
 
 Missing/Partial:
-- Contract verification interface
-- Advanced search and filtering
+- Contract ABI verification and decoding
 - Historical analytics and charts
 
 Code:
@@ -240,6 +244,10 @@ Code:
 - `COC/explorer/src/app/tx/[hash]/page.tsx` (transaction details)
 - `COC/explorer/src/app/address/[address]/page.tsx` (address explorer)
 - `COC/explorer/src/lib/provider.ts` (ethers.js provider)
+- `COC/explorer/src/lib/rpc.ts` (custom RPC calls)
+- `COC/explorer/src/components/SearchBar.tsx` (global search)
+- `COC/explorer/src/components/TxHistory.tsx` (transaction history)
+- `COC/explorer/src/components/ContractView.tsx` (contract viewer)
 
 ## 12) Node Operations & Policy Engine
 **Status: Implemented**

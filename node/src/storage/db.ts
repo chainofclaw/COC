@@ -14,6 +14,11 @@ export interface BatchOp {
   value?: Uint8Array
 }
 
+export interface RangeOptions {
+  limit?: number
+  reverse?: boolean
+}
+
 export interface IDatabase {
   get(key: string): Promise<Uint8Array | null>
   put(key: string, value: Uint8Array): Promise<void>
@@ -21,6 +26,7 @@ export interface IDatabase {
   batch(ops: BatchOp[]): Promise<void>
   close(): Promise<void>
   clear(): Promise<void>
+  getKeysWithPrefix(prefix: string, opts?: RangeOptions): Promise<string[]>
 }
 
 export class LevelDatabase implements IDatabase {
@@ -94,6 +100,20 @@ export class LevelDatabase implements IDatabase {
     await this.db.clear()
   }
 
+  async getKeysWithPrefix(prefix: string, opts?: RangeOptions): Promise<string[]> {
+    await this.ensureOpen()
+    const keys: string[] = []
+    for await (const key of this.db.keys({
+      gte: prefix,
+      lt: prefix + "\xff",
+      reverse: opts?.reverse ?? false,
+      limit: opts?.limit ?? -1,
+    })) {
+      keys.push(key)
+    }
+    return keys
+  }
+
   private async ensureOpen(): Promise<void> {
     if (!this.isOpen) {
       await this.open()
@@ -135,5 +155,12 @@ export class MemoryDatabase implements IDatabase {
 
   async clear(): Promise<void> {
     this.store.clear()
+  }
+
+  async getKeysWithPrefix(prefix: string, opts?: RangeOptions): Promise<string[]> {
+    let keys = [...this.store.keys()].filter(k => k.startsWith(prefix)).sort()
+    if (opts?.reverse) keys.reverse()
+    if (opts?.limit && opts.limit > 0) keys = keys.slice(0, opts.limit)
+    return keys
   }
 }

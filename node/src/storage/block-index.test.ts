@@ -242,3 +242,83 @@ test("BlockIndex: getLogs across multiple blocks", async () => {
   const empty = await index.getLogs({ fromBlock: 10n, toBlock: 20n })
   assert.strictEqual(empty.length, 0)
 })
+
+test("BlockIndex: address index - putTransaction indexes from/to", async () => {
+  const db = new MemoryDatabase()
+  const index = new BlockIndex(db)
+
+  const fromAddr = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as Hex
+  const toAddr = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" as Hex
+
+  await index.putTransaction("0x1111" as Hex, {
+    rawTx: "0x00" as Hex,
+    receipt: {
+      transactionHash: "0x1111" as Hex,
+      blockNumber: 5n,
+      blockHash: "0xblock5" as Hex,
+      from: fromAddr,
+      to: toAddr,
+      gasUsed: 21000n,
+      status: 1n,
+      logs: [],
+    },
+  })
+
+  // Query by sender
+  const fromTxs = await index.getTransactionsByAddress(fromAddr)
+  assert.strictEqual(fromTxs.length, 1)
+  assert.strictEqual(fromTxs[0].receipt.transactionHash, "0x1111")
+
+  // Query by recipient
+  const toTxs = await index.getTransactionsByAddress(toAddr)
+  assert.strictEqual(toTxs.length, 1)
+  assert.strictEqual(toTxs[0].receipt.transactionHash, "0x1111")
+})
+
+test("BlockIndex: address index - multiple txs ordered by block", async () => {
+  const db = new MemoryDatabase()
+  const index = new BlockIndex(db)
+
+  const addr = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as Hex
+
+  for (let i = 1; i <= 5; i++) {
+    await index.putTransaction(`0x${i.toString().padStart(64, "0")}` as Hex, {
+      rawTx: "0x00" as Hex,
+      receipt: {
+        transactionHash: `0x${i.toString().padStart(64, "0")}` as Hex,
+        blockNumber: BigInt(i * 10),
+        blockHash: `0xblock${i}` as Hex,
+        from: addr,
+        to: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" as Hex,
+        gasUsed: 21000n,
+        status: 1n,
+        logs: [],
+      },
+    })
+  }
+
+  // Default: reverse order (newest first)
+  const txsReverse = await index.getTransactionsByAddress(addr, { reverse: true })
+  assert.strictEqual(txsReverse.length, 5)
+  assert.strictEqual(txsReverse[0].receipt.blockNumber, 50n)
+  assert.strictEqual(txsReverse[4].receipt.blockNumber, 10n)
+
+  // Forward order (oldest first)
+  const txsForward = await index.getTransactionsByAddress(addr, { reverse: false })
+  assert.strictEqual(txsForward.length, 5)
+  assert.strictEqual(txsForward[0].receipt.blockNumber, 10n)
+  assert.strictEqual(txsForward[4].receipt.blockNumber, 50n)
+
+  // Limit
+  const limited = await index.getTransactionsByAddress(addr, { limit: 2, reverse: true })
+  assert.strictEqual(limited.length, 2)
+  assert.strictEqual(limited[0].receipt.blockNumber, 50n)
+})
+
+test("BlockIndex: address index - empty result for unknown address", async () => {
+  const db = new MemoryDatabase()
+  const index = new BlockIndex(db)
+
+  const txs = await index.getTransactionsByAddress("0xcccccccccccccccccccccccccccccccccccccccc" as Hex)
+  assert.strictEqual(txs.length, 0)
+})
