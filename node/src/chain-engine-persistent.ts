@@ -7,7 +7,7 @@
  * - Receipts storage
  */
 
-import type { TxReceipt, EvmChain } from "./evm.ts"
+import type { TxReceipt, EvmChain, EvmLog } from "./evm.ts"
 import { Mempool } from "./mempool.ts"
 import { hashBlockPayload, validateBlockLink, zeroHash } from "./hash.ts"
 import type { ChainBlock, Hex, MempoolTx } from "./blockchain-types.ts"
@@ -259,21 +259,21 @@ export class PersistentChainEngine {
             to: txTo ?? ("0x0" as Hex),
             gasUsed: BigInt(receipt.gasUsed.toString()),
             status: BigInt(receipt.status ?? 1),
-            logs: receiptLogs.map((log: any) => ({
+            logs: receiptLogs.map((log: EvmLog) => ({
               address: log.address as Hex,
-              topics: (log.topics ?? []) as Hex[],
-              data: (log.data ?? "0x") as Hex,
+              topics: log.topics as Hex[],
+              data: log.data as Hex,
             })),
           },
         })
 
         // Collect indexed logs
         for (let logIdx = 0; logIdx < receiptLogs.length; logIdx++) {
-          const log = receiptLogs[logIdx] as any
+          const log = receiptLogs[logIdx]
           blockLogs.push({
-            address: (log.address ?? "0x") as Hex,
-            topics: ((log.topics ?? []) as string[]).map((t) => t as Hex),
-            data: (log.data ?? "0x") as Hex,
+            address: log.address as Hex,
+            topics: log.topics.map((t) => t as Hex),
+            data: log.data as Hex,
             blockNumber: block.number,
             blockHash: block.hash,
             transactionHash: result.txHash as Hex,

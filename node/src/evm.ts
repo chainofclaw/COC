@@ -11,6 +11,17 @@ export interface ExecutionResult {
   success: boolean
 }
 
+export interface EvmLog {
+  address: string
+  topics: string[]
+  data: string
+  blockNumber: string
+  transactionHash: string
+  transactionIndex: string
+  logIndex: string
+  removed: boolean
+}
+
 export interface TxReceipt {
   transactionHash: string
   blockNumber: string
@@ -20,7 +31,7 @@ export interface TxReceipt {
   gasUsed: string
   status: "0x0" | "0x1"
   logsBloom: string
-  logs: unknown[]
+  logs: EvmLog[]
   effectiveGasPrice: string
 }
 
