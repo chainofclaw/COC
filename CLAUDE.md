@@ -74,15 +74,15 @@ Policy files are located at `nodeops/policies/*.yaml` and can be loaded and eval
 
 ## Test Strategy
 
-Uses Node.js built-in test framework (191 tests, 94+97 distribution across 66 test files):
-- **Node layer tests**: `node/src/**/*.test.ts` (94 tests, 45 files) - chain engine, EVM, RPC, WebSocket, P2P, mempool, storage, IPFS, PoSe, config, hash, Merkle
+Uses Node.js built-in test framework (543+97 tests across 70+ test files):
+- **Node layer tests**: `node/src/*.test.ts node/src/**/*.test.ts` (543 tests, 49 files) - chain engine, EVM, RPC, WebSocket, P2P, mempool, storage, IPFS, PoSe, BFT consensus, DHT, wire protocol, fork choice, state snapshot
 - **Service layer tests**: `services/**/*.test.ts` + `nodeops/*.test.ts` + `tests/**/*.test.ts` (97 tests, 21 files)
 - **Storage layer tests**: `node/src/storage/*.test.ts` (included in node layer)
 
 Running tests:
 ```bash
-# Node layer tests
-cd node && node --experimental-strip-types --test --test-force-exit src/**/*.test.ts
+# Node layer tests (both root and subdirectory test files)
+cd node && node --experimental-strip-types --test --test-force-exit src/*.test.ts src/**/*.test.ts
 
 # Service layer tests
 cd /path/to/COC && node --experimental-strip-types --test --test-force-exit services/**/*.test.ts nodeops/*.test.ts tests/**/*.test.ts
@@ -115,6 +115,14 @@ cd contracts && npm test
 - `peer-store.ts`: Peer persistence storage (peers.json, auto-save)
 - `dns-seeds.ts`: DNS seed discovery (TXT record resolution)
 - `ipfs-merkle.ts`: Merkle tree construction and proof generation (with index bounds validation)
+- `ipfs-tar.ts`: POSIX tar archive builder for IPFS `/api/v0/get` compatibility
+- `bft.ts`: BFT-lite consensus round (propose/prepare/commit, 2/3 stake-weighted quorum)
+- `bft-coordinator.ts`: BFT round lifecycle management with timeout and P2P bridging
+- `fork-choice.ts`: GHOST-inspired fork selection (BFT finality > chain length > weight)
+- `wire-protocol.ts`: Binary framed TCP protocol (Magic 0xC0C1, FrameDecoder streaming)
+- `dht.ts`: Kademlia DHT routing table (XOR distance, K-buckets, findClosest)
+- `state-snapshot.ts`: EVM state snapshot export/import for fast sync
+- `validator-governance.ts`: Validator set management with stake-weighted voting
 - `pose-engine.ts`: PoSe challenge/receipt pipeline
 - `pose-http.ts`: PoSe HTTP endpoints (field validation for challenge/receipt)
 
@@ -211,10 +219,10 @@ cd contracts && npm test
 
 ## Current Limitations
 
-- Consensus uses ValidatorGovernance stake-weighted block production + rotation fallback (BFT finality not yet implemented)
-- P2P uses HTTP gossip + peer persistence + DNS seed discovery (DHT and binary wire protocol not yet implemented)
-- EVM state persists across restarts via PersistentStateManager + LevelDB
-- IPFS supports core HTTP APIs, gateway, MFS, and Pubsub (tar archive `get` not yet supported)
+- Consensus has BFT-lite round state machine and coordinator implemented but not yet wired into block production loop (pending integration)
+- P2P has BFT message routing, binary wire protocol framing, and DHT routing table implemented but not yet replacing HTTP gossip transport
+- Fork choice rule implemented but not yet integrated into sync path
+- EVM state snapshot export/import implemented but not yet used in fast sync flow
 
 ## Configuration File Locations
 

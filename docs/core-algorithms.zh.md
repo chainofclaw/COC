@@ -154,3 +154,56 @@
 
 代码：
 - `COC/node/src/consensus.ts`
+
+## 14) BFT-lite 共识轮次
+**目标**：三阶段提交 + 权益加权法定人数实现区块最终性。
+
+算法：
+- 阶段：`propose` → `prepare` → `commit` → `finalized`。
+- 法定人数阈值：`floor(2/3 * totalStake) + 1`。
+- 出块者广播区块，验证者发送 prepare 投票。
+- prepare 达到法定人数后进入 commit 阶段。
+- commit 达到法定人数后区块 BFT 最终化。
+- 超时处理：轮次在 prepare + commit 超时后失败。
+
+代码：
+- `COC/node/src/bft.ts`（轮次状态机、法定人数计算）
+- `COC/node/src/bft-coordinator.ts`（生命周期管理）
+
+## 15) GHOST 式分叉选择
+**目标**：在竞争分叉中确定性选择链。
+
+算法：
+- 优先级 1：BFT 最终化链总是获胜。
+- 优先级 2：较长链优先。
+- 优先级 3：更高累积权益权重。
+- 优先级 4：较低区块哈希（确定性决胜）。
+- `shouldSwitchFork()` 判断同步是否应采用远端链。
+
+代码：
+- `COC/node/src/fork-choice.ts`
+
+## 16) Kademlia DHT 路由
+**目标**：基于 XOR 距离路由的去中心化节点发现。
+
+算法：
+- 节点 ID 为 256 位值；距离 = XOR(nodeA, nodeB)。
+- 路由表：256 个 K-Bucket（每个最多 K=20 个节点）。
+- Bucket 索引 = XOR 距离最高位位置。
+- `findClosest(target, K)`：返回按 XOR 距离最近的 K 个节点。
+- LRU 淘汰：最近活跃节点保留在 bucket 尾部。
+
+代码：
+- `COC/node/src/dht.ts`
+
+## 17) 二进制线协议
+**目标**：高效二进制帧格式用于 P2P 通信。
+
+算法：
+- 帧：`[Magic 2B: 0xC0C1] [Type 1B] [Length 4B 大端] [Payload NB]`。
+- 最大载荷：16 MiB。
+- `FrameDecoder`：TCP 流式累积解码器。
+- 消息类型：Handshake, Block, Transaction, BFT, Ping/Pong。
+
+代码：
+- `COC/node/src/wire-protocol.ts`

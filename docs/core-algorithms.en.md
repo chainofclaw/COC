@@ -154,3 +154,56 @@ Algorithm:
 
 Code:
 - `COC/node/src/consensus.ts`
+
+## 14) BFT-lite Consensus Round
+**Goal**: three-phase commit with stake-weighted quorum for block finalization.
+
+Algorithm:
+- Phases: `propose` → `prepare` → `commit` → `finalized`.
+- Quorum threshold: `floor(2/3 * totalStake) + 1`.
+- Proposer broadcasts block, validators send prepare votes.
+- On prepare quorum, transition to commit phase.
+- On commit quorum, block is BFT-finalized.
+- Timeout handling: rounds fail after configurable prepare + commit timeout.
+
+Code:
+- `COC/node/src/bft.ts` (round state machine, quorum calculation)
+- `COC/node/src/bft-coordinator.ts` (lifecycle management)
+
+## 15) GHOST-inspired Fork Choice
+**Goal**: deterministic chain selection across competing forks.
+
+Algorithm:
+- Priority 1: BFT-finalized chain always wins.
+- Priority 2: Longer chain preferred.
+- Priority 3: Higher cumulative stake-weight.
+- Priority 4: Lower block hash (deterministic tiebreaker).
+- `shouldSwitchFork()` determines if sync should adopt a remote chain.
+
+Code:
+- `COC/node/src/fork-choice.ts`
+
+## 16) Kademlia DHT Routing
+**Goal**: decentralized peer discovery via XOR distance routing.
+
+Algorithm:
+- Node IDs are 256-bit values; distance = XOR(nodeA, nodeB).
+- Routing table: 256 K-buckets (K=20 peers each).
+- Bucket index = highest bit position of XOR distance.
+- `findClosest(target, K)`: returns K nearest peers by XOR distance.
+- LRU eviction: most recently seen peers kept at bucket tail.
+
+Code:
+- `COC/node/src/dht.ts`
+
+## 17) Binary Wire Protocol
+**Goal**: efficient binary framing for P2P communication.
+
+Algorithm:
+- Frame: `[Magic 2B: 0xC0C1] [Type 1B] [Length 4B BE] [Payload NB]`.
+- Max payload: 16 MiB.
+- `FrameDecoder`: streaming accumulator for TCP partial reads.
+- Message types: Handshake, Block, Transaction, BFT, Ping/Pong.
+
+Code:
+- `COC/node/src/wire-protocol.ts`
