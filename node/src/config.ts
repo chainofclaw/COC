@@ -33,6 +33,10 @@ export interface NodeConfig {
   minGasPriceWei: string
   prefund: Array<{ address: string; balanceEth: string }>
   poseEpochMs: number
+  // P2P peer discovery
+  dnsSeeds: string[]
+  peerStorePath: string
+  peerMaxAgeMs: number
 }
 
 export async function loadNodeConfig(): Promise<NodeConfig> {
@@ -83,6 +87,9 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
       { address: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", balanceEth: "10000" }
     ],
     poseEpochMs: 60 * 60 * 1000,
+    dnsSeeds: [],
+    peerStorePath: join(dataDir, "peers.json"),
+    peerMaxAgeMs: 7 * 24 * 60 * 60 * 1000,
     ...user,
     storage: { ...storageDefaults, ...userStorage },
   }

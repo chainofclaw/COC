@@ -43,18 +43,25 @@ export class EvmChain {
   private readonly txs = new Map<string, TxInfo>()
   private prefundAccounts: PrefundAccount[] = []
 
-  private constructor(chainId: number, vm: VM, common: ReturnType<typeof createCustomCommon>) {
+  private externalStateManager: unknown | null = null
+
+  private constructor(chainId: number, vm: VM, common: ReturnType<typeof createCustomCommon>, externalStateManager?: unknown) {
     this.vm = vm
     this.common = common
+    this.externalStateManager = externalStateManager ?? null
   }
 
-  static async create(chainId: number): Promise<EvmChain> {
+  static async create(chainId: number, stateManager?: unknown): Promise<EvmChain> {
     const base = getPresetChainConfig("mainnet")
     const common = createCustomCommon({ chainId, networkId: chainId, name: "COC" }, base, {
       hardfork: Hardfork.Shanghai
     })
-    const vm = await createVM({ common })
-    return new EvmChain(chainId, vm, common)
+    const opts: Record<string, unknown> = { common }
+    if (stateManager) {
+      opts.stateManager = stateManager
+    }
+    const vm = await createVM(opts as any)
+    return new EvmChain(chainId, vm, common, stateManager)
   }
 
   async prefund(accounts: PrefundAccount[]): Promise<void> {
@@ -140,7 +147,11 @@ export class EvmChain {
   }
 
   async resetExecution(): Promise<void> {
-    this.vm = await createVM({ common: this.common })
+    const opts: Record<string, unknown> = { common: this.common }
+    if (this.externalStateManager) {
+      opts.stateManager = this.externalStateManager
+    }
+    this.vm = await createVM(opts as any)
     if (this.prefundAccounts.length > 0) {
       await this.prefund(this.prefundAccounts)
     }

@@ -5,6 +5,8 @@ import { join } from "node:path"
 import type { IpfsBlockstore } from "./ipfs-blockstore.ts"
 import { UnixFsBuilder, storeRawBlock, loadRawBlock } from "./ipfs-unixfs.ts"
 import type { IpfsAddResult, UnixFsFileMeta } from "./ipfs-types.ts"
+import type { IpfsMfs } from "./ipfs-mfs.ts"
+import type { IpfsPubsub } from "./ipfs-pubsub.ts"
 import { createLogger } from "./logger.ts"
 
 const log = createLogger("ipfs")
@@ -20,11 +22,21 @@ export class IpfsHttpServer {
   private readonly cfg: IpfsServerConfig
   private readonly store: IpfsBlockstore
   private readonly unixfs: UnixFsBuilder
+  private mfs: IpfsMfs | null = null
+  private pubsub: IpfsPubsub | null = null
 
   constructor(cfg: IpfsServerConfig, store: IpfsBlockstore, unixfs: UnixFsBuilder) {
     this.cfg = cfg
     this.store = store
     this.unixfs = unixfs
+  }
+
+  /**
+   * Attach MFS and Pubsub subsystems.
+   */
+  attachSubsystems(opts: { mfs?: IpfsMfs; pubsub?: IpfsPubsub }): void {
+    if (opts.mfs) this.mfs = opts.mfs
+    if (opts.pubsub) this.pubsub = opts.pubsub
   }
 
   start(): void {
@@ -94,6 +106,18 @@ export class IpfsHttpServer {
       }
       if (url.pathname === "/api/v0/pin/ls") {
         await this.handlePinLs(res)
+        return
+      }
+
+      // MFS routes
+      if (url.pathname?.startsWith("/api/v0/files/") && this.mfs) {
+        await this.handleMfsRoute(req, res, url)
+        return
+      }
+
+      // Pubsub routes
+      if (url.pathname?.startsWith("/api/v0/pubsub/") && this.pubsub) {
+        await this.handlePubsubRoute(req, res, url)
         return
       }
 
@@ -291,6 +315,174 @@ export class IpfsHttpServer {
       return JSON.parse(raw) as Record<string, UnixFsFileMeta>
     } catch {
       return {}
+    }
+  }
+
+  private async handleMfsRoute(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    url: ReturnType<typeof parseUrl>,
+  ): Promise<void> {
+    if (!this.mfs) {
+      res.writeHead(501)
+      res.end(JSON.stringify({ error: "MFS not enabled" }))
+      return
+    }
+
+    const route = url.pathname?.replace("/api/v0/files/", "") ?? ""
+    const arg = (url.query?.arg as string) ?? ""
+
+    try {
+      switch (route) {
+        case "mkdir": {
+          const parents = url.query?.parents === "true"
+          await this.mfs.mkdir(arg, { parents })
+          res.writeHead(200, { "content-type": "application/json" })
+          res.end(JSON.stringify({ ok: true }))
+          break
+        }
+        case "write": {
+          const body = await readBody(req)
+          await this.mfs.write(arg, body, {
+            create: url.query?.create === "true",
+            truncate: url.query?.truncate === "true",
+            parents: url.query?.parents === "true",
+          })
+          res.writeHead(200, { "content-type": "application/json" })
+          res.end(JSON.stringify({ ok: true }))
+          break
+        }
+        case "read": {
+          const data = await this.mfs.read(arg)
+          res.writeHead(200)
+          res.end(data)
+          break
+        }
+        case "ls": {
+          const entries = await this.mfs.ls(arg || "/")
+          res.writeHead(200, { "content-type": "application/json" })
+          res.end(JSON.stringify({
+            Entries: entries.map((e) => ({
+              Name: e.name,
+              Type: e.type === "directory" ? 1 : 0,
+              Size: e.size,
+              Hash: e.cid,
+            })),
+          }))
+          break
+        }
+        case "rm": {
+          const recursive = url.query?.recursive === "true"
+          await this.mfs.rm(arg, { recursive })
+          res.writeHead(200, { "content-type": "application/json" })
+          res.end(JSON.stringify({ ok: true }))
+          break
+        }
+        case "mv": {
+          const source = arg
+          const dest = url.query?.dest as string ?? ""
+          await this.mfs.mv(source, dest)
+          res.writeHead(200, { "content-type": "application/json" })
+          res.end(JSON.stringify({ ok: true }))
+          break
+        }
+        case "cp": {
+          const source = arg
+          const dest = url.query?.dest as string ?? ""
+          await this.mfs.cp(source, dest)
+          res.writeHead(200, { "content-type": "application/json" })
+          res.end(JSON.stringify({ ok: true }))
+          break
+        }
+        case "stat": {
+          const stat = await this.mfs.stat(arg || "/")
+          res.writeHead(200, { "content-type": "application/json" })
+          res.end(JSON.stringify(stat))
+          break
+        }
+        case "flush": {
+          const cid = await this.mfs.flush(arg || "/")
+          res.writeHead(200, { "content-type": "application/json" })
+          res.end(JSON.stringify({ Cid: cid }))
+          break
+        }
+        default:
+          res.writeHead(404)
+          res.end(JSON.stringify({ error: `unknown MFS command: ${route}` }))
+      }
+    } catch (err) {
+      res.writeHead(500, { "content-type": "application/json" })
+      res.end(JSON.stringify({ error: String(err) }))
+    }
+  }
+
+  private async handlePubsubRoute(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    url: ReturnType<typeof parseUrl>,
+  ): Promise<void> {
+    if (!this.pubsub) {
+      res.writeHead(501)
+      res.end(JSON.stringify({ error: "Pubsub not enabled" }))
+      return
+    }
+
+    const route = url.pathname?.replace("/api/v0/pubsub/", "") ?? ""
+    const topic = (url.query?.arg as string) ?? ""
+
+    try {
+      switch (route) {
+        case "pub": {
+          const body = await readBody(req)
+          await this.pubsub.publish(topic, body)
+          res.writeHead(200, { "content-type": "application/json" })
+          res.end(JSON.stringify({ ok: true }))
+          break
+        }
+        case "sub": {
+          // Long-polling: return recent messages and stream new ones via ndjson
+          res.writeHead(200, {
+            "content-type": "application/x-ndjson",
+            "transfer-encoding": "chunked",
+          })
+
+          const handler = (msg: { from: string; seqno: string; data: Uint8Array; topicIDs: string[] }) => {
+            const encoded = Buffer.from(msg.data).toString("base64")
+            res.write(JSON.stringify({
+              from: msg.from,
+              seqno: msg.seqno,
+              data: encoded,
+              topicIDs: msg.topicIDs,
+            }) + "\n")
+          }
+
+          this.pubsub.subscribe(topic, handler)
+
+          // Clean up on client disconnect
+          req.on("close", () => {
+            this.pubsub?.unsubscribe(topic, handler)
+          })
+          break
+        }
+        case "ls": {
+          const topics = this.pubsub.getTopics()
+          res.writeHead(200, { "content-type": "application/json" })
+          res.end(JSON.stringify({ Strings: topics }))
+          break
+        }
+        case "peers": {
+          const count = this.pubsub.getSubscribers(topic)
+          res.writeHead(200, { "content-type": "application/json" })
+          res.end(JSON.stringify({ Strings: [], count }))
+          break
+        }
+        default:
+          res.writeHead(404)
+          res.end(JSON.stringify({ error: `unknown pubsub command: ${route}` }))
+      }
+    } catch (err) {
+      res.writeHead(500, { "content-type": "application/json" })
+      res.end(JSON.stringify({ error: String(err) }))
     }
   }
 }

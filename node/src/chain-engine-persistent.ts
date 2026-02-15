@@ -18,6 +18,9 @@ import type { TxWithReceipt, IndexedLog, LogFilter } from "./storage/block-index
 import { PersistentNonceStore } from "./storage/nonce-store.ts"
 import { ChainEventEmitter } from "./chain-events.ts"
 import type { BlockEvent, PendingTxEvent } from "./chain-events.ts"
+import type { IStateTrie } from "./storage/state-trie.ts"
+import { ValidatorGovernance } from "./validator-governance.ts"
+import type { ValidatorInfo } from "./validator-governance.ts"
 
 export interface PersistentChainEngineConfig {
   dataDir: string
@@ -28,16 +31,21 @@ export interface PersistentChainEngineConfig {
   maxTxPerBlock: number
   minGasPriceWei: bigint
   prefundAccounts?: Array<{ address: string; balanceWei: string }>
+  stateTrie?: IStateTrie
+  enableGovernance?: boolean
+  validatorStakes?: Array<{ id: string; address: string; stake: bigint }>
 }
 
 export class PersistentChainEngine {
   readonly mempool: Mempool
   readonly events: ChainEventEmitter
+  readonly governance: ValidatorGovernance | null
   private readonly db: LevelDatabase
   private readonly blockIndex: BlockIndex
   private readonly txNonceStore: PersistentNonceStore
   private readonly cfg: PersistentChainEngineConfig
   private readonly evm: EvmChain
+  private readonly stateTrie: IStateTrie | null
 
   constructor(cfg: PersistentChainEngineConfig, evm: EvmChain) {
     this.cfg = cfg
@@ -47,6 +55,20 @@ export class PersistentChainEngine {
     this.blockIndex = new BlockIndex(this.db)
     this.txNonceStore = new PersistentNonceStore(this.db)
     this.events = new ChainEventEmitter()
+    this.stateTrie = cfg.stateTrie ?? null
+
+    // Initialize validator governance if enabled
+    if (cfg.enableGovernance) {
+      this.governance = new ValidatorGovernance()
+      const genesisValidators = cfg.validatorStakes ?? cfg.validators.map((id) => ({
+        id,
+        address: "0x" + "0".repeat(40),
+        stake: 1000000000000000000n, // 1 ETH default
+      }))
+      this.governance.initGenesis(genesisValidators)
+    } else {
+      this.governance = null
+    }
   }
 
   async init(): Promise<void> {
@@ -60,7 +82,13 @@ export class PersistentChainEngine {
     // Load latest block and rebuild if exists
     const latestBlock = await this.blockIndex.getLatestBlock()
     if (latestBlock) {
-      await this.rebuildFromPersisted(latestBlock.number)
+      // If we have a persistent state trie with a valid state root,
+      // skip full replay - state is already persisted in LevelDB
+      if (this.stateTrie && this.stateTrie.stateRoot()) {
+        // State already restored from trie init, no replay needed
+      } else {
+        await this.rebuildFromPersisted(latestBlock.number)
+      }
     }
   }
 
@@ -118,6 +146,15 @@ export class PersistentChainEngine {
   }
 
   expectedProposer(nextHeight: bigint): string {
+    // Use governance-based stake-weighted selection if available
+    if (this.governance) {
+      const activeValidators = this.governance.getActiveValidators()
+      if (activeValidators.length > 0) {
+        return stakeWeightedProposer(activeValidators, nextHeight)
+      }
+    }
+
+    // Fallback to simple round-robin
     const set = this.cfg.validators
     if (set.length === 0) {
       return this.cfg.nodeId
@@ -281,6 +318,11 @@ export class PersistentChainEngine {
     for (const log of blockLogs) {
       this.events.emitLog({ log })
     }
+
+    // Commit state trie after block execution for persistence
+    if (this.stateTrie) {
+      await this.stateTrie.commit()
+    }
   }
 
   async maybeAdoptSnapshot(blocks: ChainBlock[]): Promise<boolean> {
@@ -402,4 +444,35 @@ export class PersistentChainEngine {
       await this.applyBlock(normalized)
     }
   }
+}
+
+/**
+ * Deterministic stake-weighted proposer selection.
+ * Uses cumulative stake thresholds with block-height-seeded selection.
+ */
+function stakeWeightedProposer(validators: ValidatorInfo[], blockHeight: bigint): string {
+  // Sort deterministically by ID
+  const sorted = [...validators].sort((a, b) => a.id.localeCompare(b.id))
+
+  const totalStake = sorted.reduce((sum, v) => sum + v.stake, 0n)
+  if (totalStake === 0n) {
+    // Equal weight fallback
+    const idx = Number((blockHeight - 1n) % BigInt(sorted.length))
+    return sorted[idx].id
+  }
+
+  // Deterministic seed from block height
+  const seed = blockHeight % totalStake
+
+  // Walk cumulative stakes to find proposer
+  let cumulative = 0n
+  for (const v of sorted) {
+    cumulative += v.stake
+    if (seed < cumulative) {
+      return v.id
+    }
+  }
+
+  // Fallback (shouldn't reach here)
+  return sorted[0].id
 }

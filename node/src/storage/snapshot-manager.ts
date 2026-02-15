@@ -92,13 +92,16 @@ export class SnapshotManager implements ISnapshotManager {
       )
     }
 
-    // State is already persisted in the trie, no need to restore
-    // Just verify the state root matches
-    const currentStateRoot = await this.stateTrie.commit()
-    if (currentStateRoot !== metadata.stateRoot) {
-      console.warn(
-        `State root mismatch: expected ${metadata.stateRoot}, got ${currentStateRoot}`
-      )
+    // Restore state trie to the snapshot's state root
+    if (metadata.stateRoot) {
+      const hasRoot = await this.stateTrie.hasStateRoot(metadata.stateRoot)
+      if (hasRoot) {
+        await this.stateTrie.setStateRoot(metadata.stateRoot)
+      } else {
+        console.warn(
+          `State root ${metadata.stateRoot} not found in trie, cannot restore`
+        )
+      }
     }
   }
 

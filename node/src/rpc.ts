@@ -809,6 +809,59 @@ async function handleRpc(
       }
       return { latestBlock: 0, pruningHeight: 0, retainedBlocks: 0 }
     }
+    case "coc_getValidators": {
+      const engine = chain as any
+      if (engine.governance) {
+        const validators = engine.governance.getActiveValidators()
+        return validators.map((v: any) => ({
+          id: v.id,
+          address: v.address,
+          stake: `0x${v.stake.toString(16)}`,
+          votingPower: v.votingPower,
+          active: v.active,
+          joinedAtEpoch: `0x${v.joinedAtEpoch.toString(16)}`,
+        }))
+      }
+      // Fallback: return basic validator info from round-robin
+      const height = await Promise.resolve(chain.getHeight())
+      return chain.expectedProposer(height + 1n)
+    }
+    case "coc_submitProposal": {
+      const engine = chain as any
+      if (!engine.governance) throw new Error("governance not enabled")
+      const proposalParams = (payload.params ?? [])[0] as Record<string, string>
+      const proposal = engine.governance.submitProposal(
+        proposalParams.type,
+        proposalParams.targetId,
+        proposalParams.proposer,
+        {
+          targetAddress: proposalParams.targetAddress,
+          stakeAmount: proposalParams.stakeAmount ? BigInt(proposalParams.stakeAmount) : undefined,
+        },
+      )
+      return {
+        id: proposal.id,
+        type: proposal.type,
+        targetId: proposal.targetId,
+        status: proposal.status,
+      }
+    }
+    case "coc_voteProposal": {
+      const engine = chain as any
+      if (!engine.governance) throw new Error("governance not enabled")
+      const voteParams = (payload.params ?? [])[0] as Record<string, unknown>
+      engine.governance.vote(
+        String(voteParams.proposalId),
+        String(voteParams.voterId),
+        Boolean(voteParams.approve),
+      )
+      const updated = engine.governance.getProposal(String(voteParams.proposalId))
+      return {
+        id: updated?.id,
+        status: updated?.status,
+        votes: updated?.votes ? Object.fromEntries(updated.votes) : {},
+      }
+    }
     default:
       throw new Error(`method not supported: ${payload.method}`)
   }

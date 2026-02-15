@@ -23,6 +23,9 @@ export interface P2PConfig {
   nodeId?: string
   maxPeers?: number
   enableDiscovery?: boolean
+  peerStorePath?: string
+  dnsSeeds?: string[]
+  peerMaxAgeMs?: number
 }
 
 export class BoundedSet<T> {
@@ -68,6 +71,7 @@ export class P2PNode {
   private blocksBroadcast = 0
   readonly scoring: PeerScoring
   readonly discovery: PeerDiscovery
+  private pubsubHandler: ((topic: string, message: unknown) => void) | null = null
 
   constructor(cfg: P2PConfig, handlers: P2PHandlers) {
     this.cfg = cfg
@@ -80,6 +84,9 @@ export class P2PNode {
         selfId: cfg.nodeId ?? "node-1",
         selfUrl: `http://${cfg.bind}:${cfg.port}`,
         maxPeers: cfg.maxPeers ?? 50,
+        peerStorePath: cfg.peerStorePath,
+        dnsSeeds: cfg.dnsSeeds,
+        peerMaxAgeMs: cfg.peerMaxAgeMs,
       },
     )
 
@@ -151,6 +158,17 @@ export class P2PNode {
             return
           }
 
+          if (req.url === "/p2p/pubsub-message") {
+            const payload = JSON.parse(body || "{}") as { topic?: string; message?: unknown }
+            if (!payload.topic || !payload.message) throw new Error("missing topic or message")
+            if (this.pubsubHandler) {
+              this.pubsubHandler(payload.topic, payload.message)
+            }
+            res.writeHead(200)
+            res.end(serializeJson({ ok: true }))
+            return
+          }
+
           res.writeHead(404)
           res.end(serializeJson({ error: "not found" }))
         } catch (error) {
@@ -199,6 +217,20 @@ export class P2PNode {
       }
     }
     return results
+  }
+
+  /**
+   * Set handler for incoming pubsub messages from peers.
+   */
+  setPubsubHandler(handler: (topic: string, message: unknown) => void): void {
+    this.pubsubHandler = handler
+  }
+
+  /**
+   * Broadcast a pubsub message to all peers.
+   */
+  async broadcastPubsub(topic: string, message: unknown): Promise<void> {
+    await this.broadcast("/p2p/pubsub-message", { topic, message })
   }
 
   getStats(): { txReceived: number; txBroadcast: number; blocksReceived: number; blocksBroadcast: number; seenTxSize: number; seenBlocksSize: number } {

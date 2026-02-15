@@ -18,11 +18,15 @@ import { startWsRpcServer } from "./websocket-rpc.ts"
 import { handleRpcMethod } from "./rpc.ts"
 import { ChainEventEmitter } from "./chain-events.ts"
 import { createLogger } from "./logger.ts"
+import { LevelDatabase } from "./storage/db.ts"
+import { PersistentStateTrie } from "./storage/state-trie.ts"
+import { PersistentStateManager } from "./storage/persistent-state-manager.ts"
+import { IpfsMfs } from "./ipfs-mfs.ts"
+import { IpfsPubsub } from "./ipfs-pubsub.ts"
 
 const log = createLogger("node")
 
 const config = await loadNodeConfig()
-const evm = await EvmChain.create(config.chainId)
 
 const prefund = (config.prefund || []).map((entry) => ({
   address: entry.address,
@@ -43,8 +47,19 @@ if (usePersistent) {
 }
 
 let chain: IChainEngine
+let evm: EvmChain
 
 if (usePersistent) {
+  // Create persistent state trie backed by LevelDB
+  const stateDb = new LevelDatabase(config.dataDir, "state")
+  await stateDb.open()
+  const stateTrie = new PersistentStateTrie(stateDb)
+  await stateTrie.init()
+
+  // Create state manager adapter and pass to EVM
+  const stateManager = new PersistentStateManager(stateTrie)
+  evm = await EvmChain.create(config.chainId, stateManager)
+
   const persistentEngine = new PersistentChainEngine(
     {
       dataDir: config.dataDir,
@@ -55,13 +70,15 @@ if (usePersistent) {
       maxTxPerBlock: config.maxTxPerBlock,
       minGasPriceWei: BigInt(config.minGasPriceWei),
       prefundAccounts: prefund,
+      stateTrie,
     },
     evm,
   )
   await persistentEngine.init()
   chain = persistentEngine
-  log.info("using persistent storage backend (LevelDB)")
+  log.info("using persistent storage backend (LevelDB) with EVM state persistence")
 } else {
+  evm = await EvmChain.create(config.chainId)
   await evm.prefund(prefund)
   const memoryEngine = new ChainEngine(
     {
@@ -85,6 +102,11 @@ const p2p = new P2PNode(
     bind: config.p2pBind,
     port: config.p2pPort,
     peers: config.peers,
+    nodeId: config.nodeId,
+    enableDiscovery: true,
+    peerStorePath: config.peerStorePath,
+    dnsSeeds: config.dnsSeeds,
+    peerMaxAgeMs: config.peerMaxAgeMs,
   },
   {
     onTx: async (rawTx) => {
@@ -126,6 +148,23 @@ const ipfs = new IpfsHttpServer(
   ipfsStore,
   unixfs,
 )
+
+// Initialize MFS and Pubsub subsystems
+const mfs = new IpfsMfs(ipfsStore, unixfs)
+const pubsub = new IpfsPubsub({ nodeId: config.nodeId })
+pubsub.start()
+ipfs.attachSubsystems({ mfs, pubsub })
+
+// Wire pubsub to P2P layer for cross-node messaging
+pubsub.setPeerForwarder({
+  async forwardPubsubMessage(topic, msg) {
+    await p2p.broadcastPubsub(topic, msg)
+  },
+})
+p2p.setPubsubHandler((topic, message) => {
+  pubsub.receiveFromPeer(topic, message as any)
+})
+
 ipfs.start()
 
 const consensus = new ConsensusEngine(chain, p2p, {

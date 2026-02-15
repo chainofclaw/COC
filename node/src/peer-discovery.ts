@@ -11,6 +11,8 @@
 import { request as httpRequest } from "node:http"
 import type { NodePeer } from "./blockchain-types.ts"
 import { PeerScoring } from "./peer-scoring.ts"
+import { PeerStore } from "./peer-store.ts"
+import { DnsSeedResolver } from "./dns-seeds.ts"
 import { createLogger } from "./logger.ts"
 
 const log = createLogger("discovery")
@@ -22,6 +24,9 @@ export interface DiscoveryConfig {
   healthCheckTimeoutMs: number
   selfId: string
   selfUrl: string
+  peerStorePath?: string
+  dnsSeeds?: string[]
+  peerMaxAgeMs?: number
 }
 
 const DEFAULT_CONFIG: DiscoveryConfig = {
@@ -37,6 +42,8 @@ export class PeerDiscovery {
   private readonly peers = new Map<string, NodePeer>()
   private readonly scoring: PeerScoring
   private readonly cfg: DiscoveryConfig
+  private readonly peerStore: PeerStore | null
+  private readonly dnsResolver: DnsSeedResolver | null
   private discoveryTimer: ReturnType<typeof setInterval> | null = null
   private healthTimer: ReturnType<typeof setInterval> | null = null
 
@@ -48,6 +55,19 @@ export class PeerDiscovery {
     this.scoring = scoring
     this.cfg = { ...DEFAULT_CONFIG, ...config }
 
+    // Initialize peer store for persistence
+    this.peerStore = this.cfg.peerStorePath
+      ? new PeerStore({
+          filePath: this.cfg.peerStorePath,
+          maxAgeMs: this.cfg.peerMaxAgeMs ?? 7 * 24 * 60 * 60 * 1000,
+        })
+      : null
+
+    // Initialize DNS seed resolver
+    this.dnsResolver = this.cfg.dnsSeeds && this.cfg.dnsSeeds.length > 0
+      ? new DnsSeedResolver({ seeds: this.cfg.dnsSeeds })
+      : null
+
     // Register bootstrap peers
     for (const peer of bootstrapPeers) {
       if (peer.id !== this.cfg.selfId) {
@@ -58,9 +78,15 @@ export class PeerDiscovery {
   }
 
   /**
-   * Start periodic discovery and health checking
+   * Start periodic discovery and health checking.
+   * Loads persisted peers and DNS seeds on startup.
    */
   start(): void {
+    // Load persisted peers and DNS seeds asynchronously
+    this.loadInitialPeers().catch((err) => {
+      log.error("failed to load initial peers", { error: String(err) })
+    })
+
     this.discoveryTimer = setInterval(() => {
       this.discoverPeers().catch((err) => {
         log.error("discovery round failed", { error: String(err) })
@@ -73,14 +99,21 @@ export class PeerDiscovery {
       })
     }, this.cfg.healthCheckIntervalMs)
 
+    // Start auto-save for peer persistence
+    if (this.peerStore) {
+      this.peerStore.startAutoSave()
+    }
+
     log.info("peer discovery started", {
       bootstrapPeers: this.peers.size,
       maxPeers: this.cfg.maxPeers,
+      hasPeerStore: !!this.peerStore,
+      hasDnsSeeds: !!this.dnsResolver,
     })
   }
 
   /**
-   * Stop discovery and health checking
+   * Stop discovery and health checking. Saves peers to disk.
    */
   stop(): void {
     if (this.discoveryTimer) {
@@ -90,6 +123,10 @@ export class PeerDiscovery {
     if (this.healthTimer) {
       clearInterval(this.healthTimer)
       this.healthTimer = null
+    }
+    if (this.peerStore) {
+      this.peerStore.stopAutoSave()
+      this.peerStore.save().catch(() => {})
     }
   }
 
@@ -133,6 +170,9 @@ export class PeerDiscovery {
 
       this.peers.set(peer.id, peer)
       this.scoring.addPeer(peer.id, peer.url)
+      if (this.peerStore) {
+        this.peerStore.addPeer(peer)
+      }
       added++
     }
     if (added > 0) {
@@ -220,6 +260,23 @@ export class PeerDiscovery {
       })
       req.end()
     })
+  }
+
+  /**
+   * Load peers from disk and DNS seeds on startup.
+   */
+  private async loadInitialPeers(): Promise<void> {
+    // Load persisted peers from disk
+    if (this.peerStore) {
+      const stored = await this.peerStore.load()
+      this.addDiscoveredPeers(stored.map(({ id, url }) => ({ id, url })))
+    }
+
+    // Resolve DNS seeds
+    if (this.dnsResolver) {
+      const dnsPeers = await this.dnsResolver.resolve()
+      this.addDiscoveredPeers(dnsPeers)
+    }
   }
 
   private async checkPeerHealth(peer: NodePeer): Promise<boolean> {

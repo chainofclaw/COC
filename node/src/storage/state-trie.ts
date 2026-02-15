@@ -25,6 +25,7 @@ export interface AccountState {
 export interface IStateTrie {
   get(address: string): Promise<AccountState | null>
   put(address: string, state: AccountState): Promise<void>
+  delete(address: string): Promise<void>
   getStorageAt(address: string, slot: string): Promise<string>
   putStorageAt(address: string, slot: string, value: string): Promise<void>
   getCode(codeHash: string): Promise<Uint8Array | null>
@@ -33,6 +34,9 @@ export interface IStateTrie {
   checkpoint(): Promise<void>
   revert(): Promise<void>
   close(): Promise<void>
+  stateRoot(): string | null
+  setStateRoot(root: string): Promise<void>
+  hasStateRoot(root: string): Promise<boolean>
 }
 
 /**
@@ -179,6 +183,42 @@ export class PersistentStateTrie implements IStateTrie {
     this.accountCache.set(address, state)
     this.dirtyAddresses.add(address)
     this.lastStateRoot = null // Invalidate cached root
+  }
+
+  async delete(address: string): Promise<void> {
+    const addressBytes = hexToBytes(address)
+    await this.trie.del(addressBytes)
+    this.accountCache.delete(address)
+    this.dirtyAddresses.delete(address)
+    this.storageTries.delete(address)
+    this.lastStateRoot = null
+  }
+
+  async setStateRoot(root: string): Promise<void> {
+    const rootBytes = hexToBytes(root)
+    this.trie = new Trie({ db: this.trieDb as any, root: rootBytes })
+    this.lastStateRoot = root
+    this.accountCache.clear()
+    this.storageTries.clear()
+    this.storageTrieAccess.length = 0
+    this.dirtyAddresses.clear()
+
+    // Persist the new state root
+    const encoder = new TextEncoder()
+    await this.db.put(STATE_ROOT_KEY, encoder.encode(root))
+  }
+
+  async hasStateRoot(root: string): Promise<boolean> {
+    // Check if we can initialize a trie with the given root
+    try {
+      const rootBytes = hexToBytes(root)
+      const testTrie = new Trie({ db: this.trieDb as any, root: rootBytes })
+      // Try to read from it; if root doesn't exist, it won't throw until access
+      await testTrie.get(new Uint8Array(20))
+      return true
+    } catch {
+      return false
+    }
   }
 
   async getStorageAt(address: string, slot: string): Promise<string> {
@@ -341,6 +381,7 @@ export class InMemoryStateTrie implements IStateTrie {
   private accounts = new Map<string, AccountState>()
   private storage = new Map<string, Map<string, string>>() // address -> slot -> value
   private code = new Map<string, Uint8Array>() // codeHash -> code
+  private lastRoot: string | null = null
   private checkpoints: Array<{
     accounts: Map<string, AccountState>
     storage: Map<string, Map<string, string>>
@@ -352,6 +393,11 @@ export class InMemoryStateTrie implements IStateTrie {
 
   async put(address: string, state: AccountState): Promise<void> {
     this.accounts.set(address, { ...state })
+  }
+
+  async delete(address: string): Promise<void> {
+    this.accounts.delete(address)
+    this.storage.delete(address)
   }
 
   async getStorageAt(address: string, slot: string): Promise<string> {
@@ -383,7 +429,21 @@ export class InMemoryStateTrie implements IStateTrie {
     // Simple hash of all account addresses for in-memory implementation
     const addresses = Array.from(this.accounts.keys()).sort()
     const stateString = addresses.join(",")
-    return keccak256(toUtf8Bytes(stateString))
+    this.lastRoot = keccak256(toUtf8Bytes(stateString))
+    return this.lastRoot
+  }
+
+  stateRoot(): string | null {
+    return this.lastRoot
+  }
+
+  async setStateRoot(_root: string): Promise<void> {
+    // No-op for in-memory; state root is just a hash
+    this.lastRoot = _root
+  }
+
+  async hasStateRoot(_root: string): Promise<boolean> {
+    return true
   }
 
   async checkpoint(): Promise<void> {

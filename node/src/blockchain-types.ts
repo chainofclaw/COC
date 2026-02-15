@@ -20,6 +20,8 @@ export interface ChainBlock {
   timestampMs: number
   txs: Hex[]
   finalized: boolean
+  signature?: Hex
+  stateRoot?: Hex
 }
 
 export interface ChainSnapshot {
