@@ -37,6 +37,19 @@ export interface NodeConfig {
   dnsSeeds: string[]
   peerStorePath: string
   peerMaxAgeMs: number
+  // BFT consensus
+  enableBft: boolean
+  bftPrepareTimeoutMs: number
+  bftCommitTimeoutMs: number
+  // Wire protocol (TCP transport)
+  enableWireProtocol: boolean
+  wirePort: number
+  // DHT peer discovery
+  enableDht: boolean
+  dhtBootstrapPeers: Array<{ id: string; address: string; port: number }>
+  // State snapshot sync
+  enableSnapSync: boolean
+  snapSyncThreshold: number
 }
 
 export async function loadNodeConfig(): Promise<NodeConfig> {
@@ -90,6 +103,15 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     dnsSeeds: [],
     peerStorePath: join(dataDir, "peers.json"),
     peerMaxAgeMs: 7 * 24 * 60 * 60 * 1000,
+    enableBft: false,
+    bftPrepareTimeoutMs: 5000,
+    bftCommitTimeoutMs: 5000,
+    enableWireProtocol: false,
+    wirePort: 19781,
+    enableDht: false,
+    dhtBootstrapPeers: [],
+    enableSnapSync: false,
+    snapSyncThreshold: 100,
     ...user,
     storage: { ...storageDefaults, ...userStorage },
   }

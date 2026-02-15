@@ -20,6 +20,7 @@ export interface ChainBlock {
   timestampMs: number
   txs: Hex[]
   finalized: boolean
+  bftFinalized?: boolean
   signature?: Hex
   stateRoot?: Hex
 }

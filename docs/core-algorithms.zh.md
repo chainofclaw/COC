@@ -207,3 +207,49 @@
 
 代码：
 - `COC/node/src/wire-protocol.ts`
+
+## 18) DHT 网络迭代查找
+**目标**：通过 DHT 网络迭代查询发现节点。
+
+算法：
+- 从本地路由表获取 K 个最近节点作为初始集合。
+- 选择 ALPHA (3) 个未查询过的最近候选节点。
+- 并行查询每个候选节点获取其最近节点列表。
+- 将新发现的节点加入路由表和候选集合。
+- 重复直到无新节点发现（收敛）。
+- 返回路由表中最终 K 个最近节点。
+
+代码：
+- `COC/node/src/dht-network.ts`（`iterativeLookup`）
+
+## 19) Wire Server/Client TCP 握手
+**目标**：在节点间建立经验证的 TCP 连接。
+
+算法：
+- 服务端监听配置端口并接受连接。
+- 连接建立时服务端发送 Handshake 帧（nodeId, chainId, height）。
+- 客户端在连接时发送 Handshake 帧。
+- 接收方验证 chainId — 不匹配则断开连接。
+- 验证成功后标记连接为握手完成。
+- 握手后：将 Block、Transaction、BFT 帧分发到对应处理器。
+- 客户端断线后使用指数退避重连（初始 1s，上限 30s，每次翻倍）。
+
+代码：
+- `COC/node/src/wire-server.ts`
+- `COC/node/src/wire-client.ts`
+
+## 20) 快照同步状态传输
+**目标**：从 peer 的 EVM 快照快速同步节点状态。
+
+算法：
+- 同步节点通过 `/p2p/state-snapshot` 向 peer 请求状态快照。
+- Peer 导出完整 EVM 状态：账户、存储槽、合约代码。
+- 接收方验证快照结构（`validateSnapshot()`）。
+- 将账户、存储和代码导入本地状态树。
+- 设置本地 state root 以匹配快照。
+- 从快照的区块高度恢复共识。
+
+代码：
+- `COC/node/src/state-snapshot.ts`（`exportStateSnapshot`、`importStateSnapshot`）
+- `COC/node/src/consensus.ts`（`SnapSyncProvider` 接口）
+- `COC/node/src/p2p.ts`（`/p2p/state-snapshot` 端点）

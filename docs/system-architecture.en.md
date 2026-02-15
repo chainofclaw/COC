@@ -19,9 +19,9 @@ COC is an EVM-compatible blockchain prototype that combines a lightweight execut
 
 3. **P2P Networking Layer**
    - HTTP-based gossip for transactions, blocks, BFT messages, and pubsub messages.
-   - Binary wire protocol with frame encoding/decoding for future TCP transport.
-   - Kademlia DHT routing table for decentralized peer discovery.
-   - Snapshot-based sync to reconcile peers.
+   - Binary wire protocol with frame encoding/decoding and TCP transport (wire server/client).
+   - Kademlia DHT routing table and network layer (bootstrap, iterative lookup, periodic refresh).
+   - Snapshot-based sync to reconcile peers, including EVM state snapshot via `/p2p/state-snapshot`.
    - Peer persistence to disk with DNS seed discovery.
    - Reputation-based peer scoring with auto-ban/unban.
 
@@ -71,7 +71,8 @@ COC is an EVM-compatible blockchain prototype that combines a lightweight execut
 7. Aggregated batch is submitted to PoSeManager and finalized later by relayer.
 
 ## Current Boundaries
-- Consensus uses ValidatorGovernance stake-weighted block production + rotation fallback. BFT-lite round state machine and fork choice rule implemented but not yet wired into live block production loop.
-- P2P uses HTTP gossip + peer persistence + DNS seed discovery. Kademlia DHT and binary wire protocol implemented as standalone modules, not yet integrated with live transport.
-- EVM state persists across restarts via PersistentStateManager + LevelDB. State snapshot export/import available for fast sync.
+- Consensus uses ValidatorGovernance stake-weighted block production + rotation fallback. BFT coordinator integrated into ConsensusEngine (opt-in via `enableBft`): starts BFT round in `tryPropose()`, falls back to direct broadcast on failure. Fork choice rule integrated into `trySync()` for deterministic chain adoption.
+- P2P uses HTTP gossip as primary transport + peer persistence + DNS seed discovery. Wire server/client provide opt-in TCP transport (`enableWireProtocol`). DHT network layer provides opt-in iterative peer discovery (`enableDht`). State snapshot endpoint available for fast sync.
+- EVM state persists across restarts via PersistentStateManager + LevelDB. Snap sync provider integrated into ConsensusEngine (opt-in via `enableSnapSync`).
 - IPFS supports core HTTP APIs, gateway, MFS, Pubsub, and tar archive for `get`.
+- All advanced features (BFT, wire protocol, DHT, snap sync) are disabled by default and enabled via config flags.

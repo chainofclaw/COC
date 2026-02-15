@@ -22,6 +22,7 @@ export interface P2PHandlers {
   onBlock: (block: ChainBlock) => Promise<void>
   onSnapshotRequest: () => ChainSnapshot
   onBftMessage?: (msg: BftMessagePayload) => Promise<void>
+  onStateSnapshotRequest?: () => Promise<unknown | null>
 }
 
 export interface P2PConfig {
@@ -115,6 +116,28 @@ export class P2PNode {
       if (req.method === "GET" && req.url === "/p2p/chain-snapshot") {
         res.writeHead(200, { "content-type": "application/json" })
         res.end(serializeJson(this.handlers.onSnapshotRequest()))
+        return
+      }
+
+      if (req.method === "GET" && req.url === "/p2p/state-snapshot") {
+        if (this.handlers.onStateSnapshotRequest) {
+          try {
+            const snapshot = await this.handlers.onStateSnapshotRequest()
+            if (snapshot) {
+              res.writeHead(200, { "content-type": "application/json" })
+              res.end(serializeJson(snapshot))
+            } else {
+              res.writeHead(404, { "content-type": "application/json" })
+              res.end(serializeJson({ error: "no state snapshot available" }))
+            }
+          } catch (err) {
+            res.writeHead(500, { "content-type": "application/json" })
+            res.end(serializeJson({ error: String(err) }))
+          }
+        } else {
+          res.writeHead(404, { "content-type": "application/json" })
+          res.end(serializeJson({ error: "state snapshot not enabled" }))
+        }
         return
       }
 

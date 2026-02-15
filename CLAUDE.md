@@ -74,8 +74,8 @@ Policy files are located at `nodeops/policies/*.yaml` and can be loaded and eval
 
 ## Test Strategy
 
-Uses Node.js built-in test framework (543+97 tests across 70+ test files):
-- **Node layer tests**: `node/src/*.test.ts node/src/**/*.test.ts` (543 tests, 49 files) - chain engine, EVM, RPC, WebSocket, P2P, mempool, storage, IPFS, PoSe, BFT consensus, DHT, wire protocol, fork choice, state snapshot
+Uses Node.js built-in test framework (570+97 tests across 77 test files):
+- **Node layer tests**: `node/src/*.test.ts node/src/**/*.test.ts` (570 tests, 56 files) - chain engine, EVM, RPC, WebSocket, P2P, mempool, storage, IPFS, PoSe, BFT consensus, DHT, wire protocol, fork choice, state snapshot, wire server, DHT network, snap sync, consensus-BFT integration
 - **Service layer tests**: `services/**/*.test.ts` + `nodeops/*.test.ts` + `tests/**/*.test.ts` (97 tests, 21 files)
 - **Storage layer tests**: `node/src/storage/*.test.ts` (included in node layer)
 
@@ -96,11 +96,11 @@ cd contracts && npm test
 ### Node Core Components (node/src/)
 - `chain-engine.ts`: Blockchain engine, manages block production, persistence, and finality
 - `evm.ts`: EVM execution layer (based on @ethereumjs/vm)
-- `consensus.ts`: Consensus engine (deterministic rotation + degraded mode + auto-recovery)
+- `consensus.ts`: Consensus engine (deterministic rotation + degraded mode + auto-recovery + optional BFT coordinator + snap sync provider)
 - `p2p.ts`: HTTP gossip network (per-peer dedup, request body limits, broadcast concurrency control)
 - `rpc.ts`: JSON-RPC interface (57+ methods, parameter validation, structured error codes)
 - `websocket-rpc.ts`: WebSocket RPC (eth_subscribe, subscription validation and limits)
-- `config.ts`: Node configuration with validation (chainId, ports, validators, storage)
+- `config.ts`: Node configuration with validation (chainId, ports, validators, storage, enableBft, enableWireProtocol, enableDht, enableSnapSync)
 - `mempool.ts`: Transaction mempool (EIP-1559 effective gas price sorting)
 - `base-fee.ts`: EIP-1559 dynamic baseFee calculation
 - `health.ts`: Health checks (memory/WS/storage/consensus diagnostics)
@@ -120,6 +120,9 @@ cd contracts && npm test
 - `bft-coordinator.ts`: BFT round lifecycle management with timeout and P2P bridging
 - `fork-choice.ts`: GHOST-inspired fork selection (BFT finality > chain length > weight)
 - `wire-protocol.ts`: Binary framed TCP protocol (Magic 0xC0C1, FrameDecoder streaming)
+- `wire-server.ts`: TCP server accepting inbound connections, handshake, frame dispatch
+- `wire-client.ts`: TCP client with exponential backoff reconnect (1s-30s)
+- `dht-network.ts`: DHT network layer (bootstrap, iterative lookup, periodic refresh)
 - `dht.ts`: Kademlia DHT routing table (XOR distance, K-buckets, findClosest)
 - `state-snapshot.ts`: EVM state snapshot export/import for fast sync
 - `validator-governance.ts`: Validator set management with stake-weighted voting
@@ -219,10 +222,10 @@ cd contracts && npm test
 
 ## Current Limitations
 
-- Consensus has BFT-lite round state machine and coordinator implemented but not yet wired into block production loop (pending integration)
-- P2P has BFT message routing, binary wire protocol framing, and DHT routing table implemented but not yet replacing HTTP gossip transport
-- Fork choice rule implemented but not yet integrated into sync path
-- EVM state snapshot export/import implemented but not yet used in fast sync flow
+- BFT consensus, wire protocol TCP transport, DHT peer discovery, and state snapshot sync are all integrated but disabled by default (opt-in via `enableBft`, `enableWireProtocol`, `enableDht`, `enableSnapSync` config flags)
+- BFT requires >= 3 validators; single-node devnet auto-disables BFT
+- Wire protocol FIND_NODE request/response not yet implemented (DHT uses local routing table fallback)
+- Multi-node BFT finality not yet tested in production devnet environment
 
 ## Configuration File Locations
 

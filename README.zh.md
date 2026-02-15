@@ -57,7 +57,10 @@ COC 是一个 EVM 兼容的区块链原型，包含 PoSe（Proof-of-Service）�
 - **线协议**：二进制帧格式（Magic 0xC0C1, 类型字节, 4B 大端长度, 载荷）+ 流式 FrameDecoder
 - **状态快照**：EVM 状态导出/导入，支持快速同步（账户、存储、代码）
 - **IPFS Tar**：`/api/v0/get` 端点支持 POSIX USTAR tar 归档格式
-- **测试覆盖**：640 个测试，73 个测试文件，覆盖链引擎、EVM、mempool、RPC、WebSocket、P2P、存储、IPFS、PoSe、BFT、DHT、线协议、分叉选择、配置等模块
+- **TCP 传输**：Wire 服务端（入站 TCP、握手、帧分发）和 Wire 客户端（出站 TCP、指数退避重连 1s-30s）
+- **DHT 网络**：DHT 网络层（引导、迭代 FIND_NODE 查找 alpha=3、定期刷新 5 分钟）
+- **协议集成**：BFT 协调器 + 分叉选择集成到 ConsensusEngine，快照同步提供者，所有功能通过配置标志可选启用
+- **测试覆盖**：667 个测试，77 个测试文件，覆盖链引擎、EVM、mempool、RPC、WebSocket、P2P、存储、IPFS、PoSe、BFT、DHT、线协议、分叉选择、快照同步、配置等模块
 - **生产加固**：RPC 参数验证（结构化错误码）、共识广播隔离、PoSe HTTP 输入验证、配置校验、Merkle 路径边界检查、结构化日志替代 console.warn
 
 ## 快速开始

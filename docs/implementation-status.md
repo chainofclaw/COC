@@ -63,15 +63,19 @@ Implemented:
 - **Phase 28**: GHOST-inspired fork choice rule (BFT finality > chain length > cumulative weight > hash)
 - **Phase 28**: `shouldSwitchFork()` for deterministic chain selection
 
+- **Phase 29**: BFT coordinator integrated into ConsensusEngine `tryPropose()` (BFT round instead of direct broadcast when enabled)
+- **Phase 29**: Fork choice rule (`shouldSwitchFork()`) integrated into ConsensusEngine `trySync()`
+- **Phase 29**: Snap sync provider support in ConsensusEngine for state snapshot fetching
+
 Missing/Partial:
-- BFT round integration with live block production (modules ready, not yet wired into ConsensusEngine main loop)
 - Slashing rules for BFT misbehavior
+- Multi-node BFT finality not yet tested in production devnet
 
 Code:
 - `COC/node/src/chain-engine.ts`
 - `COC/node/src/chain-engine-persistent.ts`
 - `COC/node/src/hash.ts`
-- `COC/node/src/consensus.ts`
+- `COC/node/src/consensus.ts` (UPDATED - Phase 29: BFT + fork choice + snap sync integration)
 - `COC/node/src/bft.ts` (NEW - Phase 28)
 - `COC/node/src/bft-coordinator.ts` (NEW - Phase 28)
 - `COC/node/src/fork-choice.ts` (NEW - Phase 28)
@@ -99,17 +103,25 @@ Implemented:
 - **Phase 28**: `findClosest(target, K)` for nearest-peer lookup
 - **Phase 28**: BFT message routing via `/p2p/bft-message` endpoint + `broadcastBft()`
 
+- **Phase 29**: Wire server TCP transport (accept inbound connections, handshake with chain ID validation, frame dispatch)
+- **Phase 29**: Wire client TCP transport (outbound connections, exponential backoff reconnect 1s-30s)
+- **Phase 29**: DHT network layer (bootstrap from seeds, iterative FIND_NODE with alpha=3, periodic refresh every 5 min)
+- **Phase 29**: State snapshot P2P endpoint (`GET /p2p/state-snapshot`)
+
 Missing/Partial:
-- Wire protocol integration with live TCP transport (module ready, HTTP gossip still primary)
-- DHT integration with peer discovery (module ready, static + DNS seeds still primary)
+- Wire protocol FIND_NODE request/response not yet implemented (DHT uses local routing table fallback)
+- HTTP gossip still primary transport; wire protocol is opt-in alternative
 
 Code:
-- `COC/node/src/p2p.ts`
+- `COC/node/src/p2p.ts` (UPDATED - Phase 29: state snapshot endpoint)
 - `COC/node/src/peer-store.ts` (NEW - Phase 26)
 - `COC/node/src/dns-seeds.ts` (NEW - Phase 26)
 - `COC/node/src/peer-discovery.ts`
 - `COC/node/src/wire-protocol.ts` (NEW - Phase 28)
+- `COC/node/src/wire-server.ts` (NEW - Phase 29)
+- `COC/node/src/wire-client.ts` (NEW - Phase 29)
 - `COC/node/src/dht.ts` (NEW - Phase 28)
+- `COC/node/src/dht-network.ts` (NEW - Phase 29)
 
 ## 4) Storage & Persistence
 **Status: Implemented (Phase 13.1 + 13.2 + 21 + 26 Complete)**
@@ -240,7 +252,7 @@ Implemented:
 - 3/5/7 node devnet scripts
 - End‑to‑end verify script: block production + tx propagation
 - Quality gate script for automated testing (unit + integration + e2e)
-- Comprehensive test coverage (73 test files, 640 tests across all modules)
+- Comprehensive test coverage (77 test files, 667 tests across all modules)
 
 Code:
 - `COC/scripts/start-devnet.sh`
@@ -640,12 +652,63 @@ Tests (114 new tests across 7 files):
 - `COC/node/src/ipfs-tar.test.ts` (13 tests)
 - `COC/node/src/debug-trace.test.ts` (7 tests, updated)
 
-## 21) Whitepaper Gap Summary
-- Consensus: validator governance with stake-weighted proposer selection (Phase 22 + 26), BFT-lite round state machine with coordinator (Phase 28), GHOST fork choice (Phase 28). BFT not yet wired into live block production loop.
-- P2P: peer scoring (Phase 16), peer persistence and DNS seed discovery (Phase 26), binary wire protocol and Kademlia DHT (Phase 28). Wire/DHT modules ready but not yet integrated with live transport.
-- EVM: state persistence connected (Phase 26), real stateRoot in block headers (Phase 27), state snapshot export/import (Phase 28).
+## 22) Phase 29: Protocol Integration
+**Status: Implemented (2026-02-15)**
+
+### 29.1 Consensus Engine Integration
+- BFT coordinator wired into `tryPropose()`: starts BFT round instead of direct broadcast when `enableBft=true`
+- BFT fallback to direct broadcast on round failure
+- Fork choice rule (`shouldSwitchFork()`) integrated into `trySync()` for deterministic chain adoption
+- Snap sync provider interface (`SnapSyncProvider`) for state snapshot fetching from peers
+
+### 29.2 TCP Transport Layer
+- `WireServer`: TCP server accepting inbound connections, handshake with chain ID validation, frame dispatch for Block/Transaction/BFT messages, connected peer tracking, broadcast to all peers
+- `WireClient`: outbound TCP with exponential backoff reconnect (1s → 30s cap), handshake negotiation, typed JSON send, automatic reconnection on disconnect
+
+### 29.3 DHT Network Layer
+- `DhtNetwork`: wraps `RoutingTable` with network operations
+- Bootstrap from seed peers (add to routing table + self-lookup)
+- Iterative FIND_NODE lookup with alpha=3 parallelism
+- Periodic bucket refresh every 5 minutes (random target lookup)
+- Peer discovery callback integration
+
+### 29.4 Node Startup Integration
+- BFT coordinator initialization when `enableBft=true` and validators >= 3
+- Wire server/client setup when `enableWireProtocol=true`
+- DHT network setup when `enableDht=true`
+- State snapshot export/import handlers
+- `onBftMessage` handler in P2P for consensus message routing
+- `onStateSnapshotRequest` handler for snapshot serving
+
+### 29.5 Configuration
+- `enableBft` / `bftPrepareTimeoutMs` / `bftCommitTimeoutMs`: BFT consensus opt-in
+- `enableWireProtocol` / `wirePort`: TCP transport opt-in
+- `enableDht` / `dhtBootstrapPeers`: DHT peer discovery opt-in
+- `enableSnapSync` / `snapSyncThreshold`: State snapshot sync opt-in
+- `bftFinalized` field added to `ChainBlock` type
+
+Code:
+- `COC/node/src/consensus.ts` (UPDATED - BFT + fork choice + snap sync integration)
+- `COC/node/src/index.ts` (UPDATED - full protocol integration)
+- `COC/node/src/config.ts` (UPDATED - new config options)
+- `COC/node/src/p2p.ts` (UPDATED - state snapshot endpoint)
+- `COC/node/src/blockchain-types.ts` (UPDATED - bftFinalized field)
+- `COC/node/src/wire-server.ts` (NEW)
+- `COC/node/src/wire-client.ts` (NEW)
+- `COC/node/src/dht-network.ts` (NEW)
+
+Tests (4 new test files):
+- `COC/node/src/consensus-bft.test.ts` - ConsensusEngine + BFT coordinator integration
+- `COC/node/src/wire-server.test.ts` - TCP handshake, chain ID mismatch, frame dispatch
+- `COC/node/src/dht-network.test.ts` - Bootstrap, iterative lookup, self-lookup
+- `COC/node/src/snap-sync.test.ts` - State snapshot sync export/import
+
+## 23) Whitepaper Gap Summary
+- Consensus: validator governance with stake-weighted proposer selection (Phase 22 + 26), BFT-lite round state machine with coordinator (Phase 28), GHOST fork choice (Phase 28), BFT integrated into ConsensusEngine main loop (Phase 29, opt-in).
+- P2P: peer scoring (Phase 16), peer persistence and DNS seed discovery (Phase 26), binary wire protocol and Kademlia DHT (Phase 28), TCP server/client transport and DHT network layer (Phase 29, opt-in). HTTP gossip remains primary.
+- EVM: state persistence connected (Phase 26), real stateRoot in block headers (Phase 27), state snapshot export/import (Phase 28), snap sync provider in consensus (Phase 29).
 - RPC: 57+ methods with parameter validation and structured error codes (Phase 27), BFT status endpoint (Phase 28).
 - PoSe: dispute automation partially addressed (Phase 19), HTTP input validation (Phase 27).
 - IPFS: MFS and Pubsub (Phase 26), tar archive for `get` (Phase 28), Merkle path bounds validation (Phase 27).
 - Explorer: contract registry, call history, tx type classification, internal traces, governance display (Phase 27).
-- Testing: 640 tests across 73 files covering all major modules (Phase 28).
+- Testing: 667 tests across 77 files covering all major modules (Phase 29).
