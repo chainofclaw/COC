@@ -45,9 +45,9 @@ const rateLimiter = new RateLimiter()
 // Cleanup expired buckets every 5 minutes
 setInterval(() => rateLimiter.cleanup(), 300_000).unref()
 
-// Test account feature gate: only enabled when COC_DEV_ACCOUNTS=1 or NODE_ENV=test
-const DEV_ACCOUNTS_ENABLED = process.env.COC_DEV_ACCOUNTS === "1" ||
-  process.env.NODE_ENV === "test"
+function isDevAccountsEnabled(): boolean {
+  return process.env.COC_DEV_ACCOUNTS === "1" || process.env.NODE_ENV === "test"
+}
 
 // Debug/trace RPC feature gate: only enabled when COC_DEBUG_RPC=1
 const DEBUG_RPC_ENABLED = process.env.COC_DEBUG_RPC === "1"
@@ -110,6 +110,13 @@ interface JsonRpcResponse {
   error?: { message: string }
 }
 
+interface RpcRuntimeOptions {
+  nodeId?: string
+  getP2PStats?: () => unknown
+  getWireStats?: () => unknown
+  getDhtStats?: () => unknown
+}
+
 export function startRpcServer(
   bind: string,
   port: number,
@@ -121,8 +128,9 @@ export function startRpcServer(
   bftCoordinator?: BftCoordinator,
   nodeId?: string,
   poseAuthOptions?: PoseInboundAuthOptions,
+  runtimeOptions?: RpcRuntimeOptions,
 ) {
-  if (DEV_ACCOUNTS_ENABLED) {
+  if (isDevAccountsEnabled()) {
     initializeTestAccounts()
   }
 
@@ -182,10 +190,27 @@ export function startRpcServer(
         }
 
         const payload = JSON.parse(body)
-        const rpcOpts = nodeId ? { nodeId } : undefined
+        const rpcOpts: Record<string, unknown> = {}
+        const resolvedNodeId = nodeId ?? runtimeOptions?.nodeId
+        if (resolvedNodeId) {
+          rpcOpts.nodeId = resolvedNodeId
+        }
+        const p2pStats = runtimeOptions?.getP2PStats?.() ?? p2p?.getStats?.()
+        if (p2pStats) {
+          rpcOpts.p2pStats = p2pStats
+        }
+        const wireStats = runtimeOptions?.getWireStats?.()
+        if (wireStats) {
+          rpcOpts.wireStats = wireStats
+        }
+        const dhtStats = runtimeOptions?.getDhtStats?.()
+        if (dhtStats) {
+          rpcOpts.dhtStats = dhtStats
+        }
+        const scopedOpts = Object.keys(rpcOpts).length > 0 ? rpcOpts : undefined
         const response = Array.isArray(payload)
-          ? await Promise.all(payload.map((item) => handleOne(item, chainId, evm, chain, p2p, filters, bftCoordinator, rpcOpts)))
-          : await handleOne(payload, chainId, evm, chain, p2p, filters, bftCoordinator, rpcOpts)
+          ? await Promise.all(payload.map((item) => handleOne(item, chainId, evm, chain, p2p, filters, bftCoordinator, scopedOpts)))
+          : await handleOne(payload, chainId, evm, chain, p2p, filters, bftCoordinator, scopedOpts)
 
         if (!res.headersSent) {
           res.writeHead(200, { "content-type": "application/json" })
@@ -393,7 +418,7 @@ async function handleRpc(
     case "net_peerCount":
       return `0x${p2p ? "1" : "0"}`
     case "eth_accounts":
-      if (!DEV_ACCOUNTS_ENABLED) return []
+      if (!isDevAccountsEnabled()) return []
       return Array.from(testAccounts.keys())
     case "web3_sha3": {
       const hex = String((payload.params ?? [])[0] ?? "0x")
@@ -928,21 +953,17 @@ async function handleRpc(
     case "coc_getNetworkStats": {
       const peerCount = p2p?.getPeers?.()?.length ?? 0
       const height = await Promise.resolve(chain.getHeight())
+      const p2pStats = (opts as Record<string, unknown>)?.p2pStats
+        ?? p2p?.getStats?.()
 
       // BFT status
       const bft = bftCoordinator
         ? { enabled: true, ...bftCoordinator.getRoundState() }
         : { enabled: false }
 
-      // Wire protocol stats (if available via opts)
-      const wireStats = (opts as Record<string, unknown>)?.wireConnectionManager
-        ? (((opts as Record<string, unknown>).wireConnectionManager) as { getStats: () => unknown }).getStats()
-        : null
+      const wireStats = (opts as Record<string, unknown>)?.wireStats ?? null
 
-      // DHT stats (if available via opts)
-      const dhtStats = (opts as Record<string, unknown>)?.dhtNetwork
-        ? (((opts as Record<string, unknown>).dhtNetwork) as { getStats: () => unknown }).getStats()
-        : null
+      const dhtStats = (opts as Record<string, unknown>)?.dhtStats ?? null
 
       return {
         blockHeight: `0x${height.toString(16)}`,
@@ -950,6 +971,17 @@ async function handleRpc(
         p2p: {
           peers: peerCount,
           protocol: "http-gossip",
+          security: p2pStats ? {
+            rateLimitedRequests: Number((p2pStats as Record<string, unknown>).rateLimitedRequests ?? 0),
+            authAcceptedRequests: Number((p2pStats as Record<string, unknown>).authAcceptedRequests ?? 0),
+            authMissingRequests: Number((p2pStats as Record<string, unknown>).authMissingRequests ?? 0),
+            authInvalidRequests: Number((p2pStats as Record<string, unknown>).authInvalidRequests ?? 0),
+            authRejectedRequests: Number((p2pStats as Record<string, unknown>).authRejectedRequests ?? 0),
+            authNonceTrackerSize: Number((p2pStats as Record<string, unknown>).authNonceTrackerSize ?? 0),
+            inboundAuthMode: String((p2pStats as Record<string, unknown>).inboundAuthMode ?? "off"),
+            discoveryPendingPeers: Number((p2pStats as Record<string, unknown>).discoveryPendingPeers ?? 0),
+            discoveryIdentityFailures: Number((p2pStats as Record<string, unknown>).discoveryIdentityFailures ?? 0),
+          } : undefined,
         },
         wire: wireStats ? { enabled: true, ...wireStats } : { enabled: false },
         dht: dhtStats ? { enabled: true, ...dhtStats } : { enabled: false },

@@ -1,7 +1,8 @@
 import test, { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { BoundedSet, P2PNode } from "./p2p.ts"
+import { BoundedSet, P2PNode, buildP2PIdentityChallengeMessage } from "./p2p.ts"
 import type { Hex, ChainBlock, ChainSnapshot } from "./blockchain-types.ts"
+import { createNodeSigner } from "./crypto/signer.ts"
 
 test("BoundedSet add and has", () => {
   const set = new BoundedSet<string>(5)
@@ -109,6 +110,37 @@ describe("P2P node-info endpoint", () => {
     assert.ok(typeof info.stats === "object")
     assert.ok(typeof info.stats.txReceived === "number")
     assert.ok(typeof info.uptimeMs === "number")
+  })
+
+  it("returns signed identity proof via /p2p/identity-proof", async () => {
+    const signer = createNodeSigner("0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d")
+    const port = 29700 + Math.floor(Math.random() * 200)
+    const p2p = new P2PNode(
+      {
+        bind: "127.0.0.1",
+        port,
+        peers: [],
+        nodeId: signer.nodeId,
+        signer,
+        enableDiscovery: false,
+      },
+      {
+        onTx: async () => {},
+        onBlock: async () => {},
+        onSnapshotRequest: () => ({ height: 0, latestHash: "0x0" as Hex, blocks: [] }) as unknown as ChainSnapshot,
+      },
+    )
+    p2p.start()
+    await new Promise((r) => setTimeout(r, 100))
+
+    const challenge = "identity-proof-test"
+    const res = await fetch(`http://127.0.0.1:${port}/p2p/identity-proof?challenge=${challenge}`)
+    assert.equal(res.status, 200)
+    const proof = await res.json()
+    assert.equal(proof.nodeId, signer.nodeId)
+    assert.equal(proof.challenge, challenge)
+    const message = buildP2PIdentityChallengeMessage(challenge, signer.nodeId)
+    assert.equal(signer.verifyNodeSig(message, proof.signature, signer.nodeId), true)
   })
 })
 

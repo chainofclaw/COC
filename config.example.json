@@ -8,6 +8,8 @@
   "agentSampleSize": 2,
   "operatorPrivateKey": "0xYOUR_OPERATOR_PRIVATE_KEY",
   "nonceRegistryPath": "/var/lib/coc/nonce-registry.log",
+  "nonceRegistryTtlMs": 604800000,
+  "nonceRegistryMaxEntries": 500000,
   "endpointFingerprintMode": "strict",
   "relayerIntervalMs": 60000,
   "challengerSet": [],

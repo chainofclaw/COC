@@ -17,6 +17,8 @@ async function rpcCall(port: number, method: string, params?: unknown[]) {
 }
 
 test("RPC Extended Methods", async (t) => {
+  const prevDevAccounts = process.env.COC_DEV_ACCOUNTS
+  process.env.COC_DEV_ACCOUNTS = "1"
   const chainId = 18780
   const evm = await EvmChain.create(chainId)
   await evm.prefund([
@@ -33,7 +35,20 @@ test("RPC Extended Methods", async (t) => {
     },
     evm,
   )
-  const p2p = { receiveTx: async () => {} } as P2PNode
+  const p2p = {
+    receiveTx: async () => {},
+    getStats: () => ({
+      rateLimitedRequests: 0,
+      authAcceptedRequests: 0,
+      authMissingRequests: 0,
+      authInvalidRequests: 0,
+      authRejectedRequests: 0,
+      authNonceTrackerSize: 0,
+      inboundAuthMode: "enforce",
+      discoveryPendingPeers: 0,
+      discoveryIdentityFailures: 0,
+    }),
+  } as P2PNode
   const port = 18790 + Math.floor(Math.random() * 100)
 
   startRpcServer("127.0.0.1", port, chainId, evm, chain, p2p)
@@ -229,6 +244,9 @@ test("RPC Extended Methods", async (t) => {
     assert.ok(stats.blockHeight.startsWith("0x"))
     assert.ok(typeof stats.peerCount === "number")
     assert.ok(typeof stats.p2p === "object")
+    assert.ok(typeof stats.p2p.security === "object")
+    assert.ok(typeof stats.p2p.security.rateLimitedRequests === "number")
+    assert.ok(typeof stats.p2p.security.authRejectedRequests === "number")
     assert.ok(typeof stats.wire === "object")
     assert.equal(stats.wire.enabled, false) // no wire protocol in test
     assert.ok(typeof stats.dht === "object")
@@ -263,4 +281,10 @@ test("RPC Extended Methods", async (t) => {
       (err: Error) => err.message.includes("not supported"),
     )
   })
+
+  if (prevDevAccounts === undefined) {
+    delete process.env.COC_DEV_ACCOUNTS
+  } else {
+    process.env.COC_DEV_ACCOUNTS = prevDevAccounts
+  }
 })

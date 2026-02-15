@@ -76,15 +76,18 @@ Phase 24 添加生产就绪工具：健康检查探针、配置验证和 RPC 速
   - 支持注入 `nonceRegistry` 依赖，便于接入持久化实现。
   - 新增 epoch 全局挑战预算（`maxChallengesPerEpoch`），抑制多伪节点刷挑战。
 
-## 本次补充实现（P0 第 1-2 批 + P1 第 1 批）
+## 本次补充实现（P0 第 1-3 批 + P1 第 1-2 批 + P2 第 1 批）
 
 - `node/src/pose-http.ts`
   - 新增 PoSe HTTP 入站鉴权能力（`off`/`monitor`/`enforce`），支持签名、时间窗、nonce 防重放、挑战者 allowlist。
   - `/pose/challenge` 与 `/pose/receipt` 增加 `hex32` 参数校验（`nodeId`、`challengeId`）。
 - `node/src/config.ts`
   - 新增配置项：`poseRequireInboundAuth`、`poseInboundAuthMode`、`poseAuthMaxClockSkewMs`、`poseAllowedChallengers`（含环境变量与校验）。
+  - 新增配置项：`poseAuthNonceRegistryPath`、`poseAuthNonceTtlMs`、`poseAuthNonceMaxEntries`（含环境变量与校验）。
   - 新增配置项：`p2pAuthNonceRegistryPath`、`p2pAuthNonceTtlMs`、`p2pAuthNonceMaxEntries`（含环境变量与校验）。
+  - 新增配置项：`poseNonceRegistryTtlMs`、`poseNonceRegistryMaxEntries`（含环境变量与校验）。
   - P2P 入站鉴权默认模式从 `monitor` 调整为 `enforce`（可通过配置显式回退）。
+  - PoSe 入站鉴权默认模式从 `monitor` 调整为 `enforce`（可通过配置显式回退）。
 - `node/src/rpc.ts`、`node/src/index.ts`
   - RPC 启动链路接入 PoSe 路由鉴权配置。
 - `runtime/coc-agent.ts`
@@ -92,21 +95,27 @@ Phase 24 添加生产就绪工具：健康检查探针、配置验证和 RPC 速
   - 新增 `endpointFingerprintMode`（`strict`/`legacy`），默认 `strict`，缓解同机多地址绕过。
 - `node/src/peer-discovery.ts`、`node/src/p2p.ts`
   - discovery 新 peer 先进入待验证队列，通过身份校验后再加入主 peers 池。
+  - 新增 `/p2p/identity-proof` 挑战签名验证，拒绝仅靠自报 `nodeId` 的伪造节点。
 - `node/src/p2p.ts`
   - P2P auth nonce 防重放升级为“持久化 + TTL + 周期压缩”，覆盖节点重启窗口。
 - `node/src/dht-network.ts`
   - `verifyPeer` 优先使用带签名的 Wire 握手验证身份；无鉴权配置时再回退 TCP 可达性探测。
+- `services/verifier/nonce-registry.ts`、`services/verifier/receipt-verifier.ts`
+  - NonceRegistry 增加 TTL、容量上限和周期压缩，缓解长期运行磁盘/内存膨胀。
+  - 回执时序校验新增下界（`responseAtMs >= issuedAtMs`），封堵时序异常回执。
+- `node/src/rpc.ts`
+  - `coc_getNetworkStats` 增加 P2P 安全统计（限流、鉴权拒绝、discovery 失败）与 DHT 验证统计暴露。
 
 ## 后续计划（下一批）
 
-1. P2P 身份绑定灰度
-- 继续从 `monitor` 推进到默认 `enforce`，并定义不兼容节点隔离与回退窗口。
-
-2. 挑战预算分层化
+1. 挑战预算分层化
 - 在已具备“按节点 + 按 epoch 全局预算”的基础上，继续细化到“按挑战类型/信誉分层预算”。
 
-3. 观测与告警
-- 增加限流命中率、拒绝计数与高频来源统计，联动封禁策略。
+2. 链上角色联动
+- 将 PoSe challengers allowlist 从静态配置扩展为“链上活跃角色 + 本地缓存”双重校验。
+
+3. 策略联动自动化
+- 增加高频来源熔断与封禁闭环（鉴权失败率/重放命中率 -> peer scoring/health 降级）。
 
 ## 基于代码实况的残留风险（2026-02-15）
 
@@ -116,7 +125,7 @@ Phase 24 添加生产就绪工具：健康检查探针、配置验证和 RPC 速
 - 现状：`/pose/challenge` 与 `/pose/receipt` 仅做基础字段校验与 IP 频控，未校验请求方身份或挑战者角色。
 - 代码位置：`node/src/pose-http.ts`
 - 风险：外部攻击者可批量构造请求消耗 `maxChallengesPerEpoch`，并干扰正常挑战流程。
-- 状态：已在第 1 批实现入站签名鉴权与挑战者 allowlist，后续继续联动链上角色校验。
+- 状态：已实现入站签名鉴权、挑战者 allowlist 且默认 `enforce`；后续继续联动链上角色校验。
 
 2. endpointCommitment 对“同机多地址”约束不足
 - 现状：机器指纹包含 `pubkey`，同一机器换地址会产生不同 commitment。
@@ -128,7 +137,7 @@ Phase 24 添加生产就绪工具：健康检查探针、配置验证和 RPC 速
 - 现状：Peer discovery 与 DHT 主要依赖格式/可达性检查；DHT 回退校验仅 TCP 可连通，不校验节点身份。
 - 代码位置：`node/src/peer-discovery.ts`、`node/src/dht-network.ts`
 - 风险：伪造节点可污染路由表与发现池，放大 Eclipse/Sybil 风险。
-- 状态：已在第 2 批实现“待验证队列 + 握手优先验证”，后续继续引入信誉分层。
+- 状态：已实现“待验证队列 + `/p2p/identity-proof` 挑战签名 + 握手优先验证”，后续继续引入信誉分层。
 
 ### P1（应在下一阶段完成）
 
@@ -148,6 +157,7 @@ Phase 24 添加生产就绪工具：健康检查探针、配置验证和 RPC 速
 - 现状：持久化日志逐行追加，无 TTL/分段/压缩；启动时全量加载到内存。
 - 代码位置：`services/verifier/nonce-registry.ts`
 - 风险：长期运行存在磁盘与内存增长风险，可被滥用放大为可用性问题。
+- 状态：已完成 TTL、容量上限与压缩基线，后续可按天/epoch 分段进一步优化冷启动。
 
 ### P2（观测与运营增强）
 
@@ -155,11 +165,13 @@ Phase 24 添加生产就绪工具：健康检查探针、配置验证和 RPC 速
 - 现状：`coc_getNetworkStats` 未返回 P2P 鉴权与限流计数。
 - 代码位置：`node/src/rpc.ts`
 - 风险：外部监控系统难以及时识别攻击态势与调参效果。
+- 状态：已完成 P2P/DHT 安全计数对外暴露，后续补告警阈值模板。
 
 2. 回执时序校验可再收紧
 - 现状：校验了超时上界，但未限制 `responseAtMs >= issuedAtMs`。
 - 代码位置：`services/verifier/receipt-verifier.ts`
 - 风险：在边界条件下存在时序异常回执被接受的空间。
+- 状态：已补充下界校验，风险闭合。
 
 ## 改造计划（执行版）
 

@@ -14,7 +14,7 @@ import { IpfsBlockstore } from "./ipfs-blockstore.ts"
 import { UnixFsBuilder } from "./ipfs-unixfs.ts"
 import { IpfsHttpServer } from "./ipfs-http.ts"
 import { createNodeSigner } from "./crypto/signer.ts"
-import { registerPoseRoutes } from "./pose-http.ts"
+import { PersistentPoseAuthNonceTracker } from "./pose-http.ts"
 import { migrateLegacySnapshot } from "./storage/migrate-legacy.ts"
 import { startWsRpcServer } from "./websocket-rpc.ts"
 import { handleRpcMethod } from "./rpc.ts"
@@ -306,6 +306,9 @@ if (stateTrie && config.enableSnapSync) {
 let wireBroadcastFn: ((block: ChainBlock) => void) | undefined
 let wireTxRelayFn: ((rawTx: Hex) => void) | undefined
 let wireBftBroadcastFn: ((msg: BftMessage) => void) | undefined
+let wireServer: WireServer | undefined
+const wireClients: WireClient[] = []
+let dhtNetwork: DhtNetwork | undefined
 
 const consensus = new ConsensusEngine(chain, p2p, {
   blockTimeMs: config.blockTimeMs,
@@ -321,9 +324,22 @@ consensus.start()
 
 const pose = new PoSeEngine(BigInt(Math.floor(Date.now() / config.poseEpochMs)), {
   signer: nodeSigner,
-  nonceRegistry: new NonceRegistry({ persistencePath: config.poseNonceRegistryPath }),
+  nonceRegistry: new NonceRegistry({
+    persistencePath: config.poseNonceRegistryPath,
+    ttlMs: config.poseNonceRegistryTtlMs,
+    maxEntries: config.poseNonceRegistryMaxEntries,
+  }),
   maxChallengesPerEpoch: config.poseMaxChallengesPerEpoch,
 })
+const poseAuthNonceTracker = new PersistentPoseAuthNonceTracker({
+  persistencePath: config.poseAuthNonceRegistryPath,
+  ttlMs: config.poseAuthNonceTtlMs,
+  maxSize: config.poseAuthNonceMaxEntries,
+})
+setInterval(() => poseAuthNonceTracker.cleanup(), 300_000).unref()
+if (config.poseAuthNonceRegistryPath) {
+  setInterval(() => poseAuthNonceTracker.compact(), 60 * 60 * 1000).unref()
+}
 
 startRpcServer(
   config.rpcBind,
@@ -340,7 +356,14 @@ startRpcServer(
     inboundAuthMode: config.poseInboundAuthMode,
     authMaxClockSkewMs: config.poseAuthMaxClockSkewMs,
     verifier: nodeSigner,
+    nonceTracker: poseAuthNonceTracker,
     allowedChallengers: config.poseAllowedChallengers,
+  },
+  {
+    nodeId: config.nodeId,
+    getP2PStats: () => p2p.getStats(),
+    getWireStats: () => wireServer?.getStats(),
+    getDhtStats: () => dhtNetwork?.getStats(),
   },
 )
 
@@ -355,10 +378,6 @@ const wsServer = startWsRpcServer(
   handleRpcMethod,
 )
 log.info("WebSocket RPC configured", { bind: config.wsBind, port: config.wsPort })
-
-// Wire protocol TCP transport
-let wireServer: WireServer | undefined
-const wireClients: WireClient[] = []
 
 if (config.enableWireProtocol) {
   wireServer = new WireServer({
@@ -457,9 +476,6 @@ if (config.enableWireProtocol) {
     }
   }
 }
-
-// DHT peer discovery
-let dhtNetwork: DhtNetwork | undefined
 
 if (config.enableDht) {
   // Build peer ID → WireClient map for O(1) lookup in DHT FIND_NODE

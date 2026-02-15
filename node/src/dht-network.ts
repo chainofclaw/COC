@@ -50,6 +50,11 @@ export class DhtNetwork {
   private refreshTimer: ReturnType<typeof setInterval> | null = null
   private announceTimer: ReturnType<typeof setInterval> | null = null
   private stopped = false
+  private verifyAttempts = 0
+  private verifySuccess = 0
+  private verifyFailures = 0
+  private verifyFallbackTcpAttempts = 0
+  private verifyFallbackTcpFailures = 0
 
   constructor(cfg: DhtNetworkConfig) {
     this.cfg = cfg
@@ -160,6 +165,7 @@ export class DhtNetwork {
 
   /** Verify a peer is reachable via wire protocol (TCP connect + Pong response) */
   async verifyPeer(peer: DhtPeer): Promise<boolean> {
+    this.verifyAttempts += 1
     // Try to find a wire client connected to this peer
     const client = this.cfg.wireClientByPeerId?.get(peer.id)
       ?? this.cfg.wireClients.find((c) => c.getRemoteNodeId() === peer.id && c.isConnected())
@@ -168,19 +174,27 @@ export class DhtNetwork {
       // Verify claimed ID matches actual remote node ID from wire handshake
       const remoteId = client.getRemoteNodeId()
       if (remoteId && remoteId.toLowerCase() !== peer.id.toLowerCase()) {
+        this.verifyFailures += 1
         log.warn("DHT peer ID mismatch with wire handshake", { claimed: peer.id, actual: remoteId })
         return false
       }
+      this.verifySuccess += 1
       return true
     }
 
     // Prefer authenticated wire handshake when crypto config is available.
     const handshakeVerified = await this.verifyPeerByHandshake(peer)
     if (handshakeVerified !== null) {
+      if (handshakeVerified) {
+        this.verifySuccess += 1
+      } else {
+        this.verifyFailures += 1
+      }
       return handshakeVerified
     }
 
     // Fallback: lightweight TCP connect probe when handshake config is unavailable.
+    this.verifyFallbackTcpAttempts += 1
     const [host, portStr] = peer.address.split(":")
     const port = parseInt(portStr, 10)
     if (!host || !port || isNaN(port)) return false
@@ -188,17 +202,22 @@ export class DhtNetwork {
     return new Promise<boolean>((resolve) => {
       const timer = setTimeout(() => {
         socket.destroy()
+        this.verifyFailures += 1
+        this.verifyFallbackTcpFailures += 1
         resolve(false)
       }, PEER_VERIFY_TIMEOUT_MS)
 
       const socket = net.createConnection({ host, port }, () => {
         clearTimeout(timer)
         socket.destroy()
+        this.verifySuccess += 1
         resolve(true)
       })
 
       socket.on("error", () => {
         clearTimeout(timer)
+        this.verifyFailures += 1
+        this.verifyFallbackTcpFailures += 1
         resolve(false)
       })
     })
@@ -373,8 +392,24 @@ export class DhtNetwork {
     }
   }
 
-  /** Get routing table stats */
-  getStats(): { totalPeers: number; nonEmptyBuckets: number; maxBucketSize: number } {
-    return this.routingTable.stats()
+  /** Get routing table + security stats */
+  getStats(): {
+    totalPeers: number
+    nonEmptyBuckets: number
+    maxBucketSize: number
+    verifyAttempts: number
+    verifySuccess: number
+    verifyFailures: number
+    verifyFallbackTcpAttempts: number
+    verifyFallbackTcpFailures: number
+  } {
+    return {
+      ...this.routingTable.stats(),
+      verifyAttempts: this.verifyAttempts,
+      verifySuccess: this.verifySuccess,
+      verifyFailures: this.verifyFailures,
+      verifyFallbackTcpAttempts: this.verifyFallbackTcpAttempts,
+      verifyFallbackTcpFailures: this.verifyFallbackTcpFailures,
+    }
   }
 }

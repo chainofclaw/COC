@@ -39,3 +39,45 @@ test("nonce registry restores persisted keys after restart", () => {
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test("nonce registry prunes expired persisted entries by ttl", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nonce-registry-"))
+  const filePath = join(dir, "used-nonces.log")
+  try {
+    const first = new NonceRegistry({
+      persistencePath: filePath,
+      ttlMs: 50,
+      nowFn: () => 100,
+    })
+    assert.equal(first.consume(challenge), true)
+
+    const second = new NonceRegistry({
+      persistencePath: filePath,
+      ttlMs: 50,
+      nowFn: () => 200,
+    })
+    // Previously consumed nonce expired at restart and can be accepted again.
+    assert.equal(second.consume(challenge), true)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("nonce registry enforces maxEntries and evicts oldest", () => {
+  const registry = new NonceRegistry({
+    maxEntries: 2,
+    ttlMs: 60_000,
+    nowFn: () => 1000,
+  })
+
+  const c1 = { ...challenge, nonce: "0x00000000000000000000000000000001" }
+  const c2 = { ...challenge, nonce: "0x00000000000000000000000000000002" }
+  const c3 = { ...challenge, nonce: "0x00000000000000000000000000000003" }
+
+  assert.equal(registry.consume(c1), true)
+  assert.equal(registry.consume(c2), true)
+  assert.equal(registry.consume(c3), true)
+
+  // c1 should have been evicted by maxEntries cap, so it can be consumed again.
+  assert.equal(registry.consume(c1), true)
+})

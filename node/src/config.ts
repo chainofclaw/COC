@@ -36,6 +36,8 @@ export interface NodeConfig {
   poseEpochMs: number
   poseMaxChallengesPerEpoch: number
   poseNonceRegistryPath: string
+  poseNonceRegistryTtlMs: number
+  poseNonceRegistryMaxEntries: number
   // P2P peer discovery
   dnsSeeds: string[]
   peerStorePath: string
@@ -53,6 +55,9 @@ export interface NodeConfig {
   poseRequireInboundAuth: boolean
   poseInboundAuthMode: "off" | "monitor" | "enforce"
   poseAuthMaxClockSkewMs: number
+  poseAuthNonceRegistryPath: string
+  poseAuthNonceTtlMs: number
+  poseAuthNonceMaxEntries: number
   poseAllowedChallengers: string[]
   // BFT consensus
   enableBft: boolean
@@ -99,6 +104,14 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
   const poseNonceRegistryPath = process.env.COC_POSE_NONCE_REGISTRY_PATH
     || userPoseNonceRegistryPath
     || join(dataDir, "pose-nonce-registry.log")
+  const poseNonceRegistryTtlMsEnv = process.env.COC_POSE_NONCE_REGISTRY_TTL_MS
+  const poseNonceRegistryTtlMs = poseNonceRegistryTtlMsEnv !== undefined
+    ? Number(poseNonceRegistryTtlMsEnv)
+    : Number((user as Record<string, unknown>).poseNonceRegistryTtlMs ?? (7 * 24 * 60 * 60 * 1000))
+  const poseNonceRegistryMaxEntriesEnv = process.env.COC_POSE_NONCE_REGISTRY_MAX_ENTRIES
+  const poseNonceRegistryMaxEntries = poseNonceRegistryMaxEntriesEnv !== undefined
+    ? Number(poseNonceRegistryMaxEntriesEnv)
+    : Number((user as Record<string, unknown>).poseNonceRegistryMaxEntries ?? 500_000)
   const p2pRequireInboundAuthEnv = process.env.COC_P2P_REQUIRE_INBOUND_AUTH
   const p2pRequireInboundAuthFromEnv = p2pRequireInboundAuthEnv !== undefined
     ? (p2pRequireInboundAuthEnv === "1" || p2pRequireInboundAuthEnv.toLowerCase() === "true")
@@ -152,12 +165,26 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
       ? (poseRequireInboundAuthFromEnv ? "enforce" : "off")
       : poseRequireInboundAuthFromUser !== undefined
         ? (poseRequireInboundAuthFromUser ? "enforce" : "off")
-        : "monitor")
+        : "enforce")
   const poseRequireInboundAuth = poseInboundAuthMode === "enforce"
   const poseAuthMaxClockSkewMsEnv = process.env.COC_POSE_AUTH_MAX_CLOCK_SKEW_MS
   const poseAuthMaxClockSkewMs = poseAuthMaxClockSkewMsEnv !== undefined
     ? Number(poseAuthMaxClockSkewMsEnv)
     : Number((user as Record<string, unknown>).poseAuthMaxClockSkewMs ?? 120_000)
+  const userPoseAuthNonceRegistryPath = typeof (user as Record<string, unknown>).poseAuthNonceRegistryPath === "string"
+    ? ((user as Record<string, unknown>).poseAuthNonceRegistryPath as string)
+    : undefined
+  const poseAuthNonceRegistryPath = process.env.COC_POSE_AUTH_NONCE_REGISTRY_PATH
+    || userPoseAuthNonceRegistryPath
+    || join(dataDir, "pose-auth-nonce.log")
+  const poseAuthNonceTtlMsEnv = process.env.COC_POSE_AUTH_NONCE_TTL_MS
+  const poseAuthNonceTtlMs = poseAuthNonceTtlMsEnv !== undefined
+    ? Number(poseAuthNonceTtlMsEnv)
+    : Number((user as Record<string, unknown>).poseAuthNonceTtlMs ?? (24 * 60 * 60 * 1000))
+  const poseAuthNonceMaxEntriesEnv = process.env.COC_POSE_AUTH_NONCE_MAX_ENTRIES
+  const poseAuthNonceMaxEntries = poseAuthNonceMaxEntriesEnv !== undefined
+    ? Number(poseAuthNonceMaxEntriesEnv)
+    : Number((user as Record<string, unknown>).poseAuthNonceMaxEntries ?? 100_000)
   const userPoseAllowedChallengers = (user as Record<string, unknown>).poseAllowedChallengers
   const poseAllowedChallengersFromUser = Array.isArray(userPoseAllowedChallengers)
     ? userPoseAllowedChallengers.filter((x): x is string => typeof x === "string")
@@ -199,6 +226,8 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     poseEpochMs: 60 * 60 * 1000,
     poseMaxChallengesPerEpoch: 200,
     poseNonceRegistryPath,
+    poseNonceRegistryTtlMs,
+    poseNonceRegistryMaxEntries,
     dnsSeeds: [],
     peerStorePath: join(dataDir, "peers.json"),
     peerMaxAgeMs: 7 * 24 * 60 * 60 * 1000,
@@ -215,6 +244,9 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     poseRequireInboundAuth,
     poseInboundAuthMode,
     poseAuthMaxClockSkewMs,
+    poseAuthNonceRegistryPath,
+    poseAuthNonceTtlMs,
+    poseAuthNonceMaxEntries,
     poseAllowedChallengers,
     enableBft: false,
     bftPrepareTimeoutMs: 5000,
@@ -228,6 +260,8 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     nodePrivateKey,
     ...user,
     poseNonceRegistryPath,
+    poseNonceRegistryTtlMs,
+    poseNonceRegistryMaxEntries,
     p2pRequireInboundAuth,
     p2pInboundAuthMode,
     p2pAuthMaxClockSkewMs,
@@ -237,6 +271,9 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     poseRequireInboundAuth,
     poseInboundAuthMode,
     poseAuthMaxClockSkewMs,
+    poseAuthNonceRegistryPath,
+    poseAuthNonceTtlMs,
+    poseAuthNonceMaxEntries,
     poseAllowedChallengers,
     storage: { ...storageDefaults, ...userStorage },
   }
@@ -383,6 +420,24 @@ export function validateConfig(cfg: Partial<NodeConfig>): string[] {
     }
   }
 
+  if (cfg.poseAuthNonceRegistryPath !== undefined) {
+    if (typeof cfg.poseAuthNonceRegistryPath !== "string" || cfg.poseAuthNonceRegistryPath.trim().length === 0) {
+      errors.push("poseAuthNonceRegistryPath must be a non-empty string")
+    }
+  }
+
+  if (cfg.poseAuthNonceTtlMs !== undefined) {
+    if (!Number.isInteger(cfg.poseAuthNonceTtlMs) || cfg.poseAuthNonceTtlMs < 60_000) {
+      errors.push("poseAuthNonceTtlMs must be >= 60000")
+    }
+  }
+
+  if (cfg.poseAuthNonceMaxEntries !== undefined) {
+    if (!Number.isInteger(cfg.poseAuthNonceMaxEntries) || cfg.poseAuthNonceMaxEntries < 1) {
+      errors.push("poseAuthNonceMaxEntries must be a positive integer")
+    }
+  }
+
   if (cfg.poseAllowedChallengers !== undefined) {
     if (!Array.isArray(cfg.poseAllowedChallengers)) {
       errors.push("poseAllowedChallengers must be an array")
@@ -453,6 +508,18 @@ export function validateConfig(cfg: Partial<NodeConfig>): string[] {
   if (cfg.poseNonceRegistryPath !== undefined) {
     if (typeof cfg.poseNonceRegistryPath !== "string" || cfg.poseNonceRegistryPath.trim().length === 0) {
       errors.push("poseNonceRegistryPath must be a non-empty string")
+    }
+  }
+
+  if (cfg.poseNonceRegistryTtlMs !== undefined) {
+    if (!Number.isInteger(cfg.poseNonceRegistryTtlMs) || cfg.poseNonceRegistryTtlMs < 60_000) {
+      errors.push("poseNonceRegistryTtlMs must be >= 60000")
+    }
+  }
+
+  if (cfg.poseNonceRegistryMaxEntries !== undefined) {
+    if (!Number.isInteger(cfg.poseNonceRegistryMaxEntries) || cfg.poseNonceRegistryMaxEntries < 1) {
+      errors.push("poseNonceRegistryMaxEntries must be a positive integer")
     }
   }
 

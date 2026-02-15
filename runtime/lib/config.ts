@@ -17,6 +17,8 @@ export interface CocRuntimeConfig {
   poseManagerAddress?: string;
   operatorPrivateKey?: string;
   nonceRegistryPath?: string;
+  nonceRegistryTtlMs?: number;
+  nonceRegistryMaxEntries?: number;
   challengerSet?: string[];
   aggregatorSet?: string[];
   nodeIds?: string[];

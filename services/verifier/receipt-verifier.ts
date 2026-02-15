@@ -35,6 +35,9 @@ export class ReceiptVerifier {
     if (receipt.challengeId !== challenge.challengeId || receipt.nodeId !== challenge.nodeId) {
       return { ok: false, reason: "challenge/receipt mismatch" }
     }
+    if (receipt.responseAtMs < challenge.issuedAtMs) {
+      return { ok: false, reason: "receipt timestamp before challenge issuance" }
+    }
     if (receipt.responseAtMs > challenge.issuedAtMs + BigInt(challenge.deadlineMs)) {
       return { ok: false, reason: "receipt timeout" }
     }

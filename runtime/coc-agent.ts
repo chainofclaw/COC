@@ -30,6 +30,14 @@ const batchSize = normalizeInt(process.env.COC_AGENT_BATCH_SIZE || config.agentB
 const sampleSize = normalizeInt(process.env.COC_AGENT_SAMPLE_SIZE || config.agentSampleSize, 2);
 const storageDir = resolveStorageDir(config.dataDir, config.storageDir);
 const nonceRegistryPath = process.env.COC_NONCE_REGISTRY_PATH || config.nonceRegistryPath || join(config.dataDir, "nonce-registry.log");
+const nonceRegistryTtlMs = normalizeInt(
+  process.env.COC_NONCE_REGISTRY_TTL_MS || config.nonceRegistryTtlMs,
+  7 * 24 * 60 * 60 * 1000,
+);
+const nonceRegistryMaxEntries = normalizeInt(
+  process.env.COC_NONCE_REGISTRY_MAX_ENTRIES || config.nonceRegistryMaxEntries,
+  500_000,
+);
 const endpointFingerprintMode = resolveEndpointFingerprintMode(
   process.env.COC_ENDPOINT_FINGERPRINT_MODE || config.endpointFingerprintMode,
 );
@@ -106,7 +114,11 @@ const quota = new ChallengeQuota({
 });
 
 const verifier = new ReceiptVerifier({
-  nonceRegistry: new NonceRegistry({ persistencePath: nonceRegistryPath }),
+  nonceRegistry: new NonceRegistry({
+    persistencePath: nonceRegistryPath,
+    ttlMs: nonceRegistryTtlMs,
+    maxEntries: nonceRegistryMaxEntries,
+  }),
   verifyChallengerSig: (challenge) => {
     const payload = buildChallengeVerifyPayload(challenge);
     const challengerAddr = hex32ToAddress(challenge.challengerId);

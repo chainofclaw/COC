@@ -50,6 +50,18 @@ test("receipt verifier rejects timeout", () => {
   assert.equal(result.reason, "receipt timeout")
 })
 
+test("receipt verifier rejects response before challenge issuance", () => {
+  const verifier = new ReceiptVerifier({
+    verifyChallengerSig: () => true,
+    verifyNodeSig: () => true,
+  })
+
+  const bad: ReceiptMessage = { ...okReceipt, responseAtMs: 900n }
+  const result = verifier.verify(challenge, bad)
+  assert.equal(result.ok, false)
+  assert.equal(result.reason, "receipt timestamp before challenge issuance")
+})
+
 test("receipt verifier rejects nonce replay", () => {
   const verifier = new ReceiptVerifier({
     nonceRegistry: new NonceRegistry(),

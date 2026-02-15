@@ -4,7 +4,14 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { createNodeSigner } from "./crypto/signer.ts"
-import { BoundedSet, P2PNode, PersistentAuthNonceTracker, buildSignedP2PPayload, verifySignedP2PPayload } from "./p2p.ts"
+import {
+  BoundedSet,
+  P2PNode,
+  PersistentAuthNonceTracker,
+  buildP2PIdentityChallengeMessage,
+  buildSignedP2PPayload,
+  verifySignedP2PPayload,
+} from "./p2p.ts"
 
 const TEST_KEY = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
 
@@ -129,5 +136,13 @@ describe("P2P auth envelope", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+
+  it("verifies identity challenge signatures", () => {
+    const signer = createNodeSigner(TEST_KEY)
+    const challenge = "unit-test-challenge"
+    const message = buildP2PIdentityChallengeMessage(challenge, signer.nodeId)
+    const signature = signer.sign(message)
+    assert.equal(signer.verifyNodeSig(message, signature, signer.nodeId), true)
   })
 })

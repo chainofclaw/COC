@@ -1,5 +1,7 @@
 import crypto from "node:crypto"
 import type http from "node:http"
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { dirname } from "node:path"
 import type { PoSeEngine } from "./pose-engine.ts"
 import type { ChallengeMessage, ReceiptMessage } from "../../services/common/pose-types.ts"
 import { RateLimiter } from "./rate-limiter.ts"
@@ -24,29 +26,130 @@ interface AuthNonceTracker {
   add(value: string): void
 }
 
-class BoundedSet<T> implements AuthNonceTracker {
+export interface PoseAuthNonceTrackerOptions {
+  maxSize: number
+  ttlMs: number
+  persistencePath?: string
+  nowFn?: () => number
+}
+
+export class PersistentPoseAuthNonceTracker implements AuthNonceTracker {
   private readonly maxSize: number
-  private readonly items = new Set<T>()
-  private readonly insertOrder: T[] = []
+  private readonly ttlMs: number
+  private readonly persistencePath?: string
+  private readonly nowFn: () => number
+  private readonly items = new Map<string, number>()
 
-  constructor(maxSize: number) {
-    this.maxSize = maxSize
+  constructor(options: PoseAuthNonceTrackerOptions) {
+    this.maxSize = options.maxSize
+    this.ttlMs = options.ttlMs
+    this.persistencePath = options.persistencePath
+    this.nowFn = options.nowFn ?? (() => Date.now())
+    this.loadPersisted()
+    this.cleanup()
   }
 
-  has(value: T): boolean {
-    return this.items.has(value)
+  has(value: string): boolean {
+    const now = this.nowFn()
+    this.pruneExpired(now)
+    const ts = this.items.get(value)
+    if (ts === undefined) return false
+    if (this.isExpired(ts, now)) {
+      this.items.delete(value)
+      return false
+    }
+    return true
   }
 
-  add(value: T): void {
+  add(value: string): void {
+    const now = this.nowFn()
+    this.pruneExpired(now)
     if (this.items.has(value)) return
-    if (this.items.size >= this.maxSize) {
-      const oldest = this.insertOrder.shift()
-      if (oldest !== undefined) {
-        this.items.delete(oldest)
+
+    while (this.items.size >= this.maxSize) {
+      const oldestKey = this.items.keys().next().value
+      if (oldestKey === undefined) break
+      this.items.delete(oldestKey)
+    }
+
+    this.items.set(value, now)
+    this.persistEntry(value, now)
+  }
+
+  cleanup(): void {
+    this.pruneExpired(this.nowFn())
+  }
+
+  compact(): void {
+    if (!this.persistencePath) return
+    this.cleanup()
+    try {
+      mkdirSync(dirname(this.persistencePath), { recursive: true })
+      const lines = [...this.items.entries()].map(([key, ts]) => `${ts}\t${key}`)
+      writeFileSync(this.persistencePath, lines.join("\n") + (lines.length > 0 ? "\n" : ""), "utf8")
+    } catch {
+      // keep in-memory safety even if compaction fails
+    }
+  }
+
+  get size(): number {
+    return this.items.size
+  }
+
+  private loadPersisted(): void {
+    if (!this.persistencePath || !existsSync(this.persistencePath)) return
+    try {
+      const now = this.nowFn()
+      const raw = readFileSync(this.persistencePath, "utf8")
+      for (const line of raw.split("\n")) {
+        const trimmed = line.trim()
+        if (!trimmed) continue
+        const tab = trimmed.indexOf("\t")
+        let ts = now
+        let key = trimmed
+        if (tab > 0) {
+          const parsedTs = Number(trimmed.slice(0, tab))
+          if (Number.isFinite(parsedTs) && parsedTs > 0) {
+            ts = parsedTs
+          }
+          key = trimmed.slice(tab + 1)
+        }
+        if (!key) continue
+        if (this.isExpired(ts, now)) continue
+        this.items.set(key, ts)
+      }
+      while (this.items.size > this.maxSize) {
+        const oldestKey = this.items.keys().next().value
+        if (oldestKey === undefined) break
+        this.items.delete(oldestKey)
+      }
+    } catch {
+      // fall back to in-memory tracker if persisted file is unreadable
+    }
+  }
+
+  private persistEntry(key: string, ts: number): void {
+    if (!this.persistencePath) return
+    try {
+      mkdirSync(dirname(this.persistencePath), { recursive: true })
+      appendFileSync(this.persistencePath, `${ts}\t${key}\n`, "utf8")
+    } catch {
+      // fail-open: in-memory replay protection remains active
+    }
+  }
+
+  private pruneExpired(now: number): void {
+    if (this.ttlMs <= 0) return
+    const cutoff = now - this.ttlMs
+    for (const [key, ts] of this.items.entries()) {
+      if (ts < cutoff) {
+        this.items.delete(key)
       }
     }
-    this.items.add(value)
-    this.insertOrder.push(value)
+  }
+
+  private isExpired(ts: number, now: number): boolean {
+    return this.ttlMs > 0 && ts < (now - this.ttlMs)
   }
 }
 
@@ -59,7 +162,11 @@ export interface PoseInboundAuthOptions {
   nonceTracker?: AuthNonceTracker
 }
 
-const defaultNonceTracker = new BoundedSet<string>(100_000)
+const defaultNonceTracker = new PersistentPoseAuthNonceTracker({
+  maxSize: 100_000,
+  ttlMs: 24 * 60 * 60 * 1000,
+})
+setInterval(() => defaultNonceTracker.cleanup(), 300_000).unref()
 
 interface PoseRouteHandler {
   method: string

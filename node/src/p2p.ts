@@ -73,6 +73,10 @@ export function buildP2PAuthMessage(path: string, senderId: string, timestampMs:
   return `p2p:${path}:${senderId}:${timestampMs}:${nonce}:${payloadHash}`
 }
 
+export function buildP2PIdentityChallengeMessage(challenge: string, nodeId: string): string {
+  return `p2p:identity:${challenge}:${nodeId.toLowerCase()}`
+}
+
 export function buildSignedP2PPayload(
   path: string,
   payload: Record<string, unknown>,
@@ -313,6 +317,7 @@ export class P2PNode {
   private authMissingRequests = 0
   private authInvalidRequests = 0
   private authRejectedRequests = 0
+  private discoveryIdentityFailures = 0
   // Per-peer tracking: avoid sending same hash to same peer
   private readonly sentToPeer = new Map<string, BoundedSet<string>>()
   private txReceived = 0
@@ -416,6 +421,33 @@ export class P2PNode {
         return
       }
 
+      if (req.method === "GET" && (req.url ?? "").startsWith("/p2p/identity-proof")) {
+        const nodeId = this.cfg.nodeId ?? "unknown"
+        const signer = this.cfg.signer
+        if (!signer) {
+          res.writeHead(503, { "content-type": "application/json" })
+          res.end(serializeJson({ error: "identity proof signer unavailable" }))
+          return
+        }
+        try {
+          const requestUrl = new URL(req.url ?? "", `http://${req.headers.host ?? "127.0.0.1"}`)
+          const challenge = requestUrl.searchParams.get("challenge")?.trim() ?? ""
+          if (!challenge || challenge.length > 256) {
+            res.writeHead(400, { "content-type": "application/json" })
+            res.end(serializeJson({ error: "invalid challenge" }))
+            return
+          }
+          const message = buildP2PIdentityChallengeMessage(challenge, nodeId)
+          const signature = signer.sign(message)
+          res.writeHead(200, { "content-type": "application/json" })
+          res.end(serializeJson({ nodeId, challenge, signature }))
+        } catch {
+          res.writeHead(400, { "content-type": "application/json" })
+          res.end(serializeJson({ error: "invalid identity proof request" }))
+        }
+        return
+      }
+
       if (req.method === "GET" && req.url === "/p2p/node-info") {
         const height = this.handlers.getHeight ? await Promise.resolve(this.handlers.getHeight()) : 0n
         const stats = this.getStats()
@@ -443,6 +475,8 @@ export class P2PNode {
             authRejectedRequests: stats.authRejectedRequests,
             authNonceTrackerSize: stats.authNonceTrackerSize,
             inboundAuthMode: stats.inboundAuthMode,
+            discoveryPendingPeers: stats.discoveryPendingPeers,
+            discoveryIdentityFailures: stats.discoveryIdentityFailures,
           },
         }))
         return
@@ -611,6 +645,12 @@ export class P2PNode {
     return results
   }
 
+  getPeers(): NodePeer[] {
+    return this.cfg.enableDiscovery !== false
+      ? this.discovery.getActivePeers()
+      : this.cfg.peers
+  }
+
   /**
    * Set handler for incoming pubsub messages from peers.
    */
@@ -644,6 +684,8 @@ export class P2PNode {
     authInvalidRequests: number
     authRejectedRequests: number
     authNonceTrackerSize: number
+    discoveryPendingPeers: number
+    discoveryIdentityFailures: number
     inboundAuthMode: "off" | "monitor" | "enforce"
   } {
     return {
@@ -662,6 +704,8 @@ export class P2PNode {
       authInvalidRequests: this.authInvalidRequests,
       authRejectedRequests: this.authRejectedRequests,
       authNonceTrackerSize: this.authNonceTracker.size,
+      discoveryPendingPeers: this.discovery.getPendingPeers().length,
+      discoveryIdentityFailures: this.discoveryIdentityFailures,
       inboundAuthMode: resolveInboundAuthMode(this.cfg),
     }
   }
@@ -710,20 +754,45 @@ export class P2PNode {
   }
 
   private async verifyDiscoveredPeerIdentity(peer: NodePeer): Promise<boolean> {
+    const verifier = this.cfg.verifier
+    if (!verifier) {
+      this.discoveryIdentityFailures += 1
+      return false
+    }
+
+    const challenge = crypto.randomUUID()
     try {
-      const info = await requestJson<{ nodeId?: string }>(`${peer.url}/p2p/node-info`, "GET")
+      const info = await requestJson<{ nodeId?: string; challenge?: string; signature?: string }>(
+        `${peer.url}/p2p/identity-proof?challenge=${encodeURIComponent(challenge)}`,
+        "GET",
+      )
       const claimed = peer.id.toLowerCase()
       const reported = String(info?.nodeId ?? "").toLowerCase()
-      if (!reported || reported !== claimed) {
+      const signedChallenge = String(info?.challenge ?? "")
+      const signature = String(info?.signature ?? "")
+      if (!reported || reported !== claimed || signedChallenge !== challenge || !signature) {
+        this.discoveryIdentityFailures += 1
         log.warn("peer identity mismatch during discovery verification", {
           claimed: peer.id,
           reported: info?.nodeId,
+          challenge,
+          signedChallenge,
+          url: peer.url,
+        })
+        return false
+      }
+      const message = buildP2PIdentityChallengeMessage(challenge, claimed)
+      if (!verifier.verifyNodeSig(message, signature, claimed)) {
+        this.discoveryIdentityFailures += 1
+        log.warn("peer identity signature verification failed", {
+          claimed: peer.id,
           url: peer.url,
         })
         return false
       }
       return true
     } catch {
+      this.discoveryIdentityFailures += 1
       return false
     }
   }
@@ -738,7 +807,7 @@ async function requestJson<T = unknown>(url: string, method: "GET" | "POST", bod
         protocol: endpoint.protocol,
         hostname: endpoint.hostname,
         port: endpoint.port,
-        path: endpoint.pathname,
+        path: `${endpoint.pathname}${endpoint.search}`,
         method,
         headers: {
           "content-type": "application/json",
