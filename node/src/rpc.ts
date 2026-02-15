@@ -1,5 +1,5 @@
 import http from "node:http"
-import { SigningKey, keccak256, hashMessage, Transaction } from "ethers"
+import { SigningKey, keccak256, hashMessage, Transaction, TypedDataEncoder } from "ethers"
 import type { IChainEngine } from "./chain-engine-types.ts"
 import type { EvmChain } from "./evm.ts"
 import type { Hex, PendingFilter } from "./blockchain-types.ts"
@@ -471,8 +471,15 @@ async function handleRpc(
       const account = testAccounts.get(address)
       if (!account) throw new Error(`account not found: ${address}`)
 
-      // Simplified: hash the serialized typed data for signing
-      const dataHash = keccak256(Buffer.from(JSON.stringify(typedData)))
+      // EIP-712 compliant: use TypedDataEncoder for correct domain-separated hash
+      const td = typedData as Record<string, unknown>
+      const types = (td.types ?? {}) as Record<string, Array<{ name: string; type: string }>>
+      const domain = (td.domain ?? {}) as Record<string, unknown>
+      const message = (td.message ?? {}) as Record<string, unknown>
+      // Remove EIP712Domain from types (TypedDataEncoder handles it internally)
+      const filteredTypes = { ...types }
+      delete filteredTypes.EIP712Domain
+      const dataHash = TypedDataEncoder.hash(domain, filteredTypes, message)
       const signature = account.signingKey.sign(dataHash)
       return signature.serialized
     }
