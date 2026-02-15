@@ -111,3 +111,17 @@ Code:
 - `COC/node/src/ipfs-unixfs.ts`
 - `COC/node/src/ipfs-merkle.ts`
 - `COC/runtime/coc-node.ts`
+
+## 11) Stake-Weighted Proposer Selection
+**Goal**: deterministic proposer selection weighted by validator stake.
+
+Algorithm:
+- Get active validators from `ValidatorGovernance`, sort by ID lexicographically.
+- Compute `totalStake = sum(v.stake for v in validators)`.
+- Compute `seed = blockHeight mod totalStake`.
+- Walk sorted validators accumulating stake: first validator where `cumulative > seed` is proposer.
+- Deterministic: same height always produces same proposer.
+- Falls back to round-robin if governance is disabled or no active validators.
+
+Code:
+- `COC/node/src/chain-engine-persistent.ts` (`stakeWeightedProposer`)

@@ -111,3 +111,17 @@
 - `COC/node/src/ipfs-unixfs.ts`
 - `COC/node/src/ipfs-merkle.ts`
 - `COC/runtime/coc-node.ts`
+
+## 11) 权益加权出块者选择
+**目标**：按验证者权益确定性选择出块者。
+
+算法：
+- 从 `ValidatorGovernance` 获取活跃验证者，按 ID 字典序排序。
+- 计算 `totalStake = sum(v.stake for v in validators)`。
+- 计算 `seed = blockHeight mod totalStake`。
+- 遍历排序后的验证者累加权益：第一个使 `cumulative > seed` 的验证者为出块者。
+- 确定性：相同高度总是产生相同出块者。
+- 治理未启用或无活跃验证者时降级为轮转制。
+
+代码：
+- `COC/node/src/chain-engine-persistent.ts`（`stakeWeightedProposer`）
