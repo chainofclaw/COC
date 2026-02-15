@@ -19,6 +19,7 @@ const log = createLogger("discovery")
 
 export interface DiscoveryConfig {
   maxPeers: number
+  maxDiscoveredPerBatch: number
   discoveryIntervalMs: number
   healthCheckIntervalMs: number
   healthCheckTimeoutMs: number
@@ -31,6 +32,7 @@ export interface DiscoveryConfig {
 
 const DEFAULT_CONFIG: DiscoveryConfig = {
   maxPeers: 50,
+  maxDiscoveredPerBatch: 200,
   discoveryIntervalMs: 30_000,    // 30 seconds
   healthCheckIntervalMs: 60_000,  // 1 minute
   healthCheckTimeoutMs: 5_000,    // 5 seconds
@@ -70,10 +72,10 @@ export class PeerDiscovery {
 
     // Register bootstrap peers
     for (const peer of bootstrapPeers) {
-      if (peer.id !== this.cfg.selfId) {
-        this.peers.set(peer.id, peer)
-        this.scoring.addPeer(peer.id, peer.url)
-      }
+      const normalized = normalizePeer(peer)
+      if (!normalized || normalized.id === this.cfg.selfId) continue
+      this.peers.set(normalized.id, normalized)
+      this.scoring.addPeer(normalized.id, normalized.url)
     }
   }
 
@@ -163,15 +165,18 @@ export class PeerDiscovery {
    */
   addDiscoveredPeers(peers: NodePeer[]): number {
     let added = 0
-    for (const peer of peers) {
-      if (peer.id === this.cfg.selfId) continue
-      if (this.peers.has(peer.id)) continue
+    const limited = peers.slice(0, this.cfg.maxDiscoveredPerBatch)
+    for (const peer of limited) {
+      const normalized = normalizePeer(peer)
+      if (!normalized) continue
+      if (normalized.id === this.cfg.selfId) continue
+      if (this.peers.has(normalized.id)) continue
       if (this.peers.size >= this.cfg.maxPeers) break
 
-      this.peers.set(peer.id, peer)
-      this.scoring.addPeer(peer.id, peer.url)
+      this.peers.set(normalized.id, normalized)
+      this.scoring.addPeer(normalized.id, normalized.url)
       if (this.peerStore) {
-        this.peerStore.addPeer(peer)
+        this.peerStore.addPeer(normalized)
       }
       added++
     }
@@ -306,6 +311,36 @@ export class PeerDiscovery {
       req.end()
     })
   }
+}
+
+function normalizePeer(peer: NodePeer): NodePeer | null {
+  if (!isValidPeerId(peer.id)) return null
+  if (!peer.url) return null
+
+  try {
+    const url = new URL(peer.url)
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return null
+    }
+    if (!url.hostname) {
+      return null
+    }
+    if (url.port && !/^\d+$/.test(url.port)) {
+      return null
+    }
+    return {
+      id: peer.id.trim(),
+      url: `${url.protocol}//${url.host}`,
+    }
+  } catch {
+    return null
+  }
+}
+
+function isValidPeerId(id: string): boolean {
+  const trimmed = id.trim()
+  if (trimmed.length < 1 || trimmed.length > 128) return false
+  return /^[a-zA-Z0-9._:-]+$/.test(trimmed)
 }
 
 function shuffleArray<T>(arr: T[]): T[] {

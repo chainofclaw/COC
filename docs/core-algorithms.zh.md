@@ -274,13 +274,18 @@
 算法：
 - 出块时：同时通过 HTTP gossip（主）和 Wire 协议 TCP（辅）广播。
 - 通过 HTTP 接收交易时：中继至所有 wire 连接的节点（`broadcastFrame`）。
+- 通过 Wire 接收交易/区块时：通过 `onTxRelay`/`onBlockRelay` 回调中继至 HTTP gossip 层。
 - 两条传输路径独立运行 — 一条失败不影响另一条。
 - Wire 广播使用延迟绑定模式：函数引用在 wire 服务器初始化后设置。
-- 交易去重在应用层完成（mempool 拒绝重复交易）。
+- Wire 层通过 `BoundedSet`（seenTx 50K, seenBlocks 10K）去重，防止重复处理。
+- 跨协议中继安全：P2P `receiveTx`/`receiveBlock` 内部有去重，Wire 层也独立去重。
+- `broadcastFrame` 支持 `excludeNodeId` 参数，跳过原始发送方。
+- BFT 消息也通过双传输层（HTTP gossip + Wire 协议 TCP）广播。
 
 代码：
 - `COC/node/src/consensus.ts`（`broadcastBlock` 含 wireBroadcast 回调）
-- `COC/node/src/index.ts`（`wireBroadcastFn`、`wireTxRelayFn`）
+- `COC/node/src/index.ts`（`wireBroadcastFn`、`wireTxRelayFn`、`wireBftBroadcastFn`）
+- `COC/node/src/wire-server.ts`（去重、中继回调、excludeNodeId）
 
 ## 23) 共识指标收集
 **目标**：追踪出块和同步性能以支持可观测性。
@@ -294,3 +299,124 @@
 
 代码：
 - `COC/node/src/consensus.ts`（`ConsensusMetrics` 接口、`getMetrics()`）
+
+## 24) Wire 协议去重
+**目标**：在 Wire 协议层防止重复 Block/Tx 处理。
+
+算法：
+- 维护 `seenTx = BoundedSet<Hex>(50_000)` 和 `seenBlocks = BoundedSet<Hex>(10_000)`。
+- 收到 Block 帧时：检查 `seenBlocks.has(block.hash)` — 已见则静默丢弃，否则添加并处理。
+- 收到 Transaction 帧时：检查 `seenTx.has(rawTx)` — 已见则静默丢弃，否则添加并处理。
+- BoundedSet 容量满时淘汰最旧条目（FIFO）。
+- 统计通过 `getStats()` 暴露：`seenTxSize`、`seenBlocksSize`。
+
+代码：
+- `COC/node/src/wire-server.ts`（`seenTx`、`seenBlocks`、`handleFrame`）
+
+## 25) 跨协议中继
+**目标**：桥接 Wire 协议与 HTTP gossip 实现全网覆盖。
+
+算法：
+- Wire→HTTP：Wire 层去重 + 处理后，调用 `onTxRelay(rawTx)` / `onBlockRelay(block)` 注入 HTTP gossip 层。
+- HTTP→Wire：现有 `wireTxRelayFn` / `wireBroadcastFn` 从 HTTP 中继至 wire 连接的节点。
+- 中继错误为非致命（try-catch，忽略失败）。
+- 无循环中继：两层各自独立去重（Wire BoundedSet + P2P `seenTx.has()`）。
+
+代码：
+- `COC/node/src/wire-server.ts`（`onTxRelay`、`onBlockRelay` 配置回调）
+- `COC/node/src/index.ts`（将中继回调接入 P2P `receiveTx`/`receiveBlock`）
+
+## 26) DHT Wire 客户端优先查找
+**目标**：高效的 wire 客户端发现用于 DHT FIND_NODE 查询。
+
+算法：
+- 优先级 1：`wireClientByPeerId` Map — O(1) 直接按 peer ID 查找。
+- 优先级 2：扫描 `wireClients` 数组按 `getRemoteNodeId()` 匹配（向后兼容）。
+- 优先级 3：回退到本地路由表 `findClosest(targetId, ALPHA)`。
+- `wireClientByPeerId` 在启动时构建：映射 `config.peers[i].id → wireClients[i]`。
+- 每个 peer 的 wire port 从 `dhtBootstrapPeers` 配置解析，而非使用本地 `wirePort`。
+
+代码：
+- `COC/node/src/dht-network.ts`（`findNode` 三级优先查找）
+- `COC/node/src/index.ts`（`wireClientByPeerId` 构建、`peerWirePortMap`）
+
+## 27) DHT 节点验证
+**目标**：通过验证节点可达性防止 DHT 路由表投毒。
+
+算法：
+- 通过迭代查找发现新节点时，先验证可达性再加入路由表。
+- 优先级 1：检查该节点是否有活跃的 wire 客户端连接（`wireClientByPeerId` 或 `wireClients` 扫描）— 已验证。
+- 优先级 2：向节点地址发起 TCP 连接探测，3 秒超时。
+- TCP 连接成功 = 节点可达 → 加入路由表并通知发现回调。
+- 超时或连接拒绝 → 丢弃节点（不加入路由表）。
+- 加载时过滤过期节点：`lastSeenMs` 超过 24 小时的节点被排除。
+
+代码：
+- `COC/node/src/dht-network.ts`（`verifyPeer`、`iterativeLookup`）
+
+## 28) 指数节点封禁
+**目标**：对异常节点实施递增的封禁时间。
+
+算法：
+- 每个 `PeerScore` 维护 `banCount` 字段（封禁次数）。
+- 触发封禁（无效数据、反复失败）时：递增 `banCount`。
+- 封禁时长：`baseBanMs * 2^min(banCount - 1, 10)`，上限 24 小时。
+- 封禁期间：`applyDecay()` 跳过该节点（不恢复评分）。
+- 封禁到期后：节点可重新评估，但下次违规封禁时长翻倍。
+
+代码：
+- `COC/node/src/peer-scoring.ts`（`exponentialBanMs`、`recordInvalidData`、`applyDecay`）
+
+## 29) 节点身份握手
+**目标**：在 Wire 协议 TCP 握手中通过密码学验证节点身份。
+
+算法：
+- 每个节点拥有持久化私钥（`nodePrivateKey`，来自 `COC_NODE_KEY` 环境变量 / `dataDir/node-key`）。
+- Wire 握手时，发送方签名 `handshake:<nodeId>:<nonce>`（使用 `NodeSigner.sign()`）。
+- 接收方通过 `SignatureVerifier.recoverAddress()` 验证签名。
+- 恢复的地址必须与声称的 `nodeId` 匹配 — 不匹配则断开连接并记录 `recordInvalidData()`。
+- Nonce 防止重放攻击（每次握手唯一）。
+- 向后兼容：无签名能力的节点仍可连接（仅警告，第一阶段）。
+
+代码：
+- `COC/node/src/wire-server.ts`（握手验证）
+- `COC/node/src/wire-client.ts`（握手签名）
+- `COC/node/src/config.ts`（`resolveNodeKey`）
+- `COC/node/src/crypto/signer.ts`（`NodeSigner`、`SignatureVerifier`）
+
+## 30) BFT 消息签名
+**目标**：通过强制密码学签名防止 BFT 投票伪造。
+
+算法：
+- `BftMessage.signature` 为必填字段（类型 `Hex`，不再可选）。
+- 规范消息格式：`bft:<type>:<height>:<blockHash>`（确定性字符串）。
+- 发送方通过 `NodeSigner.sign()` 签名规范消息。
+- 接收方通过 `SignatureVerifier.verifyNodeSig(canonical, signature, validatorAddress)` 验证。
+- 签名缺失或无效的消息被静默丢弃。
+- 仅接受来自已知活跃验证者的消息。
+
+代码：
+- `COC/node/src/bft.ts`（`BftMessage.signature` 必填）
+- `COC/node/src/bft-coordinator.ts`（`signMessage`、`bftCanonicalMessage`、`handlePrepare`/`handleCommit` 中的验证）
+
+## 31) P2P HTTP 认证信封
+**目标**：为 HTTP gossip 写流量提供节点级认证，并支持平滑灰度上线，避免一次性网络分裂。
+
+算法：
+- 发送方签名规范消息：`p2p:<path>:<senderId>:<timestampMs>:<nonce>:<payloadHash>`，并附加 `_auth` 字段。
+- `payloadHash` 使用确定性 JSON 序列化后做 keccak256。
+- 接收方依次校验：
+  - 信封字段完整性（`senderId/timestampMs/nonce/signature`）。
+  - 时间戳是否在 `p2pAuthMaxClockSkewMs` 允许窗口内。
+  - 重放键（`senderId:nonce`）是否已出现。
+  - 签名是否能恢复并匹配声明的发送地址。
+- 灰度模式：
+  - `off`：不校验。
+  - `monitor`：校验并记账，不拒绝请求。
+  - `enforce`：无签名或签名无效时返回 HTTP 401。
+- 节点暴露安全观测计数：
+  - `authAcceptedRequests`、`authMissingRequests`、`authInvalidRequests`、`authRejectedRequests`、`rateLimitedRequests`。
+
+代码：
+- `COC/node/src/p2p.ts`（`buildSignedP2PPayload`、`verifySignedP2PPayload`、灰度处理）
+- `COC/node/src/config.ts`（`p2pInboundAuthMode`、`p2pAuthMaxClockSkewMs`）

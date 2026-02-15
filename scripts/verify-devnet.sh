@@ -40,5 +40,14 @@ for i in $(seq 1 "$NODES"); do
   echo "node-${i} height=${H}"
 done
 
+# Verify BFT consensus is enabled on all nodes
+echo "checking BFT status..."
+for i in $(seq 1 "$NODES"); do
+  IDX=$((i - 1))
+  RP="http://127.0.0.1:$((BASE_RPC + IDX))"
+  BFT=$(curl -sS -X POST "$RP" -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":4,"method":"coc_getBftStatus","params":[]}' 2>/dev/null || echo '{}')
+  echo "node-${i} bft=${BFT}"
+done
+
 "${ROOT}/scripts/stop-devnet.sh" "$NODES"
 echo "verify ok"

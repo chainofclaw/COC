@@ -384,7 +384,15 @@ function normalizePath(path: string): string {
     path = path.slice(0, -1)
   }
   // Collapse double slashes
-  return path.replace(/\/+/g, "/")
+  path = path.replace(/\/+/g, "/")
+  // Reject path traversal components
+  const parts = path.split("/")
+  for (const part of parts) {
+    if (part === ".." || part === ".") {
+      throw new Error(`path traversal not allowed: ${path}`)
+    }
+  }
+  return path
 }
 
 function splitPath(path: string): { dir: string; base: string } {

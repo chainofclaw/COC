@@ -1,0 +1,508 @@
+{
+  "common": {
+    "home": "Inicio",
+    "plan": "Plan",
+    "technology": "Tecnología",
+    "network": "Estado de la Red",
+    "roadmap": "Hoja de Ruta",
+    "docs": "Documentación",
+    "explorer": "Explorador de Bloques",
+    "readMore": "Saber Más",
+    "viewExplorer": "Explorar Blockchain",
+    "viewDocs": "Leer Documentación",
+    "github": "Repositorio GitHub",
+    "community": "Comunidad",
+    "resources": "Recursos",
+    "development": "Desarrollo",
+    "whitepaper": "Libro Blanco",
+    "allRightsReserved": "Todos los derechos reservados",
+    "copyright": "Derechos de autor"
+  },
+  "home": {
+    "hero": {
+      "title": "Blockchain de Prueba de Servicio\nOperado por Agentes IA",
+      "subtitle": "Permitiendo a usuarios comunes participar en redes blockchain, ganando recompensas a través de contribuciones de servicio en lugar de acumulación de capital",
+      "learnMore": "Saber Más",
+      "browseBlockchain": "Explorar Blockchain",
+      "readDocs": "Leer Documentación"
+    },
+    "networkStats": {
+      "title": "Estado de la Red en Vivo"
+    },
+    "features": {
+      "title": "¿Por Qué Elegir COC?",
+      "subtitle": "COC rompe el dilema de centralización de las blockchains tradicionales mediante mecanismos innovadores de Prueba de Servicio",
+      "pose": {
+        "title": "Prueba de Servicio",
+        "description": "Gana recompensas a través de desafíos de servicio verificables, no competencia de capital o poder de cómputo"
+      },
+      "aiAgent": {
+        "title": "Operaciones con Agente IA",
+        "description": "Agentes IA de nivel OpenClaw automatizan las operaciones de nodos, reduciendo barreras técnicas mientras mantienen el determinismo"
+      },
+      "hardware": {
+        "title": "Amigable con Hardware Común",
+        "description": "Los dispositivos domésticos pueden competir de manera justa, sin equipo de minería especializado o grandes apuestas requeridas"
+      },
+      "nonPos": {
+        "title": "Incentivos No-PoS",
+        "description": "Bonos pequeños fijos, ganancias vinculadas a la contribución del servicio, no a la cantidad de capital"
+      },
+      "evmCompatible": {
+        "title": "Compatible con EVM",
+        "description": "Soporte completo para Máquina Virtual de Ethereum, puede ejecutar contratos inteligentes Solidity"
+      },
+      "storage": {
+        "title": "Almacenamiento Descentralizado",
+        "description": "Interfaz compatible con IPFS integrada, soporta desafíos de disponibilidad de datos"
+      }
+    },
+    "architecture": {
+      "title": "Arquitectura de Cuatro Capas",
+      "layer1": {
+        "title": "Capa de Ejecución (EVM)",
+        "description": "Procesa transacciones y contratos inteligentes, mantiene el estado de blockchain"
+      },
+      "layer2": {
+        "title": "Capa de Consenso (Conectable)",
+        "description": "Produce bloques, proporciona garantías de finalidad"
+      },
+      "layer3": {
+        "title": "Capa de Servicio PoSe (Núcleo)",
+        "description": "Registro de nodos, desafíos aleatorios, cálculo de puntuación, distribución de recompensas"
+      },
+      "layer4": {
+        "title": "Capa de Operaciones con Agente IA",
+        "description": "Automatiza la gestión del ciclo de vida del nodo sin afectar el determinismo del consenso"
+      },
+      "learnMore": "Profundizar en la Arquitectura Técnica"
+    },
+    "nodeRoles": {
+      "title": "Roles de Nodos",
+      "fullNode": {
+        "title": "Nodo Completo (FN)",
+        "description": "Valida bloques y estado, proporciona consultas RPC básicas",
+        "reward": "60% del Pool de Recompensas"
+      },
+      "storageNode": {
+        "title": "Nodo de Almacenamiento (SN)",
+        "description": "Almacena datos históricos y snapshots, demuestra disponibilidad de datos",
+        "reward": "30% del Pool de Recompensas"
+      },
+      "relayNode": {
+        "title": "Nodo de Retransmisión (RN)",
+        "description": "Mejora la propagación de bloques y transacciones en la red",
+        "reward": "10% del Pool de Recompensas"
+      },
+      "note": "Un solo operador puede ejecutar múltiples roles para recompensas acumuladas"
+    },
+    "cta": {
+      "title": "¿Listo para Unirte a la Red COC?",
+      "subtitle": "Inicia tu nodo y comienza a ganar recompensas proporcionando servicios de red",
+      "startNode": "Guía de Configuración de Nodo",
+      "viewNetwork": "Ver Estado de la Red"
+    }
+  },
+  "about": {
+    "title": "Acerca de COC",
+    "subtitle": "Puntos Clave del Libro Blanco de ChainOfClaw",
+    "abstract": {
+      "title": "Resumen",
+      "intro": "COC (ChainOfClaw) es una red blockchain diseñada para participación amplia y sostenida de nodos. Observamos:",
+      "pow": "Los sistemas PoW tienden a centralizarse en torno al hardware especializado y la energía barata",
+      "pos": "Los sistemas PoS tienden a centralizarse en torno a la concentración de capital y operación delegada",
+      "pose": "COC introduce Proof-of-Service (PoSe): un protocolo de desafío-respuesta verificable que recompensa a los nodos por proporcionar servicios de red medibles—disponibilidad de tiempo de actividad/RPC, almacenamiento de datos y disponibilidad, soporte de retransmisión—en lugar de recompensar la propiedad de participación."
+    },
+    "vision": {
+      "title": "Visión y Objetivos",
+      "mission": "Misión",
+      "missionText": "Hacer la descentralización práctica, desplazando los cuellos de botella centrales de participación:\nde 'comprar hardware + operar complejidad' → 'ejecutar un nodo confiable con automatización de agente'",
+      "goals": "Seis Objetivos de Diseño",
+      "goal1": {
+        "title": "Participación sin Permiso",
+        "desc": "Cualquiera puede ejecutar un nodo y ganar recompensas"
+      },
+      "goal2": {
+        "title": "Incentivos No-PoS",
+        "desc": "Las ganancias están vinculadas a la contribución del servicio, no a la participación"
+      },
+      "goal3": {
+        "title": "Amigable con Hardware Común",
+        "desc": "Hardware doméstico/borde puede competir equitativamente"
+      },
+      "goal4": {
+        "title": "Verificable y Auditable",
+        "desc": "Las afirmaciones de servicio se verifican mediante desafío"
+      },
+      "goal5": {
+        "title": "Resistencia a la Oligarquía",
+        "desc": "Rendimientos decrecientes y límites previenen el monopolio del ganador"
+      },
+      "goal6": {
+        "title": "Confiabilidad de Operaciones con Agente IA",
+        "desc": "Los agentes IA alivian la carga operativa sin comprometer el determinismo"
+      }
+    },
+    "economic": {
+      "title": "Modelo Económico",
+      "rewardPool": "Pool de Recompensas (por Época)",
+      "epochLength": "Duración de Época",
+      "epochDefault": "Predeterminado: 1 hora",
+      "blockTime": "Tiempo de Bloque Objetivo: 1-2 segundos (configurable, depende del consenso)",
+      "buckets": "Cubos de Recompensas",
+      "bucket1": "B1: Tiempo de Actividad/RPC",
+      "bucket2": "B2: Almacenamiento & Disponibilidad",
+      "bucket3": "B3: Soporte de Retransmisión",
+      "rationale": "Fundamento: Maximizar la inclusión; almacenamiento/retransmisión obtiene incentivos adicionales pero no es obligatorio",
+      "bond": "Bono (No-PoS)",
+      "bondIntro": "Los nodos envían un pequeño bono fijo D:",
+      "bondTarget": "Valor objetivo: ~50 USDT equivalente",
+      "bondUnlock": "Retraso de desbloqueo: 7 días",
+      "bondPurpose": "Propósito: Solo para castigo anti-fraude",
+      "bondNoPower": "El bono no aumenta el poder de consenso",
+      "bondNoReward": "El bono no aumenta directamente las recompensas"
+    },
+    "pose": {
+      "title": "Protocolo de Prueba de Servicio (PoSe)",
+      "coreIdea": "Idea Central",
+      "coreText": "Los nodos ganan recompensas con el tiempo superando desafíos aleatorios y verificables. Cada desafío produce un recibo auditable. Las puntuaciones se agregan dentro de una época.",
+      "types": "Tipos de Desafío",
+      "typeU": "Desafío de Tiempo de Actividad/RPC",
+      "typeS": "Desafío de Prueba de Almacenamiento",
+      "typeR": "Desafío de Retransmisión/Sondeo",
+      "frequency": "Frecuencia de Desafío (por Época)",
+      "freqU": "Tiempo de Actividad/RPC: ~6 desafíos promedio/nodo/época (~1 cada 10 min)",
+      "freqS": "Almacenamiento (solo SN): ~2 desafíos promedio/SN/época",
+      "freqR": "Retransmisión (solo RN): ~2 desafíos promedio/RN/época",
+      "threshold": "Umbral de Aprobación:",
+      "thresholdU": "Tasa de aprobación U ≥ 80% para calificar para recompensas del cubo U",
+      "thresholdS": "Tasa de aprobación S ≥ 70% para calificar para recompensas del cubo S",
+      "scoring": "Fórmula de Puntuación"
+    },
+    "antiCheat": {
+      "title": "Mecanismos Anti-Fraude",
+      "sybil": "Ataque Sybil",
+      "sybilMit": ["Bono fijo + retraso de desbloqueo", "Límite suave de recompensas por nodo único", "Rendimientos decrecientes de compromiso de almacenamiento", "Requisito de servicio continuo"],
+      "forgery": "Forja de Recibo/Repetición",
+      "forgeryMit": ["Vinculación única de challenge_id", "Firma de desafiante + nodo", "Nonce único por nodo por época", "Campos de respuesta verificables"],
+      "collusion": "Colusión Desafiante-Nodo",
+      "collusionMit": ["Diversidad de conjunto de desafiantes", "Muestreo en cadena + ventana de disputa", "Bono de desafiante/agregador", "Datos estadísticos transparentes"],
+      "network": "Falsos Positivos de Red Doméstica",
+      "networkMit": ["Umbral de aprobación moderado (80%)", "Puntuación de latencia basada en mediana", "Castigo progresivo", "Estrategia de auto-curación de agente IA"]
+    },
+    "agent": {
+      "title": "Capa de Operaciones con Agente IA",
+      "canDo": "Responsabilidades del Agente",
+      "can1": "Instalar, configurar, actualizar software de nodo",
+      "can2": "Monitorear salud (CPU/disco/red), alertas, auto-curación",
+      "can3": "Gestionar snapshots y ventanas de almacenamiento",
+      "can4": "Aplicar límites de velocidad y políticas de cortafuegos",
+      "can5": "Gestionar ciclo de vida de claves (TPM/enclave seguro recomendado)",
+      "cantDo": "Operaciones Prohibidas del Agente",
+      "cant1": "Modificar reglas de consenso o determinismo de transición de estado",
+      "cant2": "Inyectar 'decisiones de IA' no verificables en ejecución en cadena",
+      "cant3": "Cambiar reglas de validez de transacción",
+      "note": "COC mantiene verificabilidad manteniéndose estrictamente en la capa operativa para los agentes IA"
+    },
+    "cta": {
+      "title": "¿Quieres Aprender Más?",
+      "technology": "Explicación Detallada de Arquitectura Técnica",
+      "roadmap": "Ver Hoja de Ruta",
+      "docs": "Leer Documentación Completa"
+    }
+  },
+  "technology": {
+    "title": "Arquitectura Técnica",
+    "subtitle": "Profundice en el diseño de arquitectura de cuatro capas de COC y los algoritmos centrales",
+    "layersTitle": "Arquitectura de Cuatro Capas",
+    "layer1": {
+      "number": "1",
+      "title": "Capa de Ejecución (Execution Layer)",
+      "subtitle": "Runtime EVM",
+      "features": ["Soporte completo de EVM basado en @ethereumjs/vm", "Ejecuta transacciones y contratos inteligentes", "Mantiene estado mundial (LevelDB + Merkle Patricia Trie)", "Compatible con contratos Solidity"],
+      "note": "EVM es el entorno de ejecución, no el mecanismo de descentralización en sí"
+    },
+    "layer2": {
+      "number": "2",
+      "title": "Capa de Consenso (Consensus Layer)",
+      "subtitle": "Diseño conectable",
+      "features": ["Produce bloques, proporciona garantías de finalidad", "Implementación actual: rotación determinista de proposer", "Tiempo de bloque objetivo: 1-2 segundos", "Futuro: puede integrar BFT, PoA y otros algoritmos de consenso"],
+      "note": "El modelo de incentivos de COC no depende de PoS, puede coexistir con múltiples mecanismos de consenso"
+    },
+    "layer3": {
+      "number": "3",
+      "title": "Capa de Servicio PoSe (PoSe Service Layer)",
+      "subtitle": "Innovación central",
+      "features": ["Registro de nodos y compromiso de servicio", "Generación aleatoria de desafíos (tipos U/S/R)", "Verificación y agregación de recibos", "Cálculo de puntuación y distribución de recompensas", "Mecanismo de prueba de fraude y castigo"],
+      "note": "Esta es la capa central que distingue a COC de PoW/PoS tradicionales"
+    },
+    "layer4": {
+      "number": "4",
+      "title": "Capa de Operaciones con Agente IA (Agent Operations Layer)",
+      "subtitle": "Automatización nivel OpenClaw",
+      "features": ["Gestión automatizada del ciclo de vida del nodo", "Monitoreo de salud y estrategias de auto-curación", "Actualización de software y gestión de configuración", "Limitación de velocidad y refuerzo de seguridad", "Gestión de claves (TPM/Secure Enclave)"],
+      "note": "Los agentes están estrictamente aislados, no interfieren con la lógica de consenso o transiciones de estado"
+    },
+    "poseProtocol": {
+      "title": "Protocolo PoSe Detallado",
+      "challengeFlow": "Flujo Desafío-Respuesta",
+      "step1": {
+        "title": "Generación de Desafío",
+        "description": "El Challenger selecciona nodos objetivo basándose en la aleatoriedad VRF, genera mensaje de desafío",
+        "details": ["challenge_id = keccak(epoch_id || node_id || type || nonce || challenger_id)", "Incluye especificación de consulta (U: método RPC, S: chunk_id, R: route_tag)", "Firma del Challenger asegura no falsificación"]
+      },
+      "step2": {
+        "title": "Respuesta del Nodo",
+        "description": "El nodo recibe el desafío, genera respuesta y firma antes del tiempo de espera",
+        "details": ["Desafío U: ejecuta consulta RPC, devuelve resultado (tiempo de espera 2.5s)", "Desafío S: proporciona prueba de almacenamiento (ruta Merkle, tiempo de espera 6s)", "Desafío R: envía testigo de retransmisión (opcional)"]
+      },
+      "step3": {
+        "title": "Verificación de Recibo",
+        "description": "Aggregator o Verifier valida la validez del recibo",
+        "details": ["Verifica firmas (challenger + nodo)", "Verifica unicidad de challenge_id", "Verifica contenido de respuesta (U: recalculable, S: verificación Merkle)"]
+      },
+      "step4": {
+        "title": "Envío en Cadena",
+        "description": "Aggregator envía raíz del árbol Merkle de recibos a la cadena",
+        "details": ["Envía epoch_id + merkle_root + summary_hash", "Incluye k muestras aleatorias de recibos (k=32-128)", "Abre ventana de disputa de 2 épocas"]
+      },
+      "step5": {
+        "title": "Liquidación de Puntuación",
+        "description": "Al final de la época, calcula puntuación del nodo basándose en tasa de aprobación y distribuye recompensas",
+        "details": ["Calcula puntuaciones S_u, S_s, S_r", "Aplica rendimientos decrecientes y límites suaves", "Distribuye a billeteras de nodos"]
+      },
+      "scoringTitle": "Explicación Detallada de Fórmula de Puntuación",
+      "uptimeScore": {
+        "title": "Puntuación de Tiempo de Actividad",
+        "formula": "S_u,i = u_i × (0.85 + 0.15 × lat_i)",
+        "variables": ["u_i = pass_u_i / total_u_i (tasa de aprobación)", "lat_i = (L_max - median_latency_i) / (L_max - L_min)", "L_min = 0.2s, L_max = 2.5s"],
+        "rationale": "El factor de latencia solo representa el 15% del peso, evita carrera armamentista de ancho de banda"
+      },
+      "storageScore": {
+        "title": "Puntuación de Almacenamiento (SN)",
+        "formula": "S_s,i = s_i × cap_i",
+        "variables": ["s_i = pass_s_i / total_s_i (tasa de aprobación)", "cap_i = √(min(storedGB_i, 500GB) / 500GB)"],
+        "rationale": "Función raíz cuadrada asegura rendimientos decrecientes de capacidad de almacenamiento, previene monopolio de grandes participantes"
+      },
+      "antiSybilTitle": "🛡️ Combinación de Mecanismos Anti-Sybil",
+      "antiSybilItems": ["✓ Bono fijo (~50 USDT) + 7 días de desbloqueo", "✓ Límite suave de recompensas por nodo único (5× mediana)", "✓ Rendimientos decrecientes de capacidad de almacenamiento (función √)", "✓ Desafíos de servicio continuos (no falsificables)", "✓ Nonce único por época previene repetición", "✓ Diversidad de desafiantes + rotación aleatoria", "✓ Muestreo en cadena + período de disputa de 2 épocas", "✓ Certificación de hardware opcional (bono, no barrera)"]
+    },
+    "performance": {
+      "title": "Indicadores de Rendimiento",
+      "blockTime": { "title": "Tiempo de Bloque", "value": "1-2 segundos", "description": "Intervalo objetivo de producción de bloques, valor real depende de configuración de capa de consenso" },
+      "finality": { "title": "Velocidad de Confirmación", "value": "~12 segundos", "description": "Alcanza finalidad después de 6-12 bloques (configurable)" },
+      "storage": { "title": "Requisito de Almacenamiento", "value": "500GB recomendado", "description": "Límite de rendimientos decrecientes para nodos SN, FN puede ser más bajo" },
+      "bandwidth": { "title": "Requisito de Ancho de Banda", "value": "Moderado", "description": "La latencia solo representa el 15% del peso, red doméstica común puede participar" },
+      "frequency": { "title": "Frecuencia de Desafío", "value": "~6 veces/hora", "description": "Los nodos FN reciben aproximadamente 6 desafíos U por época" },
+      "threshold": { "title": "Umbral de Aprobación", "value": "80% (U) / 70% (S)", "description": "Por debajo del umbral pierde elegibilidad para recompensas del cubo correspondiente en esa época" }
+    },
+    "comparison": {
+      "title": "Comparación con Mecanismos Tradicionales",
+      "dimensions": {
+        "barrier": "Barrera de Participación",
+        "centralization": "Tendencia de Centralización",
+        "energy": "Consumo de Energía",
+        "reward": "Mecanismo de Recompensa",
+        "decentralization": "Descentralización",
+        "automation": "Automatización Operativa"
+      },
+      "pow": { "barrier": "Alta (equipo de minería especializado)", "centralization": "Centralización de poder de cómputo", "energy": "Muy alta", "reward": "Competencia de poder de cómputo", "decentralization": "Media (pools de minería)", "automation": "Difícil" },
+      "pos": { "barrier": "Alta (apuesta grande)", "centralization": "Centralización de capital", "energy": "Baja", "reward": "Apuesta de participación", "decentralization": "Baja (grandes participantes + delegación)", "automation": "Media" },
+      "coc": { "barrier": "Baja (hardware común + pequeño bono)", "centralization": "Descentralización de contribución de servicio", "energy": "Baja", "reward": "Tasa de aprobación de desafíos de servicio", "decentralization": "Alta (usuarios comunes pueden participar)", "automation": "Soporte de Agente IA" }
+    },
+    "techStack": {
+      "title": "Stack Tecnológico",
+      "execution": { "title": "Capa de Ejecución", "items": ["@ethereumjs/vm (runtime EVM)", "@ethereumjs/trie (Merkle Patricia Trie)", "LevelDB (almacenamiento de estado)", "ethers.js (biblioteca cliente)"] },
+      "consensus": { "title": "Capa de Consenso", "items": ["Rotación determinista de proposer", "Tarifa Gas dinámica EIP-1559", "Mecanismo de sincronización de snapshot", "Red gossip P2P (HTTP)"] },
+      "pose": { "title": "Capa PoSe", "items": ["VRF (Función Aleatoria Verificable)", "Merkle Tree (agregación de recibos)", "Keccak256 (hash)", "Firma ECDSA (desafío + recibo)"] },
+      "storage": { "title": "Capa de Almacenamiento", "items": ["API HTTP compatible con IPFS", "Direccionamiento CID", "Gestión de Pin", "Almacenamiento de bloques/objetos"] }
+    }
+  },
+  "network": {
+    "title": "Estado de la Red COC",
+    "subtitle": "Monitoreo en vivo de la salud de la red blockchain",
+    "realTimeStats": "Estadísticas en Tiempo Real",
+    "nodeInfo": {
+      "title": "Información del Nodo",
+      "runtime": "Runtime",
+      "version": "Versión",
+      "startTime": "Hora de Inicio",
+      "uptime": "Tiempo de Actividad",
+      "rpcEndpoint": "Endpoint RPC",
+      "wsEndpoint": "WebSocket",
+      "p2pEndpoint": "Endpoint P2P"
+    },
+    "performanceMetrics": {
+      "title": "Métricas de Rendimiento",
+      "avgBlockTime": "Tiempo Promedio de Bloque",
+      "avgTxPerBlock": "Promedio Transacciones/Bloque",
+      "avgGasUsed": "Promedio Uso de Gas"
+    },
+    "validators": {
+      "title": "Validadores",
+      "address": "Dirección",
+      "score": "Puntuación",
+      "blocks": "Bloques Producidos"
+    },
+    "recentBlocks": {
+      "title": "Bloques Recientes",
+      "viewExplorer": "Ver Explorador Completo →",
+      "blockHeight": "Altura de Bloque",
+      "timestamp": "Marca de Tiempo",
+      "txCount": "Número de Transacciones",
+      "gasUsed": "Uso de Gas"
+    },
+    "quickLinks": {
+      "title": "Enlaces Rápidos",
+      "explorer": { "title": "Explorador de Bloques", "description": "Ver detalles completos de bloques y transacciones" },
+      "startNode": { "title": "Iniciar Nodo", "description": "Únase a la red COC, ejecute su propio nodo" },
+      "technology": { "title": "Documentación Técnica", "description": "Conozca la arquitectura técnica de COC" }
+    }
+  },
+  "roadmap": {
+    "title": "Hoja de Ruta de Desarrollo",
+    "subtitle": "Historia de desarrollo y planes futuros del proyecto COC",
+    "whitepaper": {
+      "title": "Planificación del Libro Blanco (Alto Nivel)",
+      "v0_1": {
+        "version": "v0.1",
+        "title": "Contrato PoSe + Registro de Nodos + Mecanismo de Desafío",
+        "status": "Completado",
+        "items": ["Contrato de gestión PoSe (registro, envío por lotes, disputa, castigo)", "Interfaz de registro de nodos (node_id, pubkey, flags, commitments)", "Definición de tipos de desafío U/S", "Especificación de formato de recibo"]
+      },
+      "v0_2": {
+        "version": "v0.2",
+        "title": "Agregación Fuera de Cadena + Envío por Lotes en Cadena + Ventana de Disputa",
+        "status": "En Progreso",
+        "items": ["Aggregator: construcción de árbol Merkle de recibos", "Envío por lotes en cadena (merkle_root + summary_hash)", "Ventana de disputa de 2 épocas", "Muestreo aleatorio en cadena (k=32-128)"]
+      },
+      "v0_3": {
+        "version": "v0.3",
+        "title": "Conjunto de Desafiantes Descentralizado + Métricas de Transparencia",
+        "status": "Planificado",
+        "items": ["Diversidad de desafiantes + rotación aleatoria", "Bono y cuota de desafiantes", "Sistema de reputación de desafiantes", "Datos estadísticos transparentes (detección de patrones anormales)"]
+      },
+      "v0_4": {
+        "version": "v0.4",
+        "title": "Estándar OpenClaw NodeOps + Cliente Multi-Implementación",
+        "status": "Planificado",
+        "items": ["Especificación de API OpenClaw NodeOps", "Implementación de clientes multi-lenguaje (Rust/Go/TypeScript)", "Interfaz estándar de Agente IA", "Pruebas de compatibilidad entre clientes"]
+      }
+    },
+    "implementation": {
+      "title": "Progreso de Desarrollo Real (Ciclo 1-25)",
+      "infrastructure": {
+        "title": "Infraestructura (Ciclo 1-10)",
+        "cycles": [
+          { "num": 1, "desc": "Corregir decodificación RLP de PersistentStateTrie" },
+          { "num": 2, "desc": "Agregar 13 métodos RPC estándar de Ethereum" },
+          { "num": 3, "desc": "Decodificación de transferencia de tokens (ERC-20)" },
+          { "num": 4, "desc": "Panel de estadísticas de cadena" },
+          { "num": 5, "desc": "Interfaz de llamada de contrato + corrección de serialización BigInt de WebSocket" },
+          { "num": 6, "desc": "eth_getBlockReceipts + página de detalles de bloque mejorada" },
+          { "num": 7, "desc": "Métodos RPC de txpool + página de explorador de mempool" },
+          { "num": 8, "desc": "Página de estado de red + página 404 global" },
+          { "num": 9, "desc": "Desensamblador de bytecode EVM + escáner de almacenamiento" },
+          { "num": 10, "desc": "Mejora de cobertura de pruebas: 175→190 pruebas" }
+        ]
+      },
+      "consolidation": {
+        "title": "Consolidación y Extensión (Ciclo 11-20)",
+        "cycles": [
+          { "num": 11, "desc": "Corregir estructura de tabla TxHistory, agregar columna gas" },
+          { "num": 12, "desc": "Corregir complejidad O(n*m) de formatBlock" },
+          { "num": 13, "desc": "Límite de cuerpo de solicitud (2MB P2P, 1MB RPC)" },
+          { "num": 14, "desc": "Orden de precio de gas efectivo EIP-1559" },
+          { "num": 15, "desc": "Agregar RPC mining/hashrate/coinbase" },
+          { "num": 16, "desc": "Validación de suscripción WebSocket" },
+          { "num": 17, "desc": "Recuperación de error de consenso + modo degradado" },
+          { "num": 18, "desc": "Corregir verificador de salud, agregar diagnóstico" },
+          { "num": 19, "desc": "Deduplicación de difusión por par P2P" },
+          { "num": 20, "desc": "Página de explorador de validadores + RPC coc_validators" }
+        ]
+      },
+      "features": {
+        "title": "Funciones y Optimización (Ciclo 21-25)",
+        "cycles": [
+          { "num": 21, "desc": "Página de estadísticas de cadena (actividad de bloques, TPS, visualización de Gas)" },
+          { "num": 22, "desc": "Soporte de paginación de consulta de transacciones de dirección" },
+          { "num": 23, "desc": "Cálculo de base fee dinámica EIP-1559" },
+          { "num": 24, "desc": "Mejora de debug trace, soporte de registro de eventos" },
+          { "num": 25, "desc": "Página de lista de contratos, escaneo de despliegue reciente" }
+        ]
+      }
+    },
+    "future": {
+      "title": "Planificación Futura",
+      "aiAgent": { "icon": "🤖", "title": "Integración Profunda de Agente IA", "items": ["Respuesta de desafío automatizada", "Programación inteligente de recursos", "Mantenimiento predictivo", "Adaptación de estrategia de seguridad"] },
+      "crossChain": { "icon": "🌐", "title": "Interoperabilidad entre Cadenas", "items": ["Protocolo de puente", "Activos entre cadenas", "Soporte IBC", "Sincronización de estado multi-cadena"] },
+      "analytics": { "icon": "📊", "title": "Herramientas de Análisis Avanzado", "items": ["Análisis de datos en cadena", "Sistema de puntuación de rendimiento de nodos", "Herramienta de predicción de recompensas", "Evaluación de salud de red"] },
+      "privacy": { "icon": "🔐", "title": "Mejora de Privacidad", "items": ["Desafíos de prueba de conocimiento cero", "Protección de anonimato de nodos", "Compromiso de privacidad de endpoint", "Certificación de hardware TEE"] },
+      "performance": { "icon": "⚡", "title": "Optimización de Rendimiento", "items": ["Solución de extensión Layer 2", "EVM Paralelo", "Poda de estado", "Compresión de snapshot"] },
+      "ecosystem": { "icon": "🌍", "title": "Construcción de Ecosistema", "items": ["Herramientas de desarrollador DApp", "Programa de incentivos para operadores de nodos", "Mecanismo de gobernanza comunitaria", "Programa de subsidios para desarrolladores"] }
+    },
+    "cta": {
+      "title": "¿Quieres Participar en el Desarrollo de COC?",
+      "subtitle": "Damos la bienvenida a desarrolladores, operadores de nodos y miembros de la comunidad para contribuir",
+      "github": "Repositorio GitHub",
+      "docs": "Documentación para Desarrolladores"
+    }
+  },
+  "docs": {
+    "title": "Centro de Documentación",
+    "subtitle": "Documentación técnica completa y guías de desarrollo de blockchain COC",
+    "quickStart": {
+      "title": "Inicio Rápido",
+      "runNode": { "icon": "🚀", "title": "Ejecutar Nodo Local", "description": "Iniciar rápidamente un nodo COC", "code": "cd node\nnpm install\nnpm start" },
+      "deployContract": { "icon": "📜", "title": "Desplegar Contrato", "description": "Desplegar contrato inteligente PoSe", "code": "cd contracts\nnpm install\nnpm run compile\nnpm run deploy:local" },
+      "launchExplorer": { "icon": "🌐", "title": "Iniciar Explorador", "description": "Ejecutar explorador de bloques", "code": "cd explorer\nnpm install\nnpm run dev" }
+    },
+    "coreDocs": {
+      "title": "Documentación Central",
+      "whitepaper": { "title": "📄 Libro Blanco", "description": "Filosofía de diseño central de COC, explicación detallada del protocolo PoSe, modelo económico y arquitectura técnica", "link": "Libro Blanco COC (Versión Completa)" },
+      "architecture": { "title": "🏗️ Arquitectura del Sistema", "description": "Diseño de arquitectura de cuatro capas, interacción de componentes, flujo de datos y escalabilidad", "links": ["Arquitectura del Sistema (ES)", "System Architecture (EN)"] },
+      "algorithms": { "title": "🔬 Algoritmos Centrales", "description": "Protocolo de desafío PoSe, fórmula de puntuación, mecanismo de consenso y prueba de almacenamiento", "links": ["Explicación Detallada de Algoritmos Centrales (ES)", "Core Algorithms (EN)"] },
+      "antiSybil": { "title": "🛡️ Mecanismo Anti-Sybil", "description": "Estrategia contra ataques Sybil, mecanismo de bonos y verificación de desafíos", "links": ["Anti-Sybil (ES)", "Anti-Sybil (EN)"] }
+    },
+    "devGuides": {
+      "title": "Guías de Desarrollo",
+      "nodeOps": { "icon": "⚙️", "title": "Guía de Ejecución de Nodos", "items": ["Instalación y configuración", "Ejecutar devnet (3/5/7 nodos)", "Monitoreo y mantenimiento de nodos", "Solución de problemas"] },
+      "contracts": { "icon": "📝", "title": "Desarrollo de Contratos Inteligentes", "items": ["Escritura de contratos Solidity", "Interfaz de contrato PoSe", "Despliegue y verificación", "Mejores prácticas de pruebas"] },
+      "rpcApi": { "icon": "🔌", "title": "Referencia de API RPC", "items": ["Métodos RPC estándar de Ethereum (40+)", "Métodos personalizados de COC (coc_*)", "Suscripción WebSocket", "Consulta Txpool"] },
+      "aiAgent": { "icon": "🤖", "title": "Operaciones con Agente IA", "items": ["Integración OpenClaw", "Monitoreo automatizado", "Configuración de motor de estrategias", "Mejores prácticas de seguridad"] }
+    },
+    "implementationStatus": {
+      "title": "Estado de Implementación",
+      "chainEngine": { "label": "Motor de Cadena", "status": "Completado", "details": "Producción de bloques, mempool, snapshot, finalidad" },
+      "p2pNetwork": { "label": "Red P2P", "status": "Completado", "details": "Gossip HTTP, sincronización de snapshot" },
+      "evmExecution": { "label": "Ejecución EVM", "status": "Completado", "details": "Estado en memoria + persistente, LevelDB" },
+      "jsonRpc": { "label": "JSON-RPC", "status": "Completado", "details": "40+ métodos estándar, serialización BigInt" },
+      "wsRpc": { "label": "WebSocket RPC", "status": "Completado", "details": "eth_subscribe, eventos en tiempo real" },
+      "poseProtocol": { "label": "Protocolo PoSe", "status": "En Progreso", "details": "Desafíos fuera de cadena, contrato en cadena, agregación por lotes" },
+      "storage": { "label": "Capa de Almacenamiento", "status": "Completado", "details": "API HTTP compatible con IPFS" },
+      "runtime": { "label": "Servicios Runtime", "status": "En Progreso", "details": "coc-node, coc-agent, coc-relayer" },
+      "tests": { "label": "Cobertura de Pruebas", "status": "Buena", "details": "190 pruebas, 9 suites de pruebas" },
+      "detailsNote": "Consulte el README del proyecto para el estado de implementación detallado",
+      "viewGithub": "Ver Repositorio GitHub"
+    },
+    "tools": {
+      "title": "Herramientas de Desarrollo",
+      "wallet": { "title": "💼 Cartera CLI", "description": "Herramienta de cartera de línea de comandos", "features": ["Crear dirección", "Transferir", "Consultar saldo"] },
+      "explorer": { "title": "🔍 Explorador de Bloques", "description": "Explorador web con todas las funciones", "features": ["Consulta de bloques/transacciones", "Llamada de contrato", "Escáner de almacenamiento"] },
+      "testing": { "title": "🧪 Scripts de Prueba", "description": "Herramientas de aseguramiento de calidad", "features": ["Pruebas unitarias", "Pruebas de integración", "Pruebas E2E"] },
+      "openTool": "Abrir Herramienta →"
+    },
+    "resources": {
+      "title": "Más Recursos",
+      "technology": { "title": "Explicación Detallada de Arquitectura Técnica", "description": "Profundice en el diseño de arquitectura de cuatro capas de COC" },
+      "roadmap": { "title": "Hoja de Ruta de Desarrollo", "description": "Ver progreso del proyecto y planificación futura" },
+      "network": { "title": "Estado de la Red", "description": "Monitoreo en vivo de la salud de la red blockchain" },
+      "about": { "title": "Acerca de COC", "description": "Conozca la visión del proyecto y filosofía central" }
+    }
+  },
+  "footer": {
+    "tagline": "Blockchain de Prueba de Servicio\nOperado por Agentes IA",
+    "copyright": "Derechos de autor",
+    "allRightsReserved": "Todos los derechos reservados"
+  }
+}

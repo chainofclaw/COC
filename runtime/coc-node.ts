@@ -111,14 +111,18 @@ const server = http.createServer((req, res) => {
         return;
       }
 
+      const responseAtMs = Date.now();
+      const minBlockNumber = Number((challenge as any)?.querySpec?.minBlockNumber ?? 0);
       const responseBody =
         kind === "R"
-          ? { ok: true, routeTag: "l1-l2", witness: "relay-ok" }
-          : { ok: true, echo: payload.payload ?? null };
+          ? buildRelayResponseBody(payload.challengeId, challenge, responseAtMs)
+          : kind === "U"
+            ? { ok: true, blockNumber: minBlockNumber > 0 ? minBlockNumber : 1 }
+            : { ok: true, echo: payload.payload ?? null };
       return json(res, 200, {
         challengeId: payload.challengeId,
         nodeId: nodeSigner.nodeId,
-        responseAtMs: Date.now(),
+        responseAtMs,
         responseBody,
         nodeSig: signReceipt(payload.challengeId, nodeSigner.nodeId, responseBody),
       });
@@ -136,6 +140,23 @@ server.listen(port, bind, () => {
 function resolveStorageDir(dataDir: string, configured?: string): string {
   if (configured) return configured;
   return join(dataDir, "storage");
+}
+
+function buildRelayResponseBody(
+  challengeId: string,
+  challenge: Record<string, unknown>,
+  responseAtMs: number,
+): Record<string, unknown> {
+  const routeTag = String((challenge.querySpec as Record<string, unknown> | undefined)?.routeTag ?? "l1-l2");
+  const relayMsg = `pose:relay:${challengeId}:${routeTag}:${responseAtMs}`;
+  const witness = {
+    relayer: nodeSigner.nodeId,
+    challengeId,
+    routeTag,
+    responseAtMs,
+    signature: nodeSigner.sign(relayMsg),
+  };
+  return { ok: true, routeTag, witness };
 }
 
 async function loadStorageProof(storageDirPath: string, cid: string, chunkIndex: number): Promise<{

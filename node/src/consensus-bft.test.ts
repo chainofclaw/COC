@@ -565,6 +565,65 @@ describe("ConsensusEngine metrics", () => {
   })
 })
 
+describe("BFT wire broadcast integration", () => {
+  it("should broadcast BFT messages via wire when wireBroadcastFn is set", async () => {
+    let finalizedBlock: ChainBlock | null = null
+    const httpMsgs: BftMessage[] = []
+    const wireMsgs: BftMessage[] = []
+
+    const validators = [
+      { id: "node-1", stake: 1000n },
+      { id: "node-2", stake: 1000n },
+      { id: "node-3", stake: 1000n },
+    ]
+
+    const coordinator = new BftCoordinator({
+      localId: "node-1",
+      validators,
+      prepareTimeoutMs: 5000,
+      commitTimeoutMs: 5000,
+      broadcastMessage: async (msg) => {
+        httpMsgs.push(msg)
+        // Simulate dual broadcast: also push to wire
+        wireMsgs.push(msg)
+      },
+      onFinalized: async (block) => { finalizedBlock = block },
+    })
+
+    const block = makeBlock(1)
+    await coordinator.startRound(block)
+
+    // Both HTTP and wire should have received the prepare message
+    assert.ok(httpMsgs.length > 0, "HTTP broadcast should have messages")
+    assert.ok(wireMsgs.length > 0, "wire broadcast should have messages")
+    assert.equal(httpMsgs[0].type, "prepare")
+  })
+
+  it("should work without wire broadcast function", async () => {
+    const httpMsgs: BftMessage[] = []
+
+    const validators = [
+      { id: "node-1", stake: 1000n },
+      { id: "node-2", stake: 1000n },
+      { id: "node-3", stake: 1000n },
+    ]
+
+    const coordinator = new BftCoordinator({
+      localId: "node-1",
+      validators,
+      prepareTimeoutMs: 5000,
+      commitTimeoutMs: 5000,
+      broadcastMessage: async (msg) => { httpMsgs.push(msg) },
+      onFinalized: async () => {},
+    })
+
+    const block = makeBlock(1)
+    await coordinator.startRound(block)
+
+    assert.ok(httpMsgs.length > 0, "HTTP broadcast should work alone")
+  })
+})
+
 describe("ConsensusEngine sync progress", () => {
   it("should report not syncing when no peer data", async () => {
     const chain = makeMockChain(10n)

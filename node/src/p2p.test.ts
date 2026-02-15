@@ -111,3 +111,36 @@ describe("P2P node-info endpoint", () => {
     assert.ok(typeof info.uptimeMs === "number")
   })
 })
+
+describe("P2P inbound rate limit", () => {
+  it("returns 429 when request rate exceeds configured limit", async () => {
+    const port = 29900 + Math.floor(Math.random() * 200)
+    const p2p = new P2PNode(
+      {
+        bind: "127.0.0.1",
+        port,
+        peers: [],
+        nodeId: "test-node-rate-limit",
+        enableDiscovery: false,
+        inboundRateLimitWindowMs: 30_000,
+        inboundRateLimitMaxRequests: 2,
+      },
+      {
+        onTx: async () => {},
+        onBlock: async () => {},
+        onSnapshotRequest: () => ({ height: 0, latestHash: "0x0" as Hex, blocks: [] }) as unknown as ChainSnapshot,
+      },
+    )
+    p2p.start()
+    await new Promise((r) => setTimeout(r, 100))
+
+    const url = `http://127.0.0.1:${port}/p2p/peers`
+    const r1 = await fetch(url)
+    const r2 = await fetch(url)
+    const r3 = await fetch(url)
+
+    assert.equal(r1.status, 200)
+    assert.equal(r2.status, 200)
+    assert.equal(r3.status, 429)
+  })
+})

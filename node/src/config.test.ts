@@ -31,6 +31,28 @@ describe("validateConfig", () => {
     assert.ok(validateConfig({ ipfsPort: 0 }).length > 0)
   })
 
+  it("validates p2p anti-sybil limits", () => {
+    assert.ok(validateConfig({ p2pMaxPeers: 0 }).length > 0)
+    assert.ok(validateConfig({ p2pMaxDiscoveredPerBatch: 0 }).length > 0)
+    assert.ok(validateConfig({ p2pRateLimitWindowMs: 99 }).length > 0)
+    assert.ok(validateConfig({ p2pRateLimitMaxRequests: 0 }).length > 0)
+    assert.ok(validateConfig({ p2pRequireInboundAuth: "true" as any }).length > 0)
+    assert.ok(validateConfig({ p2pInboundAuthMode: "strict" as any }).length > 0)
+    assert.ok(validateConfig({ p2pAuthMaxClockSkewMs: 999 }).length > 0)
+    assert.equal(
+      validateConfig({
+        p2pMaxPeers: 50,
+        p2pMaxDiscoveredPerBatch: 200,
+        p2pRateLimitWindowMs: 60_000,
+        p2pRateLimitMaxRequests: 240,
+        p2pRequireInboundAuth: true,
+        p2pInboundAuthMode: "enforce",
+        p2pAuthMaxClockSkewMs: 120_000,
+      }).length,
+      0,
+    )
+  })
+
   it("accepts valid port range", () => {
     assert.equal(validateConfig({ rpcPort: 1 }).length, 0)
     assert.equal(validateConfig({ rpcPort: 65535 }).length, 0)
@@ -74,6 +96,17 @@ describe("validateConfig", () => {
     assert.ok(validateConfig({ storage: { backend: "redis" as any, leveldbDir: "", cacheSize: 0, enablePruning: false, nonceRetentionDays: 1 } }).length > 0)
     assert.ok(validateConfig({ storage: { backend: "leveldb", leveldbDir: "", cacheSize: -1, enablePruning: false, nonceRetentionDays: 1 } }).length > 0)
     assert.ok(validateConfig({ storage: { backend: "leveldb", leveldbDir: "", cacheSize: 0, enablePruning: false, nonceRetentionDays: 0 } }).length > 0)
+  })
+
+  it("validates pose nonce registry path", () => {
+    assert.ok(validateConfig({ poseNonceRegistryPath: "" }).length > 0)
+    assert.equal(validateConfig({ poseNonceRegistryPath: "/tmp/pose-nonce.log" }).length, 0)
+  })
+
+  it("validates pose max challenge budget", () => {
+    assert.ok(validateConfig({ poseMaxChallengesPerEpoch: 0 }).length > 0)
+    assert.ok(validateConfig({ poseMaxChallengesPerEpoch: -1 }).length > 0)
+    assert.equal(validateConfig({ poseMaxChallengesPerEpoch: 1 }).length, 0)
   })
 
   it("accumulates multiple errors", () => {

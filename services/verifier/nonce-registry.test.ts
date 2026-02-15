@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from "node:fs"
+import { join } from "node:path"
+import { tmpdir } from "node:os"
 import test from "node:test"
 import assert from "node:assert/strict"
 import { NonceRegistry } from "./nonce-registry.ts"
@@ -21,4 +24,18 @@ test("nonce registry rejects replay", () => {
   const registry = new NonceRegistry()
   assert.equal(registry.consume(challenge), true)
   assert.equal(registry.consume(challenge), false)
+})
+
+test("nonce registry restores persisted keys after restart", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nonce-registry-"))
+  const filePath = join(dir, "used-nonces.log")
+  try {
+    const first = new NonceRegistry({ persistencePath: filePath })
+    assert.equal(first.consume(challenge), true)
+
+    const second = new NonceRegistry({ persistencePath: filePath })
+    assert.equal(second.consume(challenge), false)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })

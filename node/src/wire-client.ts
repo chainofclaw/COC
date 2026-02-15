@@ -228,8 +228,13 @@ export class WireClient {
           this.socket?.destroy()
           return
         }
-        // Verify handshake signature if verifier available and signature present
-        if (this.cfg.verifier && hs.signature && hs.nonce) {
+        // When verifier is enabled, peer handshake signature is mandatory.
+        if (this.cfg.verifier) {
+          if (!hs.signature || !hs.nonce) {
+            log.warn("peer handshake missing signature", { peer: hs.nodeId })
+            this.socket?.destroy()
+            return
+          }
           const msg = `wire:handshake:${hs.nodeId}:${hs.nonce}`
           const recovered = this.cfg.verifier.recoverAddress(msg, hs.signature)
           if (recovered.toLowerCase() !== hs.nodeId.toLowerCase()) {

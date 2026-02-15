@@ -86,6 +86,41 @@ describe("PeerDiscovery", () => {
     assert.equal(discovery.getAllPeers().length, 3)
   })
 
+  it("addDiscoveredPeers rejects malformed peers", () => {
+    const scoring = makeScoring()
+    const discovery = new PeerDiscovery([], scoring, {
+      selfId: "node-0",
+      selfUrl: "http://127.0.0.1:19000",
+      maxPeers: 10,
+    })
+    const added = discovery.addDiscoveredPeers([
+      { id: "", url: "http://127.0.0.1:19001" },
+      { id: "node/evil", url: "http://127.0.0.1:19002" },
+      { id: "node-1", url: "javascript:alert(1)" },
+      { id: "node-2", url: "http://127.0.0.1:19003/path" },
+    ])
+
+    assert.equal(added, 1)
+    const peers = discovery.getAllPeers()
+    assert.equal(peers.length, 1)
+    assert.equal(peers[0].id, "node-2")
+    assert.equal(peers[0].url, "http://127.0.0.1:19003")
+  })
+
+  it("addDiscoveredPeers enforces per-batch input cap", () => {
+    const scoring = makeScoring()
+    const discovery = new PeerDiscovery([], scoring, {
+      selfId: "node-0",
+      selfUrl: "http://127.0.0.1:19000",
+      maxPeers: 500,
+      maxDiscoveredPerBatch: 3,
+    })
+    const incoming = Array.from({ length: 10 }, (_, i) => makePeer(`node-${i + 1}`))
+    const added = discovery.addDiscoveredPeers(incoming)
+    assert.equal(added, 3)
+    assert.equal(discovery.getAllPeers().length, 3)
+  })
+
   it("stop clears timers without error", () => {
     const scoring = makeScoring()
     const discovery = new PeerDiscovery(

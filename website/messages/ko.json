@@ -1,0 +1,508 @@
+{
+  "common": {
+    "home": "홈",
+    "plan": "계획",
+    "technology": "기술",
+    "network": "네트워크 상태",
+    "roadmap": "로드맵",
+    "docs": "문서",
+    "explorer": "블록 탐색기",
+    "readMore": "자세히 알아보기",
+    "viewExplorer": "블록체인 둘러보기",
+    "viewDocs": "문서 읽기",
+    "github": "GitHub 저장소",
+    "community": "커뮤니티",
+    "resources": "리소스",
+    "development": "개발",
+    "whitepaper": "백서",
+    "allRightsReserved": "모든 권리 보유",
+    "copyright": "저작권"
+  },
+  "home": {
+    "hero": {
+      "title": "AI-Agent가 운영하는\n서비스 증명 블록체인",
+      "subtitle": "일반 사용자도 블록체인 네트워크에 참여할 수 있도록 하고, 서비스 기여를 통해 보상을 받을 수 있게 하며, 자본 축적이 아닌 방식으로",
+      "learnMore": "자세히 알아보기",
+      "browseBlockchain": "블록체인 둘러보기",
+      "readDocs": "문서 읽기"
+    },
+    "networkStats": {
+      "title": "실시간 네트워크 상태"
+    },
+    "features": {
+      "title": "왜 COC를 선택해야 할까요?",
+      "subtitle": "COC는 혁신적인 Proof-of-Service 메커니즘을 통해 전통적인 블록체인의 중앙화 문제를 타파합니다",
+      "pose": {
+        "title": "서비스 증명 (Proof-of-Service)",
+        "description": "검증 가능한 서비스 챌린지를 통해 보상을 받으며, 자본 축적이나 채산성 경쟁에 의존하지 않습니다"
+      },
+      "aiAgent": {
+        "title": "AI Agent 운영",
+        "description": "OpenClaw급 AI 에이전트가 노드 운영을 자동화하여 기술적 진입장벽을 낮추고 결정성을 유지합니다"
+      },
+      "hardware": {
+        "title": "일반 하드웨어 친화적",
+        "description": "가정용 기기도 공정하게 경쟁할 수 있으며, 전문 채굴기나 대량의 스테이킹 자금이 필요하지 않습니다"
+      },
+      "nonPos": {
+        "title": "비 PoS 인센티브",
+        "description": "소액의 고정 보증금, 수익은 자본량이 아닌 서비스 기여도에 연결됩니다"
+      },
+      "evmCompatible": {
+        "title": "EVM 호환",
+        "description": "이더리움 가상 머신을 완전히 지원하며 Solidity 스마트 계약을 실행할 수 있습니다"
+      },
+      "storage": {
+        "title": "분산 스토리지",
+        "description": "내장 IPFS 호환 인터페이스, 데이터 가용성 챌린지 지원"
+      }
+    },
+    "architecture": {
+      "title": "4계층 아키텍처 설계",
+      "layer1": {
+        "title": "실행층 (EVM)",
+        "description": "거래 및 스마트 계약 처리, 블록체인 상태 유지"
+      },
+      "layer2": {
+        "title": "합의층 (플러그인 가능)",
+        "description": "블록 생성, 최종성 보장 제공"
+      },
+      "layer3": {
+        "title": "PoSe 서비스층 (핵심)",
+        "description": "노드 등록, 난수 챌린지, 점수 계산, 보상 분배"
+      },
+      "layer4": {
+        "title": "AI Agent 운영층",
+        "description": "노드 생명주기 자동화 관리, 합의 결정성에 영향을 주지 않음"
+      },
+      "learnMore": "기술 아키텍처 깊이 있게 알아보기"
+    },
+    "nodeRoles": {
+      "title": "노드 역할",
+      "fullNode": {
+        "title": "전체 노드 (FN)",
+        "description": "블록 및 상태 검증, 기본 RPC 쿼리 제공",
+        "reward": "보상 풀의 60%"
+      },
+      "storageNode": {
+        "title": "스토리지 노드 (SN)",
+        "description": "역사 데이터 및 스냅샷 저장, 데이터 가용성 증명",
+        "reward": "보상 풀의 30%"
+      },
+      "relayNode": {
+        "title": "릴레이 노드 (RN)",
+        "description": "블록 및 거래의 네트워크 전파 개선",
+        "reward": "보상 풀의 10%"
+      },
+      "note": "단일 운영자는 여러 역할을 실행할 수 있으며 보상이 적립됩니다"
+    },
+    "cta": {
+      "title": "COC 네트워크에 참여할 준비가 되셨나요?",
+      "subtitle": "노드를 시작하고 네트워크 서비스 제공을 통해 보상받기 시작하세요",
+      "startNode": "노드 시작 가이드",
+      "viewNetwork": "네트워크 상태 보기"
+    }
+  },
+  "about": {
+    "title": "COC 정보",
+    "subtitle": "ChainOfClaw 백서 핵심 요점",
+    "abstract": {
+      "title": "요약",
+      "intro": "COC (ChainOfClaw)는 광범위하고 지속적인 노드 참여를 위해 설계된 블록체인 네트워크입니다. 우리가 관찰한 것:",
+      "pow": "PoW 시스템은 전문 하드웨어와 저렴한 전기 주변에 집중되는 경향이 있습니다",
+      "pos": "PoS 시스템은 자본 집중 및 위임 운영 중앙화 주변에 집중되는 경향이 있습니다",
+      "pose": "COC는 Proof-of-Service (PoSe)를 도입합니다: 노드가 측정 가능한 네트워크 서비스(가동 시간/RPC 가용성, 데이터 저장 및 가용성, 릴레이 지원)를 제공하는 것을 보상하는 검증 가능한 챌린지-응답 프로토콜이며, 스테이킹 소유권을 보상하는 것이 아닙니다."
+    },
+    "vision": {
+      "title": "비전 및 목표",
+      "mission": "미션",
+      "missionText": "분산화를 실용적으로 만들고, 핵심 참여 병목을 이동:\n'하드웨어 구매 + 복잡한 운영 실행' → '안정적인 노드 실행, 자동화 에이전트 운영 추가'",
+      "goals": "6가지 설계 목표",
+      "goal1": {
+        "title": "허가 없는 참여",
+        "desc": "누구나 노드를 실행하고 보상을 받을 수 있습니다"
+      },
+      "goal2": {
+        "title": "비 PoS 인센티브",
+        "desc": "수익은 서비스 기여도에 연결되며, 스테이킹이 아닙니다"
+      },
+      "goal3": {
+        "title": "일반 하드웨어 친화적",
+        "desc": "가정용/에지 하드웨어가 공정하게 경쟁할 수 있습니다"
+      },
+      "goal4": {
+        "title": "검증 가능하고 감사 가능",
+        "desc": "서비스 클레임은 챌린지를 통해 검증됩니다"
+      },
+      "goal5": {
+        "title": "독점 방지",
+        "desc": "수익 감소 및 한계는 승자 독식을 방지합니다"
+      },
+      "goal6": {
+        "title": "AI 에이전트 운영 신뢰성",
+        "desc": "AI 에이전트는 운영 부담을 줄이면서도 결정성을 손상시키지 않습니다"
+      }
+    },
+    "economic": {
+      "title": "경제 모델",
+      "rewardPool": "보상 풀 (Epoch당)",
+      "epochLength": "Epoch 길이",
+      "epochDefault": "기본값: 1시간",
+      "blockTime": "블록 시간 목표: 1-2초 (합의에 따라 구성 가능)",
+      "buckets": "보상 버킷",
+      "bucket1": "B1: 가동시간/RPC",
+      "bucket2": "B2: 스토리지 & 가용성",
+      "bucket3": "B3: 릴레이 지원",
+      "rationale": "근거: 포함성 최대화; 스토리지/릴레이는 추가 수익을 얻지만 필수는 아닙니다",
+      "bond": "보증금 (비 PoS)",
+      "bondIntro": "노드는 소액의 고정 보증금 D를 제출합니다:",
+      "bondTarget": "목표 가치: ~50 USDT 상당액",
+      "bondUnlock": "잠금 해제 지연: 7일",
+      "bondPurpose": "목적: 반사기 처벌에만 사용됩니다",
+      "bondNoPower": "보증금은 합의 권력을 증가시키지 않습니다",
+      "bondNoReward": "보증금은 직접적으로 보상을 증가시키지 않습니다"
+    },
+    "pose": {
+      "title": "서비스 증명 (Proof-of-Service, PoSe) 프로토콜",
+      "coreIdea": "핵심 아이디어",
+      "coreText": "노드는 난수 검증 가능한 챌린지를 시간에 따라 통과하여 수익을 얻습니다. 각 챌린지는 감사 가능한 영수증을 생성합니다. 점수는 epoch 내에서 합계됩니다.",
+      "types": "챌린지 유형",
+      "typeU": "가동시간/RPC 챌린지",
+      "typeS": "스토리지 증명 챌린지",
+      "typeR": "릴레이/프로브 챌린지",
+      "frequency": "챌린지 빈도 (Epoch당)",
+      "freqU": "가동시간/RPC: 평균 노드당 epoch당 6회 챌린지 (약 10분마다 1회)",
+      "freqS": "스토리지 (SN만): 평균 SN당 epoch당 2회 챌린지",
+      "freqR": "릴레이 (RN만): 평균 RN당 epoch당 2회 챌린지",
+      "threshold": "통과 임계값:",
+      "thresholdU": "U 통과율 ≥ 80% U 버킷 보상 자격",
+      "thresholdS": "S 통과율 ≥ 70% S 버킷 보상 자격",
+      "scoring": "채점 공식"
+    },
+    "antiCheat": {
+      "title": "부정행위 방지 메커니즘",
+      "sybil": "Sybil 공격",
+      "sybilMit": ["고정 보증금 + 잠금 해제 지연", "단일 노드 보상 소프트 한계", "스토리지 약정 수익 감소", "지속적인 서비스 요구사항"],
+      "forgery": "영수증 위조/재생",
+      "forgeryMit": ["고유한 challenge_id 바인딩", "챌린저 + 노드 서명", "단일 노드 단일 epoch 고유 nonce", "검증 가능한 응답 필드"],
+      "collusion": "챌린저-노드 담합",
+      "collusionMit": ["챌린저 세트 다양성", "온체인 샘플링 + 분쟁 창", "챌린저/애그리게이터 보증금", "투명한 통계"],
+      "network": "가정용 네트워크 거짓 양성",
+      "networkMit": ["적절한 통과 임계값 (80%)", "중앙값 기반 지연 채점", "점진적 처벌", "AI 에이전트 자가 치유 전략"]
+    },
+    "agent": {
+      "title": "AI Agent 운영층",
+      "canDo": "에이전트 책임 범위",
+      "can1": "노드 소프트웨어 설치, 구성, 업데이트",
+      "can2": "건강 모니터링 (CPU/디스크/네트워크), 경고, 자가 치유",
+      "can3": "스냅샷 및 스토리지 윈도우 관리",
+      "can4": "속도 제한 및 방화벽 정책 적용",
+      "can5": "키 생명주기 관리 (TPM/보안 enclave 권장)",
+      "cantDo": "에이전트 금지 작업",
+      "cant1": "합의 규칙 또는 상태 전환 결정성 수정",
+      "cant2": "검증 불가능한 'AI 결정' 주입을 체인 실행에",
+      "cant3": "거래 유효성 규칙 변경",
+      "note": "COC는 AI 에이전트를 엄격히 운영층에 유지하여 검증 가능성을 보장합니다"
+    },
+    "cta": {
+      "title": "더 알고 싶으신가요?",
+      "technology": "기술 아키텍처 상세 설명",
+      "roadmap": "로드맵 보기",
+      "docs": "전체 문서 읽기"
+    }
+  },
+  "technology": {
+    "title": "기술 아키텍처",
+    "subtitle": "COC의 4계층 아키텍처 설계 및 핵심 알고리즘 심층 이해",
+    "layersTitle": "4계층 아키텍처",
+    "layer1": {
+      "number": "1",
+      "title": "실행층 (Execution Layer)",
+      "subtitle": "EVM 런타임",
+      "features": ["@ethereumjs/vm 기반 완전한 EVM 지원", "거래 및 스마트 계약 실행", "세계 상태 유지 (LevelDB + Merkle Patricia Trie)", "Solidity 계약 호환"],
+      "note": "EVM은 런타임 환경이며, 분산화 메커니즘 자체는 아닙니다"
+    },
+    "layer2": {
+      "number": "2",
+      "title": "합의층 (Consensus Layer)",
+      "subtitle": "플러그인 가능한 설계",
+      "features": ["블록 생성, 최종성 보장 제공", "현재 구현: 결정론적 proposer 순환", "블록 시간 목표: 1-2초", "향후 BFT, PoA 등 합의 알고리즘 접속 가능"],
+      "note": "COC의 인센티브 모델은 PoS에 의존하지 않으며, 다양한 합의 메커니즘과 공존할 수 있습니다"
+    },
+    "layer3": {
+      "number": "3",
+      "title": "PoSe 서비스층 (PoSe Service Layer)",
+      "subtitle": "핵심 혁신",
+      "features": ["노드 등록 및 서비스 약정", "난수 챌린지 생성 (U/S/R 유형)", "영수증 검증 및 집계", "점수 계산 및 보상 분배", "사기 증명 및 처벌 메커니즘"],
+      "note": "이것은 COC가 전통적인 PoW/PoS와 다른 핵심 계층입니다"
+    },
+    "layer4": {
+      "number": "4",
+      "title": "AI Agent 운영층 (Agent Operations Layer)",
+      "subtitle": "OpenClaw급 자동화",
+      "features": ["노드 생명주기 자동화 관리", "건강 모니터링 및 자가 치유 전략", "소프트웨어 업그레이드 및 구성 관리", "속도 제한 및 보안 강화", "키 관리 (TPM/Secure Enclave)"],
+      "note": "에이전트는 엄격히 격리되어 합의 로직이나 상태 전환에 개입하지 않습니다"
+    },
+    "poseProtocol": {
+      "title": "PoSe 프로토콜 상세 설명",
+      "challengeFlow": "챌린지-응답 플로우",
+      "step1": {
+        "title": "챌린지 생성",
+        "description": "Challenger는 VRF 난수성에 따라 대상 노드를 선택하고 챌린지 메시지를 생성합니다",
+        "details": ["challenge_id = keccak(epoch_id || node_id || type || nonce || challenger_id)", "쿼리 사양 포함 (U: RPC 메소드, S: chunk_id, R: route_tag)", "Challenger 서명으로 위조 불가능 보장"]
+      },
+      "step2": {
+        "title": "노드 응답",
+        "description": "노드는 챌린지를 받은 후 타임아웃 전에 응답을 생성하고 서명합니다",
+        "details": ["U 챌린지: RPC 쿼리 실행, 결과 반환 (2.5s 타임아웃)", "S 챌린지: 스토리지 증명 제공 (Merkle 경로, 6s 타임아웃)", "R 챌린지: 릴레이 증인 제출 (선택 사항)"]
+      },
+      "step3": {
+        "title": "영수증 검증",
+        "description": "Aggregator 또는 Verifier가 영수증의 유효성을 검증합니다",
+        "details": ["서명 검증 (challenger + node)", "challenge_id 고유성 확인", "응답 내용 검증 (U: 재계산 가능, S: Merkle 검증)"]
+      },
+      "step4": {
+        "title": "온체인 제출",
+        "description": "Aggregator가 영수증 Merkle 트리 루트를 체인에 제출합니다",
+        "details": ["epoch_id + merkle_root + summary_hash 제출", "k개의 무작위 샘플 영수증 포함 (k=32-128)", "2 epoch 분쟁 창 시작"]
+      },
+      "step5": {
+        "title": "점수 결산",
+        "description": "Epoch 종료 후 통과율에 따라 노드 점수를 계산하고 보상을 분배합니다",
+        "details": ["S_u, S_s, S_r 점수 계산", "수익 감소 및 소프트 한계 적용", "노드 지갑으로 분배"]
+      },
+      "scoringTitle": "채점 공식 상세 설명",
+      "uptimeScore": {
+        "title": "가동시간 점수",
+        "formula": "S_u,i = u_i × (0.85 + 0.15 × lat_i)",
+        "variables": ["u_i = pass_u_i / total_u_i (통과율)", "lat_i = (L_max - median_latency_i) / (L_max - L_min)", "L_min = 0.2s, L_max = 2.5s"],
+        "rationale": "지연 인자는 15% 가중치만 차지하여 대역폭 경쟁을 피합니다"
+      },
+      "storageScore": {
+        "title": "스토리지 점수 (SN)",
+        "formula": "S_s,i = s_i × cap_i",
+        "variables": ["s_i = pass_s_i / total_s_i (통과율)", "cap_i = √(min(storedGB_i, 500GB) / 500GB)"],
+        "rationale": "제곱근 함수는 스토리지 용량 수익 감소를 보장하여 대형 플레이어의 독점을 방지합니다"
+      },
+      "antiSybilTitle": "🛡️ Sybil 공격 방지 메커니즘 조합",
+      "antiSybilItems": ["✓ 고정 보증금 (~50 USDT) + 7일 잠금 해제", "✓ 단일 노드 보상 소프트 한계 (중앙값의 5배)", "✓ 스토리지 용량 수익 감소 (√함수)", "✓ 지속적인 서비스 챌린지 (위조 불가능)", "✓ epoch당 고유 nonce로 재생 방지", "✓ 챌린저 다양성 + 무작위 순환", "✓ 온체인 샘플링 + 2 epoch 분쟁 기간", "✓ 선택적 하드웨어 인증(보너스, 필수 아님)"]
+    },
+    "performance": {
+      "title": "성능 지표",
+      "blockTime": { "title": "블록 시간", "value": "1-2초", "description": "목표 블록 간격, 실제 값은 합의층 구성에 따라 다릅니다" },
+      "finality": { "title": "확인 속도", "value": "~12초", "description": "6-12개 블록 후 최종성 달성 (구성 가능)" },
+      "storage": { "title": "스토리지 요구사항", "value": "500GB 권장", "description": "SN 노드의 수익 감소 한계, FN은 더 낮을 수 있습니다" },
+      "bandwidth": { "title": "대역폭 요구사항", "value": "보통", "description": "지연은 15% 가중치만 차지하며, 일반 가정용 네트워크로 참여 가능합니다" },
+      "frequency": { "title": "챌린지 빈도", "value": "~6회/시간", "description": "FN 노드는 epoch당 약 6회 U 챌린지를 받습니다" },
+      "threshold": { "title": "통과 임계값", "value": "80% (U) / 70% (S)", "description": "임계값 미만일 경우 해당 epoch 버킷 보상 자격 상실" }
+    },
+    "comparison": {
+      "title": "전통적인 메커니즘과의 비교",
+      "dimensions": {
+        "barrier": "참여 장벽",
+        "centralization": "중앙화 경향",
+        "energy": "에너지 소비",
+        "reward": "보상 메커니즘",
+        "decentralization": "탈중앙화",
+        "automation": "자동화 운영"
+      },
+      "pow": { "barrier": "높음 (전문 채굴기)", "centralization": "산력 집중화", "energy": "극도로 높음", "reward": "산력 경쟁", "decentralization": "보통 (채굴 풀)", "automation": "어려움" },
+      "pos": { "barrier": "높음 (대량 스테이킹)", "centralization": "자본 집중화", "energy": "낮음", "reward": "지분 스테이킹", "decentralization": "낮음 (대형 플레이어 + 위임)", "automation": "보통" },
+      "coc": { "barrier": "낮음 (일반 하드웨어 + 소액 보증금)", "centralization": "서비스 기여 분산화", "energy": "낮음", "reward": "서비스 챌린지 통과율", "decentralization": "높음 (일반 사용자 참여 가능)", "automation": "AI Agent 지원" }
+    },
+    "techStack": {
+      "title": "기술 스택",
+      "execution": { "title": "실행층", "items": ["@ethereumjs/vm (EVM 런타임)", "@ethereumjs/trie (Merkle Patricia Trie)", "LevelDB (상태 저장소)", "ethers.js (클라이언트 라이브러리)"] },
+      "consensus": { "title": "합의층", "items": ["결정론적 proposer 순환", "EIP-1559 동적 Gas 수수료", "스냅샷 동기화 메커니즘", "P2P gossip 네트워크 (HTTP)"] },
+      "pose": { "title": "PoSe층", "items": ["VRF (검증 가능한 난수 함수)", "Merkle Tree (영수증 집계)", "Keccak256 (해시)", "ECDSA 서명 (챌린지 + 영수증)"] },
+      "storage": { "title": "스토리지층", "items": ["IPFS 호환 HTTP API", "CID 주소 지정", "Pin 관리", "블록/객체 저장소"] }
+    }
+  },
+  "network": {
+    "title": "COC 네트워크 상태",
+    "subtitle": "블록체인 네트워크 건강 상태 실시간 모니터링",
+    "realTimeStats": "실시간 통계",
+    "nodeInfo": {
+      "title": "노드 정보",
+      "runtime": "런타임",
+      "version": "버전",
+      "startTime": "시작 시간",
+      "uptime": "가동 시간",
+      "rpcEndpoint": "RPC 엔드포인트",
+      "wsEndpoint": "WebSocket",
+      "p2pEndpoint": "P2P 엔드포인트"
+    },
+    "performanceMetrics": {
+      "title": "성능 지표",
+      "avgBlockTime": "평균 블록 시간",
+      "avgTxPerBlock": "평균 거래수/블록",
+      "avgGasUsed": "평균 Gas 사용량"
+    },
+    "validators": {
+      "title": "검증자",
+      "address": "주소",
+      "score": "점수",
+      "blocks": "생성한 블록 수"
+    },
+    "recentBlocks": {
+      "title": "최근 블록",
+      "viewExplorer": "전체 탐색기 보기 →",
+      "blockHeight": "블록 높이",
+      "timestamp": "타임스탬프",
+      "txCount": "거래 수",
+      "gasUsed": "Gas 사용량"
+    },
+    "quickLinks": {
+      "title": "빠른 링크",
+      "explorer": { "title": "블록 탐색기", "description": "전체 블록 및 거래 세부 정보 보기" },
+      "startNode": { "title": "노드 시작", "description": "COC 네트워크에 참여하고 자신의 노드 실행" },
+      "technology": { "title": "기술 문서", "description": "COC의 기술 아키텍처 이해" }
+    }
+  },
+  "roadmap": {
+    "title": "개발 로드맵",
+    "subtitle": "COC 프로젝트의 발전 과정 및 향후 계획",
+    "whitepaper": {
+      "title": "백서 계획 (High Level)",
+      "v0_1": {
+        "version": "v0.1",
+        "title": "PoSe 계약 + 노드 등록 + 챌린지 메커니즘",
+        "status": "완료",
+        "items": ["PoSe 관리 계약 (등록, 배치 제출, 분쟁, 처벌)", "노드 등록 인터페이스 (node_id, pubkey, flags, commitments)", "U/S 챌린지 유형 정의", "영수증 형식 사양"]
+      },
+      "v0_2": {
+        "version": "v0.2",
+        "title": "오프체인 집계 + 온체인 배치 제출 + 분쟁 창",
+        "status": "진행 중",
+        "items": ["Aggregator: 영수증 Merkle 트리 구축", "온체인 배치 제출 (merkle_root + summary_hash)", "2 epoch 분쟁 창", "온체인 무작위 샘플링 (k=32-128)"]
+      },
+      "v0_3": {
+        "version": "v0.3",
+        "title": "탈중앙화 챌린저 세트 + 투명성 지표",
+        "status": "계획됨",
+        "items": ["챌린저 다양성 + 무작위 순환", "챌린저 보증금 및 할당량", "챌린저 평판 시스템", "투명한 통계 데이터 (이상 패턴 탐지)"]
+      },
+      "v0_4": {
+        "version": "v0.4",
+        "title": "OpenClaw NodeOps 표준 + 다중 구현 클라이언트",
+        "status": "계획됨",
+        "items": ["OpenClaw NodeOps API 사양", "다국어 클라이언트 구현 (Rust/Go/TypeScript)", "AI Agent 표준 인터페이스", "크로스 클라이언트 호환성 테스트"]
+      }
+    },
+    "implementation": {
+      "title": "실제 개발 진행 (Cycle 1-25)",
+      "infrastructure": {
+        "title": "인프라 (Cycle 1-10)",
+        "cycles": [
+          { "num": 1, "desc": "PersistentStateTrie RLP 디코딩 수정" },
+          { "num": 2, "desc": "13개 표준 이더리움 RPC 메소드 추가" },
+          { "num": 3, "desc": "토큰 전송 디코딩 (ERC-20)" },
+          { "num": 4, "desc": "체인 통계 대시보드" },
+          { "num": 5, "desc": "계약 호출 인터페이스 + WebSocket BigInt 직렬화 수정" },
+          { "num": 6, "desc": "eth_getBlockReceipts + 향상된 블록 세부 정보 페이지" },
+          { "num": 7, "desc": "txpool RPC 메소드 + 메모리 풀 탐색기 페이지" },
+          { "num": 8, "desc": "네트워크 상태 페이지 + 전역 404 페이지" },
+          { "num": 9, "desc": "EVM 바이트코드 디스어셈블리 + 스토리지 스캐너" },
+          { "num": 10, "desc": "테스트 커버리지 향상: 175→190개 테스트" }
+        ]
+      },
+      "consolidation": {
+        "title": "강화 및 확장 (Cycle 11-20)",
+        "cycles": [
+          { "num": 11, "desc": "TxHistory 테이블 구조 수정, gas 열 추가" },
+          { "num": 12, "desc": "formatBlock O(n*m) 복잡도 수정" },
+          { "num": 13, "desc": "요청 본문 제한 (2MB P2P, 1MB RPC)" },
+          { "num": 14, "desc": "EIP-1559 유효 gas 가격 정렬" },
+          { "num": 15, "desc": "mining/hashrate/coinbase RPC 추가" },
+          { "num": 16, "desc": "WebSocket 구독 검증" },
+          { "num": 17, "desc": "합의 오류 복구 + 강등 모드" },
+          { "num": 18, "desc": "건강 검사기 수정, 진단 추가" },
+          { "num": 19, "desc": "P2P 피어별 브로드캐스트 중복 제거" },
+          { "num": 20, "desc": "Validators 탐색기 페이지 + coc_validators RPC" }
+        ]
+      },
+      "features": {
+        "title": "기능 및 최적화 (Cycle 21-25)",
+        "cycles": [
+          { "num": 21, "desc": "체인 통계 페이지 (블록 활동, TPS, Gas 시각화)" },
+          { "num": 22, "desc": "주소 거래 쿼리 페이지네이션 지원" },
+          { "num": 23, "desc": "EIP-1559 동적 base fee 계산" },
+          { "num": 24, "desc": "Debug trace 개선, 이벤트 로그 지원" },
+          { "num": 25, "desc": "계약 목록 페이지, 최근 배포 스캔" }
+        ]
+      }
+    },
+    "future": {
+      "title": "향후 계획",
+      "aiAgent": { "icon": "🤖", "title": "AI Agent 심층 통합", "items": ["자동화된 챌린지 응답", "지능형 리소스 스케줄링", "예측적 유지 관리", "보안 정책 적응"] },
+      "crossChain": { "icon": "🌐", "title": "크로스체인 상호운용성", "items": ["브리지 프로토콜", "자산 크로스체인", "IBC 지원", "멀티체인 상태 동기화"] },
+      "analytics": { "icon": "📊", "title": "고급 분석 도구", "items": ["온체인 데이터 분석", "노드 성능 평점 시스템", "보상 예측 도구", "네트워크 건강도 평가"] },
+      "privacy": { "icon": "🔐", "title": "프라이버시 강화", "items": ["영지식 증명 챌린지", "노드 익명성 보호", "엔드포인트 프라이버시 약정", "TEE 하드웨어 인증"] },
+      "performance": { "icon": "⚡", "title": "성능 최적화", "items": ["Layer 2 확장 방안", "Parallel EVM", "상태 가지치기", "스냅샷 압축"] },
+      "ecosystem": { "icon": "🌍", "title": "생태계 구축", "items": ["DApp 개발자 도구", "노드 운영자 인센티브 프로그램", "커뮤니티 거버넌스 메커니즘", "개발자 지원 프로젝트"] }
+    },
+    "cta": {
+      "title": "COC 개발에 참여하고 싶으신가요?",
+      "subtitle": "개발자, 노드 운영자 및 커뮤니티 구성원의 기여를 환영합니다",
+      "github": "GitHub 저장소",
+      "docs": "개발자 문서"
+    }
+  },
+  "docs": {
+    "title": "문서 센터",
+    "subtitle": "COC 블록체인의 기술 문서 및 개발 가이드 전반적인 이해",
+    "quickStart": {
+      "title": "빠른 시작",
+      "runNode": { "icon": "🚀", "title": "로컬 노드 실행", "description": "COC 노드를 빠르게 시작", "code": "cd node\nnpm install\nnpm start" },
+      "deployContract": { "icon": "📜", "title": "계약 배포", "description": "PoSe 스마트 계약 배포", "code": "cd contracts\nnpm install\nnpm run compile\nnpm run deploy:local" },
+      "launchExplorer": { "icon": "🌐", "title": "탐색기 시작", "description": "블록 탐색기 실행", "code": "cd explorer\nnpm install\nnpm run dev" }
+    },
+    "coreDocs": {
+      "title": "핵심 문서",
+      "whitepaper": { "title": "📄 백서", "description": "COC의 핵심 설계 개념, PoSe 프로토콜 상세 설명, 경제 모델 및 기술 아키텍처", "link": "COC 백서 (전체판)" },
+      "architecture": { "title": "🏗️ 시스템 아키텍처", "description": "4계층 아키텍처 설계, 구성 요소 상호작용, 데이터 플로우 및 확장성", "links": ["시스템 아키텍처 (한국어)", "System Architecture (EN)"] },
+      "algorithms": { "title": "🔬 핵심 알고리즘", "description": "PoSe 챌린지 프로토콜, 채점 공식, 합의 메커니즘 및 스토리지 증명", "links": ["핵심 알고리즘 상세 설명 (한국어)", "Core Algorithms (EN)"] },
+      "antiSybil": { "title": "🛡️ Sybil 공격 방지 메커니즘", "description": "시빌 공격 방지 전략, 보증금 메커니즘 및 챌린지 검증", "links": ["Anti-Sybil (한국어)", "Anti-Sybil (EN)"] }
+    },
+    "devGuides": {
+      "title": "개발 가이드",
+      "nodeOps": { "icon": "⚙️", "title": "노드 실행 가이드", "items": ["설치 및 구성", "devnet 실행 (3/5/7 노드)", "노드 모니터링 및 유지 관리", "문제 해결"] },
+      "contracts": { "icon": "📝", "title": "스마트 계약 개발", "items": ["Solidity 계약 작성", "PoSe 계약 인터페이스", "배포 및 검증", "테스트 모범 사례"] },
+      "rpcApi": { "icon": "🔌", "title": "RPC API 참조", "items": ["표준 이더리움 RPC 메소드 (40+)", "COC 커스텀 메소드 (coc_*)", "WebSocket 구독", "Txpool 쿼리"] },
+      "aiAgent": { "icon": "🤖", "title": "AI Agent 운영", "items": ["OpenClaw 통합", "자동화 모니터링", "전략 엔진 구성", "보안 모범 사례"] }
+    },
+    "implementationStatus": {
+      "title": "구현 상태",
+      "chainEngine": { "label": "체인 엔진", "status": "완료", "details": "블록 생성, 메모리 풀, 스냅샷, 최종성" },
+      "p2pNetwork": { "label": "P2P 네트워크", "status": "완료", "details": "HTTP gossip, 스냅샷 동기화" },
+      "evmExecution": { "label": "EVM 실행", "status": "완료", "details": "메모리 + 영구 상태, LevelDB" },
+      "jsonRpc": { "label": "JSON-RPC", "status": "완료", "details": "40+ 표준 메소드, BigInt 직렬화" },
+      "wsRpc": { "label": "WebSocket RPC", "status": "완료", "details": "eth_subscribe, 실시간 이벤트" },
+      "poseProtocol": { "label": "PoSe 프로토콜", "status": "진행 중", "details": "오프체인 챌린지, 온체인 계약, 배치 집계" },
+      "storage": { "label": "스토리지층", "status": "완료", "details": "IPFS 호환 HTTP API" },
+      "runtime": { "label": "Runtime 서비스", "status": "진행 중", "details": "coc-node, coc-agent, coc-relayer" },
+      "tests": { "label": "테스트 커버리지", "status": "양호", "details": "190개 테스트, 9개 테스트 스위트" },
+      "detailsNote": "자세한 구현 상태는 프로젝트 README를 참조하세요",
+      "viewGithub": "GitHub 저장소 보기"
+    },
+    "tools": {
+      "title": "개발 도구",
+      "wallet": { "title": "💼 CLI 지갑", "description": "명령줄 지갑 도구", "features": ["주소 생성", "전송", "잔액 조회"] },
+      "explorer": { "title": "🔍 블록 탐색기", "description": "전체 기능 웹 탐색기", "features": ["블록/거래 쿼리", "계약 호출", "스토리지 스캐너"] },
+      "testing": { "title": "🧪 테스트 스크립트", "description": "품질 보증 도구", "features": ["단위 테스트", "통합 테스트", "E2E 테스트"] },
+      "openTool": "도구 열기 →"
+    },
+    "resources": {
+      "title": "추가 리소스",
+      "technology": { "title": "기술 아키텍처 상세 설명", "description": "COC의 4계층 아키텍처 설계 심층 이해" },
+      "roadmap": { "title": "개발 로드맵", "description": "프로젝트 진행 상황 및 향후 계획 보기" },
+      "network": { "title": "네트워크 상태", "description": "블록체인 네트워크 건강 상태 실시간 모니터링" },
+      "about": { "title": "COC 정보", "description": "프로젝트 비전 및 핵심 개념 이해" }
+    }
+  },
+  "footer": {
+    "tagline": "AI-Agent가 운영하는\n서비스 증명 블록체인",
+    "copyright": "저작권",
+    "allRightsReserved": "모든 권리 보유"
+  }
+}

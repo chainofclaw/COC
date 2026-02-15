@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from "node:fs"
+import { join } from "node:path"
+import { tmpdir } from "node:os"
 import test from "node:test"
 import assert from "node:assert/strict"
 import { ReplayGuard } from "./replay-guard.ts"
@@ -52,4 +55,26 @@ test("replay guard rejects replay key duplicates", () => {
   const next = guard.validate(sameKeyHigherChannelNonce)
   assert.equal(next.ok, true)
   assert.notEqual(next.replayKey, key)
+})
+
+test("replay guard restores monotonic state after restart", () => {
+  const dir = mkdtempSync(join(tmpdir(), "replay-guard-"))
+  const filePath = join(dir, "replay-state.json")
+  try {
+    const first = new ReplayGuard({ persistencePath: filePath })
+    const initial = envelope({ nonce: 7n })
+    const c1 = first.validate(initial)
+    assert.equal(c1.ok, true)
+    first.commit(initial, c1.replayKey)
+
+    const second = new ReplayGuard({ persistencePath: filePath })
+    const stale = second.validate(envelope({ nonce: 7n }))
+    assert.equal(stale.ok, false)
+    assert.equal(stale.reason, "nonce not monotonic")
+
+    const fresh = second.validate(envelope({ nonce: 8n }))
+    assert.equal(fresh.ok, true)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })

@@ -319,6 +319,289 @@ describe("WireServer", () => {
   })
 })
 
+describe("WireServer dedup and relay", () => {
+  let server: WireServer | null = null
+  const sockets: net.Socket[] = []
+
+  afterEach(() => {
+    for (const s of sockets) { s.destroy() }
+    sockets.length = 0
+    if (server) { server.stop(); server = null }
+  })
+
+  it("should deduplicate repeated blocks", async () => {
+    const port = getRandomPort()
+    let blockCount = 0
+
+    server = new WireServer({
+      port,
+      nodeId: "server-1",
+      chainId: 18780,
+      onBlock: async () => { blockCount++ },
+      onTx: async () => {},
+      getHeight: () => Promise.resolve(0n),
+    })
+    server.start()
+    await new Promise((r) => setTimeout(r, 100))
+
+    const socket = await connectSocket("127.0.0.1", port)
+    sockets.push(socket)
+
+    const decoder = new FrameDecoder()
+    await receiveFrames(socket, decoder, 1)
+    socket.write(encodeJsonPayload(MessageType.Handshake, { nodeId: "c1", chainId: 18780, height: "0" }))
+    await receiveFrames(socket, decoder, 1)
+    await new Promise((r) => setTimeout(r, 50))
+
+    const block = { number: 1n, hash: "0xdup1" as Hex, parentHash: "0x0" as Hex, proposer: "n", timestampMs: 0, txs: [], finalized: false }
+    socket.write(encodeJsonPayload(MessageType.Block, block))
+    socket.write(encodeJsonPayload(MessageType.Block, block)) // duplicate
+    await new Promise((r) => setTimeout(r, 150))
+
+    assert.equal(blockCount, 1, "duplicate block should be dropped")
+    assert.equal(server.getStats().seenBlocksSize, 1)
+  })
+
+  it("should deduplicate repeated transactions", async () => {
+    const port = getRandomPort()
+    let txCount = 0
+
+    server = new WireServer({
+      port,
+      nodeId: "server-1",
+      chainId: 18780,
+      onBlock: async () => {},
+      onTx: async () => { txCount++ },
+      getHeight: () => Promise.resolve(0n),
+    })
+    server.start()
+    await new Promise((r) => setTimeout(r, 100))
+
+    const socket = await connectSocket("127.0.0.1", port)
+    sockets.push(socket)
+
+    const decoder = new FrameDecoder()
+    await receiveFrames(socket, decoder, 1)
+    socket.write(encodeJsonPayload(MessageType.Handshake, { nodeId: "c1", chainId: 18780, height: "0" }))
+    await receiveFrames(socket, decoder, 1)
+    await new Promise((r) => setTimeout(r, 50))
+
+    const rawTx = "0xduptx123" as Hex
+    socket.write(encodeJsonPayload(MessageType.Transaction, { rawTx }))
+    socket.write(encodeJsonPayload(MessageType.Transaction, { rawTx })) // duplicate
+    await new Promise((r) => setTimeout(r, 150))
+
+    assert.equal(txCount, 1, "duplicate tx should be dropped")
+    assert.equal(server.getStats().seenTxSize, 1)
+  })
+
+  it("should pass through different blocks", async () => {
+    const port = getRandomPort()
+    let blockCount = 0
+
+    server = new WireServer({
+      port,
+      nodeId: "server-1",
+      chainId: 18780,
+      onBlock: async () => { blockCount++ },
+      onTx: async () => {},
+      getHeight: () => Promise.resolve(0n),
+    })
+    server.start()
+    await new Promise((r) => setTimeout(r, 100))
+
+    const socket = await connectSocket("127.0.0.1", port)
+    sockets.push(socket)
+
+    const decoder = new FrameDecoder()
+    await receiveFrames(socket, decoder, 1)
+    socket.write(encodeJsonPayload(MessageType.Handshake, { nodeId: "c1", chainId: 18780, height: "0" }))
+    await receiveFrames(socket, decoder, 1)
+    await new Promise((r) => setTimeout(r, 50))
+
+    const block1 = { number: 1n, hash: "0xaaa1" as Hex, parentHash: "0x0" as Hex, proposer: "n", timestampMs: 0, txs: [], finalized: false }
+    const block2 = { number: 2n, hash: "0xaaa2" as Hex, parentHash: "0xaaa1" as Hex, proposer: "n", timestampMs: 0, txs: [], finalized: false }
+    socket.write(encodeJsonPayload(MessageType.Block, block1))
+    socket.write(encodeJsonPayload(MessageType.Block, block2))
+    await new Promise((r) => setTimeout(r, 150))
+
+    assert.equal(blockCount, 2, "different blocks should both pass")
+  })
+
+  it("should exclude specific nodeId from broadcast", async () => {
+    const port = getRandomPort()
+
+    server = new WireServer({
+      port,
+      nodeId: "server-1",
+      chainId: 18780,
+      onBlock: async () => {},
+      onTx: async () => {},
+      getHeight: () => Promise.resolve(0n),
+    })
+    server.start()
+    await new Promise((r) => setTimeout(r, 100))
+
+    // Connect two clients
+    const socket1 = await connectSocket("127.0.0.1", port)
+    sockets.push(socket1)
+    const decoder1 = new FrameDecoder()
+    await receiveFrames(socket1, decoder1, 1)
+    socket1.write(encodeJsonPayload(MessageType.Handshake, { nodeId: "excluded-peer", chainId: 18780, height: "0" }))
+    await receiveFrames(socket1, decoder1, 1)
+
+    const socket2 = await connectSocket("127.0.0.1", port)
+    sockets.push(socket2)
+    const decoder2 = new FrameDecoder()
+    await receiveFrames(socket2, decoder2, 1)
+    socket2.write(encodeJsonPayload(MessageType.Handshake, { nodeId: "included-peer", chainId: 18780, height: "0" }))
+    await receiveFrames(socket2, decoder2, 1)
+    await new Promise((r) => setTimeout(r, 50))
+
+    // Broadcast excluding "excluded-peer"
+    const data = encodeJsonPayload(MessageType.Transaction, { rawTx: "0xtest" })
+    server.broadcastFrame(data, "excluded-peer")
+
+    // Listen on both sockets concurrently to avoid sequential timeout issues
+    const [frames1, frames2] = await Promise.all([
+      receiveFrames(socket1, decoder1, 1, 500), // short timeout: excluded peer
+      receiveFrames(socket2, decoder2, 1, 2000),
+    ])
+
+    assert.equal(frames1.length, 0, "excluded peer should not receive broadcast")
+    assert.ok(frames2.length >= 1, "non-excluded peer should receive broadcast")
+  })
+
+  it("should call onTxRelay for new transactions", async () => {
+    const port = getRandomPort()
+    let relayedTx: Hex | null = null
+
+    server = new WireServer({
+      port,
+      nodeId: "server-1",
+      chainId: 18780,
+      onBlock: async () => {},
+      onTx: async () => {},
+      onTxRelay: async (rawTx) => { relayedTx = rawTx },
+      getHeight: () => Promise.resolve(0n),
+    })
+    server.start()
+    await new Promise((r) => setTimeout(r, 100))
+
+    const socket = await connectSocket("127.0.0.1", port)
+    sockets.push(socket)
+
+    const decoder = new FrameDecoder()
+    await receiveFrames(socket, decoder, 1)
+    socket.write(encodeJsonPayload(MessageType.Handshake, { nodeId: "c1", chainId: 18780, height: "0" }))
+    await receiveFrames(socket, decoder, 1)
+    await new Promise((r) => setTimeout(r, 50))
+
+    socket.write(encodeJsonPayload(MessageType.Transaction, { rawTx: "0xrelaytx" as Hex }))
+    await new Promise((r) => setTimeout(r, 150))
+
+    assert.equal(relayedTx, "0xrelaytx", "onTxRelay should be called")
+  })
+
+  it("should call onBlockRelay for new blocks", async () => {
+    const port = getRandomPort()
+    let relayedBlock: ChainBlock | null = null
+
+    server = new WireServer({
+      port,
+      nodeId: "server-1",
+      chainId: 18780,
+      onBlock: async () => {},
+      onTx: async () => {},
+      onBlockRelay: async (block) => { relayedBlock = block },
+      getHeight: () => Promise.resolve(0n),
+    })
+    server.start()
+    await new Promise((r) => setTimeout(r, 100))
+
+    const socket = await connectSocket("127.0.0.1", port)
+    sockets.push(socket)
+
+    const decoder = new FrameDecoder()
+    await receiveFrames(socket, decoder, 1)
+    socket.write(encodeJsonPayload(MessageType.Handshake, { nodeId: "c1", chainId: 18780, height: "0" }))
+    await receiveFrames(socket, decoder, 1)
+    await new Promise((r) => setTimeout(r, 50))
+
+    const block = { number: 1n, hash: "0xrelayblk" as Hex, parentHash: "0x0" as Hex, proposer: "n", timestampMs: 0, txs: [], finalized: false }
+    socket.write(encodeJsonPayload(MessageType.Block, block))
+    await new Promise((r) => setTimeout(r, 150))
+
+    assert.ok(relayedBlock, "onBlockRelay should be called")
+    assert.equal(relayedBlock!.hash, "0xrelayblk")
+  })
+
+  it("should not relay duplicate messages", async () => {
+    const port = getRandomPort()
+    let relayCount = 0
+
+    server = new WireServer({
+      port,
+      nodeId: "server-1",
+      chainId: 18780,
+      onBlock: async () => {},
+      onTx: async () => {},
+      onTxRelay: async () => { relayCount++ },
+      getHeight: () => Promise.resolve(0n),
+    })
+    server.start()
+    await new Promise((r) => setTimeout(r, 100))
+
+    const socket = await connectSocket("127.0.0.1", port)
+    sockets.push(socket)
+
+    const decoder = new FrameDecoder()
+    await receiveFrames(socket, decoder, 1)
+    socket.write(encodeJsonPayload(MessageType.Handshake, { nodeId: "c1", chainId: 18780, height: "0" }))
+    await receiveFrames(socket, decoder, 1)
+    await new Promise((r) => setTimeout(r, 50))
+
+    const rawTx = "0xrelaydup" as Hex
+    socket.write(encodeJsonPayload(MessageType.Transaction, { rawTx }))
+    socket.write(encodeJsonPayload(MessageType.Transaction, { rawTx }))
+    await new Promise((r) => setTimeout(r, 150))
+
+    assert.equal(relayCount, 1, "relay should only be called once for duplicate")
+  })
+
+  it("should survive relay errors without breaking handler", async () => {
+    const port = getRandomPort()
+    let handlerCalled = false
+
+    server = new WireServer({
+      port,
+      nodeId: "server-1",
+      chainId: 18780,
+      onBlock: async () => { handlerCalled = true },
+      onTx: async () => {},
+      onBlockRelay: async () => { throw new Error("relay failure") },
+      getHeight: () => Promise.resolve(0n),
+    })
+    server.start()
+    await new Promise((r) => setTimeout(r, 100))
+
+    const socket = await connectSocket("127.0.0.1", port)
+    sockets.push(socket)
+
+    const decoder = new FrameDecoder()
+    await receiveFrames(socket, decoder, 1)
+    socket.write(encodeJsonPayload(MessageType.Handshake, { nodeId: "c1", chainId: 18780, height: "0" }))
+    await receiveFrames(socket, decoder, 1)
+    await new Promise((r) => setTimeout(r, 50))
+
+    const block = { number: 1n, hash: "0xerrblk" as Hex, parentHash: "0x0" as Hex, proposer: "n", timestampMs: 0, txs: [], finalized: false }
+    socket.write(encodeJsonPayload(MessageType.Block, block))
+    await new Promise((r) => setTimeout(r, 150))
+
+    assert.ok(handlerCalled, "onBlock handler should still be called despite relay error")
+  })
+})
+
 describe("WireClient ping/pong latency", () => {
   let server: WireServer | null = null
   const clients: WireClient[] = []

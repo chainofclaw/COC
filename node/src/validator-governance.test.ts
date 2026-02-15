@@ -51,7 +51,7 @@ describe("ValidatorGovernance", () => {
     })
     assert.equal(proposal.type, "add_validator")
     assert.equal(proposal.status, "pending")
-    assert.equal(proposal.votes.size, 1) // Proposer auto-votes
+    assert.equal(proposal.votes.size, 0) // No auto-vote
   })
 
   it("rejects proposal from non-validator", () => {
@@ -85,15 +85,12 @@ describe("ValidatorGovernance", () => {
       stakeAmount: STAKE,
     })
 
-    // v1 auto-voted (33%), need 67%. v2 votes yes (33+33 = 66%), still not enough with 50% participation but 66% approval
+    // Proposer must explicitly vote now
+    gov.vote(proposal.id, "v1", true)
     gov.vote(proposal.id, "v2", true)
 
     const updated = gov.getProposal(proposal.id)!
-    // With 66% voted (v1+v2) and both approve, participation >= 50%
-    // 66% approval but need 67%, so still pending
-    // Actually 2/3 participation = 66%, each has 33% power
-    // v1 (33) + v2 (33) = 66 voted, 66% approval, need 67%
-    // So it's still pending
+    // v1 (33%) + v2 (33%) = 66% participation, 66% approval, need 67%
     assert.equal(updated.status, "pending")
 
     // v3 votes yes → 100% participation, 100% approval
@@ -108,6 +105,7 @@ describe("ValidatorGovernance", () => {
   it("rejects proposal when votes against", () => {
     const proposal = gov.submitProposal("remove_validator", "v3", "v1")
 
+    gov.vote(proposal.id, "v1", true)  // proposer votes yes
     gov.vote(proposal.id, "v2", false)
     gov.vote(proposal.id, "v3", false)
 
@@ -130,6 +128,7 @@ describe("ValidatorGovernance", () => {
 
   it("removes validator via approved proposal", () => {
     const proposal = gov.submitProposal("remove_validator", "v3", "v1")
+    gov.vote(proposal.id, "v1", true)
     gov.vote(proposal.id, "v2", true)
     gov.vote(proposal.id, "v3", true)
 
@@ -141,6 +140,7 @@ describe("ValidatorGovernance", () => {
     const newStake = 50000000000000000000n // 50 ETH
     const proposal = gov.submitProposal("update_stake", "v1", "v1", { stakeAmount: newStake })
 
+    gov.vote(proposal.id, "v1", true)
     gov.vote(proposal.id, "v2", true)
     gov.vote(proposal.id, "v3", true)
 
@@ -150,6 +150,7 @@ describe("ValidatorGovernance", () => {
   it("recalculates voting power after stake change", () => {
     const newStake = 30000000000000000000n // 30 ETH (3x others)
     const proposal = gov.submitProposal("update_stake", "v1", "v1", { stakeAmount: newStake })
+    gov.vote(proposal.id, "v1", true)
     gov.vote(proposal.id, "v2", true)
     gov.vote(proposal.id, "v3", true)
 
@@ -186,6 +187,7 @@ describe("ValidatorGovernance", () => {
   it("prunes finalized proposals older than retention threshold", () => {
     // Create and approve a proposal at epoch 0
     const p1 = gov.submitProposal("add_validator", "v4", "v1", { targetAddress: "0x4444", stakeAmount: STAKE })
+    gov.vote(p1.id, "v1", true)
     gov.vote(p1.id, "v2", true)
     gov.vote(p1.id, "v3", true)
     assert.equal(gov.getProposal(p1.id)!.status, "approved")
@@ -235,6 +237,7 @@ describe("ValidatorGovernance", () => {
 
   it("governance stats reflect approved proposals", () => {
     const p = gov.submitProposal("add_validator", "v4", "v1", { targetAddress: "0x4444", stakeAmount: STAKE })
+    gov.vote(p.id, "v1", true)
     gov.vote(p.id, "v2", true)
     gov.vote(p.id, "v3", true)
 
