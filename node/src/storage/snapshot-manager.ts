@@ -8,6 +8,9 @@
 import type { IBlockIndex } from "./block-index.ts"
 import type { IStateTrie } from "./state-trie.ts"
 import type { ChainBlock } from "../blockchain-types.ts"
+import { createLogger } from "../logger.ts"
+
+const log = createLogger("snapshot-manager")
 
 export interface SnapshotMetadata {
   blockNumber: bigint
@@ -98,9 +101,7 @@ export class SnapshotManager implements ISnapshotManager {
       if (hasRoot) {
         await this.stateTrie.setStateRoot(metadata.stateRoot)
       } else {
-        console.warn(
-          `State root ${metadata.stateRoot} not found in trie, cannot restore`
-        )
+        log.warn("state root not found in trie, cannot restore", { stateRoot: metadata.stateRoot })
       }
     }
   }
@@ -140,14 +141,23 @@ export class LegacySnapshotAdapter {
   }
 
   async importFromJSON(json: string): Promise<void> {
-    const data = JSON.parse(json)
+    let data: Record<string, unknown>
+    try {
+      data = JSON.parse(json)
+    } catch (err) {
+      throw new Error(`invalid snapshot JSON: ${String(err)}`)
+    }
+
+    if (!data || typeof data !== "object" || !data.blockNumber || !data.blockHash) {
+      throw new Error("snapshot JSON missing required fields: blockNumber, blockHash")
+    }
 
     const metadata: SnapshotMetadata = {
-      blockNumber: BigInt(data.blockNumber),
-      blockHash: data.blockHash,
-      stateRoot: data.stateRoot,
-      txCount: BigInt(data.txCount ?? "0"),
-      timestamp: data.updatedAtMs ?? Date.now(),
+      blockNumber: BigInt(data.blockNumber as string),
+      blockHash: data.blockHash as string,
+      stateRoot: data.stateRoot as string,
+      txCount: BigInt((data.txCount as string) ?? "0"),
+      timestamp: (data.updatedAtMs as number) ?? Date.now(),
     }
 
     await this.snapshotManager.restoreFromSnapshot(metadata)
