@@ -10,6 +10,7 @@
 
 import fs from "node:fs"
 import path from "node:path"
+import net from "node:net"
 import { RoutingTable, ALPHA, K } from "./dht.ts"
 import type { DhtPeer } from "./dht.ts"
 import type { WireClient } from "./wire-client.ts"
@@ -20,12 +21,16 @@ const log = createLogger("dht-network")
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000 // 5 minutes
 const ANNOUNCE_INTERVAL_MS = 3 * 60 * 1000 // 3 minutes
 const LOOKUP_TIMEOUT_MS = 5_000
+const PEER_VERIFY_TIMEOUT_MS = 3_000
+const STALE_PEER_THRESHOLD_MS = 24 * 60 * 60 * 1000 // 24 hours
 
 export interface DhtNetworkConfig {
   localId: string
   localAddress: string
   bootstrapPeers: Array<{ id: string; address: string; port: number }>
   wireClients: WireClient[]
+  /** Direct peer ID → WireClient mapping for efficient lookup */
+  wireClientByPeerId?: Map<string, WireClient>
   onPeerDiscovered: (peer: DhtPeer) => void
   /** Path to save/load routing table peers (optional) */
   peerStorePath?: string
@@ -125,8 +130,17 @@ export class DhtNetwork {
           if (newPeer.id === this.cfg.localId) continue
           if (!found.has(newPeer.id)) {
             found.set(newPeer.id, newPeer)
-            this.routingTable.addPeer(newPeer)
-            this.cfg.onPeerDiscovered(newPeer)
+            // Verify peer before adding to routing table
+            // Skip verification for peers returned from connected clients (already verified)
+            const hasConnectedClient = !!(
+              this.cfg.wireClientByPeerId?.get(newPeer.id)?.isConnected() ||
+              this.cfg.wireClients.find((c) => c.getRemoteNodeId() === newPeer.id && c.isConnected())
+            )
+            const reachable = hasConnectedClient || await this.verifyPeer(newPeer)
+            if (reachable) {
+              this.routingTable.addPeer(newPeer)
+              this.cfg.onPeerDiscovered(newPeer)
+            }
             improved = true
           }
         }
@@ -136,25 +150,75 @@ export class DhtNetwork {
     return this.routingTable.findClosest(targetId, K)
   }
 
+  /** Verify a peer is reachable via wire protocol (TCP connect + Pong response) */
+  async verifyPeer(peer: DhtPeer): Promise<boolean> {
+    // Try to find a wire client connected to this peer
+    const client = this.cfg.wireClientByPeerId?.get(peer.id)
+      ?? this.cfg.wireClients.find((c) => c.getRemoteNodeId() === peer.id && c.isConnected())
+
+    if (client?.isConnected()) {
+      // Verify claimed ID matches actual remote node ID from wire handshake
+      const remoteId = client.getRemoteNodeId()
+      if (remoteId && remoteId.toLowerCase() !== peer.id.toLowerCase()) {
+        log.warn("DHT peer ID mismatch with wire handshake", { claimed: peer.id, actual: remoteId })
+        return false
+      }
+      return true
+    }
+
+    // Try a lightweight TCP connect probe with timeout
+    const [host, portStr] = peer.address.split(":")
+    const port = parseInt(portStr, 10)
+    if (!host || !port || isNaN(port)) return false
+
+    return new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => {
+        socket.destroy()
+        resolve(false)
+      }, PEER_VERIFY_TIMEOUT_MS)
+
+      const socket = net.createConnection({ host, port }, () => {
+        clearTimeout(timer)
+        socket.destroy()
+        resolve(true)
+      })
+
+      socket.on("error", () => {
+        clearTimeout(timer)
+        resolve(false)
+      })
+    })
+  }
+
   /** Query a peer for nodes closest to a target */
   private async findNode(peer: DhtPeer, targetId: string): Promise<DhtPeer[]> {
-    // Find a wire client connected to this peer
+    // Priority 1: lookup by peer ID in the direct map (O(1))
+    const mappedClient = this.cfg.wireClientByPeerId?.get(peer.id)
+    if (mappedClient && mappedClient.isConnected()) {
+      const remotePeers = await mappedClient.findNode(targetId, LOOKUP_TIMEOUT_MS)
+      return remotePeers.map((p) => ({
+        id: p.id,
+        address: p.address,
+        lastSeenMs: Date.now(),
+      }))
+    }
+
+    // Priority 2: scan wireClients by remoteNodeId (backward compat)
     const client = this.cfg.wireClients.find(
       (c) => c.getRemoteNodeId() === peer.id && c.isConnected(),
     )
 
-    if (!client) {
-      // No direct wire connection — return peers from local routing table as fallback
-      return this.routingTable.findClosest(targetId, ALPHA)
+    if (client) {
+      const remotePeers = await client.findNode(targetId, LOOKUP_TIMEOUT_MS)
+      return remotePeers.map((p) => ({
+        id: p.id,
+        address: p.address,
+        lastSeenMs: Date.now(),
+      }))
     }
 
-    // Send FIND_NODE request via wire protocol and await response
-    const remotePeers = await client.findNode(targetId, LOOKUP_TIMEOUT_MS)
-    return remotePeers.map((p) => ({
-      id: p.id,
-      address: p.address,
-      lastSeenMs: Date.now(),
-    }))
+    // Fallback: return peers from local routing table
+    return this.routingTable.findClosest(targetId, ALPHA)
   }
 
   /** Refresh the routing table by performing random lookups */
@@ -233,8 +297,14 @@ export class DhtNetwork {
       const peers = JSON.parse(data) as Array<{ id: string; address: string; lastSeenMs?: number }>
 
       if (!Array.isArray(peers)) return 0
-      const added = this.routingTable.importPeers(peers)
-      log.info("DHT peers loaded", { loaded: added, total: peers.length, path: this.cfg.peerStorePath })
+      // Filter out stale peers (not seen in 24h)
+      const now = Date.now()
+      const fresh = peers.filter((p) => {
+        if (!p.lastSeenMs) return true // unknown age — keep
+        return (now - p.lastSeenMs) < STALE_PEER_THRESHOLD_MS
+      })
+      const added = this.routingTable.importPeers(fresh)
+      log.info("DHT peers loaded", { loaded: added, total: peers.length, fresh: fresh.length, path: this.cfg.peerStorePath })
       return added
     } catch (err) {
       log.warn("failed to load DHT peers", { error: String(err) })

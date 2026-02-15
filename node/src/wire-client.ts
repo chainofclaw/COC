@@ -8,6 +8,7 @@
 import net from "node:net"
 import { FrameDecoder, MessageType, encodeJsonPayload, decodeJsonPayload } from "./wire-protocol.ts"
 import type { WireFrame, FindNodePayload, FindNodeResponsePayload } from "./wire-protocol.ts"
+import type { NodeSigner, SignatureVerifier } from "./crypto/signer.ts"
 import crypto from "node:crypto"
 import { createLogger } from "./logger.ts"
 
@@ -20,6 +21,9 @@ interface HandshakePayload {
   nodeId: string
   chainId: number
   height: string
+  publicKey?: string
+  nonce?: string
+  signature?: string
 }
 
 export interface WireClientConfig {
@@ -29,6 +33,8 @@ export interface WireClientConfig {
   chainId: number
   onConnected?: () => void
   onDisconnected?: () => void
+  signer?: NodeSigner
+  verifier?: SignatureVerifier
 }
 
 export class WireClient {
@@ -167,10 +173,16 @@ export class WireClient {
         log.info("wire client connected", { host: this.cfg.host, port: this.cfg.port })
 
         // Send handshake
+        const nonce = crypto.randomUUID()
         const hs: HandshakePayload = {
           nodeId: this.cfg.nodeId,
           chainId: this.cfg.chainId,
           height: "0", // client doesn't track height
+        }
+        if (this.cfg.signer) {
+          const msg = `wire:handshake:${this.cfg.nodeId}:${nonce}`
+          hs.nonce = nonce
+          hs.signature = this.cfg.signer.sign(msg)
         }
         socket.write(encodeJsonPayload(MessageType.Handshake, hs))
       },
@@ -215,6 +227,16 @@ export class WireClient {
           log.warn("chain ID mismatch", { expected: this.cfg.chainId, got: hs.chainId })
           this.socket?.destroy()
           return
+        }
+        // Verify handshake signature if verifier available and signature present
+        if (this.cfg.verifier && hs.signature && hs.nonce) {
+          const msg = `wire:handshake:${hs.nodeId}:${hs.nonce}`
+          const recovered = this.cfg.verifier.recoverAddress(msg, hs.signature)
+          if (recovered.toLowerCase() !== hs.nodeId.toLowerCase()) {
+            log.warn("handshake signature mismatch", { claimed: hs.nodeId, recovered })
+            this.socket?.destroy()
+            return
+          }
         }
         this.remoteNodeId = hs.nodeId
         this.handshakeComplete = true

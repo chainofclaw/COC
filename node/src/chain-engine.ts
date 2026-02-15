@@ -5,6 +5,10 @@ import { hashBlockPayload, validateBlockLink, zeroHash } from "./hash.ts"
 import type { ChainBlock, ChainSnapshot, Hex, MempoolTx } from "./blockchain-types.ts"
 import { Transaction } from "ethers"
 import { ChainEventEmitter } from "./chain-events.ts"
+import type { NodeSigner, SignatureVerifier } from "./crypto/signer.ts"
+import { createLogger } from "./logger.ts"
+
+const log = createLogger("chain-engine")
 
 export interface ChainEngineConfig {
   dataDir: string
@@ -25,6 +29,8 @@ export class ChainEngine {
   private readonly txHashSet = new Set<Hex>()
   private readonly cfg: ChainEngineConfig
   private readonly evm: EvmChain
+  private nodeSigner: NodeSigner | null = null
+  private signatureVerifier: SignatureVerifier | null = null
 
   constructor(cfg: ChainEngineConfig, evm: EvmChain) {
     this.cfg = cfg
@@ -32,6 +38,12 @@ export class ChainEngine {
     this.mempool = new Mempool({ chainId: cfg.chainId ?? 18780 })
     this.storage = new ChainStorage(cfg.dataDir)
     this.events = new ChainEventEmitter()
+  }
+
+  /** Attach a node signer for block proposer signatures */
+  setNodeSigner(signer: NodeSigner, verifier: SignatureVerifier): void {
+    this.nodeSigner = signer
+    this.signatureVerifier = verifier
   }
 
   async init(): Promise<void> {
@@ -113,6 +125,10 @@ export class ChainEngine {
     )
 
     const block = this.buildBlock(nextHeight, txs)
+    // Sign the proposed block if signer available
+    if (this.nodeSigner) {
+      block.signature = this.nodeSigner.sign(`block:${block.hash}`) as Hex
+    }
     try {
       await this.applyBlock(block, true)
     } catch {
@@ -120,6 +136,9 @@ export class ChainEngine {
         this.mempool.remove(tx.hash)
       }
       const emptyBlock = this.buildBlock(nextHeight, [])
+      if (this.nodeSigner) {
+        emptyBlock.signature = this.nodeSigner.sign(`block:${emptyBlock.hash}`) as Hex
+      }
       await this.applyBlock(emptyBlock, true)
       return emptyBlock
     }
@@ -133,6 +152,30 @@ export class ChainEngine {
     }
     if (this.expectedProposer(block.number) !== block.proposer) {
       throw new Error("invalid block proposer")
+    }
+
+    // Verify proposer signature if verifier available and signature present
+    if (!locallyProposed && this.signatureVerifier) {
+      if (block.signature) {
+        const canonical = `block:${block.hash}`
+        if (!this.signatureVerifier.verifyNodeSig(canonical, block.signature, block.proposer)) {
+          throw new Error("block proposer signature invalid")
+        }
+      } else {
+        // Phase 1: warn but accept blocks without signatures for backward compatibility
+        log.warn("block missing proposer signature", { height: block.number.toString(), proposer: block.proposer })
+      }
+    }
+
+    // Timestamp validation (skip for locally proposed blocks — we set them ourselves)
+    if (!locallyProposed) {
+      if (prev && block.timestampMs <= prev.timestampMs) {
+        throw new Error("block timestamp must be after parent timestamp")
+      }
+      const MAX_FUTURE_MS = 60_000
+      if (block.timestampMs > Date.now() + MAX_FUTURE_MS) {
+        throw new Error("block timestamp too far in the future")
+      }
     }
 
     const expectedHash = hashBlockPayload({

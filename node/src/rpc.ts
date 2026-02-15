@@ -11,6 +11,7 @@ import { keccak256Hex } from "../../services/relayer/keccak256.ts"
 import { calculateBaseFee, genesisBaseFee } from "./base-fee.ts"
 import { traceTransaction, traceBlockByNumber, traceTransactionCalls } from "./debug-trace.ts"
 import type { BftCoordinator } from "./bft-coordinator.ts"
+import { RateLimiter } from "./rate-limiter.ts"
 import { createLogger } from "./logger.ts"
 
 const log = createLogger("rpc")
@@ -38,54 +39,17 @@ function optionalHexParam(params: unknown[], index: number): Hex | undefined {
   return value as Hex
 }
 
-/**
- * Simple sliding-window rate limiter per IP address.
- * Tracks request counts within a configurable time window.
- */
-class RateLimiter {
-  private readonly windowMs: number
-  private readonly maxRequests: number
-  private readonly buckets = new Map<string, { count: number; resetAt: number }>()
-
-  constructor(windowMs = 60_000, maxRequests = 200) {
-    this.windowMs = windowMs
-    this.maxRequests = maxRequests
-  }
-
-  /**
-   * Check if a request from the given IP should be allowed.
-   * Returns true if allowed, false if rate-limited.
-   */
-  allow(ip: string): boolean {
-    const now = Date.now()
-    const bucket = this.buckets.get(ip)
-
-    if (!bucket || now >= bucket.resetAt) {
-      this.buckets.set(ip, { count: 1, resetAt: now + this.windowMs })
-      return true
-    }
-
-    bucket.count++
-    return bucket.count <= this.maxRequests
-  }
-
-  /** Periodically clean up expired buckets to prevent memory growth */
-  cleanup(): void {
-    const now = Date.now()
-    for (const [ip, bucket] of this.buckets) {
-      if (now >= bucket.resetAt) this.buckets.delete(ip)
-    }
-  }
-}
-
 const MAX_RPC_BODY = 1024 * 1024 // 1 MB max request body for RPC
 const rateLimiter = new RateLimiter()
 // Cleanup expired buckets every 5 minutes
 setInterval(() => rateLimiter.cleanup(), 300_000).unref()
 
-// Test account feature gate: only enabled when COC_DEV_ACCOUNTS=1 or NODE_ENV !== 'production'
+// Test account feature gate: only enabled when COC_DEV_ACCOUNTS=1 or NODE_ENV=test
 const DEV_ACCOUNTS_ENABLED = process.env.COC_DEV_ACCOUNTS === "1" ||
-  (process.env.NODE_ENV !== "production")
+  process.env.NODE_ENV === "test"
+
+// Debug/trace RPC feature gate: only enabled when COC_DEBUG_RPC=1
+const DEBUG_RPC_ENABLED = process.env.COC_DEBUG_RPC === "1"
 
 // Test account manager (dev/test only)
 interface TestAccount {
@@ -145,7 +109,7 @@ interface JsonRpcResponse {
   error?: { message: string }
 }
 
-export function startRpcServer(bind: string, port: number, chainId: number, evm: EvmChain, chain: IChainEngine, p2p: P2PNode, pose?: PoSeEngine, bftCoordinator?: BftCoordinator) {
+export function startRpcServer(bind: string, port: number, chainId: number, evm: EvmChain, chain: IChainEngine, p2p: P2PNode, pose?: PoSeEngine, bftCoordinator?: BftCoordinator, nodeId?: string) {
   if (DEV_ACCOUNTS_ENABLED) {
     initializeTestAccounts()
   }
@@ -206,9 +170,10 @@ export function startRpcServer(bind: string, port: number, chainId: number, evm:
         }
 
         const payload = JSON.parse(body)
+        const rpcOpts = nodeId ? { nodeId } : undefined
         const response = Array.isArray(payload)
-          ? await Promise.all(payload.map((item) => handleOne(item, chainId, evm, chain, p2p, filters, bftCoordinator)))
-          : await handleOne(payload, chainId, evm, chain, p2p, filters, bftCoordinator)
+          ? await Promise.all(payload.map((item) => handleOne(item, chainId, evm, chain, p2p, filters, bftCoordinator, rpcOpts)))
+          : await handleOne(payload, chainId, evm, chain, p2p, filters, bftCoordinator, rpcOpts)
 
         if (!res.headersSent) {
           res.writeHead(200, { "content-type": "application/json" })
@@ -549,6 +514,7 @@ async function handleRpc(
       }
     }
     case "debug_traceTransaction": {
+      if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
       const txHash = String((payload.params ?? [])[0] ?? "") as Hex
       const traceOpts = ((payload.params ?? [])[1] ?? {}) as Record<string, unknown>
       return await traceTransaction(txHash, chain, evm, {
@@ -559,6 +525,7 @@ async function handleRpc(
       })
     }
     case "debug_traceBlockByNumber": {
+      if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
       const blockTag = String((payload.params ?? [])[0] ?? "latest")
       const traceHeight = await Promise.resolve(chain.getHeight())
       const traceBlockNum = blockTag === "latest" ? traceHeight : BigInt(blockTag)
@@ -570,6 +537,7 @@ async function handleRpc(
       })
     }
     case "trace_transaction": {
+      if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
       const txHash = String((payload.params ?? [])[0] ?? "") as Hex
       return await traceTransactionCalls(txHash, chain, evm)
     }
@@ -856,6 +824,11 @@ async function handleRpc(
     case "coc_submitProposal": {
       if (!hasGovernance(chain)) throw new Error("governance not enabled")
       const proposalParams = (payload.params ?? [])[0] as Record<string, string>
+      // Only the local node can submit proposals via RPC
+      const localNodeId = (opts as Record<string, unknown>)?.nodeId as string | undefined
+      if (localNodeId && proposalParams.proposer !== localNodeId) {
+        throw { code: -32003, message: "unauthorized: can only submit proposals as local node" }
+      }
       const proposal = chain.governance.submitProposal(
         proposalParams.type,
         proposalParams.targetId,
@@ -875,6 +848,11 @@ async function handleRpc(
     case "coc_voteProposal": {
       if (!hasGovernance(chain)) throw new Error("governance not enabled")
       const voteParams = (payload.params ?? [])[0] as Record<string, unknown>
+      // Only the local node can vote via RPC
+      const localVoterId = (opts as Record<string, unknown>)?.nodeId as string | undefined
+      if (localVoterId && String(voteParams.voterId) !== localVoterId) {
+        throw { code: -32003, message: "unauthorized: can only vote as local node" }
+      }
       chain.governance.vote(
         String(voteParams.proposalId),
         String(voteParams.voterId),

@@ -12,6 +12,7 @@ import { Mempool } from "./mempool.ts"
 import { hashBlockPayload, validateBlockLink, zeroHash } from "./hash.ts"
 import type { ChainBlock, Hex, MempoolTx } from "./blockchain-types.ts"
 import { Transaction } from "ethers"
+import type { NodeSigner, SignatureVerifier } from "./crypto/signer.ts"
 import { LevelDatabase } from "./storage/db.ts"
 import { BlockIndex } from "./storage/block-index.ts"
 import type { TxWithReceipt, IndexedLog, LogFilter } from "./storage/block-index.ts"
@@ -49,6 +50,8 @@ export class PersistentChainEngine {
   private readonly cfg: PersistentChainEngineConfig
   private readonly evm: EvmChain
   private readonly stateTrie: IStateTrie | null
+  private nodeSigner: NodeSigner | null = null
+  private signatureVerifier: SignatureVerifier | null = null
 
   constructor(cfg: PersistentChainEngineConfig, evm: EvmChain) {
     this.cfg = cfg
@@ -72,6 +75,12 @@ export class PersistentChainEngine {
     } else {
       this.governance = null
     }
+  }
+
+  /** Attach a node signer for block proposer signatures */
+  setNodeSigner(signer: NodeSigner, verifier: SignatureVerifier): void {
+    this.nodeSigner = signer
+    this.signatureVerifier = verifier
   }
 
   async init(): Promise<void> {
@@ -200,6 +209,9 @@ export class PersistentChainEngine {
     )
 
     const block = await this.buildBlock(nextHeight, txs)
+    if (this.nodeSigner) {
+      block.signature = this.nodeSigner.sign(`block:${block.hash}`) as Hex
+    }
     try {
       await this.applyBlock(block, true)
     } catch (err) {
@@ -208,6 +220,9 @@ export class PersistentChainEngine {
         this.mempool.remove(tx.hash)
       }
       const emptyBlock = await this.buildBlock(nextHeight, [])
+      if (this.nodeSigner) {
+        emptyBlock.signature = this.nodeSigner.sign(`block:${emptyBlock.hash}`) as Hex
+      }
       await this.applyBlock(emptyBlock, true)
       return emptyBlock
     }
@@ -221,6 +236,18 @@ export class PersistentChainEngine {
     }
     if (this.expectedProposer(block.number) !== block.proposer) {
       throw new Error("invalid block proposer")
+    }
+
+    // Verify proposer signature if verifier available
+    if (!locallyProposed && this.signatureVerifier) {
+      if (block.signature) {
+        const canonical = `block:${block.hash}`
+        if (!this.signatureVerifier.verifyNodeSig(canonical, block.signature, block.proposer)) {
+          throw new Error("block proposer signature invalid")
+        }
+      } else {
+        log.warn("block missing proposer signature", { height: block.number.toString(), proposer: block.proposer })
+      }
     }
 
     const expectedHash = hashBlockPayload({

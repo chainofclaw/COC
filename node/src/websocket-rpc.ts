@@ -41,11 +41,20 @@ interface LogSubscriptionFilter {
   topics?: Array<string | string[] | null>
 }
 
+const IDLE_TIMEOUT_MS = 60 * 60 * 1000 // 1 hour
+
+const MAX_CONNECTIONS_PER_IP = 10
+const MAX_MESSAGES_PER_MINUTE = 100
+const WS_MAX_PAYLOAD = 1024 * 1024 // 1 MB
+
 interface ClientState {
   subscriptions: Map<string, WsSubscription>
   handlers: Map<string, (...args: unknown[]) => void>
   alive: boolean
   connectedAt: number
+  lastActivityMs: number
+  messageCount: number
+  messageWindowStart: number
 }
 
 /**
@@ -75,6 +84,8 @@ const HEX_TOPIC_RE = /^0x[0-9a-fA-F]{64}$/
 export class WsRpcServer {
   private wss: WebSocketServer | null = null
   private clients = new Map<WebSocket, ClientState>()
+  private connsByIp = new Map<string, number>()
+  private clientIps = new Map<WebSocket, string>()
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null
   private readonly config: WsRpcConfig
   private readonly chainId: number
@@ -120,9 +131,10 @@ export class WsRpcServer {
     this.wss = new WebSocketServer({
       port: this.config.port,
       host: this.config.bind,
+      maxPayload: WS_MAX_PAYLOAD,
     })
 
-    this.wss.on("connection", (ws: WebSocket, _req: IncomingMessage) => {
+    this.wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
       // Reject if at max capacity
       if (this.clients.size >= MAX_CLIENTS) {
         log.warn("max clients reached, rejecting connection", { current: this.clients.size })
@@ -130,11 +142,26 @@ export class WsRpcServer {
         return
       }
 
+      // Per-IP connection limit
+      const remoteIp = req.socket.remoteAddress ?? "unknown"
+      const ipCount = this.connsByIp.get(remoteIp) ?? 0
+      if (ipCount >= MAX_CONNECTIONS_PER_IP) {
+        log.warn("per-IP connection limit reached", { ip: remoteIp, count: ipCount })
+        ws.close(1013, "too many connections from this IP")
+        return
+      }
+      this.connsByIp.set(remoteIp, ipCount + 1)
+      this.clientIps.set(ws, remoteIp)
+
+      const now = Date.now()
       this.clients.set(ws, {
         subscriptions: new Map(),
         handlers: new Map(),
         alive: true,
-        connectedAt: Date.now(),
+        connectedAt: now,
+        lastActivityMs: now,
+        messageCount: 0,
+        messageWindowStart: now,
       })
 
       ws.on("pong", () => {
@@ -143,6 +170,25 @@ export class WsRpcServer {
       })
 
       ws.on("message", (data: Buffer | string) => {
+        const clientState = this.clients.get(ws)
+        if (!clientState) return
+        const msgNow = Date.now()
+        clientState.lastActivityMs = msgNow
+
+        // Per-client message rate limiting
+        if (msgNow - clientState.messageWindowStart > 60_000) {
+          clientState.messageCount = 0
+          clientState.messageWindowStart = msgNow
+        }
+        clientState.messageCount++
+        if (clientState.messageCount > MAX_MESSAGES_PER_MINUTE) {
+          this.send(ws, {
+            jsonrpc: "2.0", id: null,
+            error: { code: -32005, message: "rate limit exceeded" },
+          })
+          return
+        }
+
         this.handleMessage(ws, data.toString()).catch((err) => {
           log.error("message handler error", { error: String(err) })
         })
@@ -162,12 +208,20 @@ export class WsRpcServer {
       log.info("WebSocket RPC listening", { bind: this.config.bind, port: this.config.port })
     })
 
-    // Heartbeat: ping all clients every 30s, terminate unresponsive ones
+    // Heartbeat: ping all clients every 30s, terminate unresponsive/idle ones
     this.heartbeatTimer = setInterval(() => {
+      const now = Date.now()
       for (const [ws, client] of this.clients) {
         if (!client.alive) {
           log.info("terminating unresponsive client")
           ws.terminate()
+          this.cleanupClient(ws)
+          continue
+        }
+        // Close idle clients (no activity for IDLE_TIMEOUT_MS)
+        if (now - client.lastActivityMs > IDLE_TIMEOUT_MS) {
+          log.info("closing idle client", { idleMs: now - client.lastActivityMs })
+          ws.close(1000, "idle timeout")
           this.cleanupClient(ws)
           continue
         }
@@ -358,6 +412,18 @@ export class WsRpcServer {
       this.removeSubscription(client, subId, sub)
     }
     this.clients.delete(ws)
+
+    // Decrement per-IP counter
+    const ip = this.clientIps.get(ws)
+    if (ip) {
+      const count = this.connsByIp.get(ip) ?? 1
+      if (count <= 1) {
+        this.connsByIp.delete(ip)
+      } else {
+        this.connsByIp.set(ip, count - 1)
+      }
+      this.clientIps.delete(ws)
+    }
   }
 
   private sendSubscription(ws: WebSocket, subId: string, result: unknown): void {

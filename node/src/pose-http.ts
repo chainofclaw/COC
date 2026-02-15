@@ -1,6 +1,11 @@
 import type http from "node:http"
 import type { PoSeEngine } from "./pose-engine.ts"
 import type { ChallengeMessage, ReceiptMessage } from "../../services/common/pose-types.ts"
+import { RateLimiter } from "./rate-limiter.ts"
+
+const MAX_POSE_BODY = 1024 * 1024 // 1 MB
+const poseRateLimiter = new RateLimiter(60_000, 60)
+setInterval(() => poseRateLimiter.cleanup(), 300_000).unref()
 
 interface PoseRouteHandler {
   method: string
@@ -87,14 +92,33 @@ export function handlePoseRequest(
   const route = routes.find((r) => r.method === method && r.path === url)
   if (!route) return false
 
+  // Rate limiting
+  const clientIp = req.socket.remoteAddress ?? "unknown"
+  if (!poseRateLimiter.allow(clientIp)) {
+    jsonResponse(res, 429, { error: "rate limit exceeded" })
+    return true
+  }
+
   if (method === "GET") {
     route.handler("", res)
     return true
   }
 
   let body = ""
-  req.on("data", (chunk) => (body += chunk))
+  let bodySize = 0
+  let aborted = false
+  req.on("data", (chunk: Buffer | string) => {
+    bodySize += typeof chunk === "string" ? chunk.length : chunk.byteLength
+    if (bodySize > MAX_POSE_BODY) {
+      aborted = true
+      jsonResponse(res, 413, { error: "body too large" })
+      req.destroy()
+      return
+    }
+    body += chunk
+  })
   req.on("end", () => {
+    if (aborted) return
     try {
       route.handler(body, res)
     } catch (error) {

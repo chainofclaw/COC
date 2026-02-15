@@ -7,6 +7,7 @@
  */
 
 import { randomBytes } from "node:crypto"
+import { BoundedSet } from "./p2p.ts"
 import { createLogger } from "./logger.ts"
 
 const log = createLogger("ipfs-pubsub")
@@ -49,7 +50,7 @@ export interface PeerForwarder {
 export class IpfsPubsub {
   private readonly cfg: PubsubConfig
   private readonly topics = new Map<string, TopicState>()
-  private readonly seenMessages = new Set<string>()
+  private readonly seenMessages = new BoundedSet<string>(50_000)
   private peerForwarder: PeerForwarder | null = null
   private cleanupTimer: ReturnType<typeof setInterval> | null = null
 
@@ -83,7 +84,6 @@ export class IpfsPubsub {
       this.cleanupTimer = null
     }
     this.topics.clear()
-    this.seenMessages.clear()
   }
 
   /**
@@ -166,6 +166,12 @@ export class IpfsPubsub {
     }
     this.seenMessages.add(msgId)
 
+    // Enforce message size limit on peer messages
+    if (msg.data && msg.data.byteLength > this.cfg.maxMessageSize) {
+      log.warn("oversized peer message rejected", { topic, size: msg.data.byteLength })
+      return false
+    }
+
     msg.receivedAt = Date.now()
     this.deliverToSubscribers(topic, msg)
     return true
@@ -222,9 +228,6 @@ export class IpfsPubsub {
       )
     }
 
-    // Limit seen messages set size
-    if (this.seenMessages.size > 50_000) {
-      this.seenMessages.clear()
-    }
+    // BoundedSet handles FIFO eviction automatically — no manual clear needed
   }
 }

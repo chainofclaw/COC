@@ -74,8 +74,8 @@ Policy files are located at `nodeops/policies/*.yaml` and can be loaded and eval
 
 ## Test Strategy
 
-Uses Node.js built-in test framework (608+97 tests across 78 test files):
-- **Node layer tests**: `node/src/*.test.ts node/src/**/*.test.ts` (608 tests, 57 files) - chain engine, EVM, RPC, WebSocket, P2P, mempool, storage, IPFS, PoSe, BFT consensus, DHT, wire protocol, fork choice, state snapshot, wire server, DHT network, snap sync, consensus-BFT integration, consensus metrics, wire connection manager, wire tx relay, sync progress, gas histogram, governance stats
+Uses Node.js built-in test framework (677+97 tests across 79 test files):
+- **Node layer tests**: `node/src/*.test.ts node/src/**/*.test.ts` (677 tests, 58 files) - chain engine, EVM, RPC, WebSocket, P2P, mempool, storage, IPFS, PoSe, BFT consensus, DHT, wire protocol, fork choice, state snapshot, wire server, DHT network, snap sync, consensus-BFT integration, consensus metrics, wire connection manager, wire tx relay, sync progress, gas histogram, governance stats, wire dedup/relay, security hardening
 - **Service layer tests**: `services/**/*.test.ts` + `nodeops/*.test.ts` + `tests/**/*.test.ts` (97 tests, 21 files)
 - **Storage layer tests**: `node/src/storage/*.test.ts` (included in node layer)
 
@@ -99,7 +99,7 @@ cd contracts && npm test
 - `consensus.ts`: Consensus engine (deterministic rotation + degraded mode + auto-recovery + optional BFT coordinator + snap sync provider)
 - `p2p.ts`: HTTP gossip network (per-peer dedup, request body limits, broadcast concurrency control)
 - `rpc.ts`: JSON-RPC interface (57+ methods, parameter validation, structured error codes)
-- `websocket-rpc.ts`: WebSocket RPC (eth_subscribe, subscription validation and limits)
+- `websocket-rpc.ts`: WebSocket RPC (eth_subscribe, subscription validation and limits, idle timeout)
 - `config.ts`: Node configuration with validation (chainId, ports, validators, storage, enableBft, enableWireProtocol, enableDht, enableSnapSync)
 - `mempool.ts`: Transaction mempool (EIP-1559 effective gas price sorting)
 - `base-fee.ts`: EIP-1559 dynamic baseFee calculation
@@ -116,19 +116,21 @@ cd contracts && npm test
 - `dns-seeds.ts`: DNS seed discovery (TXT record resolution)
 - `ipfs-merkle.ts`: Merkle tree construction and proof generation (with index bounds validation)
 - `ipfs-tar.ts`: POSIX tar archive builder for IPFS `/api/v0/get` compatibility
-- `bft.ts`: BFT-lite consensus round (propose/prepare/commit, 2/3 stake-weighted quorum, equivocation detection)
-- `bft-coordinator.ts`: BFT round lifecycle management with timeout, P2P bridging, and equivocation detector
+- `bft.ts`: BFT-lite consensus round (propose/prepare/commit, 2/3 stake-weighted quorum, equivocation detection, mandatory message signature)
+- `bft-coordinator.ts`: BFT round lifecycle management with timeout, P2P bridging, equivocation detector, message signing/verification
 - `fork-choice.ts`: GHOST-inspired fork selection (BFT finality > chain length > weight)
 - `wire-protocol.ts`: Binary framed TCP protocol (Magic 0xC0C1, FrameDecoder streaming, FindNode/FindNodeResponse)
-- `wire-server.ts`: TCP server accepting inbound connections, handshake, frame dispatch, FindNode handler
-- `wire-client.ts`: TCP client with exponential backoff reconnect (1s-30s), async FindNode requests
+- `wire-server.ts`: TCP server accepting inbound connections, handshake with identity signing, frame dispatch, FindNode handler, per-IP connection limits, default bind 127.0.0.1
+- `wire-client.ts`: TCP client with exponential backoff reconnect (1s-30s), async FindNode requests, handshake signing
 - `wire-connection-manager.ts`: Wire connection lifecycle management (add/remove peers, max connections, broadcast)
-- `dht-network.ts`: DHT network layer (bootstrap, iterative lookup, periodic refresh, node announcement)
+- `dht-network.ts`: DHT network layer (bootstrap, iterative lookup with peer verification, periodic refresh, node announcement)
 - `dht.ts`: Kademlia DHT routing table (XOR distance, K-buckets, findClosest)
 - `state-snapshot.ts`: EVM state snapshot export/import for fast sync
 - `validator-governance.ts`: Validator set management with stake-weighted voting
 - `pose-engine.ts`: PoSe challenge/receipt pipeline
 - `pose-http.ts`: PoSe HTTP endpoints (field validation for challenge/receipt)
+- `rate-limiter.ts`: Shared rate limiter for RPC/IPFS/PoSe endpoints
+- `crypto/signer.ts`: NodeSigner + SignatureVerifier (ethers.js wallet-based node identity)
 
 ### PoSe Service Layer (services/)
 - `challenger/`: Challenge generation and quota management
@@ -223,10 +225,10 @@ cd contracts && npm test
 
 ## Current Limitations
 
-- BFT consensus, wire protocol TCP transport, DHT peer discovery, and state snapshot sync are all integrated but disabled by default (opt-in via `enableBft`, `enableWireProtocol`, `enableDht`, `enableSnapSync` config flags)
-- BFT requires >= 3 validators; single-node devnet auto-disables BFT
-- Multi-node BFT finality not yet tested in production devnet environment
-- Wire protocol transaction relay is broadcast-only (no dedup across HTTP and TCP paths)
+- All advanced features (BFT, Wire, DHT, SnapSync) enabled by default in multi-node devnet via `start-devnet.sh`
+- Single-node devnet auto-disables BFT (requires >= 3 validators)
+- DHT iterative lookup uses wire protocol FIND_NODE when available, falls back to local routing table
+- Wire protocol and HTTP gossip have independent dedup (BoundedSet) and cross-protocol relay
 
 ## Configuration File Locations
 

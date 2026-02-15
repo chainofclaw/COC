@@ -111,6 +111,17 @@ if (usePersistent) {
   log.info("using memory storage backend")
 }
 
+// Node identity signer — created early so Wire/BFT/PoSe all share the same key
+const nodePrivateKey = config.nodePrivateKey ?? process.env.COC_NODE_PK ?? Wallet.createRandom().privateKey
+const nodeSigner = createNodeSigner(nodePrivateKey)
+
+// Attach signer to chain engine for block proposer signatures
+if (typeof (chain as PersistentChainEngine).setNodeSigner === "function") {
+  (chain as PersistentChainEngine).setNodeSigner(nodeSigner, nodeSigner)
+} else if (typeof (chain as ChainEngine).setNodeSigner === "function") {
+  (chain as ChainEngine).setNodeSigner(nodeSigner, nodeSigner)
+}
+
 // BFT coordinator setup
 let bftCoordinator: BftCoordinator | undefined
 const bftEnabled = config.enableBft && config.validators.length >= 3
@@ -159,6 +170,7 @@ const p2p = new P2PNode(
           height: BigInt(msg.height),
           blockHash: msg.blockHash,
           senderId: msg.senderId,
+          signature: (msg.signature ?? "") as Hex,
         }
         await bftCoordinator.handleMessage(bftMsg)
       }
@@ -189,13 +201,18 @@ if (bftEnabled) {
     validators,
     prepareTimeoutMs: config.bftPrepareTimeoutMs,
     commitTimeoutMs: config.bftCommitTimeoutMs,
+    signer: nodeSigner,
+    verifier: nodeSigner,
     broadcastMessage: async (msg: BftMessage) => {
       await p2p.broadcastBft({
         type: msg.type,
         height: msg.height.toString(),
         blockHash: msg.blockHash,
         senderId: msg.senderId,
+        signature: msg.signature,
       })
+      // Also broadcast BFT messages via wire protocol (dual transport)
+      wireBftBroadcastFn?.(msg)
     },
     onFinalized: async (block) => {
       const finalizedBlock = { ...block, bftFinalized: true }
@@ -275,6 +292,7 @@ if (stateTrie && config.enableSnapSync) {
 // Wire broadcast functions — will be bound after wire server setup
 let wireBroadcastFn: ((block: ChainBlock) => void) | undefined
 let wireTxRelayFn: ((rawTx: Hex) => void) | undefined
+let wireBftBroadcastFn: ((msg: BftMessage) => void) | undefined
 
 const consensus = new ConsensusEngine(chain, p2p, {
   blockTimeMs: config.blockTimeMs,
@@ -288,11 +306,9 @@ const consensus = new ConsensusEngine(chain, p2p, {
 })
 consensus.start()
 
-const nodePrivateKey = process.env.COC_NODE_PK || Wallet.createRandom().privateKey
-const nodeSigner = createNodeSigner(nodePrivateKey)
 const pose = new PoSeEngine(BigInt(Math.floor(Date.now() / config.poseEpochMs)), { signer: nodeSigner })
 
-startRpcServer(config.rpcBind, config.rpcPort, config.chainId, evm, chain, p2p, pose)
+startRpcServer(config.rpcBind, config.rpcPort, config.chainId, evm, chain, p2p, pose, undefined, config.nodeId)
 
 // Start WebSocket RPC server for real-time subscriptions
 const wsServer = startWsRpcServer(
@@ -315,6 +331,8 @@ if (config.enableWireProtocol) {
     port: config.wirePort,
     nodeId: config.nodeId,
     chainId: config.chainId,
+    signer: nodeSigner,
+    verifier: nodeSigner,
     onBlock: async (block) => {
       try {
         await chain.applyBlock(block)
@@ -342,6 +360,13 @@ if (config.enableWireProtocol) {
       return []
     },
     getHeight: () => Promise.resolve(chain.getHeight()),
+    // Cross-protocol relay: Wire → HTTP gossip
+    onTxRelay: async (rawTx) => {
+      try { await p2p.receiveTx(rawTx) } catch { /* dedup in P2P layer */ }
+    },
+    onBlockRelay: async (block) => {
+      try { await p2p.receiveBlock(block) } catch { /* dedup in P2P layer */ }
+    },
   })
   wireServer.start()
   log.info("wire protocol TCP server started", { port: config.wirePort })
@@ -357,15 +382,37 @@ if (config.enableWireProtocol) {
     ws.broadcastFrame(data)
   }
 
+  // BFT messages via wire protocol
+  wireBftBroadcastFn = (msg: BftMessage) => {
+    const wireType = msg.type === "prepare" ? MessageType.BftPrepare : MessageType.BftCommit
+    ws.broadcastFrame(encodeJsonPayload(wireType, {
+      type: msg.type,
+      height: msg.height.toString(),
+      blockHash: msg.blockHash,
+      senderId: msg.senderId,
+      signature: msg.signature,
+    }))
+  }
+
+  // Build peer ID → wire port mapping from dhtBootstrapPeers config
+  const peerWirePortMap = new Map<string, number>()
+  for (const bp of config.dhtBootstrapPeers) {
+    peerWirePortMap.set(bp.id, bp.port)
+  }
+
   // Connect to known peers via wire protocol
   for (const peer of config.peers) {
     try {
       const url = new URL(peer.url)
+      // Use per-peer wire port from DHT bootstrap config, fallback to local wirePort
+      const peerWirePort = peerWirePortMap.get(peer.id) ?? config.wirePort
       const client = new WireClient({
         host: url.hostname,
-        port: config.wirePort,
+        port: peerWirePort,
         nodeId: config.nodeId,
         chainId: config.chainId,
+        signer: nodeSigner,
+        verifier: nodeSigner,
         onConnected: () => log.info("wire client connected", { peer: peer.id }),
         onDisconnected: () => log.info("wire client disconnected", { peer: peer.id }),
       })
@@ -381,10 +428,17 @@ if (config.enableWireProtocol) {
 let dhtNetwork: DhtNetwork | undefined
 
 if (config.enableDht) {
+  // Build peer ID → WireClient map for O(1) lookup in DHT FIND_NODE
+  const wireClientByPeerId = new Map<string, WireClient>()
+  for (let idx = 0; idx < config.peers.length && idx < wireClients.length; idx++) {
+    wireClientByPeerId.set(config.peers[idx].id, wireClients[idx])
+  }
+
   dhtNetwork = new DhtNetwork({
     localId: config.nodeId,
     bootstrapPeers: config.dhtBootstrapPeers,
     wireClients,
+    wireClientByPeerId,
     onPeerDiscovered: (peer) => {
       p2p.discovery.addDiscoveredPeers([{ id: peer.id, url: `http://${peer.address}` }])
     },

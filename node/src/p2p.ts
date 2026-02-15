@@ -15,6 +15,7 @@ export interface BftMessagePayload {
   height: string
   blockHash: Hex
   senderId: string
+  signature?: string
 }
 
 export interface P2PHandlers {
@@ -277,8 +278,15 @@ export class P2PNode {
     if (this.seenBlocks.has(block.hash)) return
     this.seenBlocks.add(block.hash)
     this.blocksReceived++
-    await this.handlers.onBlock(block)
-    void this.broadcast("/p2p/gossip-block", { block }, block.hash)
+    try {
+      await this.handlers.onBlock(block)
+      // Only broadcast after successful validation/application
+      void this.broadcast("/p2p/gossip-block", { block }, block.hash)
+    } catch (err) {
+      // Don't broadcast invalid blocks to other peers
+      log.warn("block validation failed, not broadcasting", { hash: block.hash, error: String(err) })
+      throw err
+    }
   }
 
   async fetchSnapshots(): Promise<ChainSnapshot[]> {

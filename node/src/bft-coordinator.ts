@@ -8,6 +8,7 @@
 import { BftRound, EquivocationDetector } from "./bft.ts"
 import type { BftMessage, BftRoundConfig, EquivocationEvidence } from "./bft.ts"
 import type { ChainBlock, Hex } from "./blockchain-types.ts"
+import type { NodeSigner, SignatureVerifier } from "./crypto/signer.ts"
 import { createLogger } from "./logger.ts"
 
 const log = createLogger("bft-coordinator")
@@ -26,6 +27,10 @@ export interface BftCoordinatorConfig {
   onFinalized: (block: ChainBlock) => Promise<void>
   /** Callback when equivocation is detected */
   onEquivocation?: (evidence: EquivocationEvidence) => void
+  /** Node identity signer for signing BFT messages */
+  signer?: NodeSigner
+  /** Signature verifier for validating BFT messages */
+  verifier?: SignatureVerifier
 }
 
 /**
@@ -60,8 +65,9 @@ export class BftCoordinator {
     // Handle the propose phase
     const outgoing = this.activeRound.handlePropose(block, block.proposer)
 
-    // Broadcast prepare votes
+    // Sign and broadcast prepare votes
     for (const msg of outgoing) {
+      this.signMessage(msg)
       await this.cfg.broadcastMessage(msg)
     }
 
@@ -88,6 +94,19 @@ export class BftCoordinator {
       return
     }
 
+    // Verify BFT message signature if verifier is available
+    if (this.cfg.verifier && (msg.type === "prepare" || msg.type === "commit")) {
+      if (!msg.signature) {
+        log.warn("BFT message missing signature, dropping", { sender: msg.senderId, type: msg.type })
+        return
+      }
+      const canonical = bftCanonicalMessage(msg.type, msg.height, msg.blockHash)
+      if (!this.cfg.verifier.verifyNodeSig(canonical, msg.signature, msg.senderId)) {
+        log.warn("BFT message signature invalid, dropping", { sender: msg.senderId, type: msg.type })
+        return
+      }
+    }
+
     // Check for equivocation on prepare/commit votes
     if (msg.type === "prepare" || msg.type === "commit") {
       const evidence = this.equivocationDetector.recordVote(
@@ -102,6 +121,7 @@ export class BftCoordinator {
       case "prepare": {
         const outgoing = this.activeRound.handlePrepare(msg.senderId, msg.blockHash)
         for (const out of outgoing) {
+          this.signMessage(out)
           await this.cfg.broadcastMessage(out)
         }
         break
@@ -168,6 +188,12 @@ export class BftCoordinator {
     }, totalTimeout)
   }
 
+  private signMessage(msg: BftMessage): void {
+    if (!this.cfg.signer) return
+    const canonical = bftCanonicalMessage(msg.type, msg.height, msg.blockHash)
+    msg.signature = this.cfg.signer.sign(canonical) as Hex
+  }
+
   private clearRound(): void {
     this.activeRound = null
     if (this.timeoutTimer) {
@@ -175,4 +201,9 @@ export class BftCoordinator {
       this.timeoutTimer = null
     }
   }
+}
+
+/** Build the canonical string for BFT message signing/verification */
+export function bftCanonicalMessage(type: string, height: bigint, blockHash: Hex): string {
+  return `bft:${type}:${height.toString()}:${blockHash}`
 }
