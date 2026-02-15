@@ -9,6 +9,7 @@ import type { IChainEngine } from "./chain-engine-types.ts"
 import type { P2PNode } from "./p2p.ts"
 import { shouldSwitchFork } from "./fork-choice.ts"
 import type { ForkCandidate } from "./fork-choice.ts"
+import type { ConsensusMetrics } from "./consensus.ts"
 
 function makeBlock(n: number, bftFinalized = false): ChainBlock {
   return {
@@ -465,5 +466,101 @@ describe("ConsensusEngine snap sync", () => {
 
     assert.ok(!snapSyncTriggered, "should not trigger snap sync for small gap")
     assert.ok(normalAdopted, "should use normal sync for small gap")
+  })
+})
+
+describe("ConsensusEngine metrics", () => {
+  it("should track propose metrics", async () => {
+    const chain = makeMockChain()
+    const p2p = makeMockP2P()
+
+    const consensus = new ConsensusEngine(
+      chain as IChainEngine,
+      p2p as unknown as P2PNode,
+      { blockTimeMs: 100, syncIntervalMs: 100 },
+    )
+
+    const tryPropose = (consensus as unknown as { tryPropose: () => Promise<void> }).tryPropose.bind(consensus)
+    await tryPropose()
+    await tryPropose()
+
+    const metrics = consensus.getMetrics()
+    assert.equal(metrics.blocksProposed, 2)
+    assert.equal(metrics.proposeFailed, 0)
+    assert.ok(metrics.lastProposeMs >= 0)
+    assert.ok(metrics.avgProposeMs >= 0)
+  })
+
+  it("should track propose failures", async () => {
+    const chain = {
+      ...makeMockChain(),
+      proposeNextBlock: async () => { throw new Error("fail") },
+    }
+    const p2p = makeMockP2P()
+
+    const consensus = new ConsensusEngine(
+      chain as unknown as IChainEngine,
+      p2p as unknown as P2PNode,
+      { blockTimeMs: 100, syncIntervalMs: 100 },
+    )
+
+    const tryPropose = (consensus as unknown as { tryPropose: () => Promise<void> }).tryPropose.bind(consensus)
+    await tryPropose()
+
+    const metrics = consensus.getMetrics()
+    assert.equal(metrics.blocksProposed, 0)
+    assert.equal(metrics.proposeFailed, 1)
+  })
+
+  it("should track sync metrics", async () => {
+    const chain = makeMockChain(5n)
+    ;(chain as Record<string, unknown>).makeSnapshot = () => ({ blocks: [], updatedAtMs: 0 })
+    ;(chain as Record<string, unknown>).maybeAdoptSnapshot = async () => true
+
+    const remoteBlocks = Array.from({ length: 10 }, (_, i) => makeBlock(i + 1))
+    const p2p = {
+      ...makeMockP2P(),
+      fetchSnapshots: async (): Promise<ChainSnapshot[]> => [{
+        blocks: remoteBlocks,
+        updatedAtMs: Date.now(),
+      }],
+    }
+
+    const consensus = new ConsensusEngine(
+      chain as IChainEngine,
+      p2p as unknown as P2PNode,
+      { blockTimeMs: 100, syncIntervalMs: 100 },
+    )
+
+    const trySync = (consensus as unknown as { trySync: () => Promise<void> }).trySync.bind(consensus)
+    await trySync()
+
+    const metrics = consensus.getMetrics()
+    assert.equal(metrics.syncAttempts, 1)
+    assert.equal(metrics.syncAdoptions, 1)
+    assert.equal(metrics.blocksAdopted, 1)
+    assert.ok(metrics.lastSyncMs >= 0)
+  })
+
+  it("should report uptime after start", async () => {
+    const chain = makeMockChain()
+    const p2p = {
+      ...makeMockP2P(),
+      fetchSnapshots: async (): Promise<ChainSnapshot[]> => [],
+    }
+
+    const consensus = new ConsensusEngine(
+      chain as IChainEngine,
+      p2p as unknown as P2PNode,
+      { blockTimeMs: 60000, syncIntervalMs: 60000 },
+    )
+
+    consensus.start()
+    await new Promise((r) => setTimeout(r, 50))
+    const metrics = consensus.getMetrics()
+    consensus.stop()
+
+    assert.ok(metrics.startedAtMs > 0)
+    assert.ok(metrics.uptimeMs >= 40)
   })
 })

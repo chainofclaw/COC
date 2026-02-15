@@ -41,6 +41,21 @@ export interface SnapSyncProvider {
   setStateRoot(root: string): Promise<void>
 }
 
+export interface ConsensusMetrics {
+  blocksProposed: number
+  blocksAdopted: number
+  proposeFailed: number
+  syncAttempts: number
+  syncAdoptions: number
+  snapSyncs: number
+  avgProposeMs: number
+  avgSyncMs: number
+  lastProposeMs: number
+  lastSyncMs: number
+  startedAtMs: number
+  uptimeMs: number
+}
+
 export class ConsensusEngine {
   private readonly chain: IChainEngine
   private readonly p2p: P2PNode
@@ -53,6 +68,19 @@ export class ConsensusEngine {
   private lastRecoveryMs = 0
   private proposeTimer: ReturnType<typeof setInterval> | null = null
   private syncTimer: ReturnType<typeof setInterval> | null = null
+
+  // Metrics tracking
+  private blocksProposed = 0
+  private blocksAdopted = 0
+  private proposeFailed = 0
+  private syncAttempts = 0
+  private syncAdoptions = 0
+  private snapSyncs = 0
+  private totalProposeMs = 0
+  private totalSyncMs = 0
+  private lastProposeMs = 0
+  private lastSyncMs = 0
+  private startedAtMs = 0
 
   /** Optional callback to broadcast blocks via wire protocol (TCP) */
   private readonly wireBroadcast: ((block: ChainBlock) => void) | null
@@ -72,6 +100,7 @@ export class ConsensusEngine {
   }
 
   start(): void {
+    this.startedAtMs = Date.now()
     this.proposeTimer = setInterval(() => void this.tryPropose(), this.cfg.blockTimeMs)
     this.syncTimer = setInterval(() => void this.trySync(), this.cfg.syncIntervalMs)
     void this.trySync()
@@ -86,11 +115,32 @@ export class ConsensusEngine {
     return { status: this.status, proposeFailures: this.proposeFailures, syncFailures: this.syncFailures }
   }
 
+  getMetrics(): ConsensusMetrics {
+    const now = Date.now()
+    const proposeCount = this.blocksProposed + this.proposeFailed
+    const syncCount = this.syncAttempts
+    return {
+      blocksProposed: this.blocksProposed,
+      blocksAdopted: this.blocksAdopted,
+      proposeFailed: this.proposeFailed,
+      syncAttempts: this.syncAttempts,
+      syncAdoptions: this.syncAdoptions,
+      snapSyncs: this.snapSyncs,
+      avgProposeMs: proposeCount > 0 ? Math.round(this.totalProposeMs / proposeCount) : 0,
+      avgSyncMs: syncCount > 0 ? Math.round(this.totalSyncMs / syncCount) : 0,
+      lastProposeMs: this.lastProposeMs,
+      lastSyncMs: this.lastSyncMs,
+      startedAtMs: this.startedAtMs,
+      uptimeMs: this.startedAtMs > 0 ? now - this.startedAtMs : 0,
+    }
+  }
+
   private async tryPropose(): Promise<void> {
     if (this.status === "degraded") {
       return
     }
 
+    const t0 = Date.now()
     try {
       const block = await this.chain.proposeNextBlock()
       if (!block) {
@@ -98,6 +148,7 @@ export class ConsensusEngine {
       }
 
       this.proposeFailures = 0
+      this.blocksProposed++
 
       // If BFT is enabled, start a BFT round instead of directly broadcasting
       if (this.bft) {
@@ -115,12 +166,18 @@ export class ConsensusEngine {
         await this.broadcastBlock(block)
       }
 
+      this.lastProposeMs = Date.now() - t0
+      this.totalProposeMs += this.lastProposeMs
+
       if (this.status === "recovering") {
         this.status = "healthy"
         log.info("recovered from degraded mode via successful propose")
       }
     } catch (error) {
+      this.proposeFailed++
       this.proposeFailures++
+      this.lastProposeMs = Date.now() - t0
+      this.totalProposeMs += this.lastProposeMs
       log.error("propose failed", { error: String(error), consecutive: this.proposeFailures })
 
       if (this.status === "recovering") {
@@ -156,6 +213,8 @@ export class ConsensusEngine {
   }
 
   private async trySync(): Promise<void> {
+    const t0 = Date.now()
+    this.syncAttempts++
     try {
       const snapshots = await this.p2p.fetchSnapshots()
 
@@ -216,19 +275,25 @@ export class ConsensusEngine {
         } else if (typeof blockEngine.maybeAdoptSnapshot === "function") {
           ok = await blockEngine.maybeAdoptSnapshot(snapshot.blocks)
         }
+        if (ok) this.blocksAdopted++
         adopted = adopted || ok
       }
 
       if (adopted) {
+        this.syncAdoptions++
         const height = await Promise.resolve(this.chain.getHeight())
         log.info("sync adopted new tip", { height: height.toString() })
       }
 
+      this.lastSyncMs = Date.now() - t0
+      this.totalSyncMs += this.lastSyncMs
       this.syncFailures = 0
       if (this.status === "degraded" || this.status === "recovering") {
         this.tryRecover()
       }
     } catch (error) {
+      this.lastSyncMs = Date.now() - t0
+      this.totalSyncMs += this.lastSyncMs
       this.syncFailures++
       log.error("sync failed", { error: String(error), consecutive: this.syncFailures })
 
@@ -254,6 +319,7 @@ export class ConsensusEngine {
 
           await this.snapSync.importStateSnapshot(stateSnap)
           await this.snapSync.setStateRoot(stateSnap.stateRoot)
+          this.snapSyncs++
           log.info("snap sync complete", {
             accounts: stateSnap.accounts.length,
             blockHeight: stateSnap.blockHeight,
