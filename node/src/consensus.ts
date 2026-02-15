@@ -4,15 +4,26 @@ import { createLogger } from "./logger.ts"
 
 const log = createLogger("consensus")
 
+const MAX_CONSECUTIVE_FAILURES = 5
+const RECOVERY_COOLDOWN_MS = 30_000
+
 export interface ConsensusConfig {
   blockTimeMs: number
   syncIntervalMs: number
 }
 
+export type ConsensusStatus = "healthy" | "degraded" | "recovering"
+
 export class ConsensusEngine {
   private readonly chain: IChainEngine
   private readonly p2p: P2PNode
   private readonly cfg: ConsensusConfig
+  private proposeFailures = 0
+  private syncFailures = 0
+  private status: ConsensusStatus = "healthy"
+  private lastRecoveryMs = 0
+  private proposeTimer: ReturnType<typeof setInterval> | null = null
+  private syncTimer: ReturnType<typeof setInterval> | null = null
 
   constructor(chain: IChainEngine, p2p: P2PNode, cfg: ConsensusConfig) {
     this.chain = chain
@@ -21,20 +32,40 @@ export class ConsensusEngine {
   }
 
   start(): void {
-    setInterval(() => void this.tryPropose(), this.cfg.blockTimeMs)
-    setInterval(() => void this.trySync(), this.cfg.syncIntervalMs)
+    this.proposeTimer = setInterval(() => void this.tryPropose(), this.cfg.blockTimeMs)
+    this.syncTimer = setInterval(() => void this.trySync(), this.cfg.syncIntervalMs)
     void this.trySync()
   }
 
+  stop(): void {
+    if (this.proposeTimer) { clearInterval(this.proposeTimer); this.proposeTimer = null }
+    if (this.syncTimer) { clearInterval(this.syncTimer); this.syncTimer = null }
+  }
+
+  getStatus(): { status: ConsensusStatus; proposeFailures: number; syncFailures: number } {
+    return { status: this.status, proposeFailures: this.proposeFailures, syncFailures: this.syncFailures }
+  }
+
   private async tryPropose(): Promise<void> {
+    // Skip proposing in degraded/recovering mode
+    if (this.status !== "healthy") {
+      return
+    }
+
     try {
       const block = await this.chain.proposeNextBlock()
       if (!block) {
         return
       }
       await this.p2p.receiveBlock(block)
+      this.proposeFailures = 0
     } catch (error) {
-      log.error("propose failed", { error: String(error) })
+      this.proposeFailures++
+      log.error("propose failed", { error: String(error), consecutive: this.proposeFailures })
+
+      if (this.proposeFailures >= MAX_CONSECUTIVE_FAILURES) {
+        this.enterDegradedMode("propose")
+      }
     }
   }
 
@@ -43,7 +74,6 @@ export class ConsensusEngine {
       const snapshots = await this.p2p.fetchSnapshots()
       let adopted = false
 
-      // Support both snapshot-based and block-based sync
       const snapshotEngine = this.chain as ISnapshotSyncEngine
       const blockEngine = this.chain as IBlockSyncEngine
 
@@ -61,8 +91,36 @@ export class ConsensusEngine {
         const height = await Promise.resolve(this.chain.getHeight())
         log.info("sync adopted new tip", { height: height.toString() })
       }
+
+      this.syncFailures = 0
+      // Successful sync can recover from degraded mode
+      if (this.status === "degraded" || this.status === "recovering") {
+        this.tryRecover()
+      }
     } catch (error) {
-      log.error("sync failed", { error: String(error) })
+      this.syncFailures++
+      log.error("sync failed", { error: String(error), consecutive: this.syncFailures })
+
+      if (this.syncFailures >= MAX_CONSECUTIVE_FAILURES && this.status === "healthy") {
+        this.enterDegradedMode("sync")
+      }
     }
+  }
+
+  private enterDegradedMode(source: string): void {
+    this.status = "degraded"
+    log.warn("entering degraded mode", { source, proposeFailures: this.proposeFailures, syncFailures: this.syncFailures })
+  }
+
+  private tryRecover(): void {
+    const now = Date.now()
+    if (now - this.lastRecoveryMs < RECOVERY_COOLDOWN_MS) return
+
+    this.lastRecoveryMs = now
+    this.status = "recovering"
+    this.proposeFailures = 0
+    this.syncFailures = 0
+    this.status = "healthy"
+    log.info("recovered from degraded mode")
   }
 }
