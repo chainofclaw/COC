@@ -1,8 +1,8 @@
 # COC (ChainOfClaw) 技术架构文档
 
-> **版本**: v1.1.0
-> **更新日期**: 2026-02-14
-> **状态**: 生产就绪（127 测试通过，83.6% 覆盖率）
+> **版本**: v1.2.0
+> **更新日期**: 2026-02-15
+> **状态**: 生产就绪（190 测试通过）
 
 ---
 
@@ -21,10 +21,10 @@ COC 是基于 EVM 兼容的 PoSe (Proof of Service) 区块链，通过挑战-响
 
 | 组件 | 代码量 | 文件数 |
 |------|--------|--------|
-| TypeScript Runtime | ~7,200 行 | 83 |
+| TypeScript Runtime | ~9,000 行 | 95 |
 | Solidity 合约 | ~510 行 | 5 |
 | Solidity 测试合约 | ~280 行 | 4 |
-| 测试用例 | 127 个 | 31 |
+| 测试用例 | 190 个 | 35 |
 
 ---
 
@@ -64,9 +64,17 @@ COC 是基于 EVM 兼容的 PoSe (Proof of Service) 区块链，通过挑战-响
 
 - **chain-engine**: 区块生产、最终性确认、状态快照
 - **evm.ts**: EthereumJS VM，执行智能合约
-- **rpc.ts**: JSON-RPC 服务 (eth_call, eth_sendTransaction, eth_getStorageAt 等)
+- **rpc.ts**: JSON-RPC 服务（57+ 方法，含 eth_*、coc_*、txpool_*）
+- **websocket-rpc.ts**: WebSocket RPC（eth_subscribe，含订阅验证与限制）
+- **consensus.ts**: 共识引擎（降级模式、自动恢复）
+- **mempool.ts**: 交易池（EIP-1559 有效 gas 价格排序）
+- **p2p.ts**: HTTP gossip 网络（每 peer 去重、请求体限制）
+- **base-fee.ts**: EIP-1559 动态 baseFee 计算
+- **health.ts**: 健康检查（内存/WS/存储诊断）
+- **debug-trace.ts**: 交易追踪（debug_traceTransaction、trace_transaction）
 - **pose-engine**: PoSe 协议引擎，处理挑战验证逻辑
 - **crypto/signer**: secp256k1 签名与验证
+- **storage/**: LevelDB 持久化（区块索引、状态树、Nonce 存储）
 
 #### 2.2.2 运行时 (`runtime/`)
 
@@ -744,10 +752,10 @@ scoring:
 | 模块 | 测试数 | 文件数 |
 |------|--------|--------|
 | Contracts (Solidity) | 52 | 7 |
-| Node (EVM 引擎) | 11 | 2 |
-| Services (PoSe 运行时) | 53 | 13 |
+| Node (链引擎+EVM+RPC+WS+P2P+存储) | 83 | 9 |
+| Services (PoSe 运行时) | 44 | 13 |
 | Nodeops (运维策略) | 11 | 3 |
-| **总计** | **127** | **25** |
+| **总计** | **190** | **35** |
 
 ### 13.2 合约覆盖率（Phase 4）
 

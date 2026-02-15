@@ -69,6 +69,31 @@ The explorer (`explorer/`) is a Next.js 15 App Router application providing:
 | 9 | `8fbbbc7` | EVM bytecode disassembler + storage scanner with range scan and value interpretation |
 | 10 | `6339490` | Test coverage enhancement: 175 → 190 tests covering all new RPC methods and mempool APIs |
 
+### Hardening & Explorer Expansion (Cycles 11–20)
+
+| Cycle | Commit | Summary |
+|-------|--------|---------|
+| 11 | `82a33a4` | Fix TxHistory table structure and add gas column |
+| 12 | `2166fd2` | Fix formatBlock O(n*m) complexity, use actual gasUsed from receipts |
+| 13 | `ab40184` | Add request body limits (2MB P2P, 1MB RPC) and P2P broadcast concurrency control |
+| 14 | `cc66d03` | EIP-1559 effective gas price sorting in mempool |
+| 15 | `a73c4cf` | Add eth_mining/eth_hashrate/eth_coinbase RPC methods, improve WebSocket resilience |
+| 16 | `15eba37` | WebSocket subscription validation (address/topic format, per-client limits) |
+| 17 | `52f5f41` | Consensus error recovery with degraded mode and auto-recovery |
+| 18 | `9573e07` | Repair health checker (getHeight() fix), add memory/WS/storage diagnostics |
+| 19 | `1c42906` | P2P per-peer broadcast deduplication with BoundedSet and stats |
+| 20 | `278b7d9` | Validators explorer page + coc_validators RPC method |
+
+### Features & EIP-1559 (Cycles 21–25)
+
+| Cycle | Commit | Summary |
+|-------|--------|---------|
+| 21 | `3e636c8` | Chain statistics explorer page (block activity, TPS, gas usage visualization) |
+| 22 | `98cd0ae` | Pagination support for address transaction queries (offset parameter) |
+| 23 | `222ac8c` | EIP-1559 dynamic base fee calculation (50% target, 12.5% max change, 1 gwei floor) |
+| 24 | `92eb984` | Debug trace improvement with log-derived events and tx input data |
+| 25 | `cce7281` | Contracts listing page scanning recent blocks for deployments |
+
 ## Quick Start
 
 ### Run a local node

@@ -26,6 +26,7 @@ This matrix lists features by domain, with current status and primary code refer
 - **Chain snapshot persistence** — Implemented — `COC/node/src/storage.ts`
 - **LevelDB persistent storage** — Implemented (Phase 13.1) — `COC/node/src/storage/db.ts`
 - **Block/transaction indexing** — Implemented (Phase 13.1) — `COC/node/src/storage/block-index.ts`
+- **Address tx pagination** — Implemented — `COC/node/src/storage/block-index.ts`
 - **EVM state trie** — Implemented (Phase 13.1) — `COC/node/src/storage/state-trie.ts`
 - **Nonce registry persistence** — Implemented (Phase 13.1) — `COC/node/src/storage/nonce-store.ts`
 - **User file storage (IPFS-compatible)** — Implemented (core APIs) — `COC/node/src/ipfs-http.ts`
@@ -36,7 +37,8 @@ This matrix lists features by domain, with current status and primary code refer
 ## Mempool
 - **Gas‑price ordering** — Implemented — `COC/node/src/mempool.ts`
 - **Nonce continuity** — Implemented — `COC/node/src/mempool.ts`
-- **Fee market (EIP‑1559)** — Missing
+- **EIP-1559 effective gas price sorting** — Implemented — `COC/node/src/mempool.ts`
+- **Dynamic base fee calculation** — Implemented — `COC/node/src/base-fee.ts`
 
 ## PoSe (Off‑chain)
 - **Challenge factory** — Implemented — `COC/services/challenger/*`
@@ -65,7 +67,13 @@ This matrix lists features by domain, with current status and primary code refer
 - **Transaction viewer** — Implemented — `COC/explorer/src/app/tx/[hash]/page.tsx`
 - **Address explorer** — Implemented — `COC/explorer/src/app/address/[address]/page.tsx`
 - **Latest blocks feed** — Implemented — `COC/explorer/src/app/page.tsx`
-- **Real-time updates** — Missing
+- **Contract view** — Implemented — `COC/explorer/src/components/ContractView.tsx`
+- **Mempool page** — Implemented — `COC/explorer/src/app/mempool/page.tsx`
+- **Validators page** — Implemented — `COC/explorer/src/app/validators/page.tsx`
+- **Stats page** — Implemented — `COC/explorer/src/app/stats/page.tsx`
+- **Contracts listing** — Implemented — `COC/explorer/src/app/contracts/page.tsx`
+- **Network page** — Implemented — `COC/explorer/src/app/network/page.tsx`
+- **Real-time updates** — Implemented (WebSocket) — `COC/explorer/src/app/page.tsx`
 - **Contract verification** — Missing
 
 ## Node Operations
@@ -74,8 +82,30 @@ This matrix lists features by domain, with current status and primary code refer
 - **Agent hooks** — Implemented — `COC/nodeops/agent-hooks.ts`
 - **Policy hot-reload** — Missing
 
+## Networking (Advanced)
+- **Request body limits** — Implemented (2MB P2P, 1MB RPC) — `COC/node/src/p2p.ts`, `COC/node/src/rpc.ts`
+- **P2P broadcast concurrency** — Implemented (5 peers/batch) — `COC/node/src/p2p.ts`
+- **Per-peer broadcast dedup** — Implemented — `COC/node/src/p2p.ts`
+- **P2P stats/counters** — Implemented — `COC/node/src/p2p.ts`
+
+## WebSocket RPC
+- **eth_subscribe (newHeads)** — Implemented — `COC/node/src/websocket-rpc.ts`
+- **eth_subscribe (newPendingTransactions)** — Implemented — `COC/node/src/websocket-rpc.ts`
+- **eth_subscribe (logs)** — Implemented — `COC/node/src/websocket-rpc.ts`
+- **Subscription validation** — Implemented (address/topic format, max 10/client) — `COC/node/src/websocket-rpc.ts`
+
+## Consensus & Reliability
+- **Consensus error recovery** — Implemented (degraded mode, auto-recovery) — `COC/node/src/consensus.ts`
+- **Health checker** — Implemented (memory/WS/storage diagnostics) — `COC/node/src/health.ts`
+
+## Debug & Trace
+- **debug_traceTransaction** — Implemented — `COC/node/src/debug-trace.ts`
+- **debug_traceBlockByNumber** — Implemented — `COC/node/src/debug-trace.ts`
+- **trace_transaction** — Implemented (OpenEthereum format) — `COC/node/src/debug-trace.ts`
+
 ## Performance & Benchmarking
 - **EVM benchmarks** — Implemented — `COC/node/src/benchmarks/evm-benchmark.test.ts`
+- **formatBlock optimization** — Implemented (O(n) via Transaction.from) — `COC/node/src/rpc.ts`
 - **P2P benchmarks** — Missing
 - **Storage I/O benchmarks** — Missing
 - **Load testing** — Missing
