@@ -57,8 +57,16 @@ export class ConsensusEngine {
       if (!block) {
         return
       }
-      await this.p2p.receiveBlock(block)
+
+      // Block produced successfully — reset propose failures regardless of broadcast
       this.proposeFailures = 0
+
+      // Broadcast to peers (best-effort, failure doesn't affect local state)
+      try {
+        await this.p2p.receiveBlock(block)
+      } catch (broadcastErr) {
+        log.warn("block produced but broadcast failed", { error: String(broadcastErr), block: block.number.toString() })
+      }
 
       // Successful propose during recovery -> healthy
       if (this.status === "recovering") {
