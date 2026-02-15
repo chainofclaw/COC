@@ -253,3 +253,44 @@
 - `COC/node/src/state-snapshot.ts`（`exportStateSnapshot`、`importStateSnapshot`）
 - `COC/node/src/consensus.ts`（`SnapSyncProvider` 接口）
 - `COC/node/src/p2p.ts`（`/p2p/state-snapshot` 端点）
+
+## 21) BFT 等价检测
+**目标**：检测验证者双重投票以生成惩罚证据。
+
+算法：
+- 维护三层映射：`高度 → 阶段 → 验证者ID → 区块哈希`。
+- 每次投票（prepare/commit）时，检查该验证者在相同高度+阶段是否已为不同区块哈希投票。
+- 发现冲突则生成 `EquivocationEvidence`，包含两个冲突的区块哈希。
+- 裁剪旧高度以限制内存（可配置 `maxTrackedHeights`，默认 100）。
+- 裁剪在记录投票之后执行（而非之前），避免竞态条件。
+
+代码：
+- `COC/node/src/bft.ts`（`EquivocationDetector`）
+- `COC/node/src/bft-coordinator.ts`（集成）
+
+## 22) 双传输层区块/交易传播
+**目标**：通过并行传输路径最大化区块和交易传递可靠性。
+
+算法：
+- 出块时：同时通过 HTTP gossip（主）和 Wire 协议 TCP（辅）广播。
+- 通过 HTTP 接收交易时：中继至所有 wire 连接的节点（`broadcastFrame`）。
+- 两条传输路径独立运行 — 一条失败不影响另一条。
+- Wire 广播使用延迟绑定模式：函数引用在 wire 服务器初始化后设置。
+- 交易去重在应用层完成（mempool 拒绝重复交易）。
+
+代码：
+- `COC/node/src/consensus.ts`（`broadcastBlock` 含 wireBroadcast 回调）
+- `COC/node/src/index.ts`（`wireBroadcastFn`、`wireTxRelayFn`）
+
+## 23) 共识指标收集
+**目标**：追踪出块和同步性能以支持可观测性。
+
+算法：
+- 每次 `tryPropose()`：记录开始时间，递增 `blocksProposed` 或 `proposeFailed`，累积 `totalProposeMs`。
+- 每次 `trySync()`：记录开始时间，递增 `syncAttempts`，追踪 `syncAdoptions` 和 `blocksAdopted`。
+- 快照同步成功时：递增 `snapSyncs`。
+- `getMetrics()` 返回计算的平均值（总时间/次数）、最近操作时间和运行时间。
+- `startedAtMs` 在 `start()` 中设置用于计算运行时间。
+
+代码：
+- `COC/node/src/consensus.ts`（`ConsensusMetrics` 接口、`getMetrics()`）

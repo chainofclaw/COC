@@ -46,7 +46,12 @@ COC is an EVM-compatible blockchain prototype with PoSe (Proof-of-Service) settl
 - **TCP Transport**: Wire server (inbound TCP, handshake, frame dispatch) and wire client (outbound TCP, exponential backoff reconnect 1s-30s)
 - **DHT Network**: DHT network layer with bootstrap, iterative FIND_NODE lookup (alpha=3 parallelism), periodic refresh (5 min)
 - **Protocol Integration**: BFT coordinator + fork choice integrated into ConsensusEngine, snap sync provider, all features opt-in via config flags
-- **Testing**: 667 tests across 77 test files, covering chain engine, EVM, mempool, RPC, WebSocket, P2P, storage, IPFS, PoSe, BFT, DHT, wire protocol, fork choice, snap sync, and configuration
+- **Equivocation Detection**: Double-vote tracking with slashing evidence generation
+- **Consensus Metrics**: Block production and sync performance tracking (propose/sync times, success rates, uptime)
+- **Dual Transport**: Parallel HTTP gossip + TCP wire protocol for block and transaction propagation
+- **Wire FIND_NODE**: DHT peer discovery via wire protocol request/response messages
+- **Network Stats RPC**: `coc_getNetworkStats` endpoint aggregating P2P, wire, DHT, BFT stats
+- **Testing**: 695 tests across 78 test files, covering chain engine, EVM, mempool, RPC, WebSocket, P2P, storage, IPFS, PoSe, BFT, DHT, wire protocol, fork choice, snap sync, equivocation detection, consensus metrics, and wire connection management
 
 ### Blockchain Explorer Features
 
@@ -133,11 +138,20 @@ The explorer (`explorer/`) is a Next.js 15 App Router application providing:
 | 45 | `583b541` | Full test suite verification (640 tests) + core algorithms documentation |
 | 46 | `6aa68ef` | Update all documentation for Phase 14-25 development progress |
 
-### Protocol Integration (Cycles 47+)
+### Protocol Integration (Cycles 47–56)
 
 | Cycle | Commit | Summary |
 |-------|--------|---------|
-| 47 | — | Wire server/client TCP transport, DHT network layer, BFT/fork-choice/snap-sync consensus integration, 4 new test files (667 tests total) |
+| 47 | `59c5cee` | Wire server/client TCP transport, DHT network layer, BFT/fork-choice/snap-sync consensus integration, 4 new test files |
+| 48 | `3374448` | FIND_NODE wire protocol message (0x40/0x41) for DHT peer discovery via TCP |
+| 49 | `d0a645a` | BFT equivocation detection — double-vote tracking with slashing evidence |
+| 50 | `f0610f1` | Wire connection manager for outbound peer lifecycle (max connections, broadcast) |
+| 51 | `ddfae69` | `coc_getNetworkStats` RPC endpoint + fix bftCoordinator parameter threading |
+| 52 | `d7c8aab` | Dual HTTP+TCP block propagation in consensus engine |
+| 53 | `b24ecc4` | DHT periodic node announcement to connected peers (3-min interval) |
+| 54 | `c847e8b` | Consensus engine performance metrics tracking (propose/sync times, uptime) |
+| 55 | `9bc400a` | Wire protocol transaction relay + FindNode server handler wiring |
+| 56 | `be1c2ed` | Full test verification (695 tests) + documentation update |
 
 ## Quick Start
 

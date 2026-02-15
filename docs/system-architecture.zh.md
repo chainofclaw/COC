@@ -71,8 +71,9 @@ COC 是一个 EVM 兼容的区块链原型，结合轻量执行层与 PoSe（Pro
 7. 聚合批次提交到 PoSeManager，relayer 触发最终结算。
 
 ## 当前边界
-- 共识采用 ValidatorGovernance 权益加权出块 + 轮转降级。BFT 协调器已集成到 ConsensusEngine（通过 `enableBft` 可选启用）：在 `tryPropose()` 中启动 BFT 轮次，失败时降级为直接广播。分叉选择规则已集成到 `trySync()` 实现确定性链选择。
-- P2P 以 HTTP gossip 为主要传输 + 节点持久化 + DNS 种子发现。Wire 服务端/客户端提供可选 TCP 传输（`enableWireProtocol`）。DHT 网络层提供可选迭代节点发现（`enableDht`）。状态快照端点可用于快速同步。
+- 共识采用 ValidatorGovernance 权益加权出块 + 轮转降级。BFT 协调器已集成到 ConsensusEngine（通过 `enableBft` 可选启用）：在 `tryPropose()` 中启动 BFT 轮次，失败时降级为直接广播。分叉选择规则已集成到 `trySync()` 实现确定性链选择。等价检测追踪双重投票以生成惩罚证据。性能指标（出块时间、同步统计、运行时间）通过 `getMetrics()` 导出。
+- P2P 以 HTTP gossip 为主要传输 + 节点持久化 + DNS 种子发现。Wire 服务端/客户端提供可选 TCP 传输（`enableWireProtocol`），支持 FIND_NODE 请求/响应用于 DHT 查询。DHT 网络层提供可选迭代节点发现（`enableDht`），含定期节点公告。区块和交易通过双通道（HTTP+TCP）并行传播。Wire 连接管理器处理出站节点生命周期。状态快照端点可用于快速同步。
 - EVM 状态通过 PersistentStateManager + LevelDB 跨重启持久化。快照同步提供者已集成到 ConsensusEngine（通过 `enableSnapSync` 可选启用）。
 - IPFS 支持核心 HTTP API、网关、MFS、Pubsub 和 tar 归档 `get`。
+- RPC 提供 `coc_getNetworkStats`（P2P/Wire/DHT/BFT 统计）和 `coc_getBftStatus`（BFT 轮次状态含等价检测计数）。
 - 所有高级功能（BFT、线协议、DHT、快照同步）默认关闭，通过配置标志启用。

@@ -17,6 +17,7 @@ This matrix lists features by domain, with current status and primary code refer
 - **BFT-lite consensus rounds** — Implemented (Phase 28) — `COC/node/src/bft.ts`
 - **BFT coordinator** — Implemented (Phase 28) — `COC/node/src/bft-coordinator.ts`
 - **BFT status RPC** — Implemented (Phase 28) — `COC/node/src/rpc.ts`
+- **BFT equivocation detection** — Implemented (Phase 30) — `COC/node/src/bft.ts`
 - **Validator governance** — Implemented (Phase 22 + 26) — `COC/node/src/validator-governance.ts`, `COC/node/src/chain-engine-persistent.ts`
 - **Stake-weighted proposer** — Implemented (Phase 26) — `COC/node/src/chain-engine-persistent.ts`
 - **Block signature/stateRoot** — Implemented (Phase 26) — `COC/node/src/blockchain-types.ts`
@@ -36,6 +37,11 @@ This matrix lists features by domain, with current status and primary code refer
 - **Wire server (TCP inbound)** — Implemented (Phase 29) — `COC/node/src/wire-server.ts`
 - **Wire client (TCP outbound)** — Implemented (Phase 29) — `COC/node/src/wire-client.ts`
 - **State snapshot P2P** — Implemented (Phase 29) — `COC/node/src/p2p.ts`
+- **Wire FIND_NODE message** — Implemented (Phase 30) — `COC/node/src/wire-protocol.ts`
+- **Wire connection manager** — Implemented (Phase 30) — `COC/node/src/wire-connection-manager.ts`
+- **DHT node announcement** — Implemented (Phase 30) — `COC/node/src/dht-network.ts`
+- **Dual HTTP+TCP block propagation** — Implemented (Phase 30) — `COC/node/src/consensus.ts`
+- **Wire transaction relay** — Implemented (Phase 30) — `COC/node/src/index.ts`
 
 ## Storage
 - **Chain snapshot persistence** — Implemented — `COC/node/src/storage.ts`
@@ -125,6 +131,8 @@ This matrix lists features by domain, with current status and primary code refer
 - **BFT consensus integration** — Implemented (Phase 29, opt-in) — `COC/node/src/consensus.ts`
 - **Fork choice integration** — Implemented (Phase 29) — `COC/node/src/consensus.ts`
 - **Snap sync integration** — Implemented (Phase 29, opt-in) — `COC/node/src/consensus.ts`
+- **Consensus metrics** — Implemented (Phase 30) — `COC/node/src/consensus.ts`
+- **Network stats RPC** — Implemented (Phase 30) — `COC/node/src/rpc.ts`
 - **Health checker** — Implemented (memory/WS/storage diagnostics) — `COC/node/src/health.ts`
 
 ## Debug & Trace
