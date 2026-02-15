@@ -59,6 +59,8 @@ export interface NodeConfig {
   poseAuthNonceTtlMs: number
   poseAuthNonceMaxEntries: number
   poseAllowedChallengers: string[]
+  poseUseGovernanceChallengerAuth: boolean
+  poseChallengerAuthCacheTtlMs: number
   // BFT consensus
   enableBft: boolean
   bftPrepareTimeoutMs: number
@@ -69,6 +71,7 @@ export interface NodeConfig {
   // DHT peer discovery
   enableDht: boolean
   dhtBootstrapPeers: Array<{ id: string; address: string; port: number }>
+  dhtRequireAuthenticatedVerify: boolean
   // State snapshot sync
   enableSnapSync: boolean
   snapSyncThreshold: number
@@ -195,6 +198,20 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
       .map((x) => x.trim())
       .filter((x) => x.length > 0)
     : poseAllowedChallengersFromUser
+  const poseUseGovernanceChallengerAuth = parseBooleanFlag(
+    process.env.COC_POSE_USE_GOVERNANCE_CHALLENGER_AUTH
+      ?? (user as Record<string, unknown>).poseUseGovernanceChallengerAuth,
+    false,
+  )
+  const poseChallengerAuthCacheTtlMsEnv = process.env.COC_POSE_CHALLENGER_AUTH_CACHE_TTL_MS
+  const poseChallengerAuthCacheTtlMs = poseChallengerAuthCacheTtlMsEnv !== undefined
+    ? Number(poseChallengerAuthCacheTtlMsEnv)
+    : Number((user as Record<string, unknown>).poseChallengerAuthCacheTtlMs ?? 30_000)
+  const dhtRequireAuthenticatedVerify = parseBooleanFlag(
+    process.env.COC_DHT_REQUIRE_AUTHENTICATED_VERIFY
+      ?? (user as Record<string, unknown>).dhtRequireAuthenticatedVerify,
+    true,
+  )
 
   // Resolve node private key: env var → file → auto-generate
   const nodePrivateKey = await resolveNodeKey(dataDir)
@@ -248,6 +265,8 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     poseAuthNonceTtlMs,
     poseAuthNonceMaxEntries,
     poseAllowedChallengers,
+    poseUseGovernanceChallengerAuth,
+    poseChallengerAuthCacheTtlMs,
     enableBft: false,
     bftPrepareTimeoutMs: 5000,
     bftCommitTimeoutMs: 5000,
@@ -255,6 +274,7 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     wirePort: 19781,
     enableDht: false,
     dhtBootstrapPeers: [],
+    dhtRequireAuthenticatedVerify,
     enableSnapSync: false,
     snapSyncThreshold: 100,
     nodePrivateKey,
@@ -275,6 +295,9 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     poseAuthNonceTtlMs,
     poseAuthNonceMaxEntries,
     poseAllowedChallengers,
+    poseUseGovernanceChallengerAuth,
+    poseChallengerAuthCacheTtlMs,
+    dhtRequireAuthenticatedVerify,
     storage: { ...storageDefaults, ...userStorage },
   }
 }
@@ -286,6 +309,15 @@ function normalizeInboundAuthMode(input: unknown): "off" | "monitor" | "enforce"
     return v
   }
   return undefined
+}
+
+function parseBooleanFlag(input: unknown, fallback: boolean): boolean {
+  if (typeof input === "boolean") return input
+  if (typeof input !== "string") return fallback
+  const v = input.trim().toLowerCase()
+  if (v === "1" || v === "true" || v === "yes" || v === "on") return true
+  if (v === "0" || v === "false" || v === "no" || v === "off") return false
+  return fallback
 }
 
 async function resolveNodeKey(dataDir: string): Promise<string> {
@@ -449,6 +481,20 @@ export function validateConfig(cfg: Partial<NodeConfig>): string[] {
         }
       }
     }
+  }
+
+  if (cfg.poseUseGovernanceChallengerAuth !== undefined && typeof cfg.poseUseGovernanceChallengerAuth !== "boolean") {
+    errors.push("poseUseGovernanceChallengerAuth must be a boolean")
+  }
+
+  if (cfg.poseChallengerAuthCacheTtlMs !== undefined) {
+    if (!Number.isInteger(cfg.poseChallengerAuthCacheTtlMs) || cfg.poseChallengerAuthCacheTtlMs < 1000) {
+      errors.push("poseChallengerAuthCacheTtlMs must be >= 1000")
+    }
+  }
+
+  if (cfg.dhtRequireAuthenticatedVerify !== undefined && typeof cfg.dhtRequireAuthenticatedVerify !== "boolean") {
+    errors.push("dhtRequireAuthenticatedVerify must be a boolean")
   }
 
   if (cfg.ipfsPort !== undefined) {

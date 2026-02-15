@@ -6,6 +6,7 @@ import { PoSeEngine } from "./pose-engine.ts"
 import { ChainEngine } from "./chain-engine.ts"
 import { PersistentChainEngine } from "./chain-engine-persistent.ts"
 import type { IChainEngine } from "./chain-engine-types.ts"
+import { hasGovernance } from "./chain-engine-types.ts"
 import { P2PNode } from "./p2p.ts"
 import type { BftMessagePayload } from "./p2p.ts"
 import { ConsensusEngine } from "./consensus.ts"
@@ -15,6 +16,7 @@ import { UnixFsBuilder } from "./ipfs-unixfs.ts"
 import { IpfsHttpServer } from "./ipfs-http.ts"
 import { createNodeSigner } from "./crypto/signer.ts"
 import { PersistentPoseAuthNonceTracker } from "./pose-http.ts"
+import { createPoseChallengerAuthorizer } from "./pose-authorizer.ts"
 import { migrateLegacySnapshot } from "./storage/migrate-legacy.ts"
 import { startWsRpcServer } from "./websocket-rpc.ts"
 import { handleRpcMethod } from "./rpc.ts"
@@ -340,6 +342,22 @@ setInterval(() => poseAuthNonceTracker.cleanup(), 300_000).unref()
 if (config.poseAuthNonceRegistryPath) {
   setInterval(() => poseAuthNonceTracker.compact(), 60 * 60 * 1000).unref()
 }
+const poseChallengerAuthorizer = config.poseUseGovernanceChallengerAuth
+  ? createPoseChallengerAuthorizer({
+      staticAllowlist: config.poseAllowedChallengers,
+      cacheTtlMs: config.poseChallengerAuthCacheTtlMs,
+      dynamicResolver: async (senderId) => {
+        if (!hasGovernance(chain)) return false
+        const activeValidators = chain.governance.getActiveValidators()
+        return activeValidators.some((v) =>
+          v.active && (
+            v.id.toLowerCase() === senderId ||
+            v.address.toLowerCase() === senderId
+          ),
+        )
+      },
+    })
+  : undefined
 
 startRpcServer(
   config.rpcBind,
@@ -358,6 +376,7 @@ startRpcServer(
     verifier: nodeSigner,
     nonceTracker: poseAuthNonceTracker,
     allowedChallengers: config.poseAllowedChallengers,
+    challengerAuthorizer: poseChallengerAuthorizer,
   },
   {
     nodeId: config.nodeId,
@@ -492,6 +511,7 @@ if (config.enableDht) {
     wireClients,
     signer: nodeSigner,
     verifier: nodeSigner,
+    requireAuthenticatedVerify: config.dhtRequireAuthenticatedVerify,
     wireClientByPeerId,
     onPeerDiscovered: (peer) => {
       p2p.discovery.addDiscoveredPeers([{ id: peer.id, url: `http://${peer.address}` }])

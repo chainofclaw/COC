@@ -1,6 +1,6 @@
 import test, { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { BoundedSet, P2PNode, buildP2PIdentityChallengeMessage } from "./p2p.ts"
+import { BoundedSet, P2PNode, buildP2PIdentityChallengeMessage, buildSignedP2PPayload } from "./p2p.ts"
 import type { Hex, ChainBlock, ChainSnapshot } from "./blockchain-types.ts"
 import { createNodeSigner } from "./crypto/signer.ts"
 
@@ -174,5 +174,65 @@ describe("P2P inbound rate limit", () => {
     assert.equal(r1.status, 200)
     assert.equal(r2.status, 200)
     assert.equal(r3.status, 429)
+  })
+})
+
+describe("P2P inbound security scoring", () => {
+  it("temporarily bans abusive source after repeated auth failures", async () => {
+    const signer = createNodeSigner("0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d")
+    const port = 30100 + Math.floor(Math.random() * 200)
+    const p2p = new P2PNode(
+      {
+        bind: "127.0.0.1",
+        port,
+        peers: [],
+        nodeId: signer.nodeId,
+        enableDiscovery: false,
+        inboundAuthMode: "enforce",
+        verifier: signer,
+        inboundRateLimitWindowMs: 60_000,
+        inboundRateLimitMaxRequests: 1_000,
+      },
+      {
+        onTx: async () => {},
+        onBlock: async () => {},
+        onSnapshotRequest: () => ({ height: 0, latestHash: "0x0" as Hex, blocks: [] }) as unknown as ChainSnapshot,
+      },
+    )
+    p2p.start()
+    await new Promise((r) => setTimeout(r, 100))
+
+    const url = `http://127.0.0.1:${port}/p2p/gossip-tx`
+    for (let i = 0; i < 5; i++) {
+      const signed = buildSignedP2PPayload("/p2p/gossip-tx", { rawTx: "0x1234" }, signer, Date.now())
+      const badPayload = {
+        ...signed,
+        _auth: {
+          ...(signed._auth as Record<string, unknown>),
+          signature: "0xdeadbeef",
+        },
+      }
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(badPayload),
+      })
+      assert.equal(res.status, 401)
+    }
+
+    const signed = buildSignedP2PPayload("/p2p/gossip-tx", { rawTx: "0x1234" }, signer, Date.now())
+    const badPayload = {
+      ...signed,
+      _auth: {
+        ...(signed._auth as Record<string, unknown>),
+        signature: "0xdeadbeef",
+      },
+    }
+    const banned = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(badPayload),
+    })
+    assert.equal(banned.status, 429)
   })
 })

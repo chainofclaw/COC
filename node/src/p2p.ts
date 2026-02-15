@@ -380,8 +380,16 @@ export class P2PNode {
       }
 
       const clientIp = req.socket.remoteAddress ?? "unknown"
+      const inboundSourcePeerId = this.inboundSourcePeerId(clientIp)
+      this.scoring.addPeer(inboundSourcePeerId, `inbound://${clientIp}`)
+      if ((req.url ?? "").startsWith("/p2p/") && this.scoring.isBanned(inboundSourcePeerId)) {
+        res.writeHead(429, { "content-type": "application/json" })
+        res.end(serializeJson({ error: "peer temporarily banned" }))
+        return
+      }
       if ((req.url ?? "").startsWith("/p2p/") && !this.inboundRateLimiter.allow(clientIp)) {
         this.rateLimitedRequests += 1
+        this.scoring.recordTimeout(inboundSourcePeerId)
         res.writeHead(429, { "content-type": "application/json" })
         res.end(serializeJson({ error: "rate limit exceeded" }))
         return
@@ -521,6 +529,7 @@ export class P2PNode {
               this.authMissingRequests += 1
               if (authMode === "enforce") {
                 this.authRejectedRequests += 1
+                this.scoring.recordFailure(inboundSourcePeerId)
                 res.writeHead(401)
                 res.end(serializeJson({ error: "missing auth envelope" }))
                 return
@@ -534,12 +543,14 @@ export class P2PNode {
                 this.authInvalidRequests += 1
                 if (authMode === "enforce") {
                   this.authRejectedRequests += 1
+                  this.scoring.recordInvalidData(inboundSourcePeerId)
                   res.writeHead(401)
                   res.end(serializeJson({ error: authCheck.reason }))
                   return
                 }
               } else {
                 this.authAcceptedRequests += 1
+                this.scoring.recordSuccess(inboundSourcePeerId)
               }
             }
           }
@@ -771,7 +782,7 @@ export class P2PNode {
       const signedChallenge = String(info?.challenge ?? "")
       const signature = String(info?.signature ?? "")
       if (!reported || reported !== claimed || signedChallenge !== challenge || !signature) {
-        this.discoveryIdentityFailures += 1
+        this.recordDiscoveryIdentityFailure(peer, "invalid")
         log.warn("peer identity mismatch during discovery verification", {
           claimed: peer.id,
           reported: info?.nodeId,
@@ -783,7 +794,7 @@ export class P2PNode {
       }
       const message = buildP2PIdentityChallengeMessage(challenge, claimed)
       if (!verifier.verifyNodeSig(message, signature, claimed)) {
-        this.discoveryIdentityFailures += 1
+        this.recordDiscoveryIdentityFailure(peer, "invalid")
         log.warn("peer identity signature verification failed", {
           claimed: peer.id,
           url: peer.url,
@@ -792,9 +803,26 @@ export class P2PNode {
       }
       return true
     } catch {
-      this.discoveryIdentityFailures += 1
+      this.recordDiscoveryIdentityFailure(peer, "failure")
       return false
     }
+  }
+
+  private inboundSourcePeerId(clientIp: string): string {
+    const normalized = clientIp.startsWith("::ffff:")
+      ? clientIp.slice(7)
+      : clientIp
+    return `inbound:${normalized}`
+  }
+
+  private recordDiscoveryIdentityFailure(peer: NodePeer, kind: "invalid" | "failure"): void {
+    this.discoveryIdentityFailures += 1
+    this.scoring.addPeer(peer.id, peer.url)
+    if (kind === "invalid") {
+      this.scoring.recordInvalidData(peer.id)
+      return
+    }
+    this.scoring.recordFailure(peer.id)
   }
 }
 

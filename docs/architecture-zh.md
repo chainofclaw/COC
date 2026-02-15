@@ -68,11 +68,11 @@ COC 是基于 EVM 兼容的 PoSe (Proof of Service) 区块链，通过挑战-响
 - **websocket-rpc.ts**: WebSocket RPC（eth_subscribe，含订阅验证与限制）
 - **consensus.ts**: 共识引擎（降级模式、自动恢复）
 - **mempool.ts**: 交易池（EIP-1559 有效 gas 价格排序）
-- **p2p.ts**: HTTP gossip 网络（每 peer 去重、请求体限制）
+- **p2p.ts**: HTTP gossip 网络（每 peer 去重、请求体限制、入站签名鉴权、来源评分封禁联动）
 - **base-fee.ts**: EIP-1559 动态 baseFee 计算
 - **health.ts**: 健康检查（内存/WS/存储诊断）
 - **debug-trace.ts**: 交易追踪（debug_traceTransaction、trace_transaction）
-- **pose-engine**: PoSe 协议引擎，处理挑战验证逻辑
+- **pose-engine**: PoSe 协议引擎（全局预算 + 分层挑战配额，处理挑战验证逻辑）
 - **crypto/signer**: secp256k1 签名与验证
 - **storage/**: LevelDB 持久化（区块索引、状态树、Nonce 存储）
 
@@ -460,7 +460,13 @@ class NonceRegistry {
 }
 ```
 
-**局限**: 纯内存态，重启丢失（P2 待持久化到 LevelDB）。
+**现状**: 已支持持久化、TTL 和容量上限，节点重启后仍可维持重放保护窗口。
+
+### 4.7 网络入口与发现层加固（新增）
+
+- PoSe HTTP 入站鉴权支持 `off/monitor/enforce`，并可通过 `challengerAuthorizer` 扩展为动态角色校验（含缓存）。
+- DHT peer 验证默认 `fail-closed`：当握手鉴权不可用时拒绝 peer，仅在显式关闭开关时才允许 TCP fallback。
+- P2P 入站来源接入 `PeerScoring`，鉴权失败/限流命中可触发临时封禁；discovery 身份失败联动惩罚打分。
 
 ---
 
