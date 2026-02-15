@@ -65,6 +65,7 @@ export interface LogFilter {
   fromBlock?: bigint
   toBlock?: bigint
   address?: Hex
+  addresses?: Hex[]
   topics?: Array<Hex | null>
 }
 
@@ -338,8 +339,12 @@ function padBlockNumber(n: bigint): string {
 }
 
 function matchLogFilter(log: IndexedLog, filter: LogFilter): boolean {
+  const logAddr = log.address.toLowerCase()
   if (filter.address) {
-    if (log.address.toLowerCase() !== filter.address.toLowerCase()) return false
+    if (logAddr !== filter.address.toLowerCase()) return false
+  }
+  if (filter.addresses && filter.addresses.length > 0) {
+    if (!filter.addresses.some((a) => a.toLowerCase() === logAddr)) return false
   }
   if (filter.topics && filter.topics.length > 0) {
     for (let i = 0; i < filter.topics.length; i++) {
