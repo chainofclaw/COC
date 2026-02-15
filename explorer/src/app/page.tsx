@@ -6,16 +6,33 @@ import { LiveTransactions } from '@/components/LiveTransactions'
 
 export const dynamic = 'force-dynamic'
 
+interface ChainStatsRpc {
+  blockHeight: string
+  latestBlockTime: number
+  blocksPerMinute: number
+  pendingTxCount: number
+  recentTxCount: number
+  validatorCount: number
+  chainId: string
+}
+
 async function getChainStats() {
-  const [blockNumber, gasPrice, chainId, syncing, peerCount] = await Promise.all([
-    provider.getBlockNumber(),
+  // Use coc_chainStats for efficient server-side aggregation
+  const [chainStats, gasPrice, syncing, peerCount] = await Promise.all([
+    rpcCall<ChainStatsRpc>('coc_chainStats').catch(() => null),
     rpcCall<string>('eth_gasPrice').catch(() => '0x0'),
-    rpcCall<string>('eth_chainId').catch(() => '0x495c'),
     rpcCall<boolean>('eth_syncing').catch(() => false),
     rpcCall<string>('net_peerCount').catch(() => '0x0'),
   ])
 
-  // Calculate avg block time from last 10 blocks
+  const blockNumber = chainStats
+    ? parseInt(chainStats.blockHeight, 16)
+    : await provider.getBlockNumber()
+  const chainId = chainStats
+    ? parseInt(chainStats.chainId, 16)
+    : 18780
+
+  // Calculate avg block time from newest and 10th-newest block
   let avgBlockTimeMs = 0
   if (blockNumber > 1) {
     const count = Math.min(10, blockNumber)
@@ -28,33 +45,26 @@ async function getChainStats() {
     }
   }
 
-  // Count total txs in last 10 blocks
-  let recentTxCount = 0
-  const recentBlockCount = Math.min(10, blockNumber + 1)
-  const recentBlocks = await Promise.all(
-    Array.from({ length: recentBlockCount }, (_, i) => provider.getBlock(blockNumber - i))
-  )
-  for (const b of recentBlocks) {
-    if (b) recentTxCount += b.transactions.length
-  }
-
   return {
     blockNumber,
     gasPrice: parseInt(gasPrice, 16),
-    chainId: parseInt(chainId, 16),
+    chainId,
     syncing,
     peerCount: parseInt(peerCount, 16),
     avgBlockTimeMs,
-    recentTxCount,
-    recentBlockCount,
+    recentTxCount: chainStats?.recentTxCount ?? 0,
+    blocksPerMinute: chainStats?.blocksPerMinute ?? 0,
+    pendingTxCount: chainStats?.pendingTxCount ?? 0,
+    validatorCount: chainStats?.validatorCount ?? 0,
   }
 }
 
 export default async function HomePage() {
   const stats = await getChainStats()
 
-  // Fetch latest 20 blocks
-  const blockPromises = Array.from({ length: Math.min(20, stats.blockNumber + 1) }, (_, i) =>
+  // Fetch latest 10 blocks (reduced from 20 for faster load)
+  const blockCount = Math.min(10, stats.blockNumber + 1)
+  const blockPromises = Array.from({ length: blockCount }, (_, i) =>
     provider.getBlock(stats.blockNumber - i)
   )
   const blocks = await Promise.all(blockPromises)
@@ -69,15 +79,18 @@ export default async function HomePage() {
           value={stats.avgBlockTimeMs > 0 ? `${(stats.avgBlockTimeMs / 1000).toFixed(1)}s` : 'N/A'}
         />
         <StatCard
-          label="Recent Txs"
-          value={`${stats.recentTxCount}`}
-          sub={`last ${stats.recentBlockCount} blocks`}
+          label="Blocks/min"
+          value={stats.blocksPerMinute > 0 ? stats.blocksPerMinute.toFixed(1) : 'N/A'}
         />
         <StatCard label="Peers" value={stats.peerCount.toString()} />
         <StatCard label="Gas Price" value={`${(stats.gasPrice / 1e9).toFixed(0)} Gwei`} />
-        <StatCard label="Chain ID" value={`${stats.chainId} (0x${stats.chainId.toString(16)})`} />
-        <StatCard label="Syncing" value={stats.syncing ? 'Yes' : 'No'} />
-        <StatCard label="Network" value="ChainOfClaw" />
+        <StatCard label="Pending Txs" value={stats.pendingTxCount.toString()} />
+        <StatCard
+          label="Recent Txs"
+          value={stats.recentTxCount.toLocaleString()}
+          sub="last 100 blocks"
+        />
+        <StatCard label="Validators" value={stats.validatorCount.toString()} />
       </div>
 
       {/* Real-time section */}
