@@ -1,7 +1,10 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
+import { tmpdir } from "node:os"
 import { createNodeSigner } from "./crypto/signer.ts"
-import { BoundedSet, P2PNode, buildSignedP2PPayload, verifySignedP2PPayload } from "./p2p.ts"
+import { BoundedSet, P2PNode, PersistentAuthNonceTracker, buildSignedP2PPayload, verifySignedP2PPayload } from "./p2p.ts"
 
 const TEST_KEY = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
 
@@ -84,5 +87,47 @@ describe("P2P auth envelope", () => {
       },
     )
     assert.equal(p2p.getStats().inboundAuthMode, "monitor")
+  })
+
+  it("persists auth nonce across tracker restarts", () => {
+    const dir = mkdtempSync(join(tmpdir(), "coc-p2p-auth-"))
+    try {
+      const file = join(dir, "nonce.log")
+      const tracker1 = new PersistentAuthNonceTracker({
+        maxSize: 100,
+        ttlMs: 60_000,
+        persistencePath: file,
+        nowFn: () => 1000,
+      })
+      tracker1.add("node-1:nonce-a")
+
+      const tracker2 = new PersistentAuthNonceTracker({
+        maxSize: 100,
+        ttlMs: 60_000,
+        persistencePath: file,
+        nowFn: () => 1000,
+      })
+      assert.equal(tracker2.has("node-1:nonce-a"), true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("drops expired persisted nonces based on ttl", () => {
+    const dir = mkdtempSync(join(tmpdir(), "coc-p2p-auth-"))
+    try {
+      const file = join(dir, "nonce.log")
+      writeFileSync(file, "100\told-nonce\n80\tolder-nonce\n")
+      const tracker = new PersistentAuthNonceTracker({
+        maxSize: 100,
+        ttlMs: 50,
+        persistencePath: file,
+        nowFn: () => 200,
+      })
+      assert.equal(tracker.has("old-nonce"), false)
+      assert.equal(tracker.has("older-nonce"), false)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

@@ -1,16 +1,70 @@
+import crypto from "node:crypto"
 import type http from "node:http"
 import type { PoSeEngine } from "./pose-engine.ts"
 import type { ChallengeMessage, ReceiptMessage } from "../../services/common/pose-types.ts"
 import { RateLimiter } from "./rate-limiter.ts"
+import { keccak256Hex } from "../../services/relayer/keccak256.ts"
+import type { NodeSigner, SignatureVerifier } from "./crypto/signer.ts"
 
 const MAX_POSE_BODY = 1024 * 1024 // 1 MB
 const poseRateLimiter = new RateLimiter(60_000, 60)
 setInterval(() => poseRateLimiter.cleanup(), 300_000).unref()
+const DEFAULT_POSE_AUTH_MAX_CLOCK_SKEW_MS = 120_000
+const HEX32_RE = /^0x[0-9a-fA-F]{64}$/
+
+export interface PoseAuthEnvelope {
+  senderId: string
+  timestampMs: number
+  nonce: string
+  signature: string
+}
+
+interface AuthNonceTracker {
+  has(value: string): boolean
+  add(value: string): void
+}
+
+class BoundedSet<T> implements AuthNonceTracker {
+  private readonly maxSize: number
+  private readonly items = new Set<T>()
+  private readonly insertOrder: T[] = []
+
+  constructor(maxSize: number) {
+    this.maxSize = maxSize
+  }
+
+  has(value: T): boolean {
+    return this.items.has(value)
+  }
+
+  add(value: T): void {
+    if (this.items.has(value)) return
+    if (this.items.size >= this.maxSize) {
+      const oldest = this.insertOrder.shift()
+      if (oldest !== undefined) {
+        this.items.delete(oldest)
+      }
+    }
+    this.items.add(value)
+    this.insertOrder.push(value)
+  }
+}
+
+export interface PoseInboundAuthOptions {
+  enableInboundAuth?: boolean
+  inboundAuthMode?: "off" | "monitor" | "enforce"
+  authMaxClockSkewMs?: number
+  verifier?: SignatureVerifier
+  allowedChallengers?: string[]
+  nonceTracker?: AuthNonceTracker
+}
+
+const defaultNonceTracker = new BoundedSet<string>(100_000)
 
 interface PoseRouteHandler {
   method: string
   path: string
-  handler: (body: string, res: http.ServerResponse) => void
+  handler: (payload: Record<string, unknown>, res: http.ServerResponse) => void
 }
 
 export function registerPoseRoutes(
@@ -20,12 +74,15 @@ export function registerPoseRoutes(
     {
       method: "POST",
       path: "/pose/challenge",
-      handler: (body, res) => {
-        const payload = JSON.parse(body || "{}") as { nodeId?: string }
-        if (!payload.nodeId) {
+      handler: (payload, res) => {
+        const nodeId = String(payload.nodeId ?? "").trim()
+        if (!nodeId) {
           return jsonResponse(res, 400, { error: "missing nodeId" })
         }
-        const challenge = pose.issueChallenge(payload.nodeId)
+        if (!HEX32_RE.test(nodeId)) {
+          return jsonResponse(res, 400, { error: "invalid nodeId: expected hex32" })
+        }
+        const challenge = pose.issueChallenge(nodeId)
         if (!challenge) {
           return jsonResponse(res, 429, { error: "challenge quota exceeded" })
         }
@@ -35,8 +92,7 @@ export function registerPoseRoutes(
     {
       method: "POST",
       path: "/pose/receipt",
-      handler: (body, res) => {
-        const payload = JSON.parse(body || "{}") as { challengeId?: string; challenge?: unknown; receipt?: unknown }
+      handler: (payload, res) => {
         if (!payload.receipt) {
           return jsonResponse(res, 400, { error: "missing receipt" })
         }
@@ -47,7 +103,7 @@ export function registerPoseRoutes(
         }
         const challengeId = payload.challengeId
           ?? String((payload.challenge as Record<string, unknown> | undefined)?.challengeId ?? rc.challengeId)
-        if (!challengeId.startsWith("0x")) {
+        if (!HEX32_RE.test(challengeId)) {
           return jsonResponse(res, 400, { error: "invalid challengeId" })
         }
 
@@ -82,7 +138,7 @@ export function registerPoseRoutes(
     {
       method: "GET",
       path: "/pose/status",
-      handler: (_body, res) => {
+      handler: (_payload, res) => {
         return jsonResponse(res, 200, {
           epochId: pose.getEpochId().toString(),
           ts: Date.now(),
@@ -96,6 +152,7 @@ export function handlePoseRequest(
   routes: PoseRouteHandler[],
   req: http.IncomingMessage,
   res: http.ServerResponse,
+  authOptions: PoseInboundAuthOptions = {},
 ): boolean {
   const method = req.method ?? ""
   const url = req.url ?? ""
@@ -111,7 +168,7 @@ export function handlePoseRequest(
   }
 
   if (method === "GET") {
-    route.handler("", res)
+    route.handler({}, res)
     return true
   }
 
@@ -131,12 +188,133 @@ export function handlePoseRequest(
   req.on("end", () => {
     if (aborted) return
     try {
-      route.handler(body, res)
+      const parsedBody = JSON.parse(body || "{}")
+      if (!parsedBody || typeof parsedBody !== "object" || Array.isArray(parsedBody)) {
+        jsonResponse(res, 400, { error: "invalid JSON object body" })
+        return
+      }
+
+      const authMode = resolveInboundAuthMode(authOptions)
+      const allowedChallengers = new Set(
+        (authOptions.allowedChallengers ?? []).map((x) => x.toLowerCase()),
+      )
+      let payload = parsedBody as Record<string, unknown>
+
+      if (authMode !== "off") {
+        if (!authOptions.verifier) {
+          jsonResponse(res, 500, { error: "pose inbound auth enabled without verifier" })
+          return
+        }
+
+        if (!hasAuthEnvelope(payload)) {
+          if (authMode === "enforce") {
+            jsonResponse(res, 401, { error: "missing auth envelope" })
+            return
+          }
+        } else {
+          const authCheck = verifySignedPosePayload(url, payload, authOptions.verifier, {
+            maxClockSkewMs: authOptions.authMaxClockSkewMs ?? DEFAULT_POSE_AUTH_MAX_CLOCK_SKEW_MS,
+            nonceTracker: authOptions.nonceTracker ?? defaultNonceTracker,
+          })
+          if (!authCheck.ok) {
+            if (authMode === "enforce") {
+              jsonResponse(res, 401, { error: authCheck.reason })
+              return
+            }
+          } else {
+            if (allowedChallengers.size > 0 && !allowedChallengers.has(authCheck.senderId.toLowerCase())) {
+              if (authMode === "enforce") {
+                jsonResponse(res, 403, { error: "challenger not allowed" })
+                return
+              }
+            } else {
+              payload = authCheck.payload
+            }
+          }
+        }
+      }
+
+      route.handler(payload, res)
     } catch (error) {
-      jsonResponse(res, 500, { error: String(error) })
+      jsonResponse(res, 400, { error: String(error) })
     }
   })
   return true
+}
+
+export function buildPoseAuthMessage(path: string, senderId: string, timestampMs: number, nonce: string, payloadHash: string): string {
+  return `pose:http:${path}:${senderId}:${timestampMs}:${nonce}:${payloadHash}`
+}
+
+export function buildSignedPosePayload(
+  path: string,
+  payload: Record<string, unknown>,
+  signer: NodeSigner,
+  nowMs = Date.now(),
+): Record<string, unknown> {
+  const payloadHash = hashPayload(payload)
+  const nonce = crypto.randomUUID()
+  const signature = signer.sign(buildPoseAuthMessage(path, signer.nodeId, nowMs, nonce, payloadHash))
+  return {
+    ...payload,
+    _auth: {
+      senderId: signer.nodeId,
+      timestampMs: nowMs,
+      nonce,
+      signature,
+    } satisfies PoseAuthEnvelope,
+  }
+}
+
+export function verifySignedPosePayload(
+  path: string,
+  payload: unknown,
+  verifier: SignatureVerifier,
+  opts: {
+    maxClockSkewMs?: number
+    nowMs?: number
+    nonceTracker?: AuthNonceTracker
+  } = {},
+): { ok: true; senderId: string; payload: Record<string, unknown> } | { ok: false; reason: string } {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return { ok: false, reason: "invalid payload object" }
+  }
+
+  const obj = payload as Record<string, unknown>
+  const auth = obj._auth
+  if (!auth || typeof auth !== "object" || Array.isArray(auth)) {
+    return { ok: false, reason: "missing auth envelope" }
+  }
+
+  const authObj = auth as Record<string, unknown>
+  const senderId = String(authObj.senderId ?? "")
+  const timestampMs = Number(authObj.timestampMs ?? 0)
+  const nonce = String(authObj.nonce ?? "")
+  const signature = String(authObj.signature ?? "")
+  if (!senderId || !signature || !nonce || !Number.isFinite(timestampMs) || timestampMs <= 0) {
+    return { ok: false, reason: "invalid auth envelope fields" }
+  }
+
+  const nowMs = opts.nowMs ?? Date.now()
+  const maxClockSkewMs = opts.maxClockSkewMs ?? DEFAULT_POSE_AUTH_MAX_CLOCK_SKEW_MS
+  if (Math.abs(nowMs - timestampMs) > maxClockSkewMs) {
+    return { ok: false, reason: "auth timestamp out of range" }
+  }
+
+  const payloadNoAuth = stripAuthEnvelope(obj)
+  const replayKey = `${senderId.toLowerCase()}:${nonce}`
+  if (opts.nonceTracker?.has(replayKey)) {
+    return { ok: false, reason: "auth nonce replay detected" }
+  }
+
+  const payloadHash = hashPayload(payloadNoAuth)
+  const message = buildPoseAuthMessage(path, senderId, timestampMs, nonce, payloadHash)
+  if (!verifier.verifyNodeSig(message, signature, senderId)) {
+    return { ok: false, reason: "invalid auth signature" }
+  }
+
+  opts.nonceTracker?.add(replayKey)
+  return { ok: true, senderId, payload: payloadNoAuth }
 }
 
 function jsonResponse(res: http.ServerResponse, code: number, payload: unknown): void {
@@ -144,4 +322,45 @@ function jsonResponse(res: http.ServerResponse, code: number, payload: unknown):
   res.end(JSON.stringify(payload, (_key, value) =>
     typeof value === "bigint" ? value.toString() : value
   ))
+}
+
+function hasAuthEnvelope(payload: Record<string, unknown>): boolean {
+  return !!payload._auth && typeof payload._auth === "object" && !Array.isArray(payload._auth)
+}
+
+function stripAuthEnvelope(payload: Record<string, unknown>): Record<string, unknown> {
+  const next = { ...payload }
+  delete next._auth
+  return next
+}
+
+function hashPayload(payload: Record<string, unknown>): `0x${string}` {
+  const stable = stableStringify(payload)
+  return `0x${keccak256Hex(Buffer.from(stable, "utf8"))}`
+}
+
+function resolveInboundAuthMode(opts: PoseInboundAuthOptions): "off" | "monitor" | "enforce" {
+  if (opts.inboundAuthMode === "off" || opts.inboundAuthMode === "monitor" || opts.inboundAuthMode === "enforce") {
+    return opts.inboundAuthMode
+  }
+  if (opts.enableInboundAuth === true) {
+    return "enforce"
+  }
+  return "off"
+}
+
+function stableStringify(value: unknown): string {
+  if (typeof value === "bigint") {
+    return JSON.stringify(value.toString())
+  }
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value)
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(",")}]`
+  }
+  const obj = value as Record<string, unknown>
+  const keys = Object.keys(obj).sort()
+  const props = keys.map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`)
+  return `{${props.join(",")}}`
 }

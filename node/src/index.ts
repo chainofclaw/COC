@@ -144,6 +144,9 @@ const p2p = new P2PNode(
     inboundAuthMode: config.p2pInboundAuthMode,
     enableInboundAuth: config.p2pRequireInboundAuth,
     authMaxClockSkewMs: config.p2pAuthMaxClockSkewMs,
+    authNonceRegistryPath: config.p2pAuthNonceRegistryPath,
+    authNonceTtlMs: config.p2pAuthNonceTtlMs,
+    authNonceMaxEntries: config.p2pAuthNonceMaxEntries,
     signer: nodeSigner,
     verifier: nodeSigner,
   },
@@ -322,7 +325,24 @@ const pose = new PoSeEngine(BigInt(Math.floor(Date.now() / config.poseEpochMs)),
   maxChallengesPerEpoch: config.poseMaxChallengesPerEpoch,
 })
 
-startRpcServer(config.rpcBind, config.rpcPort, config.chainId, evm, chain, p2p, pose, undefined, config.nodeId)
+startRpcServer(
+  config.rpcBind,
+  config.rpcPort,
+  config.chainId,
+  evm,
+  chain,
+  p2p,
+  pose,
+  undefined,
+  config.nodeId,
+  {
+    enableInboundAuth: config.poseRequireInboundAuth,
+    inboundAuthMode: config.poseInboundAuthMode,
+    authMaxClockSkewMs: config.poseAuthMaxClockSkewMs,
+    verifier: nodeSigner,
+    allowedChallengers: config.poseAllowedChallengers,
+  },
+)
 
 // Start WebSocket RPC server for real-time subscriptions
 const wsServer = startWsRpcServer(
@@ -450,8 +470,12 @@ if (config.enableDht) {
 
   dhtNetwork = new DhtNetwork({
     localId: config.nodeId,
+    localAddress: `${config.p2pBind}:${config.wirePort}`,
+    chainId: config.chainId,
     bootstrapPeers: config.dhtBootstrapPeers,
     wireClients,
+    signer: nodeSigner,
+    verifier: nodeSigner,
     wireClientByPeerId,
     onPeerDiscovered: (peer) => {
       p2p.discovery.addDiscoveredPeers([{ id: peer.id, url: `http://${peer.address}` }])
