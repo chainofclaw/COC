@@ -182,4 +182,66 @@ describe("ValidatorGovernance", () => {
     const approved = gov.getProposals("approved")
     assert.equal(approved.length, 0)
   })
+
+  it("prunes finalized proposals older than retention threshold", () => {
+    // Create and approve a proposal at epoch 0
+    const p1 = gov.submitProposal("add_validator", "v4", "v1", { targetAddress: "0x4444", stakeAmount: STAKE })
+    gov.vote(p1.id, "v2", true)
+    gov.vote(p1.id, "v3", true)
+    assert.equal(gov.getProposal(p1.id)!.status, "approved")
+
+    // Create and expire a proposal
+    const p2 = gov.submitProposal("add_validator", "v5", "v2", { targetAddress: "0x5555", stakeAmount: STAKE })
+    gov.advanceEpoch(100n)
+    assert.equal(gov.getProposal(p2.id)!.status, "expired")
+
+    // Create a pending proposal (should NOT be pruned)
+    gov.advanceEpoch(100n) // reset epoch context
+    const p3 = gov.submitProposal("add_validator", "v6", "v1", { targetAddress: "0x6666", stakeAmount: STAKE })
+
+    // Prune with 10-epoch retention (cutoff = 100 - 10 = 90)
+    const pruned = gov.pruneProposals(10n)
+    assert.equal(pruned, 2) // p1 (approved, epoch 0) and p2 (expired, epoch 0) pruned
+    assert.equal(gov.getProposal(p1.id), null)
+    assert.equal(gov.getProposal(p2.id), null)
+    assert.ok(gov.getProposal(p3.id)) // pending proposal preserved
+  })
+
+  it("does not prune pending proposals", () => {
+    gov.submitProposal("add_validator", "v4", "v1", { targetAddress: "0x4444", stakeAmount: STAKE })
+    gov.advanceEpoch(100n)
+    // Proposal is now expired (not pending), but let's test with a fresh pending one
+    const p2 = gov.submitProposal("add_validator", "v5", "v2", { targetAddress: "0x5555", stakeAmount: STAKE })
+    gov.advanceEpoch(100n) // don't expire p2 (expires at 100+24=124)
+
+    const pruned = gov.pruneProposals(5n)
+    // p1 is expired (epoch 0, cutoff=95) → pruned
+    // p2 is pending → not pruned
+    assert.equal(pruned, 1)
+    assert.ok(gov.getProposal(p2.id))
+  })
+
+  it("returns governance stats summary", () => {
+    gov.advanceEpoch(5n)
+    gov.submitProposal("add_validator", "v4", "v1", { targetAddress: "0x4444", stakeAmount: STAKE })
+
+    const stats = gov.getGovernanceStats()
+    assert.equal(stats.activeValidators, 3)
+    assert.equal(stats.totalStake, STAKE * 3n)
+    assert.equal(stats.pendingProposals, 1)
+    assert.equal(stats.totalProposals, 1)
+    assert.equal(stats.currentEpoch, 5n)
+  })
+
+  it("governance stats reflect approved proposals", () => {
+    const p = gov.submitProposal("add_validator", "v4", "v1", { targetAddress: "0x4444", stakeAmount: STAKE })
+    gov.vote(p.id, "v2", true)
+    gov.vote(p.id, "v3", true)
+
+    const stats = gov.getGovernanceStats()
+    assert.equal(stats.activeValidators, 4)
+    assert.equal(stats.totalStake, STAKE * 4n)
+    assert.equal(stats.pendingProposals, 0)
+    assert.equal(stats.totalProposals, 1)
+  })
 })

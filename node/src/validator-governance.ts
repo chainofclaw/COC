@@ -90,6 +90,46 @@ export class ValidatorGovernance {
   }
 
   /**
+   * Remove finalized proposals older than a retention threshold.
+   * Returns the number of proposals pruned.
+   */
+  pruneProposals(retentionEpochs: bigint): number {
+    const cutoff = this.currentEpoch > retentionEpochs ? this.currentEpoch - retentionEpochs : 0n
+    let pruned = 0
+
+    for (const [id, proposal] of this.proposals) {
+      if (proposal.status !== "pending" && proposal.createdAtEpoch < cutoff) {
+        this.proposals.delete(id)
+        pruned++
+      }
+    }
+    return pruned
+  }
+
+  /**
+   * Get governance stats summary.
+   */
+  getGovernanceStats(): {
+    activeValidators: number
+    totalStake: bigint
+    pendingProposals: number
+    totalProposals: number
+    currentEpoch: bigint
+  } {
+    const active = this.getActiveValidators()
+    const totalStake = active.reduce((sum, v) => sum + v.stake, 0n)
+    const pending = [...this.proposals.values()].filter((p) => p.status === "pending").length
+
+    return {
+      activeValidators: active.length,
+      totalStake,
+      pendingProposals: pending,
+      totalProposals: this.proposals.size,
+      currentEpoch: this.currentEpoch,
+    }
+  }
+
+  /**
    * Submit a proposal to modify the validator set.
    */
   submitProposal(
