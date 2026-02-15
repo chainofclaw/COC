@@ -223,6 +223,27 @@ test("RPC Extended Methods", async (t) => {
     assert.ok(id.startsWith("0x"))
   })
 
+  await t.test("coc_getNetworkStats returns network info", async () => {
+    const stats = await rpcCall(port, "coc_getNetworkStats")
+    assert.ok(typeof stats === "object")
+    assert.ok(stats.blockHeight.startsWith("0x"))
+    assert.ok(typeof stats.peerCount === "number")
+    assert.ok(typeof stats.p2p === "object")
+    assert.ok(typeof stats.wire === "object")
+    assert.equal(stats.wire.enabled, false) // no wire protocol in test
+    assert.ok(typeof stats.dht === "object")
+    assert.equal(stats.dht.enabled, false)
+    assert.ok(typeof stats.bft === "object")
+    assert.equal(stats.bft.enabled, false)
+  })
+
+  await t.test("coc_getBftStatus returns disabled status", async () => {
+    const status = await rpcCall(port, "coc_getBftStatus")
+    assert.ok(typeof status === "object")
+    assert.equal(status.enabled, false)
+    assert.equal(status.active, false)
+  })
+
   await t.test("unsupported method throws error", async () => {
     await assert.rejects(
       () => rpcCall(port, "eth_nonExistentMethod"),

@@ -207,8 +207,8 @@ export function startRpcServer(bind: string, port: number, chainId: number, evm:
 
         const payload = JSON.parse(body)
         const response = Array.isArray(payload)
-          ? await Promise.all(payload.map((item) => handleOne(item, chainId, evm, chain, p2p, filters)))
-          : await handleOne(payload, chainId, evm, chain, p2p, filters)
+          ? await Promise.all(payload.map((item) => handleOne(item, chainId, evm, chain, p2p, filters, bftCoordinator)))
+          : await handleOne(payload, chainId, evm, chain, p2p, filters, bftCoordinator)
 
         if (!res.headersSent) {
           res.writeHead(200, { "content-type": "application/json" })
@@ -232,13 +232,15 @@ async function handleOne(
   chain: IChainEngine,
   p2p: P2PNode,
   filters: Map<string, PendingFilter>,
+  bftCoordinator?: BftCoordinator,
+  opts?: Record<string, unknown>,
 ): Promise<JsonRpcResponse> {
   if (!payload || typeof payload !== "object" || !payload.method) {
     return { jsonrpc: "2.0", id: payload?.id ?? null, error: { message: "invalid request" } }
   }
 
   try {
-    const result = await handleRpc(payload, chainId, evm, chain, p2p, filters)
+    const result = await handleRpc(payload, chainId, evm, chain, p2p, filters, bftCoordinator, opts)
     return { jsonrpc: "2.0", id: payload.id ?? null, result }
   } catch (error: unknown) {
     // Support structured RPC errors (e.g. { code, message } from param validation)
@@ -268,10 +270,11 @@ export async function handleRpcMethod(
   evm: EvmChain,
   chain: IChainEngine,
   p2p: P2PNode,
+  bftCoordinator?: BftCoordinator,
 ): Promise<unknown> {
   const payload = { method, params, id: null, jsonrpc: "2.0" as const }
   const filters = new Map<string, PendingFilter>()
-  return handleRpc(payload, chainId, evm, chain, p2p, filters)
+  return handleRpc(payload, chainId, evm, chain, p2p, filters, bftCoordinator)
 }
 
 async function handleRpc(
@@ -281,6 +284,8 @@ async function handleRpc(
   chain: IChainEngine,
   p2p: P2PNode,
   filters: Map<string, PendingFilter>,
+  bftCoordinator?: BftCoordinator,
+  opts?: Record<string, unknown>,
 ) {
   switch (payload.method) {
     case "web3_clientVersion":
@@ -894,6 +899,41 @@ async function handleRpc(
         phase: bftState.phase,
         prepareVotes: bftState.prepareVotes,
         commitVotes: bftState.commitVotes,
+        equivocations: bftState.equivocations,
+      }
+    }
+    case "coc_getNetworkStats": {
+      const peerCount = p2p?.getPeers?.()?.length ?? 0
+      const height = await Promise.resolve(chain.getHeight())
+
+      // BFT status
+      const bft = bftCoordinator
+        ? { enabled: true, ...bftCoordinator.getRoundState() }
+        : { enabled: false }
+
+      // Wire protocol stats (if available via opts)
+      const wireStats = (opts as Record<string, unknown>)?.wireConnectionManager
+        ? (((opts as Record<string, unknown>).wireConnectionManager) as { getStats: () => unknown }).getStats()
+        : null
+
+      // DHT stats (if available via opts)
+      const dhtStats = (opts as Record<string, unknown>)?.dhtNetwork
+        ? (((opts as Record<string, unknown>).dhtNetwork) as { getStats: () => unknown }).getStats()
+        : null
+
+      return {
+        blockHeight: `0x${height.toString(16)}`,
+        peerCount,
+        p2p: {
+          peers: peerCount,
+          protocol: "http-gossip",
+        },
+        wire: wireStats ? { enabled: true, ...wireStats } : { enabled: false },
+        dht: dhtStats ? { enabled: true, ...dhtStats } : { enabled: false },
+        bft,
+        consensus: {
+          state: "active",
+        },
       }
     }
     case "coc_chainStats": {
