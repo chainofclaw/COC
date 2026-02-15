@@ -24,6 +24,9 @@ export function buildMerkleRoot(leaves: Hex[]): Hex {
 
 export function buildMerklePath(leaves: Hex[], index: number): Hex[] {
   if (leaves.length === 0) return []
+  if (index < 0 || index >= leaves.length) {
+    throw new Error(`merkle path index out of bounds: ${index} (leaves: ${leaves.length})`)
+  }
   let idx = index
   let level = leaves.map((x) => x)
   const path: Hex[] = []
