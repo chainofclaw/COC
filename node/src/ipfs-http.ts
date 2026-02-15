@@ -7,6 +7,7 @@ import { UnixFsBuilder, storeRawBlock, loadRawBlock } from "./ipfs-unixfs.ts"
 import type { IpfsAddResult, UnixFsFileMeta } from "./ipfs-types.ts"
 import type { IpfsMfs } from "./ipfs-mfs.ts"
 import type { IpfsPubsub } from "./ipfs-pubsub.ts"
+import { createTarArchive } from "./ipfs-tar.ts"
 import { createLogger } from "./logger.ts"
 
 const log = createLogger("ipfs")
@@ -245,8 +246,9 @@ export class IpfsHttpServer {
       return
     }
     const data = await this.unixfs.readFile(cid)
-    res.writeHead(200, { "content-type": "application/octet-stream" })
-    res.end(data)
+    const archive = createTarArchive([{ name: cid, data }])
+    res.writeHead(200, { "content-type": "application/x-tar" })
+    res.end(archive)
   }
 
   private async handleBlockPut(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
