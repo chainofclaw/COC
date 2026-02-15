@@ -359,4 +359,46 @@ describe("DhtNetwork", () => {
 
     assert.equal(ok, false)
   })
+
+  it("should reject peers when authenticated verify is required but handshake config is unavailable", async () => {
+    const network = new DhtNetwork({
+      localId: "0xaaa",
+      bootstrapPeers: [],
+      wireClients: [],
+      onPeerDiscovered: () => {},
+      requireAuthenticatedVerify: true,
+    })
+
+    const ok = await network.verifyPeer({
+      id: "0xbbb",
+      address: "127.0.0.1:19781",
+      lastSeenMs: Date.now(),
+    })
+    const stats = network.getStats()
+
+    assert.equal(ok, false)
+    assert.equal(stats.verifyFailures, 1)
+    assert.equal(stats.verifyFallbackTcpAttempts, 0)
+  })
+
+  it("should attempt TCP fallback when authenticated verify is disabled", async () => {
+    const network = new DhtNetwork({
+      localId: "0xaaa",
+      bootstrapPeers: [],
+      wireClients: [],
+      onPeerDiscovered: () => {},
+      requireAuthenticatedVerify: false,
+    })
+
+    const ok = await network.verifyPeer({
+      id: "0xbbb",
+      address: "127.0.0.1:1",
+      lastSeenMs: Date.now(),
+    })
+    const stats = network.getStats()
+
+    assert.equal(ok, false)
+    assert.equal(stats.verifyFallbackTcpAttempts, 1)
+    assert.equal(stats.verifyFallbackTcpFailures, 1)
+  })
 })

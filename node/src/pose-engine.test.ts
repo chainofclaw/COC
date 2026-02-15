@@ -52,6 +52,14 @@ describe("PoSeEngine", () => {
     assert.ok(successes.length <= 6)
   })
 
+  it("issueChallenge supports non-uptime challenge bucket", () => {
+    const engine = makeEngine()
+    const nodeId = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    const challenge = engine.issueChallenge(nodeId, { challengeBucket: "S" })
+    assert.ok(challenge)
+    assert.equal(challenge!.challengeType, "S")
+  })
+
   it("issueChallenge respects global epoch budget", () => {
     const signer = createNodeSigner(TEST_KEY)
     const engine = new PoSeEngine(1n, { signer, maxChallengesPerEpoch: 2 })
@@ -64,6 +72,44 @@ describe("PoSeEngine", () => {
     assert.ok(c1)
     assert.ok(c2)
     assert.equal(c3, null)
+  })
+
+  it("issueChallenge applies restricted tier quota profile", () => {
+    const signer = createNodeSigner(TEST_KEY)
+    const nodeId = "0x" + "44".repeat(32)
+    const engine = new PoSeEngine(1n, {
+      signer,
+      maxChallengesPerEpoch: 10,
+      challengeTierResolver: () => "restricted",
+      challengeBudgetProfiles: {
+        restricted: {
+          maxPerEpoch: { U: 3 },
+          minIntervalMs: { U: 0 },
+        },
+      },
+    })
+    const results = Array.from({ length: 5 }, () => engine.issueChallenge(nodeId))
+    assert.equal(results.filter((r) => r !== null).length, 3)
+  })
+
+  it("issueChallenge applies trusted tier quota profile for storage bucket", () => {
+    const signer = createNodeSigner(TEST_KEY)
+    const nodeId = "0x" + "55".repeat(32)
+    const engine = new PoSeEngine(1n, {
+      signer,
+      maxChallengesPerEpoch: 10,
+      challengeTierResolver: () => "trusted",
+      challengeBudgetProfiles: {
+        trusted: {
+          maxPerEpoch: { S: 2 },
+          minIntervalMs: { S: 0 },
+        },
+      },
+    })
+    const results = Array.from({ length: 4 }, () => engine.issueChallenge(nodeId, { challengeBucket: "S" }))
+    const successes = results.filter((r): r is NonNullable<typeof r> => r !== null)
+    assert.equal(successes.length, 2)
+    assert.equal(successes[0].challengeType, "S")
   })
 
   it("finalizeEpoch returns null when no receipts", () => {

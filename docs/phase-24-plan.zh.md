@@ -108,14 +108,36 @@ Phase 24 添加生产就绪工具：健康检查探针、配置验证和 RPC 速
 
 ## 后续计划（下一批）
 
-1. 挑战预算分层化
-- 在已具备“按节点 + 按 epoch 全局预算”的基础上，继续细化到“按挑战类型/信誉分层预算”。
+1. 挑战预算分层化（已完成基线）
+- `node/src/pose-engine.ts` 已支持按挑战桶（`U/S/R`）+ 节点信誉层（`default/trusted/restricted`）配额。
+- 下一步：将 tier resolver 与真实链上信誉分值/历史履约率打通。
 
-2. 链上角色联动
-- 将 PoSe challengers allowlist 从静态配置扩展为“链上活跃角色 + 本地缓存”双重校验。
+2. 链上角色联动（已完成治理活跃集版本）
+- `node/src/pose-authorizer.ts` + `node/src/index.ts` 已支持“静态 allowlist + 动态 resolver + TTL 缓存”。
+- 当前动态源为治理活跃验证者集；下一步接入 PoSeManager 活跃角色查询。
 
-3. 策略联动自动化
-- 增加高频来源熔断与封禁闭环（鉴权失败率/重放命中率 -> peer scoring/health 降级）。
+3. 策略联动自动化（已完成第一阶段）
+- `node/src/p2p.ts` 已实现来源评分联动：入站鉴权失败/限流命中会写入 `PeerScoring` 并触发临时封禁。
+- discovery 身份失败已联动 `recordInvalidData/recordFailure`，形成自动处置闭环。
+
+## 本轮新增落地（2026-02-15，补丁 B）
+
+- `node/src/config.ts`、`node/src/config.test.ts`
+  - 新增 `dhtRequireAuthenticatedVerify`（默认 `true`），支持 `COC_DHT_REQUIRE_AUTHENTICATED_VERIFY`。
+  - 新增 `poseUseGovernanceChallengerAuth`（默认 `false`），支持 `COC_POSE_USE_GOVERNANCE_CHALLENGER_AUTH`。
+  - 新增 `poseChallengerAuthCacheTtlMs`（默认 `30000`），支持 `COC_POSE_CHALLENGER_AUTH_CACHE_TTL_MS`。
+- `node/src/dht-network.ts`、`node/src/dht-network.test.ts`
+  - 当握手鉴权不可用且 `dhtRequireAuthenticatedVerify=true` 时，拒绝 peer（fail-closed）。
+  - 仅在显式关闭该开关时允许 TCP fallback。
+- `node/src/pose-authorizer.ts`、`node/src/pose-authorizer.test.ts`
+  - 新增 challenger 动态鉴权器，支持缓存与失败策略。
+- `node/src/pose-http.ts`、`node/src/pose-http.test.ts`
+  - PoSe 入站鉴权新增 `challengerAuthorizer` 扩展点，支持动态 challenger 判定。
+- `node/src/p2p.ts`、`node/src/p2p-auth.test.ts`、`node/src/p2p.test.ts`
+  - 入站来源（按 IP）接入 `PeerScoring`，连续鉴权失败后自动临时封禁。
+  - discovery 身份校验失败联动惩罚打分，不再仅计数。
+- `node/src/pose-engine.ts`、`node/src/pose-engine.test.ts`
+  - `issueChallenge` 新增按挑战桶参数发放；支持 tier 化预算配置与 resolver 注入。
 
 ## 基于代码实况的残留风险（2026-02-15）
 

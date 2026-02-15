@@ -21,6 +21,7 @@ async function startTestServer(
     authMaxClockSkewMs?: number
     verifier?: ReturnType<typeof createNodeSigner>
     allowedChallengers?: string[]
+    challengerAuthorizer?: { isAllowed: (senderId: string) => Promise<boolean> }
   },
 ): Promise<{ port: number; close: () => void }> {
   const routes = registerPoseRoutes(pose)
@@ -231,6 +232,51 @@ test("POST /pose/challenge rejects signer not in allowlist", async () => {
     inboundAuthMode: "enforce",
     verifier: challenger,
     allowedChallengers: ["0x1111111111111111111111111111111111111111"],
+  })
+  try {
+    const signed = buildSignedPosePayload("/pose/challenge", {
+      nodeId: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    }, challenger, Date.now())
+    const { status } = await fetchJson(port, "POST", "/pose/challenge", signed)
+    assert.equal(status, 403)
+  } finally {
+    close()
+  }
+})
+
+test("POST /pose/challenge allows signer via dynamic challenger authorizer", async () => {
+  const pose = createTestEngine()
+  const challenger = createNodeSigner(TEST_PK)
+  const { port, close } = await startTestServer(pose, {
+    inboundAuthMode: "enforce",
+    verifier: challenger,
+    allowedChallengers: [],
+    challengerAuthorizer: {
+      isAllowed: async (senderId: string) => senderId.toLowerCase() === challenger.nodeId.toLowerCase(),
+    },
+  })
+  try {
+    const signed = buildSignedPosePayload("/pose/challenge", {
+      nodeId: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    }, challenger, Date.now())
+    const { status, data } = await fetchJson(port, "POST", "/pose/challenge", signed)
+    assert.equal(status, 200)
+    assert.ok(data.challengeId)
+  } finally {
+    close()
+  }
+})
+
+test("POST /pose/challenge rejects signer when dynamic challenger authorizer denies", async () => {
+  const pose = createTestEngine()
+  const challenger = createNodeSigner(TEST_PK)
+  const { port, close } = await startTestServer(pose, {
+    inboundAuthMode: "enforce",
+    verifier: challenger,
+    allowedChallengers: [],
+    challengerAuthorizer: {
+      isAllowed: async () => false,
+    },
   })
   try {
     const signed = buildSignedPosePayload("/pose/challenge", {

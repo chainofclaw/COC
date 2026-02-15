@@ -145,4 +145,31 @@ describe("P2P auth envelope", () => {
     const signature = signer.sign(message)
     assert.equal(signer.verifyNodeSig(message, signature, signer.nodeId), true)
   })
+
+  it("penalizes discovery peers when identity verification fails", async () => {
+    const signer = createNodeSigner(TEST_KEY)
+    const p2p = new P2PNode(
+      {
+        bind: "127.0.0.1",
+        port: 0,
+        peers: [],
+        nodeId: signer.nodeId,
+        verifier: signer,
+        enableDiscovery: false,
+      },
+      {
+        onTx: async () => {},
+        onBlock: async () => {},
+        onSnapshotRequest: () => ({ blocks: [], updatedAtMs: Date.now() }),
+      },
+    )
+
+    const peer = {
+      id: "0x" + "11".repeat(32),
+      url: "http://127.0.0.1:1",
+    }
+    const ok = await (p2p as any).verifyDiscoveredPeerIdentity(peer)
+    assert.equal(ok, false)
+    assert.ok(p2p.scoring.getScore(peer.id) < 100)
+  })
 })

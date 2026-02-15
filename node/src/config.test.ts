@@ -68,6 +68,8 @@ describe("validateConfig", () => {
     assert.ok(validateConfig({ poseAuthNonceMaxEntries: 0 }).length > 0)
     assert.ok(validateConfig({ poseAllowedChallengers: "0x1234" as any }).length > 0)
     assert.ok(validateConfig({ poseAllowedChallengers: ["0x1234"] }).length > 0)
+    assert.ok(validateConfig({ poseUseGovernanceChallengerAuth: "true" as any }).length > 0)
+    assert.ok(validateConfig({ poseChallengerAuthCacheTtlMs: 999 }).length > 0)
     assert.equal(
       validateConfig({
         poseRequireInboundAuth: true,
@@ -77,9 +79,17 @@ describe("validateConfig", () => {
         poseAuthNonceTtlMs: 86_400_000,
         poseAuthNonceMaxEntries: 100_000,
         poseAllowedChallengers: ["0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"],
+        poseUseGovernanceChallengerAuth: true,
+        poseChallengerAuthCacheTtlMs: 30_000,
       }).length,
       0,
     )
+  })
+
+  it("validates dht authenticated verify setting", () => {
+    assert.ok(validateConfig({ dhtRequireAuthenticatedVerify: "true" as any }).length > 0)
+    assert.equal(validateConfig({ dhtRequireAuthenticatedVerify: true }).length, 0)
+    assert.equal(validateConfig({ dhtRequireAuthenticatedVerify: false }).length, 0)
   })
 
   it("accepts valid port range", () => {

@@ -42,6 +42,8 @@ export interface DhtNetworkConfig {
   onPeerDiscovered: (peer: DhtPeer) => void
   /** Path to save/load routing table peers (optional) */
   peerStorePath?: string
+  /** Enforce authenticated handshake verification; when true, disables TCP-only fallback. */
+  requireAuthenticatedVerify?: boolean
 }
 
 export class DhtNetwork {
@@ -193,11 +195,24 @@ export class DhtNetwork {
       return handshakeVerified
     }
 
+    if (this.cfg.requireAuthenticatedVerify !== false) {
+      this.verifyFailures += 1
+      log.warn("DHT handshake verification unavailable; rejecting peer by policy", {
+        peer: peer.id,
+        address: peer.address,
+      })
+      return false
+    }
+
     // Fallback: lightweight TCP connect probe when handshake config is unavailable.
     this.verifyFallbackTcpAttempts += 1
     const [host, portStr] = peer.address.split(":")
     const port = parseInt(portStr, 10)
-    if (!host || !port || isNaN(port)) return false
+    if (!host || !port || isNaN(port)) {
+      this.verifyFailures += 1
+      this.verifyFallbackTcpFailures += 1
+      return false
+    }
 
     return new Promise<boolean>((resolve) => {
       const timer = setTimeout(() => {

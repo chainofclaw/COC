@@ -7,6 +7,7 @@ import type { ChallengeMessage, ReceiptMessage } from "../../services/common/pos
 import { RateLimiter } from "./rate-limiter.ts"
 import { keccak256Hex } from "../../services/relayer/keccak256.ts"
 import type { NodeSigner, SignatureVerifier } from "./crypto/signer.ts"
+import type { PoseChallengerAuthorizer } from "./pose-authorizer.ts"
 
 const MAX_POSE_BODY = 1024 * 1024 // 1 MB
 const poseRateLimiter = new RateLimiter(60_000, 60)
@@ -159,6 +160,7 @@ export interface PoseInboundAuthOptions {
   authMaxClockSkewMs?: number
   verifier?: SignatureVerifier
   allowedChallengers?: string[]
+  challengerAuthorizer?: PoseChallengerAuthorizer
   nonceTracker?: AuthNonceTracker
 }
 
@@ -292,7 +294,7 @@ export function handlePoseRequest(
     }
     body += chunk
   })
-  req.on("end", () => {
+  req.on("end", async () => {
     if (aborted) return
     try {
       const parsedBody = JSON.parse(body || "{}")
@@ -329,7 +331,12 @@ export function handlePoseRequest(
               return
             }
           } else {
-            if (allowedChallengers.size > 0 && !allowedChallengers.has(authCheck.senderId.toLowerCase())) {
+            const challengerAllowed = await isChallengerAllowed(
+              authCheck.senderId,
+              allowedChallengers,
+              authOptions.challengerAuthorizer,
+            )
+            if (!challengerAllowed) {
               if (authMode === "enforce") {
                 jsonResponse(res, 403, { error: "challenger not allowed" })
                 return
@@ -454,6 +461,23 @@ function resolveInboundAuthMode(opts: PoseInboundAuthOptions): "off" | "monitor"
     return "enforce"
   }
   return "off"
+}
+
+async function isChallengerAllowed(
+  senderId: string,
+  staticAllowlist: Set<string>,
+  authorizer?: PoseChallengerAuthorizer,
+): Promise<boolean> {
+  const normalized = senderId.toLowerCase()
+  if (staticAllowlist.has(normalized)) return true
+  if (authorizer) {
+    try {
+      return await authorizer.isAllowed(normalized)
+    } catch {
+      return false
+    }
+  }
+  return staticAllowlist.size === 0
 }
 
 function stableStringify(value: unknown): string {

@@ -10,10 +10,40 @@ import type { ChallengeMessage, Hex32, ReceiptMessage, VerifiedReceipt } from ".
 import type { NodeSigner, SignatureVerifier } from "./crypto/signer.ts"
 import { buildReceiptSignMessage } from "./crypto/signer.ts"
 
+type ChallengeBucket = "U" | "S" | "R"
+type ChallengeTier = "default" | "trusted" | "restricted"
+
+interface ChallengeBudgetProfile {
+  maxPerEpoch: Record<ChallengeBucket, number>
+  minIntervalMs: Record<ChallengeBucket, number>
+}
+
+interface PartialChallengeBudgetProfile {
+  maxPerEpoch?: Partial<Record<ChallengeBucket, number>>
+  minIntervalMs?: Partial<Record<ChallengeBucket, number>>
+}
+
+const DEFAULT_CHALLENGE_BUDGET_PROFILES: Record<ChallengeTier, ChallengeBudgetProfile> = {
+  default: {
+    maxPerEpoch: { U: 6, S: 2, R: 2 },
+    minIntervalMs: { U: 1000, S: 2000, R: 2000 },
+  },
+  trusted: {
+    maxPerEpoch: { U: 8, S: 3, R: 3 },
+    minIntervalMs: { U: 500, S: 1000, R: 1000 },
+  },
+  restricted: {
+    maxPerEpoch: { U: 3, S: 1, R: 1 },
+    minIntervalMs: { U: 2000, S: 3000, R: 3000 },
+  },
+}
+
 export interface PoSeEngineDeps {
   signer: NodeSigner & SignatureVerifier
   nonceRegistry?: NonceRegistryLike
   maxChallengesPerEpoch?: number
+  challengeTierResolver?: (nodeId: string) => ChallengeTier
+  challengeBudgetProfiles?: Partial<Record<ChallengeTier, PartialChallengeBudgetProfile>>
 }
 
 function addressToHex32(address: string): Hex32 {
@@ -28,7 +58,7 @@ function hex32ToAddress(hex32: string): string {
 }
 
 export class PoSeEngine {
-  private readonly quota: ChallengeQuota
+  private readonly tierQuotas: Record<ChallengeTier, ChallengeQuota>
   private readonly factory: ChallengeFactory
   private readonly verifier: ReceiptVerifier
   private readonly aggregator: BatchAggregator
@@ -36,6 +66,7 @@ export class PoSeEngine {
   private readonly issuedChallenges = new Map<Hex32, ChallengeMessage>()
   private readonly signer: NodeSigner & SignatureVerifier
   private readonly maxChallengesPerEpoch: number
+  private readonly challengeTierResolver?: (nodeId: string) => ChallengeTier
   private issuedChallengeCount = 0
   private epochId: bigint
 
@@ -43,11 +74,14 @@ export class PoSeEngine {
     this.signer = deps.signer
     const nonceRegistry = deps.nonceRegistry ?? new NonceRegistry()
     this.maxChallengesPerEpoch = deps.maxChallengesPerEpoch ?? 200
+    this.challengeTierResolver = deps.challengeTierResolver
     const challengerHex32 = addressToHex32(this.signer.nodeId)
-    this.quota = new ChallengeQuota({
-      maxPerEpoch: { U: 6, S: 2, R: 2 },
-      minIntervalMs: { U: 1000, S: 2000, R: 2000 }
-    })
+    const budgetProfiles = resolveChallengeBudgetProfiles(deps.challengeBudgetProfiles)
+    this.tierQuotas = {
+      default: new ChallengeQuota(budgetProfiles.default),
+      trusted: new ChallengeQuota(budgetProfiles.trusted),
+      restricted: new ChallengeQuota(budgetProfiles.restricted),
+    }
     this.factory = new ChallengeFactory({
       challengerId: challengerHex32,
       sign: (digestHex) => {
@@ -90,21 +124,25 @@ export class PoSeEngine {
     return this.epochId
   }
 
-  issueChallenge(nodeId: string): ChallengeMessage | null {
+  issueChallenge(nodeId: string, opts: { challengeBucket?: ChallengeBucket } = {}): ChallengeMessage | null {
     if (this.issuedChallengeCount >= this.maxChallengesPerEpoch) {
       return null
     }
-    const can = this.quota.canIssue(nodeId as Hex32, this.epochId, "U", BigInt(Date.now()))
+    const challengeBucket = normalizeChallengeBucket(opts.challengeBucket)
+    const challengeTier = this.resolveChallengeTier(nodeId)
+    const quota = this.tierQuotas[challengeTier]
+    const nowMs = BigInt(Date.now())
+    const can = quota.canIssue(nodeId as Hex32, this.epochId, challengeBucket, nowMs)
     if (!can.ok) return null
     const challenge = this.factory.issue({
       epochId: this.epochId,
       nodeId: nodeId as Hex32,
-      challengeType: "Uptime",
+      challengeType: challengeBucketToFactoryType(challengeBucket),
       randSeed: `0x${randomBytes(32).toString("hex")}` as Hex32,
-      issuedAtMs: BigInt(Date.now()),
+      issuedAtMs: nowMs,
       querySpec: { method: "eth_blockNumber" }
     })
-    this.quota.commitIssue(nodeId as Hex32, this.epochId, "U", BigInt(Date.now()))
+    quota.commitIssue(nodeId as Hex32, this.epochId, challengeBucket, nowMs)
     this.issuedChallengeCount += 1
     this.issuedChallenges.set(challenge.challengeId, challenge)
     return challenge
@@ -145,6 +183,49 @@ export class PoSeEngine {
     this.epochId += 1n
     return { summaryHash: batch.summaryHash, merkleRoot: batch.merkleRoot, rewards: rewards.rewards }
   }
+
+  private resolveChallengeTier(nodeId: string): ChallengeTier {
+    const tier = this.challengeTierResolver?.(nodeId)
+    if (tier === "trusted" || tier === "restricted") {
+      return tier
+    }
+    return "default"
+  }
+}
+
+function normalizeChallengeBucket(bucket: ChallengeBucket | undefined): ChallengeBucket {
+  if (bucket === "S" || bucket === "R") return bucket
+  return "U"
+}
+
+function challengeBucketToFactoryType(bucket: ChallengeBucket): "Uptime" | "Storage" | "Relay" {
+  if (bucket === "S") return "Storage"
+  if (bucket === "R") return "Relay"
+  return "Uptime"
+}
+
+function resolveChallengeBudgetProfiles(
+  overrides: Partial<Record<ChallengeTier, PartialChallengeBudgetProfile>> | undefined,
+): Record<ChallengeTier, ChallengeBudgetProfile> {
+  const merged = { ...DEFAULT_CHALLENGE_BUDGET_PROFILES }
+  if (!overrides) return merged
+
+  const tiers: ChallengeTier[] = ["default", "trusted", "restricted"]
+  for (const tier of tiers) {
+    const next = overrides[tier]
+    if (!next) continue
+    merged[tier] = {
+      maxPerEpoch: {
+        ...merged[tier].maxPerEpoch,
+        ...next.maxPerEpoch,
+      },
+      minIntervalMs: {
+        ...merged[tier].minIntervalMs,
+        ...next.minIntervalMs,
+      },
+    }
+  }
+  return merged
 }
 
 function isSameChallenge(a: ChallengeMessage, b: ChallengeMessage): boolean {
