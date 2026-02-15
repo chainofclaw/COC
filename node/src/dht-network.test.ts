@@ -1,5 +1,8 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
+import fs from "node:fs"
+import path from "node:path"
+import os from "node:os"
 import { DhtNetwork } from "./dht-network.ts"
 import type { DhtPeer } from "./dht.ts"
 import type { WireClient } from "./wire-client.ts"
@@ -118,5 +121,75 @@ describe("DhtNetwork", () => {
     assert.equal(peer, null, "self should not be in routing table")
 
     network.stop()
+  })
+
+  it("should save and load peers from disk", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "dht-test-"))
+    const storePath = path.join(tmpDir, "dht-peers.json")
+
+    // Create network with bootstrap peers
+    const net1 = new DhtNetwork({
+      localId: "0xaaa",
+      localAddress: "127.0.0.1:19780",
+      bootstrapPeers: [
+        { id: "0xbbb", address: "10.0.0.1", port: 19781 },
+        { id: "0xccc", address: "10.0.0.2", port: 19782 },
+      ],
+      wireClients: [],
+      onPeerDiscovered: () => {},
+      peerStorePath: storePath,
+    })
+    net1.start()
+
+    // Save peers
+    const saved = net1.savePeers()
+    assert.equal(saved, 2)
+    assert.ok(fs.existsSync(storePath))
+    net1.stop()
+
+    // Create a new network and load saved peers
+    const net2 = new DhtNetwork({
+      localId: "0xaaa",
+      localAddress: "127.0.0.1:19780",
+      bootstrapPeers: [],
+      wireClients: [],
+      onPeerDiscovered: () => {},
+      peerStorePath: storePath,
+    })
+
+    const loaded = net2.loadPeers()
+    assert.equal(loaded, 2)
+    assert.equal(net2.getStats().totalPeers, 2)
+
+    // Cleanup
+    fs.rmSync(tmpDir, { recursive: true })
+  })
+
+  it("should handle missing peer store gracefully", () => {
+    const net = new DhtNetwork({
+      localId: "0xaaa",
+      localAddress: "127.0.0.1:19780",
+      bootstrapPeers: [],
+      wireClients: [],
+      onPeerDiscovered: () => {},
+      peerStorePath: "/tmp/nonexistent-dht-path-12345/peers.json",
+    })
+
+    const loaded = net.loadPeers()
+    assert.equal(loaded, 0)
+  })
+
+  it("should return 0 when no peerStorePath configured", () => {
+    const net = new DhtNetwork({
+      localId: "0xaaa",
+      localAddress: "127.0.0.1:19780",
+      bootstrapPeers: [{ id: "0xbbb", address: "10.0.0.1", port: 19781 }],
+      wireClients: [],
+      onPeerDiscovered: () => {},
+    })
+    net.start()
+    assert.equal(net.savePeers(), 0)
+    assert.equal(net.loadPeers(), 0)
+    net.stop()
   })
 })

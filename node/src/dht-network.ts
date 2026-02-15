@@ -8,6 +8,8 @@
  * - Feeds discovered peers into PeerDiscovery
  */
 
+import fs from "node:fs"
+import path from "node:path"
 import { RoutingTable, ALPHA, K } from "./dht.ts"
 import type { DhtPeer } from "./dht.ts"
 import type { WireClient } from "./wire-client.ts"
@@ -25,6 +27,8 @@ export interface DhtNetworkConfig {
   bootstrapPeers: Array<{ id: string; address: string; port: number }>
   wireClients: WireClient[]
   onPeerDiscovered: (peer: DhtPeer) => void
+  /** Path to save/load routing table peers (optional) */
+  peerStorePath?: string
 }
 
 export class DhtNetwork {
@@ -191,6 +195,50 @@ export class DhtNetwork {
 
     if (announced > 0) {
       log.debug("DHT announce sent", { peers: announced })
+    }
+  }
+
+  /**
+   * Save routing table peers to disk.
+   * Returns number of peers saved.
+   */
+  savePeers(): number {
+    if (!this.cfg.peerStorePath) return 0
+
+    const peers = this.routingTable.exportPeers()
+    try {
+      const dir = path.dirname(this.cfg.peerStorePath)
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true })
+      }
+      fs.writeFileSync(this.cfg.peerStorePath, JSON.stringify(peers, null, 2))
+      log.info("DHT peers saved", { count: peers.length, path: this.cfg.peerStorePath })
+      return peers.length
+    } catch (err) {
+      log.warn("failed to save DHT peers", { error: String(err) })
+      return 0
+    }
+  }
+
+  /**
+   * Load routing table peers from disk.
+   * Returns number of peers loaded.
+   */
+  loadPeers(): number {
+    if (!this.cfg.peerStorePath) return 0
+
+    try {
+      if (!fs.existsSync(this.cfg.peerStorePath)) return 0
+      const data = fs.readFileSync(this.cfg.peerStorePath, "utf-8")
+      const peers = JSON.parse(data) as Array<{ id: string; address: string; lastSeenMs?: number }>
+
+      if (!Array.isArray(peers)) return 0
+      const added = this.routingTable.importPeers(peers)
+      log.info("DHT peers loaded", { loaded: added, total: peers.length, path: this.cfg.peerStorePath })
+      return added
+    } catch (err) {
+      log.warn("failed to load DHT peers", { error: String(err) })
+      return 0
     }
   }
 

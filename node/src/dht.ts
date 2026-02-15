@@ -169,6 +169,34 @@ export class RoutingTable {
   }
 
   /**
+   * Export routing table to a JSON-serializable structure for persistence.
+   */
+  exportPeers(): Array<{ id: string; address: string; lastSeenMs: number }> {
+    return this.allPeers().map((p) => ({
+      id: p.id,
+      address: p.address,
+      lastSeenMs: p.lastSeenMs,
+    }))
+  }
+
+  /**
+   * Import peers from a previously exported list.
+   * Returns number of peers successfully added.
+   */
+  importPeers(peers: Array<{ id: string; address: string; lastSeenMs?: number }>): number {
+    let added = 0
+    for (const p of peers) {
+      const ok = this.addPeer({
+        id: p.id,
+        address: p.address,
+        lastSeenMs: p.lastSeenMs ?? Date.now(),
+      })
+      if (ok) added++
+    }
+    return added
+  }
+
+  /**
    * Get bucket occupancy stats.
    */
   stats(): { totalPeers: number; nonEmptyBuckets: number; maxBucketSize: number } {
