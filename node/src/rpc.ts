@@ -774,45 +774,57 @@ function parseBlockTag(input: unknown, fallback: bigint): bigint {
 async function formatBlock(block: Awaited<ReturnType<IChainEngine["getBlockByNumber"]>>, includeTx: boolean, chain?: IChainEngine, evm?: EvmChain) {
   if (!block) return null
 
-  // Aggregate logsBloom from block receipts
+  // Aggregate logsBloom and gasUsed from block receipts
   let aggregatedBloom = "0x" + "0".repeat(512)
+  let totalGasUsed = BigInt(block.txs.length * 21_000) // fallback estimate
   if (chain && evm) {
     const receipts = await Promise.resolve(chain.getReceiptsByBlock(block.number))
-    for (const receipt of receipts) {
-      if (receipt.logsBloom && receipt.logsBloom !== "0x" + "0".repeat(512)) {
-        aggregatedBloom = receipt.logsBloom
-        break // use first non-zero bloom (simplified)
+    if (receipts.length > 0) {
+      totalGasUsed = 0n
+      for (const receipt of receipts) {
+        totalGasUsed += receipt.gasUsed ?? 0n
+        if (receipt.logsBloom && receipt.logsBloom !== "0x" + "0".repeat(512)) {
+          aggregatedBloom = receipt.logsBloom
+        }
       }
     }
   }
 
-  // Fix: includeTx=false should return only tx hashes
+  // Parse raw txs directly instead of O(n*m) search through EVM receipts
   let transactions: unknown[]
+  const blockNumHex = `0x${block.number.toString(16)}`
   if (includeTx) {
     transactions = block.txs.map((rawTx, i) => {
-      if (evm) {
-        // Try to get full tx info from evm
-        const allTxs = [...evm.getAllReceipts().keys()]
-        for (const hash of allTxs) {
-          const info = evm.getTransaction(hash)
-          if (info && info.blockNumber === `0x${block.number.toString(16)}`) {
-            return info
-          }
+      try {
+        const parsed = Transaction.from(rawTx)
+        return {
+          hash: parsed.hash,
+          from: parsed.from,
+          to: parsed.to ?? null,
+          nonce: `0x${parsed.nonce.toString(16)}`,
+          value: `0x${(parsed.value ?? 0n).toString(16)}`,
+          gas: `0x${(parsed.gasLimit ?? 21000n).toString(16)}`,
+          gasPrice: `0x${(parsed.gasPrice ?? parsed.maxFeePerGas ?? 0n).toString(16)}`,
+          input: parsed.data ?? "0x",
+          blockHash: block.hash,
+          blockNumber: blockNumHex,
+          transactionIndex: `0x${i.toString(16)}`,
+          type: `0x${(parsed.type ?? 0).toString(16)}`,
+          v: parsed.signature?.v !== undefined ? `0x${parsed.signature.v.toString(16)}` : "0x0",
+          r: parsed.signature?.r ?? "0x0",
+          s: parsed.signature?.s ?? "0x0",
         }
+      } catch {
+        return rawTx
       }
-      return rawTx
     })
   } else {
-    // Return tx hashes, not raw tx data
     transactions = block.txs.map((rawTx) => {
-      if (evm) {
-        for (const [hash, info] of evm.getAllReceipts().entries()) {
-          if (info.blockNumber === `0x${block.number.toString(16)}`) {
-            return hash
-          }
-        }
+      try {
+        return Transaction.from(rawTx).hash
+      } catch {
+        return keccak256Hex(Buffer.from(rawTx.slice(2), "hex"))
       }
-      return keccak256Hex(Buffer.from(rawTx.slice(2), "hex"))
     })
   }
 
@@ -832,7 +844,7 @@ async function formatBlock(block: Awaited<ReturnType<IChainEngine["getBlockByNum
     extraData: `0x${Buffer.from(block.proposer, "utf-8").toString("hex")}`,
     size: `0x${(100 + block.txs.length * 200).toString(16)}`,
     gasLimit: "0x1c9c380",
-    gasUsed: `0x${(block.txs.length * 21_000).toString(16)}`,
+    gasUsed: `0x${totalGasUsed.toString(16)}`,
     timestamp: `0x${Math.floor(block.timestampMs / 1000).toString(16)}`,
     baseFeePerGas: "0x3b9aca00",
     finalized: block.finalized,
