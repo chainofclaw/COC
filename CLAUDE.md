@@ -74,8 +74,8 @@ Policy files are located at `nodeops/policies/*.yaml` and can be loaded and eval
 
 ## Test Strategy
 
-Uses Node.js built-in test framework (570+97 tests across 77 test files):
-- **Node layer tests**: `node/src/*.test.ts node/src/**/*.test.ts` (570 tests, 56 files) - chain engine, EVM, RPC, WebSocket, P2P, mempool, storage, IPFS, PoSe, BFT consensus, DHT, wire protocol, fork choice, state snapshot, wire server, DHT network, snap sync, consensus-BFT integration
+Uses Node.js built-in test framework (598+97 tests across 78 test files):
+- **Node layer tests**: `node/src/*.test.ts node/src/**/*.test.ts` (598 tests, 57 files) - chain engine, EVM, RPC, WebSocket, P2P, mempool, storage, IPFS, PoSe, BFT consensus, DHT, wire protocol, fork choice, state snapshot, wire server, DHT network, snap sync, consensus-BFT integration, consensus metrics, wire connection manager, wire tx relay
 - **Service layer tests**: `services/**/*.test.ts` + `nodeops/*.test.ts` + `tests/**/*.test.ts` (97 tests, 21 files)
 - **Storage layer tests**: `node/src/storage/*.test.ts` (included in node layer)
 
@@ -116,13 +116,14 @@ cd contracts && npm test
 - `dns-seeds.ts`: DNS seed discovery (TXT record resolution)
 - `ipfs-merkle.ts`: Merkle tree construction and proof generation (with index bounds validation)
 - `ipfs-tar.ts`: POSIX tar archive builder for IPFS `/api/v0/get` compatibility
-- `bft.ts`: BFT-lite consensus round (propose/prepare/commit, 2/3 stake-weighted quorum)
-- `bft-coordinator.ts`: BFT round lifecycle management with timeout and P2P bridging
+- `bft.ts`: BFT-lite consensus round (propose/prepare/commit, 2/3 stake-weighted quorum, equivocation detection)
+- `bft-coordinator.ts`: BFT round lifecycle management with timeout, P2P bridging, and equivocation detector
 - `fork-choice.ts`: GHOST-inspired fork selection (BFT finality > chain length > weight)
-- `wire-protocol.ts`: Binary framed TCP protocol (Magic 0xC0C1, FrameDecoder streaming)
-- `wire-server.ts`: TCP server accepting inbound connections, handshake, frame dispatch
-- `wire-client.ts`: TCP client with exponential backoff reconnect (1s-30s)
-- `dht-network.ts`: DHT network layer (bootstrap, iterative lookup, periodic refresh)
+- `wire-protocol.ts`: Binary framed TCP protocol (Magic 0xC0C1, FrameDecoder streaming, FindNode/FindNodeResponse)
+- `wire-server.ts`: TCP server accepting inbound connections, handshake, frame dispatch, FindNode handler
+- `wire-client.ts`: TCP client with exponential backoff reconnect (1s-30s), async FindNode requests
+- `wire-connection-manager.ts`: Wire connection lifecycle management (add/remove peers, max connections, broadcast)
+- `dht-network.ts`: DHT network layer (bootstrap, iterative lookup, periodic refresh, node announcement)
 - `dht.ts`: Kademlia DHT routing table (XOR distance, K-buckets, findClosest)
 - `state-snapshot.ts`: EVM state snapshot export/import for fast sync
 - `validator-governance.ts`: Validator set management with stake-weighted voting
@@ -224,8 +225,8 @@ cd contracts && npm test
 
 - BFT consensus, wire protocol TCP transport, DHT peer discovery, and state snapshot sync are all integrated but disabled by default (opt-in via `enableBft`, `enableWireProtocol`, `enableDht`, `enableSnapSync` config flags)
 - BFT requires >= 3 validators; single-node devnet auto-disables BFT
-- Wire protocol FIND_NODE request/response not yet implemented (DHT uses local routing table fallback)
 - Multi-node BFT finality not yet tested in production devnet environment
+- Wire protocol transaction relay is broadcast-only (no dedup across HTTP and TCP paths)
 
 ## Configuration File Locations
 
