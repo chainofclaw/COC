@@ -21,6 +21,9 @@ import type { BlockEvent, PendingTxEvent } from "./chain-events.ts"
 import type { IStateTrie } from "./storage/state-trie.ts"
 import { ValidatorGovernance } from "./validator-governance.ts"
 import type { ValidatorInfo } from "./validator-governance.ts"
+import { createLogger } from "./logger.ts"
+
+const log = createLogger("persistent-engine")
 
 export interface PersistentChainEngineConfig {
   dataDir: string
@@ -138,8 +141,8 @@ export class PersistentChainEngine {
         if (tx?.receipt) {
           receipts.push(tx.receipt)
         }
-      } catch {
-        // skip unparseable txs
+      } catch (err) {
+        log.warn("skipping unparseable tx in getReceiptsByBlock", { block: number.toString(), error: String(err) })
       }
     }
     return receipts
@@ -199,9 +202,8 @@ export class PersistentChainEngine {
     const block = await this.buildBlock(nextHeight, txs)
     try {
       await this.applyBlock(block, true)
-    } catch {
-      // If block application fails (e.g. invalid tx), remove offending txs
-      // from mempool and produce an empty block instead
+    } catch (err) {
+      log.warn("block application failed, falling back to empty block", { height: nextHeight.toString(), txCount: txs.length, error: String(err) })
       for (const tx of txs) {
         this.mempool.remove(tx.hash)
       }
@@ -316,8 +318,8 @@ export class PersistentChainEngine {
       try {
         const parsed = Transaction.from(raw)
         this.mempool.remove(parsed.hash as Hex)
-      } catch {
-        // ignore parse failures
+      } catch (err) {
+        log.warn("failed to parse tx for mempool removal", { error: String(err) })
       }
     }
 
