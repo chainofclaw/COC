@@ -207,3 +207,49 @@ Algorithm:
 
 Code:
 - `COC/node/src/wire-protocol.ts`
+
+## 18) DHT Network Iterative Lookup
+**Goal**: discover peers via iterative querying across the DHT network.
+
+Algorithm:
+- Start with K closest peers from local routing table.
+- Select ALPHA (3) unqueried peers closest to target.
+- Query each in parallel for their closest peers.
+- Add newly discovered peers to routing table and candidate set.
+- Repeat until no new peers are found (convergence).
+- Return final K closest peers from routing table.
+
+Code:
+- `COC/node/src/dht-network.ts` (`iterativeLookup`)
+
+## 19) Wire Server/Client TCP Handshake
+**Goal**: establish authenticated TCP connections between nodes.
+
+Algorithm:
+- Server listens on configured port and accepts connections.
+- On connect, server sends Handshake frame (nodeId, chainId, height).
+- Client sends Handshake frame on connect.
+- Receiver validates chainId — disconnect on mismatch.
+- On successful validation, mark connection as handshake-complete.
+- Post-handshake: dispatch Block, Transaction, BFT frames to handlers.
+- Client uses exponential backoff on disconnect (1s initial, 30s max, doubles each attempt).
+
+Code:
+- `COC/node/src/wire-server.ts`
+- `COC/node/src/wire-client.ts`
+
+## 20) Snap Sync State Transfer
+**Goal**: fast-sync node state from a peer's EVM snapshot.
+
+Algorithm:
+- Syncing node requests state snapshot from peer via `/p2p/state-snapshot`.
+- Peer exports full EVM state: accounts, storage slots, contract code.
+- Receiver validates snapshot structure (`validateSnapshot()`).
+- Import accounts, storage, and code into local state trie.
+- Set local state root to match the snapshot.
+- Resume consensus from the snapshot's block height.
+
+Code:
+- `COC/node/src/state-snapshot.ts` (`exportStateSnapshot`, `importStateSnapshot`)
+- `COC/node/src/consensus.ts` (`SnapSyncProvider` interface)
+- `COC/node/src/p2p.ts` (`/p2p/state-snapshot` endpoint)

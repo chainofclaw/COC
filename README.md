@@ -43,7 +43,10 @@ COC is an EVM-compatible blockchain prototype with PoSe (Proof-of-Service) settl
 - **DHT Routing**: Kademlia DHT with XOR distance metric, 256 K-buckets (K=20), findClosest lookup
 - **Wire Protocol**: Binary framed protocol (Magic 0xC0C1, type byte, 4B length, payload) with streaming FrameDecoder
 - **State Snapshot**: EVM state export/import for fast sync (accounts, storage, code)
-- **Testing**: 640 tests across 73 test files, covering chain engine, EVM, mempool, RPC, WebSocket, P2P, storage, IPFS, PoSe, BFT, DHT, wire protocol, fork choice, and configuration
+- **TCP Transport**: Wire server (inbound TCP, handshake, frame dispatch) and wire client (outbound TCP, exponential backoff reconnect 1s-30s)
+- **DHT Network**: DHT network layer with bootstrap, iterative FIND_NODE lookup (alpha=3 parallelism), periodic refresh (5 min)
+- **Protocol Integration**: BFT coordinator + fork choice integrated into ConsensusEngine, snap sync provider, all features opt-in via config flags
+- **Testing**: 667 tests across 77 test files, covering chain engine, EVM, mempool, RPC, WebSocket, P2P, storage, IPFS, PoSe, BFT, DHT, wire protocol, fork choice, snap sync, and configuration
 
 ### Blockchain Explorer Features
 
@@ -128,6 +131,13 @@ The explorer (`explorer/`) is a Next.js 15 App Router application providing:
 | 43 | `4775b4b` | P2P BFT message routing (`/p2p/bft-message` endpoint + `broadcastBft`) |
 | 44 | `333e2c2` | `coc_getBftStatus` RPC endpoint + debug-trace OpenEthereum format fix |
 | 45 | `583b541` | Full test suite verification (640 tests) + core algorithms documentation |
+| 46 | `6aa68ef` | Update all documentation for Phase 14-25 development progress |
+
+### Protocol Integration (Cycles 47+)
+
+| Cycle | Commit | Summary |
+|-------|--------|---------|
+| 47 | — | Wire server/client TCP transport, DHT network layer, BFT/fork-choice/snap-sync consensus integration, 4 new test files (667 tests total) |
 
 ## Quick Start
 

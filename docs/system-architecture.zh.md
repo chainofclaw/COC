@@ -19,9 +19,9 @@ COC 是一个 EVM 兼容的区块链原型，结合轻量执行层与 PoSe（Pro
 
 3. **P2P 网络层**
    - 采用 HTTP gossip 传播交易、区块、BFT 消息与 pubsub 消息。
-   - 二进制线协议帧编解码（为未来 TCP 传输准备）。
-   - Kademlia DHT 路由表实现去中心化节点发现。
-   - 通过链快照同步进行对等节点对齐。
+   - 二进制线协议帧编解码，含 TCP 传输层（Wire 服务端/客户端）。
+   - Kademlia DHT 路由表和网络层（引导、迭代查找、定期刷新）。
+   - 通过链快照同步进行对等节点对齐，含 EVM 状态快照端点 `/p2p/state-snapshot`。
    - 节点持久化存储与 DNS 种子发现。
    - 基于声誉的节点评分与自动封禁/解封。
 
@@ -71,7 +71,8 @@ COC 是一个 EVM 兼容的区块链原型，结合轻量执行层与 PoSe（Pro
 7. 聚合批次提交到 PoSeManager，relayer 触发最终结算。
 
 ## 当前边界
-- 共识采用 ValidatorGovernance 权益加权出块 + 轮转降级。BFT-lite 轮次状态机和分叉选择规则已实现，尚未接入出块主循环。
-- P2P 采用 HTTP gossip + 节点持久化 + DNS 种子发现。Kademlia DHT 和二进制线协议已实现为独立模块，尚未接入实时传输。
-- EVM 状态通过 PersistentStateManager + LevelDB 跨重启持久化。支持状态快照导出/导入用于快速同步。
+- 共识采用 ValidatorGovernance 权益加权出块 + 轮转降级。BFT 协调器已集成到 ConsensusEngine（通过 `enableBft` 可选启用）：在 `tryPropose()` 中启动 BFT 轮次，失败时降级为直接广播。分叉选择规则已集成到 `trySync()` 实现确定性链选择。
+- P2P 以 HTTP gossip 为主要传输 + 节点持久化 + DNS 种子发现。Wire 服务端/客户端提供可选 TCP 传输（`enableWireProtocol`）。DHT 网络层提供可选迭代节点发现（`enableDht`）。状态快照端点可用于快速同步。
+- EVM 状态通过 PersistentStateManager + LevelDB 跨重启持久化。快照同步提供者已集成到 ConsensusEngine（通过 `enableSnapSync` 可选启用）。
 - IPFS 支持核心 HTTP API、网关、MFS、Pubsub 和 tar 归档 `get`。
+- 所有高级功能（BFT、线协议、DHT、快照同步）默认关闭，通过配置标志启用。

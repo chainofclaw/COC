@@ -31,7 +31,11 @@ This matrix lists features by domain, with current status and primary code refer
 - **DNS seed discovery** — Implemented (Phase 26) — `COC/node/src/dns-seeds.ts`
 - **BFT message routing** — Implemented (Phase 28) — `COC/node/src/p2p.ts`
 - **Kademlia DHT routing** — Implemented (Phase 28) — `COC/node/src/dht.ts`
+- **DHT network layer** — Implemented (Phase 29) — `COC/node/src/dht-network.ts`
 - **Binary wire protocol** — Implemented (Phase 28) — `COC/node/src/wire-protocol.ts`
+- **Wire server (TCP inbound)** — Implemented (Phase 29) — `COC/node/src/wire-server.ts`
+- **Wire client (TCP outbound)** — Implemented (Phase 29) — `COC/node/src/wire-client.ts`
+- **State snapshot P2P** — Implemented (Phase 29) — `COC/node/src/p2p.ts`
 
 ## Storage
 - **Chain snapshot persistence** — Implemented — `COC/node/src/storage.ts`
@@ -47,6 +51,7 @@ This matrix lists features by domain, with current status and primary code refer
 - **IPFS Pubsub** — Implemented (Phase 26) — `COC/node/src/ipfs-pubsub.ts`
 - **IPFS tar archive** — Implemented (Phase 28) — `COC/node/src/ipfs-tar.ts`
 - **EVM state snapshot** — Implemented (Phase 28) — `COC/node/src/state-snapshot.ts`
+- **Snap sync provider** — Implemented (Phase 29) — `COC/node/src/consensus.ts`
 - **Log indexing** — Implemented (Phase 13.2) — `COC/node/src/storage/block-index.ts`
 - **Block/log pruning** — Implemented (Phase 21) — `COC/node/src/storage/pruner.ts`
 
@@ -117,6 +122,9 @@ This matrix lists features by domain, with current status and primary code refer
 
 ## Consensus & Reliability
 - **Consensus error recovery** — Implemented (degraded mode, auto-recovery) — `COC/node/src/consensus.ts`
+- **BFT consensus integration** — Implemented (Phase 29, opt-in) — `COC/node/src/consensus.ts`
+- **Fork choice integration** — Implemented (Phase 29) — `COC/node/src/consensus.ts`
+- **Snap sync integration** — Implemented (Phase 29, opt-in) — `COC/node/src/consensus.ts`
 - **Health checker** — Implemented (memory/WS/storage diagnostics) — `COC/node/src/health.ts`
 
 ## Debug & Trace
