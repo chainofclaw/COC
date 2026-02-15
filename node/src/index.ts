@@ -30,6 +30,7 @@ import { BftCoordinator } from "./bft-coordinator.ts"
 import type { BftMessage } from "./bft.ts"
 import { WireServer } from "./wire-server.ts"
 import { WireClient } from "./wire-client.ts"
+import { MessageType, encodeJsonPayload } from "./wire-protocol.ts"
 import { DhtNetwork } from "./dht-network.ts"
 import { exportStateSnapshot, importStateSnapshot } from "./state-snapshot.ts"
 import type { StateSnapshot } from "./state-snapshot.ts"
@@ -269,6 +270,9 @@ if (stateTrie && config.enableSnapSync) {
   }
 }
 
+// Wire broadcast function — will be bound after wire server setup
+let wireBroadcastFn: ((block: ChainBlock) => void) | undefined
+
 const consensus = new ConsensusEngine(chain, p2p, {
   blockTimeMs: config.blockTimeMs,
   syncIntervalMs: config.syncIntervalMs,
@@ -277,6 +281,7 @@ const consensus = new ConsensusEngine(chain, p2p, {
 }, {
   bft: bftCoordinator,
   snapSync: snapSyncProvider,
+  wireBroadcast: (block) => wireBroadcastFn?.(block),
 })
 consensus.start()
 
@@ -328,6 +333,13 @@ if (config.enableWireProtocol) {
   })
   wireServer.start()
   log.info("wire protocol TCP server started", { port: config.wirePort })
+
+  // Bind wire broadcast for dual HTTP+TCP block propagation
+  const ws = wireServer
+  wireBroadcastFn = (block) => {
+    const data = encodeJsonPayload(MessageType.Block, block)
+    ws.broadcastFrame(data)
+  }
 
   // Connect to known peers via wire protocol
   for (const peer of config.peers) {

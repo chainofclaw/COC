@@ -54,17 +54,21 @@ export class ConsensusEngine {
   private proposeTimer: ReturnType<typeof setInterval> | null = null
   private syncTimer: ReturnType<typeof setInterval> | null = null
 
+  /** Optional callback to broadcast blocks via wire protocol (TCP) */
+  private readonly wireBroadcast: ((block: ChainBlock) => void) | null
+
   constructor(
     chain: IChainEngine,
     p2p: P2PNode,
     cfg: ConsensusConfig,
-    opts?: { bft?: BftCoordinator; snapSync?: SnapSyncProvider },
+    opts?: { bft?: BftCoordinator; snapSync?: SnapSyncProvider; wireBroadcast?: (block: ChainBlock) => void },
   ) {
     this.chain = chain
     this.p2p = p2p
     this.cfg = cfg
     this.bft = opts?.bft ?? null
     this.snapSync = opts?.snapSync ?? null
+    this.wireBroadcast = opts?.wireBroadcast ?? null
   }
 
   start(): void {
@@ -128,13 +132,26 @@ export class ConsensusEngine {
   }
 
   private async broadcastBlock(block: ChainBlock): Promise<void> {
+    // HTTP gossip broadcast
     try {
       await this.p2p.receiveBlock(block)
     } catch (broadcastErr) {
-      log.warn("block produced but broadcast failed", {
+      log.warn("block produced but HTTP broadcast failed", {
         error: String(broadcastErr),
         block: block.number.toString(),
       })
+    }
+
+    // Wire protocol TCP broadcast (if enabled)
+    if (this.wireBroadcast) {
+      try {
+        this.wireBroadcast(block)
+      } catch (wireErr) {
+        log.warn("wire broadcast failed", {
+          error: String(wireErr),
+          block: block.number.toString(),
+        })
+      }
     }
   }
 

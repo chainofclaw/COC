@@ -152,6 +152,32 @@ describe("ConsensusEngine BFT integration", () => {
 
     assert.ok(broadcastCalled, "should directly broadcast when no BFT")
   })
+
+  it("should broadcast via both HTTP and wire when wireBroadcast is set", async () => {
+    const chain = makeMockChain()
+    let httpBroadcast = false
+    let wireBroadcast = false
+    let wireBlock: ChainBlock | null = null
+
+    const p2p = {
+      ...makeMockP2P(),
+      receiveBlock: async () => { httpBroadcast = true },
+    }
+
+    const consensus = new ConsensusEngine(
+      chain as IChainEngine,
+      p2p as unknown as P2PNode,
+      { blockTimeMs: 100, syncIntervalMs: 100 },
+      { wireBroadcast: (block) => { wireBroadcast = true; wireBlock = block } },
+    )
+
+    const tryPropose = (consensus as unknown as { tryPropose: () => Promise<void> }).tryPropose.bind(consensus)
+    await tryPropose()
+
+    assert.ok(httpBroadcast, "should broadcast via HTTP")
+    assert.ok(wireBroadcast, "should broadcast via wire protocol")
+    assert.ok(wireBlock, "wire broadcast should receive the block")
+  })
 })
 
 describe("ConsensusEngine fork choice sync", () => {
