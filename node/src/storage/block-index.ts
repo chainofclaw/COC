@@ -5,13 +5,14 @@
  * with multiple access patterns (by number, by hash, by address).
  */
 
-import type { IDatabase } from "./db.ts"
+import type { IDatabase, RangeOptions } from "./db.ts"
 import type { ChainBlock, Hex } from "../blockchain-types.ts"
 
 const BLOCK_BY_NUMBER_PREFIX = "b:"
 const BLOCK_BY_HASH_PREFIX = "h:"
 const TX_BY_HASH_PREFIX = "t:"
 const LOG_BY_BLOCK_PREFIX = "l:"
+const ADDR_TX_PREFIX = "a:"
 const LATEST_BLOCK_KEY = "m:latest-block"
 
 const encoder = new TextEncoder()
@@ -66,6 +67,11 @@ export interface LogFilter {
   topics?: Array<Hex | null>
 }
 
+export interface AddressTxQuery {
+  limit?: number
+  reverse?: boolean   // true = newest first (default)
+}
+
 export interface IBlockIndex {
   putBlock(block: ChainBlock): Promise<void>
   getBlockByNumber(num: bigint): Promise<ChainBlock | null>
@@ -73,6 +79,7 @@ export interface IBlockIndex {
   getLatestBlock(): Promise<ChainBlock | null>
   putTransaction(txHash: Hex, tx: TxWithReceipt): Promise<void>
   getTransactionByHash(hash: Hex): Promise<TxWithReceipt | null>
+  getTransactionsByAddress(address: Hex, opts?: AddressTxQuery): Promise<TxWithReceipt[]>
   putLogs(blockNumber: bigint, logs: IndexedLog[]): Promise<void>
   getLogs(filter: LogFilter): Promise<IndexedLog[]>
   close(): Promise<void>
@@ -146,7 +153,24 @@ export class BlockIndex implements IBlockIndex {
   async putTransaction(txHash: Hex, tx: TxWithReceipt): Promise<void> {
     const key = TX_BY_HASH_PREFIX + txHash
     const txData = encoder.encode(serializeJSON(tx))
-    await this.db.put(key, txData)
+    const ops: Array<{ type: "put"; key: string; value: Uint8Array }> = [
+      { type: "put", key, value: txData },
+    ]
+
+    // Build address indexes for from/to
+    const blockPad = padBlockNumber(tx.receipt.blockNumber)
+    const hashLower = txHash.toLowerCase()
+
+    if (tx.receipt.from) {
+      const fromKey = ADDR_TX_PREFIX + tx.receipt.from.toLowerCase() + ":" + blockPad + ":" + hashLower
+      ops.push({ type: "put", key: fromKey, value: encoder.encode(txHash) })
+    }
+    if (tx.receipt.to) {
+      const toKey = ADDR_TX_PREFIX + tx.receipt.to.toLowerCase() + ":" + blockPad + ":" + hashLower
+      ops.push({ type: "put", key: toKey, value: encoder.encode(txHash) })
+    }
+
+    await this.db.batch(ops)
   }
 
   async getTransactionByHash(hash: Hex): Promise<TxWithReceipt | null> {
@@ -163,6 +187,23 @@ export class BlockIndex implements IBlockIndex {
       tx.receipt.status = BigInt(tx.receipt.status)
     }
     return tx
+  }
+
+  async getTransactionsByAddress(address: Hex, opts?: AddressTxQuery): Promise<TxWithReceipt[]> {
+    const prefix = ADDR_TX_PREFIX + address.toLowerCase() + ":"
+    const limit = opts?.limit ?? 50
+    const reverse = opts?.reverse ?? true
+    const keys = await this.db.getKeysWithPrefix(prefix, { limit, reverse })
+
+    const results: TxWithReceipt[] = []
+    for (const key of keys) {
+      const data = await this.db.get(key)
+      if (!data) continue
+      const txHash = decoder.decode(data) as Hex
+      const tx = await this.getTransactionByHash(txHash)
+      if (tx) results.push(tx)
+    }
+    return results
   }
 
   async putLogs(blockNumber: bigint, logs: IndexedLog[]): Promise<void> {
@@ -198,6 +239,11 @@ export class BlockIndex implements IBlockIndex {
   async close(): Promise<void> {
     // Database close is handled by parent
   }
+}
+
+// Zero-pad block number for lexicographic ordering (20 digits)
+function padBlockNumber(n: bigint): string {
+  return n.toString().padStart(20, "0")
 }
 
 function matchLogFilter(log: IndexedLog, filter: LogFilter): boolean {

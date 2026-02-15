@@ -428,6 +428,27 @@ async function handleRpc(
       const txHash = String((payload.params ?? [])[0] ?? "") as Hex
       return await traceTransactionCalls(txHash, chain, evm)
     }
+    case "coc_getTransactionsByAddress": {
+      const addr = String((payload.params ?? [])[0] ?? "").toLowerCase() as Hex
+      const limit = Number((payload.params ?? [])[1] ?? 50)
+      const reverse = (payload.params ?? [])[2] !== false
+
+      if (typeof (chain as any).blockIndex?.getTransactionsByAddress === "function") {
+        const txs = await (chain as any).blockIndex.getTransactionsByAddress(addr, { limit, reverse })
+        return txs.map((tx: any) => ({
+          hash: tx.receipt.transactionHash,
+          from: tx.receipt.from,
+          to: tx.receipt.to,
+          blockNumber: `0x${tx.receipt.blockNumber.toString(16)}`,
+          blockHash: tx.receipt.blockHash,
+          gasUsed: `0x${tx.receipt.gasUsed.toString(16)}`,
+          status: `0x${tx.receipt.status.toString(16)}`,
+          input: tx.rawTx,
+          logs: tx.receipt.logs,
+        }))
+      }
+      return []
+    }
     default:
       throw new Error(`method not supported: ${payload.method}`)
   }

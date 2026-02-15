@@ -2,6 +2,7 @@ import type { Metadata } from "next"
 import Link from "next/link"
 import "./globals.css"
 import { ConnectionStatus } from "@/components/ConnectionStatus"
+import { SearchBar } from "@/components/SearchBar"
 
 export const metadata: Metadata = {
   title: "COC Explorer - ChainOfClaw Block Explorer",
@@ -19,15 +20,16 @@ export default function RootLayout({
         <div className="min-h-screen flex flex-col">
           <header className="bg-blue-600 text-white shadow-lg">
             <div className="container mx-auto px-4 py-4">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-4">
                 <div className="flex items-center space-x-6">
-                  <Link href="/" className="text-2xl font-bold hover:text-blue-200">
+                  <Link href="/" className="text-2xl font-bold hover:text-blue-200 whitespace-nowrap">
                     COC Explorer
                   </Link>
                   <nav className="hidden sm:flex items-center space-x-4 text-sm">
                     <Link href="/" className="hover:text-blue-200">Blocks</Link>
                   </nav>
                 </div>
+                <SearchBar />
                 <ConnectionStatus />
               </div>
             </div>
