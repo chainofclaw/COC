@@ -74,24 +74,22 @@ bash scripts/quality-gate.sh  # 运行所有单元、集成和 e2e 测试
 
 ## 测试策略
 
-使用 Node.js 内置测试框架：
-- **单元测试**: `services/` 和 `nodeops/` 中的 `*.test.ts` 文件
-- **存储层测试**: `node/src/storage/*.test.ts` (26 tests)
-- **集成测试**: `tests/integration/*.test.ts`
-- **E2E 测试**: `tests/e2e/*.test.ts`
+使用 Node.js 内置测试框架（190 测试，83+97+10 分布）：
+- **节点层测试**: `node/src/**/*.test.ts` (83 tests) - 链引擎、EVM、RPC、WebSocket、P2P、mempool、存储
+- **服务层测试**: `services/**/*.test.ts` + `nodeops/*.test.ts` + `tests/**/*.test.ts` (97 tests)
+- **合约测试**: `contracts/` (52 tests via Hardhat)
+- **存储层测试**: `node/src/storage/*.test.ts` (26 tests, 包含在节点层中)
 
 运行测试：
 ```bash
-# 单个包内运行测试
-cd node
-node --experimental-strip-types --test src/**/*.test.ts
+# 节点层测试
+cd node && node --experimental-strip-types --test --test-force-exit src/**/*.test.ts
 
-# 仅运行存储层测试
-node --experimental-strip-types --test src/storage/*.test.ts
+# 服务层测试
+cd /path/to/COC && node --experimental-strip-types --test --test-force-exit services/**/*.test.ts nodeops/*.test.ts tests/**/*.test.ts
 
 # 合约测试
-cd contracts
-npm test
+cd contracts && npm test
 ```
 
 ## 核心架构概念
@@ -99,10 +97,14 @@ npm test
 ### 节点核心组件 (node/src/)
 - `chain-engine.ts`: 区块链引擎，管理区块生产、持久化和最终性
 - `evm.ts`: EVM 执行层（基于 @ethereumjs/vm）
-- `consensus.ts`: 共识引擎（当前为确定性轮换）
-- `p2p.ts`: HTTP-based gossip 网络（事务和区块传播）
-- `rpc.ts`: JSON-RPC 接口（钱包集成）
-- `mempool.ts`: 交易内存池（gas 优先级 + nonce 排序）
+- `consensus.ts`: 共识引擎（确定性轮换 + 降级模式 + 自动恢复）
+- `p2p.ts`: HTTP gossip 网络（每 peer 去重、请求体限制、广播并发控制）
+- `rpc.ts`: JSON-RPC 接口（57+ 方法）
+- `websocket-rpc.ts`: WebSocket RPC（eth_subscribe，订阅验证与限制）
+- `mempool.ts`: 交易内存池（EIP-1559 effective gas price 排序）
+- `base-fee.ts`: EIP-1559 动态 baseFee 计算
+- `health.ts`: 健康检查（内存/WS/存储/共识诊断）
+- `debug-trace.ts`: 交易追踪（debug_traceTransaction、trace_transaction）
 - `storage.ts`: 链快照持久化
 - `ipfs-*.ts`: IPFS 兼容存储层
   - `ipfs-blockstore.ts`: 内容寻址块存储
@@ -137,11 +139,18 @@ npm test
   - `alerts-policy.yaml`: 告警策略
 
 ### 区块链浏览器 (explorer/)
-- `src/app/page.tsx`: 首页 - 最新区块列表
-- `src/app/block/[id]/page.tsx`: 区块详情页面
-- `src/app/tx/[hash]/page.tsx`: 交易详情页面（包含 receipt 和 logs）
-- `src/app/address/[address]/page.tsx`: 地址页面（余额和交易历史）
+- `src/app/page.tsx`: 首页 - 链统计仪表盘 + 最新区块 + WebSocket 实时更新
+- `src/app/block/[id]/page.tsx`: 区块详情页面（完整交易表、方法解码、Gas 利用率）
+- `src/app/tx/[hash]/page.tsx`: 交易详情页面（包含 receipt、logs、Token 转账）
+- `src/app/address/[address]/page.tsx`: 地址页面（余额、交易历史、合约检测）
+- `src/app/mempool/page.tsx`: Mempool 页面（池统计、待处理交易流）
+- `src/app/validators/page.tsx`: 验证者页面（验证者列表与状态）
+- `src/app/stats/page.tsx`: 统计页面（链活动、TPS、Gas 使用可视化）
+- `src/app/contracts/page.tsx`: 合约页面（已部署合约列表扫描）
+- `src/app/network/page.tsx`: 网络页面（节点运行信息、连接端点）
+- `src/components/ContractView.tsx`: 合约视图（字节码反汇编、eth_call、存储扫描）
 - `src/lib/provider.ts`: ethers.js provider 配置
+- `src/lib/rpc.ts`: RPC 调用工具
 
 ### 智能合约 (contracts/)
 - `settlement/PoSeManager.sol`: PoSe 结算合约
@@ -189,9 +198,9 @@ npm test
 
 ## 当前限制
 
-- 共识采用确定性轮换（尚未实现 BFT/PoS）
+- 共识采用确定性轮换 + 降级恢复（尚未实现 BFT/PoS）
 - P2P 使用 HTTP gossip（非完整的 peer discovery 协议）
-- EVM 状态为内存存储，仅支持快照持久化
+- EVM 状态支持 LevelDB 持久化和内存快照
 - IPFS 兼容性聚焦于核心 HTTP APIs 和网关行为，不支持完整的 IPFS 功能（如 MFS、pubsub）
 
 ## 配置文件位置

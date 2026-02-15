@@ -1,8 +1,8 @@
 # COC (ChainOfClaw) Technical Architecture Documentation
 
-> **Version**: v1.0.0
-> **Last Updated**: 2026-02-14
-> **Status**: Production Ready (138 tests passing)
+> **Version**: v1.1.0
+> **Last Updated**: 2026-02-15
+> **Status**: Production Ready (190 tests passing)
 
 ---
 
@@ -21,9 +21,9 @@ COC is an EVM-compatible blockchain built on PoSe (Proof of Service) consensus. 
 
 | Component | Lines of Code | Files |
 |-----------|--------------|-------|
-| TypeScript Runtime | ~7,200 | 83 |
+| TypeScript Runtime | ~9,000 | 95 |
 | Solidity Contracts | ~510 | 5 |
-| Test Cases | 138 tests | 28 |
+| Test Cases | 190 tests | 35 |
 
 ---
 
@@ -63,9 +63,17 @@ COC is an EVM-compatible blockchain built on PoSe (Proof of Service) consensus. 
 
 - **chain-engine**: Block production, finality, state snapshots
 - **evm.ts**: EthereumJS VM for smart contract execution
-- **rpc.ts**: JSON-RPC service (eth_call, eth_sendTransaction, eth_getStorageAt, etc.)
+- **rpc.ts**: JSON-RPC service (57+ methods including eth_*, coc_*, txpool_*)
+- **websocket-rpc.ts**: WebSocket RPC (eth_subscribe with validation and limits)
+- **consensus.ts**: Consensus engine with degraded mode and auto-recovery
+- **mempool.ts**: Transaction pool with EIP-1559 effective gas price sorting
+- **p2p.ts**: HTTP gossip network with per-peer dedup and body limits
+- **base-fee.ts**: EIP-1559 dynamic base fee calculation
+- **health.ts**: Health checker with memory/WS/storage diagnostics
+- **debug-trace.ts**: Transaction tracing (debug_traceTransaction, trace_transaction)
 - **pose-engine**: PoSe protocol engine for challenge verification
 - **crypto/signer**: secp256k1 signing and verification
+- **storage/**: LevelDB persistence (block index, state trie, nonce store)
 
 #### 2.2.2 Runtime (`runtime/`)
 
