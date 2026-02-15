@@ -205,3 +205,8 @@ npm test
 - 系统架构：`docs/system-architecture.en.md`
 - 核心算法：`docs/core-algorithms.en.md`
 - 功能矩阵：`docs/feature-matrix.md`
+
+## 代码及文档语言要求
+
+- 代码中的注释采用英文
+- 文档分为中英文两个独立版本，同步更新
