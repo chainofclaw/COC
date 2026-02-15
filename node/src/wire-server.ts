@@ -25,6 +25,7 @@ export interface WireServerConfig {
   bind?: string
   nodeId: string
   chainId: number
+  maxConnections?: number
   onBlock: (block: ChainBlock) => Promise<void>
   onTx: (rawTx: Hex) => Promise<void>
   onBftMessage?: (msg: BftMessage) => Promise<void>
@@ -43,6 +44,12 @@ export class WireServer {
   private readonly cfg: WireServerConfig
   private readonly connections = new Map<string, PeerConnection>()
   private server: net.Server | null = null
+  private framesReceived = 0
+  private framesSent = 0
+  private bytesReceived = 0
+  private bytesSent = 0
+  private totalConnectionsAccepted = 0
+  private connectionsRejected = 0
 
   constructor(cfg: WireServerConfig) {
     this.cfg = cfg
@@ -78,6 +85,8 @@ export class WireServer {
     for (const [, conn] of this.connections) {
       if (conn.handshakeComplete) {
         conn.socket.write(data)
+        this.framesSent++
+        this.bytesSent += data.byteLength
       }
     }
   }
@@ -92,7 +101,34 @@ export class WireServer {
     return peers
   }
 
+  getStats(): {
+    connections: number; connectedPeers: number
+    totalAccepted: number; rejected: number
+    framesReceived: number; framesSent: number
+    bytesReceived: number; bytesSent: number
+  } {
+    return {
+      connections: this.connections.size,
+      connectedPeers: this.getConnectedPeers().length,
+      totalAccepted: this.totalConnectionsAccepted,
+      rejected: this.connectionsRejected,
+      framesReceived: this.framesReceived,
+      framesSent: this.framesSent,
+      bytesReceived: this.bytesReceived,
+      bytesSent: this.bytesSent,
+    }
+  }
+
   private handleConnection(socket: net.Socket): void {
+    const maxConns = this.cfg.maxConnections ?? 50
+    if (this.connections.size >= maxConns) {
+      this.connectionsRejected++
+      log.warn("max connections reached, rejecting", { current: this.connections.size, max: maxConns })
+      socket.destroy()
+      return
+    }
+
+    this.totalConnectionsAccepted++
     const connId = `${socket.remoteAddress}:${socket.remotePort}`
     const conn: PeerConnection = {
       socket,
@@ -108,9 +144,11 @@ export class WireServer {
     void this.sendHandshake(socket)
 
     socket.on("data", (data: Buffer) => {
+      this.bytesReceived += data.byteLength
       try {
         const frames = conn.decoder.feed(new Uint8Array(data))
         for (const frame of frames) {
+          this.framesReceived++
           void this.handleFrame(conn, frame)
         }
       } catch (err) {
