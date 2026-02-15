@@ -887,6 +887,39 @@ async function handleRpc(
         votes: updated?.votes ? Object.fromEntries(updated.votes) : {},
       }
     }
+    case "coc_getGovernanceStats": {
+      if (!hasGovernance(chain)) {
+        return { enabled: false }
+      }
+      const gStats = chain.governance.getGovernanceStats()
+      return {
+        enabled: true,
+        activeValidators: gStats.activeValidators,
+        totalStake: `0x${gStats.totalStake.toString(16)}`,
+        pendingProposals: gStats.pendingProposals,
+        totalProposals: gStats.totalProposals,
+        currentEpoch: `0x${gStats.currentEpoch.toString(16)}`,
+      }
+    }
+    case "coc_getProposals": {
+      if (!hasGovernance(chain)) return []
+      const statusFilter = ((payload.params ?? [])[0] as string | undefined) ?? undefined
+      const validStatuses = ["pending", "approved", "rejected", "expired"]
+      const filter = statusFilter && validStatuses.includes(statusFilter) ? statusFilter as "pending" | "approved" | "rejected" | "expired" : undefined
+      const proposals = chain.governance.getProposals(filter)
+      return proposals.map((p) => ({
+        id: p.id,
+        type: p.type,
+        targetId: p.targetId,
+        targetAddress: p.targetAddress ?? null,
+        stakeAmount: p.stakeAmount !== undefined ? `0x${p.stakeAmount.toString(16)}` : null,
+        proposer: p.proposer,
+        createdAtEpoch: `0x${p.createdAtEpoch.toString(16)}`,
+        expiresAtEpoch: `0x${p.expiresAtEpoch.toString(16)}`,
+        status: p.status,
+        voteCount: p.votes.size,
+      }))
+    }
     case "coc_getBftStatus": {
       if (!bftCoordinator) {
         return { enabled: false, active: false }

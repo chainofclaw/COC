@@ -244,6 +244,19 @@ test("RPC Extended Methods", async (t) => {
     assert.equal(status.active, false)
   })
 
+  await t.test("coc_getGovernanceStats returns governance info", async () => {
+    const stats = await rpcCall(port, "coc_getGovernanceStats")
+    assert.ok(typeof stats === "object")
+    // No governance module in basic ChainEngine, should return enabled: false
+    assert.equal(stats.enabled, false)
+  })
+
+  await t.test("coc_getProposals returns empty without governance", async () => {
+    const proposals = await rpcCall(port, "coc_getProposals")
+    assert.ok(Array.isArray(proposals))
+    assert.equal(proposals.length, 0)
+  })
+
   await t.test("unsupported method throws error", async () => {
     await assert.rejects(
       () => rpcCall(port, "eth_nonExistentMethod"),
