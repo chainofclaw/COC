@@ -182,6 +182,41 @@ describe("Mempool", () => {
     assert.equal(filled.senders, 2)
     assert.ok(filled.oldestMs > 0)
   })
+
+  it("getAll returns all txs sorted by gas price descending", () => {
+    const pool = new Mempool({ chainId: CHAIN_ID })
+    signAndAdd(pool, PK1, 0, "0x3b9aca00") // 1 gwei
+    signAndAdd(pool, PK2, 0, "0xb2d05e00") // 3 gwei
+    signAndAdd(pool, PK1, 1, "0x77359400") // 2 gwei
+
+    const all = pool.getAll()
+    assert.equal(all.length, 3)
+    // Should be sorted by gas price descending
+    assert.ok(all[0].gasPrice >= all[1].gasPrice, "first should have highest gas price")
+    assert.ok(all[1].gasPrice >= all[2].gasPrice, "second should have middle gas price")
+  })
+
+  it("getAll returns empty array for empty pool", () => {
+    const pool = new Mempool({ chainId: CHAIN_ID })
+    const all = pool.getAll()
+    assert.equal(all.length, 0)
+  })
+
+  it("getPendingNonce returns correct next nonce", () => {
+    const pool = new Mempool({ chainId: CHAIN_ID })
+    const wallet = new Wallet(PK1)
+    const address = wallet.address.toLowerCase() as Hex
+
+    // No pending txs: should return on-chain nonce
+    assert.equal(pool.getPendingNonce(address, 5n), 5n)
+
+    // Add pending txs
+    signAndAdd(pool, PK1, 5)
+    signAndAdd(pool, PK1, 6)
+
+    // Should return max nonce + 1
+    assert.equal(pool.getPendingNonce(address, 5n), 7n)
+  })
 })
 
 function signAndAdd(pool: Mempool, pk: string, nonce: number, gasPrice?: string): void {

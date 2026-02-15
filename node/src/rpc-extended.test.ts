@@ -150,4 +150,83 @@ test("RPC Extended Methods", async (t) => {
     const logs = await rpcCall(port, "eth_getFilterLogs", [filterId])
     assert.ok(Array.isArray(logs))
   })
+
+  await t.test("eth_getBlockReceipts returns array or null", async () => {
+    // For genesis/latest block - may return [] or null depending on chain state
+    const receipts = await rpcCall(port, "eth_getBlockReceipts", ["0x0"])
+    // Either null (no block) or array of receipts
+    assert.ok(receipts === null || Array.isArray(receipts))
+  })
+
+  await t.test("eth_getBlockReceipts returns null for non-existent block", async () => {
+    const receipts = await rpcCall(port, "eth_getBlockReceipts", ["0xffffff"])
+    assert.strictEqual(receipts, null)
+  })
+
+  await t.test("txpool_status returns pool stats", async () => {
+    const status = await rpcCall(port, "txpool_status")
+    assert.ok(typeof status === "object")
+    assert.ok(typeof status.pending === "string")
+    assert.ok(status.pending.startsWith("0x"))
+    assert.ok(typeof status.queued === "string")
+  })
+
+  await t.test("txpool_content returns pending transactions", async () => {
+    const content = await rpcCall(port, "txpool_content")
+    assert.ok(typeof content === "object")
+    assert.ok(typeof content.pending === "object")
+    assert.ok(typeof content.queued === "object")
+  })
+
+  await t.test("coc_nodeInfo returns node metadata", async () => {
+    const info = await rpcCall(port, "coc_nodeInfo")
+    assert.ok(typeof info === "object")
+    assert.strictEqual(info.clientVersion, "COC/0.2")
+    assert.strictEqual(info.chainId, chainId)
+    assert.ok(typeof info.blockHeight === "number" || typeof info.blockHeight === "string")
+    assert.ok(typeof info.mempool === "object")
+    assert.ok(typeof info.mempool.size === "number")
+    assert.ok(typeof info.uptime === "number")
+    assert.ok(typeof info.nodeVersion === "string")
+    assert.ok(typeof info.platform === "string")
+  })
+
+  await t.test("web3_clientVersion returns version string", async () => {
+    const version = await rpcCall(port, "web3_clientVersion")
+    assert.strictEqual(version, "COC/0.2")
+  })
+
+  await t.test("net_version returns chain ID string", async () => {
+    const version = await rpcCall(port, "net_version")
+    assert.strictEqual(version, String(chainId))
+  })
+
+  await t.test("net_listening returns true", async () => {
+    const listening = await rpcCall(port, "net_listening")
+    assert.strictEqual(listening, true)
+  })
+
+  await t.test("eth_gasPrice returns gas price", async () => {
+    const price = await rpcCall(port, "eth_gasPrice")
+    assert.ok(typeof price === "string")
+    assert.ok(price.startsWith("0x"))
+  })
+
+  await t.test("eth_chainId returns chain ID", async () => {
+    const id = await rpcCall(port, "eth_chainId")
+    assert.strictEqual(id, `0x${chainId.toString(16)}`)
+  })
+
+  await t.test("eth_newPendingTransactionFilter returns filter id", async () => {
+    const id = await rpcCall(port, "eth_newPendingTransactionFilter")
+    assert.ok(typeof id === "string")
+    assert.ok(id.startsWith("0x"))
+  })
+
+  await t.test("unsupported method throws error", async () => {
+    await assert.rejects(
+      () => rpcCall(port, "eth_nonExistentMethod"),
+      (err: Error) => err.message.includes("not supported"),
+    )
+  })
 })
