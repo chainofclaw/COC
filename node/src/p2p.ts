@@ -23,6 +23,7 @@ export interface P2PHandlers {
   onSnapshotRequest: () => ChainSnapshot
   onBftMessage?: (msg: BftMessagePayload) => Promise<void>
   onStateSnapshotRequest?: () => Promise<unknown | null>
+  getHeight?: () => Promise<bigint> | bigint
 }
 
 export interface P2PConfig {
@@ -148,6 +149,31 @@ export class P2PNode {
       if (req.method === "GET" && req.url === "/p2p/peers") {
         res.writeHead(200, { "content-type": "application/json" })
         res.end(serializeJson({ peers: this.discovery.getPeerListForExchange() }))
+        return
+      }
+
+      if (req.method === "GET" && req.url === "/p2p/node-info") {
+        const height = this.handlers.getHeight ? await Promise.resolve(this.handlers.getHeight()) : 0n
+        const stats = this.getStats()
+        const activePeers = this.cfg.enableDiscovery !== false
+          ? this.discovery.getActivePeers()
+          : this.cfg.peers
+        res.writeHead(200, { "content-type": "application/json" })
+        res.end(serializeJson({
+          nodeId: this.cfg.nodeId ?? "unknown",
+          blockHeight: height.toString(),
+          peerCount: activePeers.length,
+          uptimeMs: stats.uptimeMs,
+          protocol: "http-gossip",
+          stats: {
+            txReceived: stats.txReceived,
+            txBroadcast: stats.txBroadcast,
+            blocksReceived: stats.blocksReceived,
+            blocksBroadcast: stats.blocksBroadcast,
+            bytesReceived: stats.bytesReceived,
+            bytesSent: stats.bytesSent,
+          },
+        }))
         return
       }
 

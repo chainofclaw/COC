@@ -1,6 +1,7 @@
-import test from "node:test"
+import test, { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { BoundedSet } from "./p2p.ts"
+import { BoundedSet, P2PNode } from "./p2p.ts"
+import type { Hex, ChainBlock, ChainSnapshot } from "./blockchain-types.ts"
 
 test("BoundedSet add and has", () => {
   const set = new BoundedSet<string>(5)
@@ -74,4 +75,39 @@ test("BoundedSet with size 1", () => {
   assert.equal(set.has("a"), false)
   assert.equal(set.has("b"), true)
   assert.equal(set.size, 1)
+})
+
+describe("P2P node-info endpoint", () => {
+  it("returns node metadata via /p2p/node-info", async () => {
+    const port = 29700 + Math.floor(Math.random() * 200)
+    const p2p = new P2PNode(
+      {
+        bind: "127.0.0.1",
+        port,
+        peers: [],
+        nodeId: "test-node-42",
+        enableDiscovery: false,
+      },
+      {
+        onTx: async () => {},
+        onBlock: async () => {},
+        onSnapshotRequest: () => ({ height: 0, latestHash: "0x0" as Hex, blocks: [] }) as unknown as ChainSnapshot,
+        getHeight: () => 123n,
+      },
+    )
+    p2p.start()
+    await new Promise((r) => setTimeout(r, 100))
+
+    const res = await fetch(`http://127.0.0.1:${port}/p2p/node-info`)
+    assert.equal(res.status, 200)
+
+    const info = await res.json()
+    assert.equal(info.nodeId, "test-node-42")
+    assert.equal(info.blockHeight, "123")
+    assert.equal(info.protocol, "http-gossip")
+    assert.ok(typeof info.peerCount === "number")
+    assert.ok(typeof info.stats === "object")
+    assert.ok(typeof info.stats.txReceived === "number")
+    assert.ok(typeof info.uptimeMs === "number")
+  })
 })
