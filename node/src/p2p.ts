@@ -7,6 +7,9 @@ import { createLogger } from "./logger.ts"
 
 const log = createLogger("p2p")
 
+const MAX_REQUEST_BODY = 2 * 1024 * 1024 // 2 MB max request body
+const BROADCAST_CONCURRENCY = 5 // max concurrent peer broadcasts
+
 export interface P2PHandlers {
   onTx: (rawTx: Hex) => Promise<void>
   onBlock: (block: ChainBlock) => Promise<void>
@@ -107,8 +110,22 @@ export class P2PNode {
       }
 
       let body = ""
-      req.on("data", (chunk) => (body += chunk))
+      let bodySize = 0
+      let aborted = false
+
+      req.on("data", (chunk: Buffer | string) => {
+        bodySize += typeof chunk === "string" ? chunk.length : chunk.byteLength
+        if (bodySize > MAX_REQUEST_BODY) {
+          aborted = true
+          res.writeHead(413)
+          res.end(serializeJson({ error: "request body too large" }))
+          req.destroy()
+          return
+        }
+        body += chunk
+      })
       req.on("end", async () => {
+        if (aborted) return
         try {
           if (req.url === "/p2p/gossip-tx") {
             const payload = JSON.parse(body || "{}") as { rawTx?: Hex }
@@ -131,6 +148,7 @@ export class P2PNode {
           res.writeHead(404)
           res.end(serializeJson({ error: "not found" }))
         } catch (error) {
+          log.error("gossip handler error", { url: req.url, error: String(error) })
           res.writeHead(500)
           res.end(serializeJson({ error: String(error) }))
         }
@@ -176,19 +194,22 @@ export class P2PNode {
   }
 
   private async broadcast(path: string, payload: unknown): Promise<void> {
-    // Use discovered active peers if discovery is enabled, otherwise fall back to config
     const peers = this.cfg.enableDiscovery !== false
       ? this.discovery.getActivePeers()
       : this.cfg.peers
 
-    await Promise.all(peers.map(async (peer) => {
-      try {
-        await requestJson(`${peer.url}${path}`, "POST", payload)
-        this.scoring.recordSuccess(peer.id)
-      } catch {
-        this.scoring.recordFailure(peer.id)
-      }
-    }))
+    // Batch broadcasts to avoid overwhelming network
+    for (let i = 0; i < peers.length; i += BROADCAST_CONCURRENCY) {
+      const batch = peers.slice(i, i + BROADCAST_CONCURRENCY)
+      await Promise.all(batch.map(async (peer) => {
+        try {
+          await requestJson(`${peer.url}${path}`, "POST", payload)
+          this.scoring.recordSuccess(peer.id)
+        } catch {
+          this.scoring.recordFailure(peer.id)
+        }
+      }))
+    }
   }
 }
 
