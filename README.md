@@ -19,9 +19,11 @@ COC is an EVM-compatible blockchain prototype with PoSe (Proof-of-Service) settl
 
 ## Current Progress
 
-- **Chain Engine**: block production, mempool, snapshots, deterministic proposer rotation, basic finality
+- **Chain Engine**: block production, mempool (EIP-1559, replacement, eviction), snapshots, deterministic proposer rotation, basic finality
 - **P2P Networking**: HTTP-based gossip for tx/blocks, snapshot sync between peers
-- **EVM Execution**: in-memory execution with `@ethereumjs/vm`, minimal JSON-RPC support
+- **EVM Execution**: in-memory + persistent state via `@ethereumjs/vm` and LevelDB-backed trie
+- **JSON-RPC**: 40+ standard Ethereum methods + custom `coc_*` / `txpool_*` methods, BigInt-safe serialization
+- **WebSocket RPC**: `eth_subscribe` / `eth_unsubscribe` for newHeads, newPendingTransactions, logs
 - **PoSe Protocol**:
   - Off-chain: challenge factory, receipt verification, batch aggregation, epoch scoring
   - On-chain: PoSeManager contract with registration, batch submission, challenge, finalize, slash
@@ -35,8 +37,37 @@ COC is an EVM-compatible blockchain prototype with PoSe (Proof-of-Service) settl
   - CLI wallet (create address, transfer, query balance)
   - Devnet scripts for 3/5/7 node networks
   - Quality gate script (unit + integration + e2e tests)
-- **Blockchain Explorer**: Next.js app with block/tx/address views and real-time data
-- **Testing**: 32 test files covering contracts, services, runtime, and node operations
+- **Blockchain Explorer**: Full-featured Next.js app (see below)
+- **Testing**: 190 tests across 9 suites, covering chain engine, EVM, mempool, RPC, WebSocket, P2P, and storage
+
+### Blockchain Explorer Features
+
+The explorer (`explorer/`) is a Next.js 15 App Router application providing:
+
+- **Homepage**: chain stats dashboard (block height, avg block time, gas price, peer count, chain ID, sync status), latest blocks table, real-time block and pending tx streams via WebSocket
+- **Block Detail** (`/block/[id]`): full transaction table with method decoding, from/to, value, status, gas used; token transfers aggregated from receipts; prev/next block navigation; gas utilization percentage
+- **Transaction Detail** (`/tx/[hash]`): decoded method name, token transfers (ERC-20 Transfer/Approval), event logs, status badge
+- **Address Detail** (`/address/[address]`): balance, nonce, transaction history with filter tabs (All/Sent/Received/Contract/Token), contract detection
+- **Contract View**: bytecode display with EVM opcode disassembler (PUSH/DUP/SWAP + all standard opcodes), eth_call interface with quick-call presets (name/symbol/decimals/totalSupply/owner/paused), ABI string decoder, storage scanner with multi-slot range scan and value interpretation (uint256/address)
+- **Mempool** (`/mempool`): pool stats, live pending tx stream, pending transactions table with method/from/to/value/gas
+- **Network** (`/network`): node runtime info, uptime, mempool stats, connection endpoints
+- **Search**: supports address, tx hash, block number, hex block number
+- **404 Page**: user-friendly not-found page
+
+### Recent Development (Cycles 1–10)
+
+| Cycle | Commit | Summary |
+|-------|--------|---------|
+| 1 | `226018d` | Fix PersistentStateTrie RLP decode — `@ethereumjs/trie` v6 passes hex strings, not Uint8Array |
+| 2 | `69bd222` | Add 13 missing standard Ethereum RPC methods (eth_getBlockTransactionCount*, eth_getTransactionByBlock*, eth_feeHistory, eth_maxPriorityFeePerGas, filter methods) |
+| 3 | `7cc9543` | Token transfer decoding (ERC-20 Transfer/Approval events) and method signature display in explorer |
+| 4 | `e8e71e4` | Chain statistics dashboard on explorer homepage with 8 stat cards |
+| 5 | `df50eb3` | Contract call interface (eth_call UI with presets) and WebSocket BigInt serialization fix |
+| 6 | `c613d08` | eth_getBlockReceipts RPC method + enhanced block detail page with full tx table |
+| 7 | `114b650` | txpool_status/txpool_content RPC methods + mempool explorer page |
+| 8 | `684dffa` | Network status page (coc_nodeInfo RPC) + global 404 page |
+| 9 | `8fbbbc7` | EVM bytecode disassembler + storage scanner with range scan and value interpretation |
+| 10 | `6339490` | Test coverage enhancement: 175 → 190 tests covering all new RPC methods and mempool APIs |
 
 ## Quick Start
 
