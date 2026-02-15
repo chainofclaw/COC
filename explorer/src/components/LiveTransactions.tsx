@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import { useWebSocket } from '@/lib/use-websocket'
 import { formatHash } from '@/lib/provider'
@@ -11,8 +11,9 @@ const MAX_PENDING_TXS = 20
  * Displays real-time pending transaction hashes via WebSocket subscription.
  */
 export function LiveTransactions() {
-  const { connected, subscribe } = useWebSocket()
+  const { connected, subscribe, unsubscribe } = useWebSocket()
   const [txHashes, setTxHashes] = useState<string[]>([])
+  const subIdRef = useRef<string | null>(null)
 
   const handleNewTx = useCallback((data: unknown) => {
     const txHash = data as string
@@ -25,18 +26,17 @@ export function LiveTransactions() {
   useEffect(() => {
     if (!connected) return
 
-    let subId: string | null = null
-
     subscribe('newPendingTransactions', [], handleNewTx).then(id => {
-      subId = id
+      subIdRef.current = id
     })
 
     return () => {
-      if (subId) {
-        // cleanup handled by hook
+      if (subIdRef.current) {
+        void unsubscribe(subIdRef.current)
+        subIdRef.current = null
       }
     }
-  }, [connected, subscribe, handleNewTx])
+  }, [connected, subscribe, unsubscribe, handleNewTx])
 
   if (!connected) {
     return null

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import { useWebSocket } from '@/lib/use-websocket'
 import { formatHash } from '@/lib/provider'
@@ -21,8 +21,9 @@ const MAX_LIVE_BLOCKS = 10
  * Displays real-time block updates via WebSocket subscription.
  */
 export function LiveBlocks() {
-  const { connected, subscribe } = useWebSocket()
+  const { connected, subscribe, unsubscribe } = useWebSocket()
   const [blocks, setBlocks] = useState<BlockHeader[]>([])
+  const subIdRef = useRef<string | null>(null)
 
   const handleNewBlock = useCallback((data: unknown) => {
     const block = data as BlockHeader
@@ -35,18 +36,17 @@ export function LiveBlocks() {
   useEffect(() => {
     if (!connected) return
 
-    let subId: string | null = null
-
     subscribe('newHeads', [], handleNewBlock).then(id => {
-      subId = id
+      subIdRef.current = id
     })
 
     return () => {
-      if (subId) {
-        // cleanup handled by hook
+      if (subIdRef.current) {
+        void unsubscribe(subIdRef.current)
+        subIdRef.current = null
       }
     }
-  }, [connected, subscribe, handleNewBlock])
+  }, [connected, subscribe, unsubscribe, handleNewBlock])
 
   if (!connected) {
     return (
