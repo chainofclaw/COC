@@ -25,9 +25,23 @@ export const MessageType = {
   SnapshotRequest: 0x21,
   BftPrepare: 0x30,
   BftCommit: 0x31,
+  FindNode: 0x40,
+  FindNodeResponse: 0x41,
   Ping: 0xF0,
   Pong: 0xF1,
 } as const
+
+/** Payload for FindNode request */
+export interface FindNodePayload {
+  targetId: string
+  requestId: string
+}
+
+/** Payload for FindNode response */
+export interface FindNodeResponsePayload {
+  requestId: string
+  peers: Array<{ id: string; address: string }>
+}
 
 export type MessageType = (typeof MessageType)[keyof typeof MessageType]
 
