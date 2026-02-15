@@ -10,6 +10,7 @@ import { registerPoseRoutes, handlePoseRequest } from "./pose-http.ts"
 import { keccak256Hex } from "../../services/relayer/keccak256.ts"
 import { calculateBaseFee, genesisBaseFee } from "./base-fee.ts"
 import { traceTransaction, traceBlockByNumber, traceTransactionCalls } from "./debug-trace.ts"
+import type { BftCoordinator } from "./bft-coordinator.ts"
 import { createLogger } from "./logger.ts"
 
 const log = createLogger("rpc")
@@ -144,7 +145,7 @@ interface JsonRpcResponse {
   error?: { message: string }
 }
 
-export function startRpcServer(bind: string, port: number, chainId: number, evm: EvmChain, chain: IChainEngine, p2p: P2PNode, pose?: PoSeEngine) {
+export function startRpcServer(bind: string, port: number, chainId: number, evm: EvmChain, chain: IChainEngine, p2p: P2PNode, pose?: PoSeEngine, bftCoordinator?: BftCoordinator) {
   if (DEV_ACCOUNTS_ENABLED) {
     initializeTestAccounts()
   }
@@ -879,6 +880,20 @@ async function handleRpc(
         id: updated?.id,
         status: updated?.status,
         votes: updated?.votes ? Object.fromEntries(updated.votes) : {},
+      }
+    }
+    case "coc_getBftStatus": {
+      if (!bftCoordinator) {
+        return { enabled: false, active: false }
+      }
+      const bftState = bftCoordinator.getRoundState()
+      return {
+        enabled: true,
+        active: bftState.active,
+        height: bftState.height ? `0x${bftState.height.toString(16)}` : null,
+        phase: bftState.phase,
+        prepareVotes: bftState.prepareVotes,
+        commitVotes: bftState.commitVotes,
       }
     }
     case "coc_chainStats": {
