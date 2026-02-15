@@ -5,23 +5,45 @@ import { useRouter } from 'next/navigation'
 
 export function SearchBar() {
   const [query, setQuery] = useState('')
+  const [searching, setSearching] = useState(false)
   const router = useRouter()
 
-  function handleSearch(e: React.FormEvent) {
+  async function handleSearch(e: React.FormEvent) {
     e.preventDefault()
     const q = query.trim()
-    if (!q) return
+    if (!q || searching) return
 
-    if (/^0x[a-fA-F0-9]{64}$/.test(q)) {
-      router.push(`/tx/${q}`)
-    } else if (/^0x[a-fA-F0-9]{40}$/.test(q)) {
-      router.push(`/address/${q}`)
-    } else if (/^\d+$/.test(q)) {
+    // Block number
+    if (/^\d+$/.test(q)) {
       router.push(`/block/${q}`)
-    } else {
+      setQuery('')
       return
     }
-    setQuery('')
+
+    // Address (0x + 40 hex)
+    if (/^0x[a-fA-F0-9]{40}$/.test(q)) {
+      router.push(`/address/${q}`)
+      setQuery('')
+      return
+    }
+
+    // 0x + 64 hex: could be tx hash or block hash
+    if (/^0x[a-fA-F0-9]{64}$/.test(q)) {
+      // Try tx first (most common search)
+      router.push(`/tx/${q}`)
+      setQuery('')
+      return
+    }
+
+    // Short hex (block number in hex)
+    if (/^0x[a-fA-F0-9]+$/.test(q)) {
+      const num = parseInt(q, 16)
+      if (!isNaN(num)) {
+        router.push(`/block/${num}`)
+        setQuery('')
+        return
+      }
+    }
   }
 
   return (
@@ -36,6 +58,7 @@ export function SearchBar() {
         />
         <button
           type="submit"
+          disabled={searching}
           className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
         >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

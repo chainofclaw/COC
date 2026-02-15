@@ -625,6 +625,33 @@ async function handleRpc(
       }
       return receipts
     }
+    case "txpool_status": {
+      const stats = chain.mempool.stats()
+      return {
+        pending: `0x${stats.size.toString(16)}`,
+        queued: "0x0",
+      }
+    }
+    case "txpool_content": {
+      const allTxs = chain.mempool.getAll()
+      const pending: Record<string, Record<string, unknown>> = {}
+      for (const mtx of allTxs) {
+        const sender = mtx.from
+        if (!pending[sender]) pending[sender] = {}
+        const parsed = Transaction.from(mtx.rawTx)
+        pending[sender][mtx.nonce.toString()] = {
+          hash: mtx.hash,
+          nonce: `0x${mtx.nonce.toString(16)}`,
+          from: mtx.from,
+          to: parsed.to ?? null,
+          value: `0x${(parsed.value ?? 0n).toString(16)}`,
+          gas: `0x${mtx.gasLimit.toString(16)}`,
+          gasPrice: `0x${mtx.gasPrice.toString(16)}`,
+          input: parsed.data ?? "0x",
+        }
+      }
+      return { pending, queued: {} }
+    }
     case "coc_getTransactionsByAddress": {
       const addr = String((payload.params ?? [])[0] ?? "").toLowerCase() as Hex
       const limit = Number((payload.params ?? [])[1] ?? 50)

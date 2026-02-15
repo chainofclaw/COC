@@ -219,6 +219,16 @@ export class Mempool {
   /**
    * Get pool statistics
    */
+  /**
+   * Get all pending transactions in the pool, sorted by gas price desc
+   */
+  getAll(): MempoolTx[] {
+    return [...this.txs.values()].sort((a, b) => {
+      if (a.gasPrice !== b.gasPrice) return a.gasPrice > b.gasPrice ? -1 : 1
+      return a.receivedAtMs - b.receivedAtMs
+    })
+  }
+
   stats(): { size: number; senders: number; oldestMs: number } {
     let oldestMs = Date.now()
     for (const tx of this.txs.values()) {

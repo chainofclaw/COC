@@ -27,6 +27,7 @@ export default function RootLayout({
                   </Link>
                   <nav className="hidden sm:flex items-center space-x-4 text-sm">
                     <Link href="/" className="hover:text-blue-200">Blocks</Link>
+                    <Link href="/mempool" className="hover:text-blue-200">Mempool</Link>
                   </nav>
                 </div>
                 <SearchBar />
