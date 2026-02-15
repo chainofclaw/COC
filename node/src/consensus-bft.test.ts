@@ -564,3 +564,68 @@ describe("ConsensusEngine metrics", () => {
     assert.ok(metrics.uptimeMs >= 40)
   })
 })
+
+describe("ConsensusEngine sync progress", () => {
+  it("should report not syncing when no peer data", async () => {
+    const chain = makeMockChain(10n)
+    const p2p = makeMockP2P()
+
+    const consensus = new ConsensusEngine(
+      chain as IChainEngine,
+      p2p as unknown as P2PNode,
+      { blockTimeMs: 100, syncIntervalMs: 100 },
+    )
+
+    const progress = await consensus.getSyncProgress()
+    assert.equal(progress.syncing, false)
+    assert.equal(progress.currentHeight, 10n)
+    assert.equal(progress.highestPeerHeight, 0n)
+    assert.equal(progress.blocksRemaining, 0n)
+  })
+
+  it("should track sync progress after discovering peer height", async () => {
+    const chain = makeMockChain(5n)
+    ;(chain as Record<string, unknown>).makeSnapshot = () => ({ blocks: [], updatedAtMs: 0 })
+    ;(chain as Record<string, unknown>).maybeAdoptSnapshot = async () => false
+
+    const remoteBlocks = Array.from({ length: 20 }, (_, i) => makeBlock(i + 1))
+    const p2p = {
+      ...makeMockP2P(),
+      fetchSnapshots: async (): Promise<ChainSnapshot[]> => [{
+        blocks: remoteBlocks,
+        updatedAtMs: Date.now(),
+      }],
+    }
+
+    const consensus = new ConsensusEngine(
+      chain as IChainEngine,
+      p2p as unknown as P2PNode,
+      { blockTimeMs: 100, syncIntervalMs: 100 },
+    )
+
+    const trySync = (consensus as unknown as { trySync: () => Promise<void> }).trySync.bind(consensus)
+    await trySync()
+
+    const progress = await consensus.getSyncProgress()
+    assert.equal(progress.syncing, true)
+    assert.equal(progress.highestPeerHeight, 20n)
+    assert.equal(progress.startingHeight, 5n)
+    assert.equal(progress.blocksRemaining, 15n)
+    assert.ok(progress.progressPct >= 0)
+  })
+
+  it("should show 100% when fully synced", async () => {
+    const chain = makeMockChain(10n)
+    const p2p = makeMockP2P()
+
+    const consensus = new ConsensusEngine(
+      chain as IChainEngine,
+      p2p as unknown as P2PNode,
+      { blockTimeMs: 100, syncIntervalMs: 100 },
+    )
+
+    const progress = await consensus.getSyncProgress()
+    assert.equal(progress.progressPct, 100)
+    assert.equal(progress.syncing, false)
+  })
+})

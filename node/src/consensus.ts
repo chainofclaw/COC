@@ -41,6 +41,17 @@ export interface SnapSyncProvider {
   setStateRoot(root: string): Promise<void>
 }
 
+export interface SyncProgress {
+  syncing: boolean
+  currentHeight: bigint
+  highestPeerHeight: bigint
+  startingHeight: bigint
+  progressPct: number // 0-100
+  blocksRemaining: bigint
+  blocksPerSecond: number
+  estimatedSecondsLeft: number
+}
+
 export interface ConsensusMetrics {
   blocksProposed: number
   blocksAdopted: number
@@ -68,6 +79,12 @@ export class ConsensusEngine {
   private lastRecoveryMs = 0
   private proposeTimer: ReturnType<typeof setInterval> | null = null
   private syncTimer: ReturnType<typeof setInterval> | null = null
+
+  // Sync progress tracking
+  private highestPeerHeight = 0n
+  private syncStartHeight = 0n
+  private syncStartMs = 0
+  private lastSyncedHeight = 0n
 
   // Metrics tracking
   private blocksProposed = 0
@@ -132,6 +149,42 @@ export class ConsensusEngine {
       lastSyncMs: this.lastSyncMs,
       startedAtMs: this.startedAtMs,
       uptimeMs: this.startedAtMs > 0 ? now - this.startedAtMs : 0,
+    }
+  }
+
+  async getSyncProgress(): Promise<SyncProgress> {
+    const currentHeight = await Promise.resolve(this.chain.getHeight())
+    const syncing = this.highestPeerHeight > currentHeight
+    const blocksRemaining = syncing ? this.highestPeerHeight - currentHeight : 0n
+
+    const totalRange = this.highestPeerHeight > this.syncStartHeight
+      ? this.highestPeerHeight - this.syncStartHeight
+      : 0n
+    const synced = currentHeight > this.syncStartHeight
+      ? currentHeight - this.syncStartHeight
+      : 0n
+    const progressPct = totalRange > 0n
+      ? Math.min(100, Math.round(Number(synced * 10000n / totalRange)) / 100)
+      : syncing ? 0 : 100
+
+    const elapsedMs = this.syncStartMs > 0 ? Date.now() - this.syncStartMs : 0
+    const elapsedSec = elapsedMs / 1000
+    const blocksPerSecond = elapsedSec > 0 && synced > 0n
+      ? Number(synced) / elapsedSec
+      : 0
+    const estimatedSecondsLeft = blocksPerSecond > 0
+      ? Math.round(Number(blocksRemaining) / blocksPerSecond)
+      : 0
+
+    return {
+      syncing,
+      currentHeight,
+      highestPeerHeight: this.highestPeerHeight,
+      startingHeight: this.syncStartHeight,
+      progressPct,
+      blocksRemaining,
+      blocksPerSecond: Math.round(blocksPerSecond * 100) / 100,
+      estimatedSecondsLeft,
     }
   }
 
@@ -220,6 +273,21 @@ export class ConsensusEngine {
 
       // Build local fork candidate
       const localHeight = await Promise.resolve(this.chain.getHeight())
+
+      // Track sync progress: update highest peer height from snapshots
+      for (const snap of snapshots) {
+        if (Array.isArray(snap.blocks) && snap.blocks.length > 0) {
+          const remoteTipHeight = BigInt(snap.blocks[snap.blocks.length - 1].number)
+          if (remoteTipHeight > this.highestPeerHeight) {
+            this.highestPeerHeight = remoteTipHeight
+            if (this.syncStartMs === 0 && remoteTipHeight > localHeight) {
+              this.syncStartHeight = localHeight
+              this.syncStartMs = Date.now()
+            }
+          }
+        }
+      }
+
       const localTip = await Promise.resolve(this.chain.getTip())
       const localCandidate: ForkCandidate = {
         height: localHeight,
