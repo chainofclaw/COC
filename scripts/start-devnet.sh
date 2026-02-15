@@ -12,6 +12,7 @@ BASE_RPC=28780
 BASE_P2P=29780
 BASE_IPFS=5001
 BASE_WS=18781
+BASE_WIRE=29781
 RUN_DIR="${ROOT}/.run/devnet-${NODES}"
 rm -rf "$RUN_DIR"
 mkdir -p "$RUN_DIR"
@@ -23,24 +24,31 @@ for i in $(seq 1 "$NODES"); do
   P2P_PORT=$((BASE_P2P + IDX))
   IPFS_PORT=$((BASE_IPFS + IDX))
   WS_PORT=$((BASE_WS + IDX))
+  WIRE_PORT=$((BASE_WIRE + IDX))
   DATA_DIR="${RUN_DIR}/${NODE_ID}"
   mkdir -p "$DATA_DIR"
 
   PEERS_JSON="[]"
+  DHT_PEERS_JSON="[]"
   if [[ "$NODES" -gt 1 ]]; then
     PEERS=""
+    DHT_PEERS=""
     for j in $(seq 1 "$NODES"); do
       if [[ "$j" == "$i" ]]; then
         continue
       fi
       JDX=$((j - 1))
       PP=$((BASE_P2P + JDX))
+      WP=$((BASE_WIRE + JDX))
       if [[ -n "$PEERS" ]]; then
         PEERS+=" ,"
+        DHT_PEERS+=" ,"
       fi
       PEERS+="{\"id\":\"node-${j}\",\"url\":\"http://127.0.0.1:${PP}\"}"
+      DHT_PEERS+="{\"id\":\"node-${j}\",\"address\":\"127.0.0.1\",\"port\":${WP}}"
     done
     PEERS_JSON="[${PEERS}]"
+    DHT_PEERS_JSON="[${DHT_PEERS}]"
   fi
 
   VALIDATORS=""
@@ -70,6 +78,15 @@ for i in $(seq 1 "$NODES"); do
   "maxTxPerBlock": 50,
   "minGasPriceWei": "1",
   "poseEpochMs": 3600000,
+  "enableBft": true,
+  "bftPrepareTimeoutMs": 5000,
+  "bftCommitTimeoutMs": 5000,
+  "enableWireProtocol": true,
+  "wirePort": ${WIRE_PORT},
+  "enableDht": true,
+  "dhtBootstrapPeers": ${DHT_PEERS_JSON},
+  "enableSnapSync": true,
+  "snapSyncThreshold": 100,
   "prefund": [
     {
       "address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
@@ -84,7 +101,7 @@ JSON
 
   COC_NODE_CONFIG="${DATA_DIR}/node-config.json" node --experimental-strip-types "${ROOT}/node/src/index.ts" >"${LOG_FILE}" 2>&1 &
   echo $! > "${PID_FILE}"
-  echo "started ${NODE_ID}: rpc=${RPC_PORT} p2p=${P2P_PORT} ws=${WS_PORT} ipfs=${IPFS_PORT} pid=$(cat "${PID_FILE}")"
+  echo "started ${NODE_ID}: rpc=${RPC_PORT} p2p=${P2P_PORT} ws=${WS_PORT} wire=${WIRE_PORT} ipfs=${IPFS_PORT} pid=$(cat "${PID_FILE}")"
 done
 
 echo "devnet started at ${RUN_DIR}"

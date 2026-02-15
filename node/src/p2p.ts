@@ -1,14 +1,31 @@
 import http from "node:http"
 import { request as httpRequest } from "node:http"
+import crypto from "node:crypto"
 import type { ChainBlock, ChainSnapshot, Hex, NodePeer } from "./blockchain-types.ts"
 import { PeerScoring } from "./peer-scoring.ts"
 import { PeerDiscovery } from "./peer-discovery.ts"
 import { createLogger } from "./logger.ts"
+import { RateLimiter } from "./rate-limiter.ts"
+import { keccak256Hex } from "../../services/relayer/keccak256.ts"
+import type { NodeSigner, SignatureVerifier } from "./crypto/signer.ts"
 
 const log = createLogger("p2p")
 
 const MAX_REQUEST_BODY = 2 * 1024 * 1024 // 2 MB max request body
 const BROADCAST_CONCURRENCY = 5 // max concurrent peer broadcasts
+const DEFAULT_P2P_AUTH_MAX_CLOCK_SKEW_MS = 120_000
+
+export interface P2PAuthEnvelope {
+  senderId: string
+  timestampMs: number
+  nonce: string
+  signature: string
+}
+
+interface AuthNonceTracker {
+  has(value: string): boolean
+  add(value: string): void
+}
 
 export interface BftMessagePayload {
   type: "prepare" | "commit"
@@ -33,10 +50,93 @@ export interface P2PConfig {
   peers: NodePeer[]
   nodeId?: string
   maxPeers?: number
+  maxDiscoveredPerBatch?: number
   enableDiscovery?: boolean
   peerStorePath?: string
   dnsSeeds?: string[]
   peerMaxAgeMs?: number
+  inboundRateLimitWindowMs?: number
+  inboundRateLimitMaxRequests?: number
+  enableInboundAuth?: boolean
+  inboundAuthMode?: "off" | "monitor" | "enforce"
+  authMaxClockSkewMs?: number
+  signer?: NodeSigner
+  verifier?: SignatureVerifier
+}
+
+export function buildP2PAuthMessage(path: string, senderId: string, timestampMs: number, nonce: string, payloadHash: Hex): string {
+  return `p2p:${path}:${senderId}:${timestampMs}:${nonce}:${payloadHash}`
+}
+
+export function buildSignedP2PPayload(
+  path: string,
+  payload: Record<string, unknown>,
+  signer: NodeSigner,
+  nowMs = Date.now(),
+): Record<string, unknown> {
+  const payloadHash = hashP2PPayload(payload)
+  const nonce = crypto.randomUUID()
+  const signature = signer.sign(buildP2PAuthMessage(path, signer.nodeId, nowMs, nonce, payloadHash))
+  return {
+    ...payload,
+    _auth: {
+      senderId: signer.nodeId,
+      timestampMs: nowMs,
+      nonce,
+      signature,
+    } satisfies P2PAuthEnvelope,
+  }
+}
+
+export function verifySignedP2PPayload(
+  path: string,
+  payload: unknown,
+  verifier: SignatureVerifier,
+  opts: {
+    maxClockSkewMs?: number
+    nowMs?: number
+    nonceTracker?: AuthNonceTracker
+  } = {},
+): { ok: true; senderId: string; payload: Record<string, unknown> } | { ok: false; reason: string } {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return { ok: false, reason: "invalid payload object" }
+  }
+
+  const obj = payload as Record<string, unknown>
+  const auth = obj._auth
+  if (!auth || typeof auth !== "object" || Array.isArray(auth)) {
+    return { ok: false, reason: "missing auth envelope" }
+  }
+
+  const authObj = auth as Record<string, unknown>
+  const senderId = String(authObj.senderId ?? "")
+  const timestampMs = Number(authObj.timestampMs ?? 0)
+  const nonce = String(authObj.nonce ?? "")
+  const signature = String(authObj.signature ?? "")
+  if (!senderId || !signature || !nonce || !Number.isFinite(timestampMs) || timestampMs <= 0) {
+    return { ok: false, reason: "invalid auth envelope fields" }
+  }
+
+  const nowMs = opts.nowMs ?? Date.now()
+  const maxClockSkewMs = opts.maxClockSkewMs ?? DEFAULT_P2P_AUTH_MAX_CLOCK_SKEW_MS
+  if (Math.abs(nowMs - timestampMs) > maxClockSkewMs) {
+    return { ok: false, reason: "auth timestamp out of range" }
+  }
+
+  const payloadNoAuth = stripAuthEnvelope(obj)
+  const replayKey = `${senderId.toLowerCase()}:${nonce}`
+  if (opts.nonceTracker?.has(replayKey)) {
+    return { ok: false, reason: "auth nonce replay detected" }
+  }
+
+  const payloadHash = hashP2PPayload(payloadNoAuth)
+  const message = buildP2PAuthMessage(path, senderId, timestampMs, nonce, payloadHash)
+  if (!verifier.verifyNodeSig(message, signature, senderId)) {
+    return { ok: false, reason: "invalid auth signature" }
+  }
+
+  opts.nonceTracker?.add(replayKey)
+  return { ok: true, senderId, payload: payloadNoAuth }
 }
 
 export class BoundedSet<T> {
@@ -72,8 +172,15 @@ export class BoundedSet<T> {
 export class P2PNode {
   private readonly cfg: P2PConfig
   private readonly handlers: P2PHandlers
+  private readonly inboundRateLimiter: RateLimiter
+  private readonly authNonceTracker = new BoundedSet<string>(100_000)
   private readonly seenTx = new BoundedSet<Hex>(50_000)
   private readonly seenBlocks = new BoundedSet<Hex>(10_000)
+  private rateLimitedRequests = 0
+  private authAcceptedRequests = 0
+  private authMissingRequests = 0
+  private authInvalidRequests = 0
+  private authRejectedRequests = 0
   // Per-peer tracking: avoid sending same hash to same peer
   private readonly sentToPeer = new Map<string, BoundedSet<string>>()
   private txReceived = 0
@@ -90,6 +197,11 @@ export class P2PNode {
   constructor(cfg: P2PConfig, handlers: P2PHandlers) {
     this.cfg = cfg
     this.handlers = handlers
+    this.inboundRateLimiter = new RateLimiter(
+      cfg.inboundRateLimitWindowMs ?? 60_000,
+      cfg.inboundRateLimitMaxRequests ?? 240,
+    )
+    setInterval(() => this.inboundRateLimiter.cleanup(), 300_000).unref()
     this.scoring = new PeerScoring()
     this.discovery = new PeerDiscovery(
       cfg.peers,
@@ -98,6 +210,7 @@ export class P2PNode {
         selfId: cfg.nodeId ?? "node-1",
         selfUrl: `http://${cfg.bind}:${cfg.port}`,
         maxPeers: cfg.maxPeers ?? 50,
+        maxDiscoveredPerBatch: cfg.maxDiscoveredPerBatch ?? 200,
         peerStorePath: cfg.peerStorePath,
         dnsSeeds: cfg.dnsSeeds,
         peerMaxAgeMs: cfg.peerMaxAgeMs,
@@ -116,6 +229,14 @@ export class P2PNode {
       if (req.method === "GET" && req.url === "/health") {
         res.writeHead(200, { "content-type": "application/json" })
         res.end(serializeJson({ ok: true, ts: Date.now() }))
+        return
+      }
+
+      const clientIp = req.socket.remoteAddress ?? "unknown"
+      if ((req.url ?? "").startsWith("/p2p/") && !this.inboundRateLimiter.allow(clientIp)) {
+        this.rateLimitedRequests += 1
+        res.writeHead(429, { "content-type": "application/json" })
+        res.end(serializeJson({ error: "rate limit exceeded" }))
         return
       }
 
@@ -173,6 +294,12 @@ export class P2PNode {
             blocksBroadcast: stats.blocksBroadcast,
             bytesReceived: stats.bytesReceived,
             bytesSent: stats.bytesSent,
+            rateLimitedRequests: stats.rateLimitedRequests,
+            authAcceptedRequests: stats.authAcceptedRequests,
+            authMissingRequests: stats.authMissingRequests,
+            authInvalidRequests: stats.authInvalidRequests,
+            authRejectedRequests: stats.authRejectedRequests,
+            inboundAuthMode: stats.inboundAuthMode,
           },
         }))
         return
@@ -203,8 +330,47 @@ export class P2PNode {
         if (aborted) return
         this.bytesReceived += bodySize
         try {
+          const parsedBody = JSON.parse(body || "{}") as Record<string, unknown>
+
+          const authMode = resolveInboundAuthMode(this.cfg)
+          if (authMode !== "off") {
+            if (!this.cfg.verifier) {
+              res.writeHead(500)
+              res.end(serializeJson({ error: "p2p inbound auth enabled without verifier" }))
+              return
+            }
+
+            if (!hasAuthEnvelope(parsedBody)) {
+              this.authMissingRequests += 1
+              if (authMode === "enforce") {
+                this.authRejectedRequests += 1
+                res.writeHead(401)
+                res.end(serializeJson({ error: "missing auth envelope" }))
+                return
+              }
+            } else {
+              const authCheck = verifySignedP2PPayload(req.url ?? "", parsedBody, this.cfg.verifier, {
+                maxClockSkewMs: this.cfg.authMaxClockSkewMs ?? DEFAULT_P2P_AUTH_MAX_CLOCK_SKEW_MS,
+                nonceTracker: this.authNonceTracker,
+              })
+              if (!authCheck.ok) {
+                this.authInvalidRequests += 1
+                if (authMode === "enforce") {
+                  this.authRejectedRequests += 1
+                  res.writeHead(401)
+                  res.end(serializeJson({ error: authCheck.reason }))
+                  return
+                }
+              } else {
+                this.authAcceptedRequests += 1
+              }
+            }
+          }
+
+          const unsignedPayload = stripAuthEnvelope(parsedBody)
+
           if (req.url === "/p2p/gossip-tx") {
-            const payload = JSON.parse(body || "{}") as { rawTx?: Hex }
+            const payload = unsignedPayload as { rawTx?: Hex }
             if (!payload.rawTx) throw new Error("missing rawTx")
             await this.receiveTx(payload.rawTx)
             res.writeHead(200)
@@ -213,7 +379,7 @@ export class P2PNode {
           }
 
           if (req.url === "/p2p/gossip-block") {
-            const payload = JSON.parse(body || "{}") as { block?: ChainBlock }
+            const payload = unsignedPayload as { block?: ChainBlock }
             if (!payload.block) throw new Error("missing block")
             await this.receiveBlock(payload.block)
             res.writeHead(200)
@@ -222,7 +388,7 @@ export class P2PNode {
           }
 
           if (req.url === "/p2p/pubsub-message") {
-            const payload = JSON.parse(body || "{}") as { topic?: string; message?: unknown }
+            const payload = unsignedPayload as { topic?: string; message?: unknown }
             if (!payload.topic || !payload.message) throw new Error("missing topic or message")
             if (this.pubsubHandler) {
               this.pubsubHandler(payload.topic, payload.message)
@@ -233,7 +399,7 @@ export class P2PNode {
           }
 
           if (req.url === "/p2p/bft-message") {
-            const payload = JSON.parse(body || "{}") as BftMessagePayload
+            const payload = unsignedPayload as BftMessagePayload
             if (!payload.type || !payload.blockHash || !payload.senderId) {
               throw new Error("missing BFT message fields")
             }
@@ -329,6 +495,12 @@ export class P2PNode {
     blocksReceived: number; blocksBroadcast: number
     seenTxSize: number; seenBlocksSize: number
     bytesReceived: number; bytesSent: number; uptimeMs: number
+    rateLimitedRequests: number
+    authAcceptedRequests: number
+    authMissingRequests: number
+    authInvalidRequests: number
+    authRejectedRequests: number
+    inboundAuthMode: "off" | "monitor" | "enforce"
   } {
     return {
       txReceived: this.txReceived,
@@ -340,6 +512,12 @@ export class P2PNode {
       bytesReceived: this.bytesReceived,
       bytesSent: this.bytesSent,
       uptimeMs: this.startedAtMs > 0 ? Date.now() - this.startedAtMs : 0,
+      rateLimitedRequests: this.rateLimitedRequests,
+      authAcceptedRequests: this.authAcceptedRequests,
+      authMissingRequests: this.authMissingRequests,
+      authInvalidRequests: this.authInvalidRequests,
+      authRejectedRequests: this.authRejectedRequests,
+      inboundAuthMode: resolveInboundAuthMode(this.cfg),
     }
   }
 
@@ -357,7 +535,11 @@ export class P2PNode {
       ? this.discovery.getActivePeers()
       : this.cfg.peers
 
-    const payloadSize = serializeJson(payload).length
+    const payloadRecord = ensurePayloadObject(payload)
+    const signedPayload = this.cfg.signer
+      ? buildSignedP2PPayload(path, payloadRecord, this.cfg.signer)
+      : payloadRecord
+    const payloadSize = serializeJson(signedPayload).length
 
     for (let i = 0; i < peers.length; i += BROADCAST_CONCURRENCY) {
       const batch = peers.slice(i, i + BROADCAST_CONCURRENCY)
@@ -370,7 +552,7 @@ export class P2PNode {
         }
 
         try {
-          await requestJson(`${peer.url}${path}`, "POST", payload)
+          await requestJson(`${peer.url}${path}`, "POST", signedPayload)
           this.scoring.recordSuccess(peer.id)
           this.bytesSent += payloadSize
           if (path.includes("tx")) this.txBroadcast++
@@ -431,4 +613,53 @@ function serializeJson(value: unknown): string {
     }
     return input
   })
+}
+
+function ensurePayloadObject(payload: unknown): Record<string, unknown> {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new Error("p2p payload must be an object")
+  }
+  return payload as Record<string, unknown>
+}
+
+function stripAuthEnvelope(payload: Record<string, unknown>): Record<string, unknown> {
+  const next = { ...payload }
+  delete next._auth
+  return next
+}
+
+function hashP2PPayload(payload: Record<string, unknown>): Hex {
+  const stable = stableStringify(payload)
+  return `0x${keccak256Hex(Buffer.from(stable, "utf8"))}` as Hex
+}
+
+function hasAuthEnvelope(payload: Record<string, unknown>): boolean {
+  return !!payload._auth && typeof payload._auth === "object" && !Array.isArray(payload._auth)
+}
+
+function resolveInboundAuthMode(cfg: P2PConfig): "off" | "monitor" | "enforce" {
+  if (cfg.inboundAuthMode === "off" || cfg.inboundAuthMode === "monitor" || cfg.inboundAuthMode === "enforce") {
+    return cfg.inboundAuthMode
+  }
+  if (cfg.enableInboundAuth === true) {
+    return "enforce"
+  }
+  return "off"
+}
+
+function stableStringify(value: unknown): string {
+  if (typeof value === "bigint") {
+    return JSON.stringify(value.toString())
+  }
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value)
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(",")}]`
+  }
+
+  const obj = value as Record<string, unknown>
+  const keys = Object.keys(obj).sort()
+  const props = keys.map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`)
+  return `{${props.join(",")}}`
 }

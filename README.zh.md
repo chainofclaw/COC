@@ -65,7 +65,11 @@ COC 是一个 EVM 兼容的区块链原型，包含 PoSe（Proof-of-Service）�
 - **双传输层**：HTTP gossip + TCP 线协议并行传播区块和交易
 - **Wire FIND_NODE**：通过线协议请求/响应消息进行 DHT 节点发现
 - **网络统计 RPC**：`coc_getNetworkStats` 端点聚合 P2P/Wire/DHT/BFT 统计
-- **测试覆盖**：695 个测试，78 个测试文件，覆盖链引擎、EVM、mempool、RPC、WebSocket、P2P、存储、IPFS、PoSe、BFT、DHT、线协议、分叉选择、快照同步、等价检测、共识指标、连接管理等模块
+- **Wire 去重与中继**：Wire 协议 Block/Tx 去重（BoundedSet: 50K tx, 10K blocks）、跨协议中继（Wire→HTTP）、BFT 双传输层（HTTP+TCP）
+- **DHT 增强**：wireClientByPeerId O(1) 查找用于 FIND_NODE、每 peer 独立 wire port
+- **Devnet 全特性**：多节点 devnet 默认启用 BFT、Wire、DHT、SnapSync，含每节点 wire port 和 DHT 引导节点
+- **安全加固**：节点身份认证（Wire 握手签名）、BFT 强制消息签名、DHT 节点验证（TCP 探测）、每 IP 连接限制、IPFS 上传大小限制（10MB）、MFS 路径遍历防护、区块时间戳验证、指数节点封禁（最长 24h）、WebSocket 空闲超时、开发账户门控、默认本地绑定、共享速率限制器（RPC/IPFS/PoSe）、P2P HTTP 签名认证信封（`off/monitor/enforce` 灰度模式 + 防重放）、治理自投票移除、PoSeManager ecrecover v 值校验、状态快照 stateRoot 校验
+- **测试覆盖**：755 个测试，79 个测试文件，覆盖链引擎、EVM、mempool、RPC、WebSocket、P2P、存储、IPFS、PoSe、BFT、DHT、线协议、分叉选择、快照同步、等价检测、共识指标、连接管理、Wire 去重/中继、跨协议传播、安全加固等模块
 - **生产加固**：RPC 参数验证（结构化错误码）、共识广播隔离、PoSe HTTP 输入验证、配置校验、Merkle 路径边界检查、结构化日志替代 console.warn
 
 ## 快速开始

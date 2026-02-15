@@ -1,0 +1,508 @@
+{
+  "common": {
+    "home": "ホーム",
+    "plan": "プラン",
+    "technology": "技術",
+    "network": "ネットワーク",
+    "roadmap": "ロードマップ",
+    "docs": "ドキュメント",
+    "explorer": "ブロックエクスプローラー",
+    "readMore": "詳細を見る",
+    "viewExplorer": "ブロックチェーンを閲覧",
+    "viewDocs": "ドキュメントを読む",
+    "github": "GitHubリポジトリ",
+    "community": "コミュニティ",
+    "resources": "リソース",
+    "development": "開発",
+    "whitepaper": "ホワイトペーパー",
+    "allRightsReserved": "すべての権利を保有",
+    "copyright": "著作権"
+  },
+  "home": {
+    "hero": {
+      "title": "AIエージェント運用型\nProof-of-Serviceブロックチェーン",
+      "subtitle": "一般ユーザーがブロックチェーンネットワークに参加し、資本蓄積ではなくサービス貢献を通じて報酬を獲得できるようにします",
+      "learnMore": "詳細を見る",
+      "browseBlockchain": "ブロックチェーンを閲覧",
+      "readDocs": "ドキュメントを読む"
+    },
+    "networkStats": {
+      "title": "リアルタイムネットワーク状態"
+    },
+    "features": {
+      "title": "なぜCOCを選ぶのか？",
+      "subtitle": "COCは革新的なProof-of-Serviceメカニズムを通じて、従来のブロックチェーンの中央集権化ジレンマを打破します",
+      "pose": {
+        "title": "Proof-of-Service",
+        "description": "資本や計算能力の競争ではなく、検証可能なサービスチャレンジを通じて報酬を獲得"
+      },
+      "aiAgent": {
+        "title": "AIエージェント運用",
+        "description": "OpenClawレベルのAIエージェントがノード運用を自動化し、決定性を維持しながら技術的障壁を下げます"
+      },
+      "hardware": {
+        "title": "一般的なハードウェアに優しい",
+        "description": "家庭用デバイスで公平に競争可能、専門的なマイニング機器や大規模なステークは不要"
+      },
+      "nonPos": {
+        "title": "非PoSインセンティブ",
+        "description": "固定小額ボンド、収益はサービス貢献に紐付き、資本額には紐付かない"
+      },
+      "evmCompatible": {
+        "title": "EVM互換",
+        "description": "完全なEthereum仮想マシンサポート、Solidityスマートコントラクトを実行可能"
+      },
+      "storage": {
+        "title": "分散型ストレージ",
+        "description": "IPFS互換インターフェース内蔵、データ可用性チャレンジをサポート"
+      }
+    },
+    "architecture": {
+      "title": "4層アーキテクチャ",
+      "layer1": {
+        "title": "実行レイヤー (EVM)",
+        "description": "トランザクションとスマートコントラクトを処理し、ブロックチェーン状態を維持"
+      },
+      "layer2": {
+        "title": "コンセンサスレイヤー (プラガブル)",
+        "description": "ブロックを生成し、最終性保証を提供"
+      },
+      "layer3": {
+        "title": "PoSeサービスレイヤー (コア)",
+        "description": "ノード登録、ランダムチャレンジ、スコアリング、報酬配分"
+      },
+      "layer4": {
+        "title": "AIエージェント運用レイヤー",
+        "description": "コンセンサス決定性に影響を与えずにノードライフサイクル管理を自動化"
+      },
+      "learnMore": "技術アーキテクチャを深く理解する"
+    },
+    "nodeRoles": {
+      "title": "ノードの役割",
+      "fullNode": {
+        "title": "フルノード (FN)",
+        "description": "ブロックと状態を検証し、基本的なRPCクエリを提供",
+        "reward": "報酬プールの60%"
+      },
+      "storageNode": {
+        "title": "ストレージノード (SN)",
+        "description": "履歴データとスナップショットを保存し、データ可用性を証明",
+        "reward": "報酬プールの30%"
+      },
+      "relayNode": {
+        "title": "リレーノード (RN)",
+        "description": "ブロックとトランザクションのネットワーク伝播を改善",
+        "reward": "報酬プールの10%"
+      },
+      "note": "単一のオペレーターが複数の役割を実行して報酬を積み重ねることができます"
+    },
+    "cta": {
+      "title": "COCネットワークに参加する準備はできましたか？",
+      "subtitle": "ノードを起動し、ネットワークサービスを提供して報酬を獲得し始めましょう",
+      "startNode": "ノードセットアップガイド",
+      "viewNetwork": "ネットワーク状態を表示"
+    }
+  },
+  "about": {
+    "title": "COCについて",
+    "subtitle": "ChainOfClaw ホワイトペーパー 重要なポイント",
+    "abstract": {
+      "title": "概要",
+      "intro": "COC (ChainOfClaw) は、広範で持続的なノード参加を目的とするブロックチェーンネットワークです。我々は次のことを観察しました：",
+      "pow": "PoWシステムは専門的なハードウェアと廉価な電力周辺に集中化する傾向がある",
+      "pos": "PoSシステムは資本集約と委任運用周辺に集中化する傾向がある",
+      "pose": "COCはProof-of-Service (PoSe) を導入します。これは検証可能なチャレンジ-レスポンスプロトコルで、ステーク所有権ではなく、測定可能なネットワークサービス（稼働時間/RPC可用性、データストレージと可用性、リレーサポート）を提供するノードに報酬を与えます。"
+    },
+    "vision": {
+      "title": "ビジョンと目標",
+      "mission": "ミッション",
+      "missionText": "分散化を実用的にする。コア参加のボトルネックをシフト：\n「ハードウェア購入 + 複雑な操作実行」→「信頼性の高いノード実行 + 自動化エージェント運用」",
+      "goals": "6つの設計目標",
+      "goal1": {
+        "title": "パーミッションレス参加",
+        "desc": "誰でもノードを実行して報酬を獲得できる"
+      },
+      "goal2": {
+        "title": "非PoSインセンティブ",
+        "desc": "収益はステークではなくサービス貢献に紐付く"
+      },
+      "goal3": {
+        "title": "一般的なハードウェアに優しい",
+        "desc": "家庭/エッジハードウェアが公平に競争可能"
+      },
+      "goal4": {
+        "title": "検証可能で監査可能",
+        "desc": "サービス主張はチャレンジで検証される"
+      },
+      "goal5": {
+        "title": "寡占化防止",
+        "desc": "収益減少と上限が独占を防止"
+      },
+      "goal6": {
+        "title": "AIエージェント運用の確実性",
+        "desc": "AIエージェントが運用負担を軽減し、決定性を損なわない"
+      }
+    },
+    "economic": {
+      "title": "経済モデル",
+      "rewardPool": "報酬プール (エポックごと)",
+      "epochLength": "エポック長",
+      "epochDefault": "デフォルト: 1時間",
+      "blockTime": "ブロック時間目標: 1-2秒 (設定可能、コンセンサスに依存)",
+      "buckets": "報酬バケット",
+      "bucket1": "B1: 稼働時間/RPC",
+      "bucket2": "B2: ストレージ&可用性",
+      "bucket3": "B3: リレーサポート",
+      "rationale": "根拠: 包括性を最大化。ストレージ/リレーは追加報酬を得るが、必須ではない",
+      "bond": "ボンド (非PoS)",
+      "bondIntro": "ノードは小額の固定ボンド D を提出します：",
+      "bondTarget": "目標額: ~50 USDT相当",
+      "bondUnlock": "ロック解除遅延: 7日",
+      "bondPurpose": "用途: 不正防止ペナルティのみ",
+      "bondNoPower": "ボンドはコンセンサス権力を増加させない",
+      "bondNoReward": "ボンドは直接報酬を増加させない"
+    },
+    "pose": {
+      "title": "Proof-of-Service (PoSe) プロトコル",
+      "coreIdea": "コアアイデア",
+      "coreText": "ノードはランダムで検証可能なチャレンジを時系列で通すことで報酬を獲得します。各チャレンジは監査可能な領収書を生成します。スコアはエポック内に集計されます。",
+      "types": "チャレンジタイプ",
+      "typeU": "稼働時間/RPCチャレンジ",
+      "typeS": "ストレージ証明チャレンジ",
+      "typeR": "リレー/プローブチャレンジ",
+      "frequency": "チャレンジ頻度 (エポックごと)",
+      "freqU": "稼働時間/RPC: ノードあたり平均6回のチャレンジ/エポック (約10分ごとに1回)",
+      "freqS": "ストレージ (SNのみ): SNあたり平均2回のチャレンジ/エポック",
+      "freqR": "リレー (RNのみ): RNあたり平均2回のチャレンジ/エポック",
+      "threshold": "合格閾値：",
+      "thresholdU": "U 合格率 ≥ 80% でU報酬バケット対象",
+      "thresholdS": "S 合格率 ≥ 70% でS報酬バケット対象",
+      "scoring": "スコアリング公式"
+    },
+    "antiCheat": {
+      "title": "不正防止メカニズム",
+      "sybil": "Sybil攻撃",
+      "sybilMit": ["固定ボンド + ロック解除遅延", "単一ノード報酬ソフト上限", "ストレージ承約収益逓減", "継続的なサービス要件"],
+      "forgery": "領収書偽造/リプレイ",
+      "forgeryMit": ["ユニーク challenge_id バインディング", "チャレンジャー + ノード署名", "単一ノード単一エポックユニーク nonce", "検証可能レスポンスフィールド"],
+      "collusion": "チャレンジャー-ノード共謀",
+      "collusionMit": ["チャレンジャー集合の多様性", "チェーン内サンプリング + 紛争ウィンドウ", "チャレンジャー/アグリゲーター保証金", "統計データの透明性"],
+      "network": "家庭用ネットワークの誤検知",
+      "networkMit": ["適度な合格閾値 (80%)", "中央値ベースのレイテンシスコアリング", "段階的ペナルティ", "AIエージェント自己回復戦略"]
+    },
+    "agent": {
+      "title": "AIエージェント運用レイヤー",
+      "canDo": "エージェント責務の範囲",
+      "can1": "ノードソフトウェアのインストール、設定、更新",
+      "can2": "ヘルス監視 (CPU/ディスク/ネットワーク)、アラート、自己回復",
+      "can3": "スナップショットとストレージウィンドウの管理",
+      "can4": "レート制限とファイアウォールポリシーの適用",
+      "can5": "鍵ライフサイクル管理 (推奨: TPM/セキュアエンクレーブ)",
+      "cantDo": "エージェント禁止操作",
+      "cant1": "コンセンサスルールまたは状態遷移決定性の修正",
+      "cant2": "検証不可能な『AI決定』をチェーン上実行に注入",
+      "cant3": "トランザクション有効性ルールの変更",
+      "note": "COCは検証可能性を維持するため、AIエージェントを厳密に運用層に保持します"
+    },
+    "cta": {
+      "title": "もっと知りたいですか？",
+      "technology": "技術アーキテクチャの詳細解説",
+      "roadmap": "ロードマップを見る",
+      "docs": "完全なドキュメントを読む"
+    }
+  },
+  "technology": {
+    "title": "技術アーキテクチャ",
+    "subtitle": "COCの4層アーキテクチャ設計とコアアルゴリズムの詳細",
+    "layersTitle": "4層アーキテクチャ",
+    "layer1": {
+      "number": "1",
+      "title": "実行レイヤー (Execution Layer)",
+      "subtitle": "EVMランタイム",
+      "features": ["@ethereumjs/vmベースの完全EVMサポート", "トランザクションとスマートコントラクトの実行", "ワールドステートの維持 (LevelDB + Merkle Patricia Trie)", "Solidityコントラクト互換"],
+      "note": "EVMはランタイム環境であり、分散化メカニズム自体ではありません"
+    },
+    "layer2": {
+      "number": "2",
+      "title": "コンセンサスレイヤー (Consensus Layer)",
+      "subtitle": "プラガブル設計",
+      "features": ["ブロックを生成し、最終性保証を提供", "現在の実装: 決定論的プロポーザーローテーション", "ブロック時間目標: 1-2秒", "将来BFT、PoA等のコンセンサスアルゴリズムに接続可能"],
+      "note": "COCのインセンティブモデルはPoSに依存せず、複数のコンセンサスメカニズムと共存可能"
+    },
+    "layer3": {
+      "number": "3",
+      "title": "PoSeサービスレイヤー (PoSe Service Layer)",
+      "subtitle": "コアイノベーション",
+      "features": ["ノード登録とサービスコミットメント", "ランダムチャレンジ生成 (U/S/Rタイプ)", "領収書検証と集約", "スコア計算と報酬配分", "不正証明とペナルティメカニズム"],
+      "note": "これはCOCが従来のPoW/PoSと異なるコアレイヤーです"
+    },
+    "layer4": {
+      "number": "4",
+      "title": "AIエージェント運用レイヤー (Agent Operations Layer)",
+      "subtitle": "OpenClawレベルの自動化",
+      "features": ["ノードライフサイクル管理の自動化", "ヘルス監視と自己回復戦略", "ソフトウェアアップグレードと構成管理", "レート制限とセキュリティ強化", "鍵管理 (TPM/Secure Enclave)"],
+      "note": "エージェントは厳密に分離され、コンセンサスロジックや状態遷移を干渉しません"
+    },
+    "poseProtocol": {
+      "title": "PoSeプロトコル詳細",
+      "challengeFlow": "チャレンジ-レスポンスフロー",
+      "step1": {
+        "title": "チャレンジ生成",
+        "description": "ChallengerがVRFランダム性に基づいて対象ノードを選択し、チャレンジメッセージを生成",
+        "details": ["challenge_id = keccak(epoch_id || node_id || type || nonce || challenger_id)", "クエリ仕様を含む (U: RPCメソッド, S: chunk_id, R: route_tag)", "Challenger署名により偽造不可を保証"]
+      },
+      "step2": {
+        "title": "ノードレスポンス",
+        "description": "ノードがチャレンジを受信後、タイムアウト前にレスポンスを生成し署名",
+        "details": ["Uチャレンジ: RPCクエリを実行し、結果を返す (2.5秒タイムアウト)", "Sチャレンジ: ストレージ証明を提供 (Merkleパス、6秒タイムアウト)", "Rチャレンジ: リレー証明を提出 (オプション)"]
+      },
+      "step3": {
+        "title": "領収書検証",
+        "description": "AggregatorまたはVerifierが領収書の有効性を検証",
+        "details": ["署名検証 (challenger + node)", "challenge_id一意性チェック", "レスポンス内容検証 (U: 再計算可能、S: Merkle検証)"]
+      },
+      "step4": {
+        "title": "チェーン上提出",
+        "description": "Aggregatorが領収書Merkleツリーのルートをチェーン上に提出",
+        "details": ["epoch_id + merkle_root + summary_hash を提出", "k個のランダムサンプル領収書を含む (k=32-128)", "2エポックの紛争ウィンドウを開始"]
+      },
+      "step5": {
+        "title": "スコア決済",
+        "description": "エポック終了後、合格率に基づいてノードスコアを計算し報酬を配分",
+        "details": ["S_u、S_s、S_r スコアを計算", "収益逓減とソフト上限を適用", "ノードウォレットに配分"]
+      },
+      "scoringTitle": "スコアリング公式詳細",
+      "uptimeScore": {
+        "title": "稼働時間スコア",
+        "formula": "S_u,i = u_i × (0.85 + 0.15 × lat_i)",
+        "variables": ["u_i = pass_u_i / total_u_i (合格率)", "lat_i = (L_max - median_latency_i) / (L_max - L_min)", "L_min = 0.2秒、L_max = 2.5秒"],
+        "rationale": "レイテンシ係数は15%の重みのみで、帯域幅軍拡競争を回避"
+      },
+      "storageScore": {
+        "title": "ストレージスコア (SN)",
+        "formula": "S_s,i = s_i × cap_i",
+        "variables": ["s_i = pass_s_i / total_s_i (合格率)", "cap_i = √(min(storedGB_i, 500GB) / 500GB)"],
+        "rationale": "平方根関数でストレージ容量の収益逓減を保証し、大口の独占を防止"
+      },
+      "antiSybilTitle": "🛡️ Sybil防止メカニズムの組み合わせ",
+      "antiSybilItems": ["✓ 固定ボンド (~50 USDT) + 7日ロック解除", "✓ 単一ノード報酬ソフト上限 (5× 中央値)", "✓ ストレージ容量収益逓減 (√関数)", "✓ 継続的サービスチャレンジ (偽造不可)", "✓ エポックごとユニークnonce リプレイ防止", "✓ チャレンジャー多様化 + ランダムローテーション", "✓ チェーン内サンプリング + 2エポック紛争期間", "✓ オプションハードウェア認証 (加点、門檻ではない)"]
+    },
+    "performance": {
+      "title": "パフォーマンス指標",
+      "blockTime": { "title": "ブロック時間", "value": "1-2秒", "description": "目標ブロック間隔、実際の値はコンセンサスレイヤーの設定に依存" },
+      "finality": { "title": "確認速度", "value": "約12秒", "description": "6-12ブロック後に最終性に到達 (設定可能)" },
+      "storage": { "title": "ストレージ要件", "value": "500GB推奨", "description": "SNノードの収益逓減上限、FNはより低くても可" },
+      "bandwidth": { "title": "帯域幅要件", "value": "中程度", "description": "レイテンシは15%の重みのみ、一般的な家庭用ネットワークで参加可能" },
+      "frequency": { "title": "チャレンジ頻度", "value": "約6回/時間", "description": "FNノードは毎エポック約6回のUチャレンジを受ける" },
+      "threshold": { "title": "合格閾値", "value": "80% (U) / 70% (S)", "description": "閾値未満の場合、そのエポックの対応バケット報酬資格を失う" }
+    },
+    "comparison": {
+      "title": "従来のメカニズムとの比較",
+      "dimensions": {
+        "barrier": "参加障壁",
+        "centralization": "中央集権化傾向",
+        "energy": "エネルギー消費",
+        "reward": "報酬メカニズム",
+        "decentralization": "分散化",
+        "automation": "自動化運用"
+      },
+      "pow": { "barrier": "高 (専門マイニング機器)", "centralization": "計算力の集中化", "energy": "極めて高い", "reward": "計算力競争", "decentralization": "中程度 (マイニングプール)", "automation": "困難" },
+      "pos": { "barrier": "高 (大額ステーク)", "centralization": "資本の集中化", "energy": "低", "reward": "ステーク質入", "decentralization": "低 (大口+委任)", "automation": "中程度" },
+      "coc": { "barrier": "低 (一般ハードウェア + 小額ボンド)", "centralization": "サービス貢献の分散化", "energy": "低", "reward": "サービスチャレンジ合格率", "decentralization": "高 (一般ユーザーが参加可能)", "automation": "AIエージェントサポート" }
+    },
+    "techStack": {
+      "title": "テクノロジースタック",
+      "execution": { "title": "実行レイヤー", "items": ["@ethereumjs/vm (EVMランタイム)", "@ethereumjs/trie (Merkle Patricia Trie)", "LevelDB (状態ストレージ)", "ethers.js (クライアントライブラリ)"] },
+      "consensus": { "title": "コンセンサスレイヤー", "items": ["決定論的プロポーザーローテーション", "EIP-1559動的Gas料金", "スナップショット同期メカニズム", "P2P gossipネットワーク (HTTP)"] },
+      "pose": { "title": "PoSeレイヤー", "items": ["VRF (検証可能ランダム関数)", "Merkle Tree (領収書集約)", "Keccak256 (ハッシュ)", "ECDSA署名 (チャレンジ+領収書)"] },
+      "storage": { "title": "ストレージレイヤー", "items": ["IPFS互換HTTP API", "CIDアドレッシング", "Pin管理", "ブロック/オブジェクトストレージ"] }
+    }
+  },
+  "network": {
+    "title": "COCネットワーク状態",
+    "subtitle": "ブロックチェーンネットワークの健康状態をリアルタイム監視",
+    "realTimeStats": "リアルタイム統計",
+    "nodeInfo": {
+      "title": "ノード情報",
+      "runtime": "ランタイム",
+      "version": "バージョン",
+      "startTime": "起動時刻",
+      "uptime": "稼働時間",
+      "rpcEndpoint": "RPCエンドポイント",
+      "wsEndpoint": "WebSocket",
+      "p2pEndpoint": "P2Pエンドポイント"
+    },
+    "performanceMetrics": {
+      "title": "パフォーマンス指標",
+      "avgBlockTime": "平均ブロック時間",
+      "avgTxPerBlock": "平均トランザクション数/ブロック",
+      "avgGasUsed": "平均Gas使用量"
+    },
+    "validators": {
+      "title": "バリデーター",
+      "address": "アドレス",
+      "score": "スコア",
+      "blocks": "生成ブロック数"
+    },
+    "recentBlocks": {
+      "title": "最近のブロック",
+      "viewExplorer": "完全なエクスプローラーを見る →",
+      "blockHeight": "ブロック高",
+      "timestamp": "タイムスタンプ",
+      "txCount": "トランザクション数",
+      "gasUsed": "Gas使用量"
+    },
+    "quickLinks": {
+      "title": "クイックリンク",
+      "explorer": { "title": "ブロックエクスプローラー", "description": "完全なブロックとトランザクション詳細を表示" },
+      "startNode": { "title": "ノードを起動", "description": "COCネットワークに参加し、自分のノードを実行" },
+      "technology": { "title": "技術ドキュメント", "description": "COCの技術アーキテクチャを理解" }
+    }
+  },
+  "roadmap": {
+    "title": "開発ロードマップ",
+    "subtitle": "COCプロジェクトの発展経緯と将来計画",
+    "whitepaper": {
+      "title": "ホワイトペーパー計画 (ハイレベル)",
+      "v0_1": {
+        "version": "v0.1",
+        "title": "PoSeコントラクト + ノード登録 + チャレンジメカニズム",
+        "status": "完了",
+        "items": ["PoSe管理コントラクト (登録、バッチ提出、紛争、ペナルティ)", "ノード登録インターフェース (node_id、pubkey、flags、commitments)", "U/Sチャレンジタイプ定義", "領収書フォーマット仕様"]
+      },
+      "v0_2": {
+        "version": "v0.2",
+        "title": "チェーン外集約 + チェーン内バッチ提出 + 紛争ウィンドウ",
+        "status": "進行中",
+        "items": ["Aggregator: 領収書Merkleツリー構築", "チェーン内バッチ提出 (merkle_root + summary_hash)", "2エポック紛争ウィンドウ", "チェーン内ランダムサンプリング (k=32-128)"]
+      },
+      "v0_3": {
+        "version": "v0.3",
+        "title": "分散化チャレンジャー集合 + 透明性指標",
+        "status": "計画中",
+        "items": ["チャレンジャー多様化 + ランダムローテーション", "チャレンジャーボンドとクォータ", "チャレンジャー評判システム", "統計データの透明性 (異常パターン検出)"]
+      },
+      "v0_4": {
+        "version": "v0.4",
+        "title": "OpenClaw NodeOps標準 + 複数実装クライアント",
+        "status": "計画中",
+        "items": ["OpenClaw NodeOps API仕様", "多言語クライアント実装 (Rust/Go/TypeScript)", "AIエージェント標準インターフェース", "クロスクライアント互換性テスト"]
+      }
+    },
+    "implementation": {
+      "title": "実際の開発進捗 (サイクル1-25)",
+      "infrastructure": {
+        "title": "インフラストラクチャ (サイクル1-10)",
+        "cycles": [
+          { "num": 1, "desc": "PersistentStateTrie RLPデコーディング修正" },
+          { "num": 2, "desc": "13個の標準Ethereum RPCメソッド追加" },
+          { "num": 3, "desc": "トークン転送デコーディング (ERC-20)" },
+          { "num": 4, "desc": "チェーン統計ダッシュボード" },
+          { "num": 5, "desc": "コントラクト呼び出しインターフェース + WebSocket BigIntシリアライゼーション修正" },
+          { "num": 6, "desc": "eth_getBlockReceipts + ブロック詳細ページ強化" },
+          { "num": 7, "desc": "txpool RPCメソッド + メモリプールエクスプローラーページ" },
+          { "num": 8, "desc": "ネットワーク状態ページ + グローバル404ページ" },
+          { "num": 9, "desc": "EVMバイトコード逆アセンブラ + ストレージスキャナー" },
+          { "num": 10, "desc": "テストカバレッジ向上: 175→190テスト" }
+        ]
+      },
+      "consolidation": {
+        "title": "強化と拡張 (サイクル11-20)",
+        "cycles": [
+          { "num": 11, "desc": "TxHistoryテーブル構造修正、gas列追加" },
+          { "num": 12, "desc": "formatBlock O(n*m)複雑度修正" },
+          { "num": 13, "desc": "リクエストボディ制限 (2MB P2P、1MB RPC)" },
+          { "num": 14, "desc": "EIP-1559有効ガス価格ソート" },
+          { "num": 15, "desc": "mining/hashrate/coinbase RPC追加" },
+          { "num": 16, "desc": "WebSocketサブスクリプション検証" },
+          { "num": 17, "desc": "コンセンサスエラー回復 + 縮退モード" },
+          { "num": 18, "desc": "ヘルスチェッカー修正、診断追加" },
+          { "num": 19, "desc": "P2P ピア毎ブロードキャスト重複排除" },
+          { "num": 20, "desc": "Validatorsエクスプローラーページ + coc_validators RPC" }
+        ]
+      },
+      "features": {
+        "title": "機能と最適化 (サイクル21-25)",
+        "cycles": [
+          { "num": 21, "desc": "チェーン統計ページ (ブロックアクティビティ、TPS、Gas可視化)" },
+          { "num": 22, "desc": "アドレストランザクションクエリページネーションサポート" },
+          { "num": 23, "desc": "EIP-1559動的base fee計算" },
+          { "num": 24, "desc": "Debug trace改善、イベントログサポート" },
+          { "num": 25, "desc": "コントラクトリストページ、最近のデプロイをスキャン" }
+        ]
+      }
+    },
+    "future": {
+      "title": "将来計画",
+      "aiAgent": { "icon": "🤖", "title": "AIエージェント深度統合", "items": ["チャレンジレスポンスの自動化", "インテリジェントリソーススケジューリング", "予測的メンテナンス", "セキュリティポリシーの自己適応"] },
+      "crossChain": { "icon": "🌐", "title": "クロスチェーン相互運用", "items": ["ブリッジプロトコル", "アセットクロスチェーン", "IBCサポート", "マルチチェーン状態同期"] },
+      "analytics": { "icon": "📊", "title": "高度分析ツール", "items": ["チェーン上データ分析", "ノードパフォーマンス評価システム", "報酬予測ツール", "ネットワーク健康度評価"] },
+      "privacy": { "icon": "🔐", "title": "プライバシー強化", "items": ["ゼロ知識証明チャレンジ", "ノード匿名性保護", "エンドポイントプライバシーコミットメント", "TEEハードウェア認証"] },
+      "performance": { "icon": "⚡", "title": "パフォーマンス最適化", "items": ["Layer 2拡張ソリューション", "Parallel EVM", "状態プルーニング", "スナップショット圧縮"] },
+      "ecosystem": { "icon": "🌍", "title": "エコシステム構築", "items": ["DApp開発者ツール", "ノードオペレーターインセンティブプログラム", "コミュニティガバナンスメカニズム", "開発者助成プロジェクト"] }
+    },
+    "cta": {
+      "title": "COCの発展に参加しませんか？",
+      "subtitle": "開発者、ノードオペレーター、コミュニティメンバーの貢献を歓迎します",
+      "github": "GitHubリポジトリ",
+      "docs": "開発者ドキュメント"
+    }
+  },
+  "docs": {
+    "title": "ドキュメントセンター",
+    "subtitle": "COCブロックチェーンの技術ドキュメントと開発ガイドを包括的に理解",
+    "quickStart": {
+      "title": "クイックスタート",
+      "runNode": { "icon": "🚀", "title": "ローカルノードを実行", "description": "COCノードを迅速に起動", "code": "cd node\nnpm install\nnpm start" },
+      "deployContract": { "icon": "📜", "title": "コントラクトをデプロイ", "description": "PoSeスマートコントラクトをデプロイ", "code": "cd contracts\nnpm install\nnpm run compile\nnpm run deploy:local" },
+      "launchExplorer": { "icon": "🌐", "title": "エクスプローラーを起動", "description": "ブロックエクスプローラーを実行", "code": "cd explorer\nnpm install\nnpm run dev" }
+    },
+    "coreDocs": {
+      "title": "コアドキュメント",
+      "whitepaper": { "title": "📄 ホワイトペーパー", "description": "COCのコア設計理念、PoSeプロトコル詳細、経済モデルと技術アーキテクチャ", "link": "COC ホワイトペーパー (完全版)" },
+      "architecture": { "title": "🏗️ システムアーキテクチャ", "description": "4層アーキテクチャ設計、コンポーネント相互作用、データフローと拡張性", "links": ["システムアーキテクチャ (日本語)", "System Architecture (EN)"] },
+      "algorithms": { "title": "🔬 コアアルゴリズム", "description": "PoSeチャレンジプロトコル、スコアリング公式、コンセンサスメカニズムとストレージ証明", "links": ["コアアルゴリズム詳細 (日本語)", "Core Algorithms (EN)"] },
+      "antiSybil": { "title": "🛡️ Sybil攻撃防止メカニズム", "description": "Sybil攻撃防止戦略、ボンドメカニズム、チャレンジ検証", "links": ["Anti-Sybil (日本語)", "Anti-Sybil (EN)"] }
+    },
+    "devGuides": {
+      "title": "開発ガイド",
+      "nodeOps": { "icon": "⚙️", "title": "ノード運用ガイド", "items": ["インストールと設定", "devnetの実行 (3/5/7ノード)", "ノード監視とメンテナンス", "トラブルシューティング"] },
+      "contracts": { "icon": "📝", "title": "スマートコントラクト開発", "items": ["Solidityコントラクト作成", "PoSeコントラクトインターフェース", "デプロイと検証", "テストベストプラクティス"] },
+      "rpcApi": { "icon": "🔌", "title": "RPC APIリファレンス", "items": ["標準Ethereum RPCメソッド (40+)", "COCカスタムメソッド (coc_*)", "WebSocketサブスクリプション", "Txpoolクエリ"] },
+      "aiAgent": { "icon": "🤖", "title": "AIエージェント運用", "items": ["OpenClaw統合", "自動化監視", "戦略エンジン設定", "セキュリティベストプラクティス"] }
+    },
+    "implementationStatus": {
+      "title": "実装状況",
+      "chainEngine": { "label": "チェーンエンジン", "status": "完了", "details": "ブロック生成、メモリプール、スナップショット、最終性" },
+      "p2pNetwork": { "label": "P2Pネットワーク", "status": "完了", "details": "HTTP gossip、スナップショット同期" },
+      "evmExecution": { "label": "EVM実行", "status": "完了", "details": "メモリ+永続状態、LevelDB" },
+      "jsonRpc": { "label": "JSON-RPC", "status": "完了", "details": "40+標準メソッド、BigIntシリアライゼーション" },
+      "wsRpc": { "label": "WebSocket RPC", "status": "完了", "details": "eth_subscribe、リアルタイムイベント" },
+      "poseProtocol": { "label": "PoSeプロトコル", "status": "進行中", "details": "チェーン外チャレンジ、チェーン内コントラクト、バッチ集約" },
+      "storage": { "label": "ストレージレイヤー", "status": "完了", "details": "IPFS互換HTTP API" },
+      "runtime": { "label": "Runtimeサービス", "status": "進行中", "details": "coc-node、coc-agent、coc-relayer" },
+      "tests": { "label": "テストカバレッジ", "status": "良好", "details": "190テスト、9テストスイート" },
+      "detailsNote": "詳細な実装状況はプロジェクトREADMEを参照してください",
+      "viewGithub": "GitHubリポジトリを見る"
+    },
+    "tools": {
+      "title": "開発ツール",
+      "wallet": { "title": "💼 CLIウォレット", "description": "コマンドラインウォレットツール", "features": ["アドレス作成", "送金", "残高照会"] },
+      "explorer": { "title": "🔍 ブロックエクスプローラー", "description": "フル機能Webエクスプローラー", "features": ["ブロック/トランザクションクエリ", "コントラクト呼び出し", "ストレージスキャナー"] },
+      "testing": { "title": "🧪 テストスクリプト", "description": "品質保証ツール", "features": ["ユニットテスト", "統合テスト", "E2Eテスト"] },
+      "openTool": "ツールを開く →"
+    },
+    "resources": {
+      "title": "その他のリソース",
+      "technology": { "title": "技術アーキテクチャ詳細", "description": "COCの4層アーキテクチャ設計を深く理解" },
+      "roadmap": { "title": "開発ロードマップ", "description": "プロジェクトの進捗と将来計画を確認" },
+      "network": { "title": "ネットワーク状態", "description": "ブロックチェーンネットワークの健康状態をリアルタイム監視" },
+      "about": { "title": "COCについて", "description": "プロジェクトビジョンとコア理念を理解" }
+    }
+  },
+  "footer": {
+    "tagline": "AIエージェント運用型\nProof-of-Serviceブロックチェーン",
+    "copyright": "著作権",
+    "allRightsReserved": "すべての権利を保有"
+  }
+}

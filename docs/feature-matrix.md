@@ -42,6 +42,12 @@ This matrix lists features by domain, with current status and primary code refer
 - **DHT node announcement** — Implemented (Phase 30) — `COC/node/src/dht-network.ts`
 - **Dual HTTP+TCP block propagation** — Implemented (Phase 30) — `COC/node/src/consensus.ts`
 - **Wire transaction relay** — Implemented (Phase 30) — `COC/node/src/index.ts`
+- **Wire Block/Tx dedup** — Implemented (Phase 32) — `COC/node/src/wire-server.ts`
+- **Cross-protocol relay (Wire→HTTP)** — Implemented (Phase 32) — `COC/node/src/wire-server.ts`
+- **BFT dual transport (HTTP+TCP)** — Implemented (Phase 32) — `COC/node/src/index.ts`
+- **DHT wireClientByPeerId lookup** — Implemented (Phase 32) — `COC/node/src/dht-network.ts`
+- **Per-peer wire port config** — Implemented (Phase 32) — `COC/node/src/index.ts`
+- **broadcastFrame sender exclusion** — Implemented (Phase 32) — `COC/node/src/wire-server.ts`
 
 ## Storage
 - **Chain snapshot persistence** — Implemented — `COC/node/src/storage.ts`
@@ -119,6 +125,9 @@ This matrix lists features by domain, with current status and primary code refer
 - **P2P broadcast concurrency** — Implemented (5 peers/batch) — `COC/node/src/p2p.ts`
 - **Per-peer broadcast dedup** — Implemented — `COC/node/src/p2p.ts`
 - **P2P stats/counters** — Implemented — `COC/node/src/p2p.ts`
+- **P2P signed auth envelope (`_auth`)** — Implemented (tx/block/pubsub/bft write paths) — `COC/node/src/p2p.ts`
+- **P2P inbound auth mode** — Implemented (`off`/`monitor`/`enforce`) — `COC/node/src/config.ts`, `COC/node/src/p2p.ts`
+- **P2P auth observability counters** — Implemented (`authAccepted/authMissing/authInvalid/authRejected`) — `COC/node/src/p2p.ts`
 
 ## WebSocket RPC
 - **eth_subscribe (newHeads)** — Implemented — `COC/node/src/websocket-rpc.ts`
@@ -128,7 +137,7 @@ This matrix lists features by domain, with current status and primary code refer
 
 ## Consensus & Reliability
 - **Consensus error recovery** — Implemented (degraded mode, auto-recovery) — `COC/node/src/consensus.ts`
-- **BFT consensus integration** — Implemented (Phase 29, opt-in) — `COC/node/src/consensus.ts`
+- **BFT consensus integration** — Implemented (Phase 29, opt-in; Phase 32, dual transport) — `COC/node/src/consensus.ts`
 - **Fork choice integration** — Implemented (Phase 29) — `COC/node/src/consensus.ts`
 - **Snap sync integration** — Implemented (Phase 29, opt-in) — `COC/node/src/consensus.ts`
 - **Consensus metrics** — Implemented (Phase 30) — `COC/node/src/consensus.ts`
@@ -147,6 +156,24 @@ This matrix lists features by domain, with current status and primary code refer
 - **Config validation** — Implemented (Phase 27) — `COC/node/src/config.ts`
 - **Merkle path bounds check** — Implemented (Phase 27) — `COC/node/src/ipfs-merkle.ts`
 - **Snapshot JSON validation** — Implemented (Phase 27) — `COC/node/src/storage/snapshot-manager.ts`
+
+## Security Hardening (Phase 33)
+- **IPFS upload size limit** — Implemented (10MB default) — `COC/node/src/ipfs-http.ts`
+- **MFS path traversal protection** — Implemented — `COC/node/src/ipfs-mfs.ts`
+- **Wire per-IP connection limit** — Implemented (max 5/IP) — `COC/node/src/wire-server.ts`
+- **Block timestamp validation** — Implemented (parent ordering + 60s drift) — `COC/node/src/chain-engine.ts`
+- **Node identity authentication** — Implemented (wire handshake signing) — `COC/node/src/wire-server.ts`, `COC/node/src/wire-client.ts`
+- **BFT message signing** — Implemented (mandatory signature) — `COC/node/src/bft-coordinator.ts`
+- **DHT peer verification** — Implemented (TCP probe before routing table add) — `COC/node/src/dht-network.ts`
+- **State snapshot stateRoot check** — Implemented — `COC/node/src/state-snapshot.ts`
+- **Exponential peer ban** — Implemented (base * 2^n, max 24h) — `COC/node/src/peer-scoring.ts`
+- **WebSocket idle timeout** — Implemented (1h) — `COC/node/src/websocket-rpc.ts`
+- **Dev accounts gating** — Implemented (COC_DEV_ACCOUNTS=1) — `COC/node/src/rpc.ts`
+- **Default localhost binding** — Implemented (127.0.0.1) — `COC/node/src/wire-server.ts`
+- **Shared rate limiter** — Implemented (RPC/IPFS/PoSe) — `COC/node/src/rate-limiter.ts`
+- **P2P signed request verification** — Implemented (timestamp window + nonce replay guard) — `COC/node/src/p2p.ts`
+- **Governance self-vote removal** — Implemented — `COC/node/src/validator-governance.ts`
+- **PoSeManager v-value check** — Implemented — `COC/contracts/settlement/PoSeManager.sol`
 
 ## Performance & Benchmarking
 - **EVM benchmarks** — Implemented — `COC/node/src/benchmarks/evm-benchmark.test.ts`

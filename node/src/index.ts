@@ -23,6 +23,7 @@ import { createLogger } from "./logger.ts"
 import { LevelDatabase } from "./storage/db.ts"
 import { PersistentStateTrie } from "./storage/state-trie.ts"
 import { PersistentStateManager } from "./storage/persistent-state-manager.ts"
+import { NonceRegistry } from "../services/verifier/nonce-registry.ts"
 import { IpfsMfs } from "./ipfs-mfs.ts"
 import { IpfsPubsub } from "./ipfs-pubsub.ts"
 import type { PubsubMessage } from "./ipfs-pubsub.ts"
@@ -132,10 +133,19 @@ const p2p = new P2PNode(
     port: config.p2pPort,
     peers: config.peers,
     nodeId: config.nodeId,
+    maxPeers: config.p2pMaxPeers,
     enableDiscovery: true,
     peerStorePath: config.peerStorePath,
     dnsSeeds: config.dnsSeeds,
     peerMaxAgeMs: config.peerMaxAgeMs,
+    maxDiscoveredPerBatch: config.p2pMaxDiscoveredPerBatch,
+    inboundRateLimitWindowMs: config.p2pRateLimitWindowMs,
+    inboundRateLimitMaxRequests: config.p2pRateLimitMaxRequests,
+    inboundAuthMode: config.p2pInboundAuthMode,
+    enableInboundAuth: config.p2pRequireInboundAuth,
+    authMaxClockSkewMs: config.p2pAuthMaxClockSkewMs,
+    signer: nodeSigner,
+    verifier: nodeSigner,
   },
   {
     onTx: async (rawTx) => {
@@ -306,7 +316,11 @@ const consensus = new ConsensusEngine(chain, p2p, {
 })
 consensus.start()
 
-const pose = new PoSeEngine(BigInt(Math.floor(Date.now() / config.poseEpochMs)), { signer: nodeSigner })
+const pose = new PoSeEngine(BigInt(Math.floor(Date.now() / config.poseEpochMs)), {
+  signer: nodeSigner,
+  nonceRegistry: new NonceRegistry({ persistencePath: config.poseNonceRegistryPath }),
+  maxChallengesPerEpoch: config.poseMaxChallengesPerEpoch,
+})
 
 startRpcServer(config.rpcBind, config.rpcPort, config.chainId, evm, chain, p2p, pose, undefined, config.nodeId)
 

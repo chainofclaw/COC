@@ -29,6 +29,17 @@ describe("PoSeEngine", () => {
     assert.equal(challenge!.epochId, 1n)
   })
 
+  it("issueChallenge uses non-constant randSeed", () => {
+    const engine = makeEngine()
+    const nodeId1 = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    const nodeId2 = "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    const c1 = engine.issueChallenge(nodeId1)
+    const c2 = engine.issueChallenge(nodeId2)
+    assert.ok(c1 !== null && c2 !== null)
+    assert.notEqual(c1!.randSeed, "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc")
+    assert.notEqual(c1!.randSeed, c2!.randSeed)
+  })
+
   it("issueChallenge respects quota limits", () => {
     const engine = makeEngine()
     const nodeId = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -39,6 +50,20 @@ describe("PoSeEngine", () => {
     // First 6 should succeed, rest null (quota exhausted)
     const successes = results.filter((r) => r !== null)
     assert.ok(successes.length <= 6)
+  })
+
+  it("issueChallenge respects global epoch budget", () => {
+    const signer = createNodeSigner(TEST_KEY)
+    const engine = new PoSeEngine(1n, { signer, maxChallengesPerEpoch: 2 })
+    const n1 = "0x" + "11".repeat(32)
+    const n2 = "0x" + "22".repeat(32)
+    const n3 = "0x" + "33".repeat(32)
+    const c1 = engine.issueChallenge(n1)
+    const c2 = engine.issueChallenge(n2)
+    const c3 = engine.issueChallenge(n3)
+    assert.ok(c1)
+    assert.ok(c2)
+    assert.equal(c3, null)
   })
 
   it("finalizeEpoch returns null when no receipts", () => {
@@ -55,7 +80,7 @@ describe("PoSeEngine", () => {
     assert.ok(challenge !== null)
 
     // Build a proper ReceiptMessage matching the interface
-    const responseBody = { status: 200, latencyMs: 50, result: "0x1" }
+    const responseBody = { ok: true, blockNumber: 123 }
     const responseAtMs = challenge!.issuedAtMs + 500n // within deadline
 
     // Compute responseBodyHash the same way ReceiptVerifier does internally
@@ -85,5 +110,64 @@ describe("PoSeEngine", () => {
     assert.ok(result!.merkleRoot)
     // Epoch incremented after finalization
     assert.equal(engine.getEpochId(), 11n)
+  })
+
+  it("submitReceipt rejects unknown challenge ID", () => {
+    const engine = makeEngine(1n)
+    const signer = createNodeSigner(TEST_KEY)
+    const nodeId = ("0x" + signer.nodeId.slice(2).padStart(64, "0")) as Hex32
+    const challenge = engine.issueChallenge(nodeId)
+    assert.ok(challenge)
+
+    const responseBody = { ok: true, blockNumber: 1 }
+    const bodyHashHex = `0x${keccak256Hex(Buffer.from(JSON.stringify(responseBody), "utf8"))}` as Hex32
+    const msg = buildReceiptSignMessage(challenge!.challengeId, nodeId, bodyHashHex)
+    const sig = signer.sign(msg)
+
+    assert.throws(() => {
+      engine.submitReceiptByChallengeId(
+        "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        {
+          challengeId: challenge!.challengeId,
+          nodeId,
+          responseAtMs: challenge!.issuedAtMs + 100n,
+          responseBody,
+          nodeSig: sig as `0x${string}`,
+        },
+      )
+    }, /unknown challenge/)
+  })
+
+  it("submitReceipt uses injected nonce registry", () => {
+    let consumeCalls = 0
+    const signer = createNodeSigner(TEST_KEY)
+    const nodeId = ("0x" + signer.nodeId.slice(2).padStart(64, "0")) as Hex32
+    const engine = new PoSeEngine(1n, {
+      signer,
+      nonceRegistry: {
+        consume() {
+          consumeCalls += 1
+          return false
+        },
+      },
+    })
+    const challenge = engine.issueChallenge(nodeId)
+    assert.ok(challenge)
+
+    const responseBody = { ok: true, blockNumber: 1 }
+    const bodyHashHex = `0x${keccak256Hex(Buffer.from(JSON.stringify(responseBody), "utf8"))}` as Hex32
+    const msg = buildReceiptSignMessage(challenge!.challengeId, nodeId, bodyHashHex)
+    const sig = signer.sign(msg)
+
+    assert.throws(() => {
+      engine.submitReceipt(challenge!, {
+        challengeId: challenge!.challengeId,
+        nodeId,
+        responseAtMs: challenge!.issuedAtMs + 100n,
+        responseBody,
+        nodeSig: sig as `0x${string}`,
+      })
+    }, /nonce replay detected/)
+    assert.equal(consumeCalls, 1)
   })
 })

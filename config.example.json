@@ -6,6 +6,8 @@
   "agentIntervalMs": 60000,
   "agentBatchSize": 5,
   "agentSampleSize": 2,
+  "operatorPrivateKey": "0xYOUR_OPERATOR_PRIVATE_KEY",
+  "nonceRegistryPath": "/var/lib/coc/nonce-registry.log",
   "relayerIntervalMs": 60000,
   "challengerSet": [],
   "aggregatorSet": [],

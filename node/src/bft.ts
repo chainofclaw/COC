@@ -18,7 +18,7 @@ export interface BftMessage {
   height: bigint
   blockHash: Hex
   senderId: string
-  signature?: Hex
+  signature: Hex
 }
 
 export interface BftRoundConfig {

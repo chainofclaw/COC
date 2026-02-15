@@ -287,7 +287,7 @@ describe("B1: Node identity authentication", () => {
     assert.ok(closed, "connection should be closed due to signature mismatch")
   })
 
-  it("should accept handshake without signature (backward compatible)", async () => {
+  it("should reject handshake without signature when verifier is enabled", async () => {
     const port = getRandomPort()
     const serverKey = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
     const serverSigner = createNodeSigner(serverKey)
@@ -311,15 +311,17 @@ describe("B1: Node identity authentication", () => {
     const decoder = new FrameDecoder()
     await receiveFrames(socket, decoder, 1)
 
-    // Send handshake WITHOUT signature — should still be accepted (backward compat)
+    // Send handshake WITHOUT signature — should be rejected
+    let closed = false
+    socket.on("close", () => { closed = true })
     socket.write(encodeJsonPayload(MessageType.Handshake, {
       nodeId: "legacy-client",
       chainId: 18780,
       height: "0",
     }))
 
-    const ackFrames = await receiveFrames(socket, decoder, 1)
-    assert.ok(ackFrames.length >= 1, "should accept unsigned handshake for backward compatibility")
+    await new Promise((r) => setTimeout(r, 300))
+    assert.ok(closed, "should reject unsigned handshake when verifier is enabled")
   })
 })
 

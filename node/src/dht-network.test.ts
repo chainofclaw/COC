@@ -192,4 +192,99 @@ describe("DhtNetwork", () => {
     assert.equal(net.loadPeers(), 0)
     net.stop()
   })
+
+  it("should use wireClientByPeerId for findNode when available", async () => {
+    let findNodeCalled = false
+    const mockClient = {
+      isConnected: () => true,
+      findNode: async () => {
+        findNodeCalled = true
+        return [{ id: "0xddd", address: "10.0.0.4:19781" }]
+      },
+      getRemoteNodeId: () => "0xbbb",
+    } as unknown as WireClient
+
+    // Mock client for discovered peer 0xddd (so verifyPeer won't TCP probe)
+    const mockClientDdd = {
+      isConnected: () => true,
+      findNode: async () => [],
+      getRemoteNodeId: () => "0xddd",
+    } as unknown as WireClient
+
+    const wireClientByPeerId = new Map<string, WireClient>()
+    wireClientByPeerId.set("0xbbb", mockClient)
+    wireClientByPeerId.set("0xddd", mockClientDdd)
+
+    const discovered: DhtPeer[] = []
+    const network = new DhtNetwork({
+      localId: "0xaaa",
+      localAddress: "127.0.0.1:19780",
+      bootstrapPeers: [{ id: "0xbbb", address: "10.0.0.1", port: 19781 }],
+      wireClients: [],
+      wireClientByPeerId,
+      onPeerDiscovered: (peer) => discovered.push(peer),
+    })
+
+    network.start()
+    await network.iterativeLookup("0xccc")
+    network.stop()
+
+    assert.ok(findNodeCalled, "should use wireClientByPeerId for FIND_NODE")
+    assert.ok(discovered.length > 0, "should discover peers via wire client")
+  })
+
+  it("should fall back to wireClients scan when wireClientByPeerId has no match", async () => {
+    let scanCalled = false
+    const mockClient = {
+      isConnected: () => true,
+      findNode: async () => {
+        scanCalled = true
+        return [{ id: "0xeee", address: "10.0.0.5:19781" }]
+      },
+      getRemoteNodeId: () => "0xbbb",
+    } as unknown as WireClient
+
+    // Mock client for discovered peer so verifyPeer skips TCP probe
+    const mockClientEee = {
+      isConnected: () => true,
+      findNode: async () => [],
+      getRemoteNodeId: () => "0xeee",
+    } as unknown as WireClient
+
+    const discovered: DhtPeer[] = []
+    const network = new DhtNetwork({
+      localId: "0xaaa",
+      localAddress: "127.0.0.1:19780",
+      bootstrapPeers: [{ id: "0xbbb", address: "10.0.0.1", port: 19781 }],
+      wireClients: [mockClient, mockClientEee],
+      wireClientByPeerId: new Map(), // empty map
+      onPeerDiscovered: (peer) => discovered.push(peer),
+    })
+
+    network.start()
+    await network.iterativeLookup("0xccc")
+    network.stop()
+
+    assert.ok(scanCalled, "should fall back to scanning wireClients")
+  })
+
+  it("should fall back to local routing table when no wire client available", async () => {
+    const network = new DhtNetwork({
+      localId: "0xaaa",
+      localAddress: "127.0.0.1:19780",
+      bootstrapPeers: [
+        { id: "0xbbb", address: "10.0.0.1", port: 19781 },
+        { id: "0xccc", address: "10.0.0.2", port: 19782 },
+      ],
+      wireClients: [],
+      wireClientByPeerId: new Map(),
+      onPeerDiscovered: () => {},
+    })
+
+    network.start()
+    const result = await network.iterativeLookup("0xbbb")
+    network.stop()
+
+    assert.ok(result.length > 0, "should return peers from local routing table fallback")
+  })
 })

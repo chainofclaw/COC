@@ -42,7 +42,7 @@ Code:
 - `COC/node/src/storage/persistent-state-manager.ts` (NEW - Phase 26)
 
 ## 2) Consensus & Block Production
-**Status: Partial (Enhanced in Phase 13.2 + 22 + 26 + 28)**
+**Status: Partial (Enhanced in Phase 13.2 + 22 + 26 + 28 + 32)**
 
 Implemented:
 - Deterministic round‑robin proposer rotation
@@ -67,9 +67,10 @@ Implemented:
 - **Phase 29**: Fork choice rule (`shouldSwitchFork()`) integrated into ConsensusEngine `trySync()`
 - **Phase 29**: Snap sync provider support in ConsensusEngine for state snapshot fetching
 
+- **Phase 32**: BFT messages broadcast via dual transport (HTTP gossip + wire protocol TCP)
+
 Missing/Partial:
 - Slashing rules for BFT misbehavior
-- Multi-node BFT finality not yet tested in production devnet
 
 Code:
 - `COC/node/src/chain-engine.ts`
@@ -81,7 +82,7 @@ Code:
 - `COC/node/src/fork-choice.ts` (NEW - Phase 28)
 
 ## 3) P2P Networking
-**Status: Partial (Enhanced in Phase 16 + 26 + 28)**
+**Status: Partial (Enhanced in Phase 16 + 26 + 28 + 32)**
 
 Implemented:
 - HTTP-based gossip for tx and blocks
@@ -108,8 +109,14 @@ Implemented:
 - **Phase 29**: DHT network layer (bootstrap from seeds, iterative FIND_NODE with alpha=3, periodic refresh every 5 min)
 - **Phase 29**: State snapshot P2P endpoint (`GET /p2p/state-snapshot`)
 
+- **Phase 32**: Wire protocol Block/Tx dedup via BoundedSet (seenTx 50K, seenBlocks 10K)
+- **Phase 32**: Cross-protocol relay: Wire→HTTP (onTxRelay/onBlockRelay callbacks)
+- **Phase 32**: BFT message broadcast via wire protocol TCP (dual HTTP+TCP transport)
+- **Phase 32**: DHT FIND_NODE uses wireClientByPeerId map (O(1) lookup) → wireClients scan → local routing table fallback
+- **Phase 32**: Per-peer wire port from dhtBootstrapPeers config (no longer uses local wirePort for all peers)
+- **Phase 32**: broadcastFrame supports excludeNodeId parameter
+
 Missing/Partial:
-- Wire protocol FIND_NODE request/response not yet implemented (DHT uses local routing table fallback)
 - HTTP gossip still primary transport; wire protocol is opt-in alternative
 
 Code:
@@ -252,7 +259,7 @@ Implemented:
 - 3/5/7 node devnet scripts
 - End‑to‑end verify script: block production + tx propagation
 - Quality gate script for automated testing (unit + integration + e2e)
-- Comprehensive test coverage (77 test files, 667 tests across all modules)
+- Comprehensive test coverage (79 test files, 755 tests across all modules)
 
 Code:
 - `COC/scripts/start-devnet.sh`
@@ -443,7 +450,7 @@ Documentation:
 - `COC/docs/phase-14-plan.zh.md`
 
 ## 17) Production Hardening
-**Status: Implemented (Phase 24 + 27)**
+**Status: Implemented (Phase 24 + 27 + 33)**
 
 Implemented:
 - Health check probes (healthy/degraded/unhealthy) with chain, block freshness, peer, mempool checks
@@ -457,14 +464,44 @@ Implemented:
 - **Phase 27**: PoSe HTTP endpoint field validation
 - **Phase 27**: Snapshot JSON import validation
 - **Phase 27**: Merkle path index bounds checking
+- **Phase 33**: IPFS upload size limit (10MB default)
+- **Phase 33**: MFS path traversal prevention (`..` / `.` component check)
+- **Phase 33**: Wire server per-IP connection limit (max 5 per IP)
+- **Phase 33**: Block timestamp validation (parent ordering + 60s future drift limit)
+- **Phase 33**: Node identity authentication (wire handshake signing via NodeSigner/SignatureVerifier)
+- **Phase 33**: BFT message signature verification (mandatory signing, reject unsigned/forged votes)
+- **Phase 33**: DHT peer verification (TCP connect probe before routing table insertion)
+- **Phase 33**: State snapshot stateRoot verification (compare imported root vs expected)
+- **Phase 33**: Exponential peer ban duration (base * 2^min(banCount, 10), max 24h)
+- **Phase 33**: WebSocket idle timeout (1h inactivity → close)
+- **Phase 33**: Dev accounts gated behind `COC_DEV_ACCOUNTS=1` env var
+- **Phase 33**: Default bind address changed to `127.0.0.1`
+- **Phase 33**: Shared rate limiter for RPC/IPFS/PoSe endpoints
+- **Phase 33**: Governance self-vote removal (proposer no longer auto-votes)
+- **Phase 33**: PoSeManager ecrecover v-value validation (`v == 27 || v == 28`)
 
 Code:
 - `COC/node/src/health.ts`
-- `COC/node/src/config.ts` (UPDATED - validateConfig)
-- `COC/node/src/rpc.ts` (UPDATED - parameter validation)
-- `COC/node/src/pose-http.ts` (UPDATED - field validation)
+- `COC/node/src/config.ts` (UPDATED - validateConfig, nodePrivateKey, resolveNodeKey)
+- `COC/node/src/rpc.ts` (UPDATED - parameter validation, dev accounts gate)
+- `COC/node/src/pose-http.ts` (UPDATED - field validation, rate limiting)
 - `COC/node/src/storage/snapshot-manager.ts` (UPDATED - JSON validation)
 - `COC/node/src/ipfs-merkle.ts` (UPDATED - bounds check)
+- `COC/node/src/ipfs-http.ts` (UPDATED - upload size limit, rate limiting)
+- `COC/node/src/ipfs-mfs.ts` (UPDATED - path traversal check)
+- `COC/node/src/wire-server.ts` (UPDATED - per-IP limit, handshake signing, default bind)
+- `COC/node/src/wire-client.ts` (UPDATED - handshake signing/verification)
+- `COC/node/src/chain-engine.ts` (UPDATED - timestamp validation)
+- `COC/node/src/bft.ts` (UPDATED - mandatory signature field)
+- `COC/node/src/bft-coordinator.ts` (UPDATED - sign/verify BFT messages)
+- `COC/node/src/dht-network.ts` (UPDATED - peer verification, stale peer filtering)
+- `COC/node/src/state-snapshot.ts` (UPDATED - stateRoot verification)
+- `COC/node/src/peer-scoring.ts` (UPDATED - exponential ban, banCount)
+- `COC/node/src/websocket-rpc.ts` (UPDATED - idle timeout)
+- `COC/node/src/validator-governance.ts` (UPDATED - remove self-vote)
+- `COC/node/src/rate-limiter.ts` (NEW - shared rate limiter)
+- `COC/node/src/security-hardening.test.ts` (NEW - 34 security tests)
+- `COC/contracts/settlement/PoSeManager.sol` (UPDATED - v-value check)
 
 Documentation:
 - `COC/docs/phase-24-plan.en.md`
@@ -768,12 +805,63 @@ Tests (28 new tests across 4 files):
 - `COC/node/src/bft.test.ts` (8 new: equivocation detection)
 - `COC/node/src/rpc-extended.test.ts` (2 new: network stats, BFT status)
 
-## 24) Whitepaper Gap Summary
-- Consensus: validator governance with stake-weighted proposer selection (Phase 22 + 26), BFT-lite round state machine with coordinator (Phase 28), GHOST fork choice (Phase 28), BFT integrated into ConsensusEngine main loop (Phase 29, opt-in), equivocation detection for double-vote slashing (Phase 30), consensus metrics tracking (Phase 30).
-- P2P: peer scoring (Phase 16), peer persistence and DNS seed discovery (Phase 26), binary wire protocol and Kademlia DHT (Phase 28), TCP server/client transport and DHT network layer (Phase 29, opt-in), wire FIND_NODE message for DHT queries (Phase 30), dual HTTP+TCP block and tx propagation (Phase 30), DHT node announcement (Phase 30), wire connection manager (Phase 30). HTTP gossip remains primary.
-- EVM: state persistence connected (Phase 26), real stateRoot in block headers (Phase 27), state snapshot export/import (Phase 28), snap sync provider in consensus (Phase 29).
-- RPC: 57+ methods with parameter validation and structured error codes (Phase 27), BFT status endpoint (Phase 28), coc_getNetworkStats endpoint (Phase 30).
-- PoSe: dispute automation partially addressed (Phase 19), HTTP input validation (Phase 27).
-- IPFS: MFS and Pubsub (Phase 26), tar archive for `get` (Phase 28), Merkle path bounds validation (Phase 27).
+## 25) Phase 33: Security Hardening
+**Status: Implemented (2026-02-15)**
+
+Comprehensive security audit addressing 15 vulnerabilities (5 CRITICAL, 5 HIGH, 5 MEDIUM):
+
+### 33.1 Immediate Protections (Phase A)
+- IPFS upload size limit (10MB default, `readBody()` maxSize parameter)
+- MFS path traversal prevention (`..` / `.` component rejection in `normalizePath()`)
+- Wire server per-IP connection limit (max 5 per IP via `connsByIp` map)
+- Block timestamp validation (must be after parent, within 60s future drift)
+
+### 33.2 Protocol Authentication (Phase B)
+- Node identity authentication via `NodeSigner`/`SignatureVerifier` from `crypto/signer.ts`
+- Wire handshake includes nonce + signature, verified against claimed nodeId
+- `nodePrivateKey` auto-generated from `COC_NODE_KEY` env / `dataDir/node-key` file
+- BFT message signature now mandatory (`BftMessage.signature: Hex`)
+- BFT coordinator signs outgoing votes and verifies incoming prepare/commit messages
+
+### 33.3 Network Robustness (Phase C)
+- DHT peer verification: TCP connect probe (3s timeout) before routing table insertion
+- Skip verification for peers already connected via wire client (optimization)
+- State snapshot stateRoot verification after import
+- Peer scoring exponential ban: `baseBanMs * 2^min(banCount-1, 10)`, max 24h
+- No decay during ban period
+
+### 33.4 Resource Management (Phase D)
+- WebSocket idle timeout: 1h inactivity → close + cleanup
+- Dev accounts gated behind `COC_DEV_ACCOUNTS=1` (no longer auto-enabled)
+- Default wire/IPFS bind changed to `127.0.0.1`
+- Shared `RateLimiter` class for RPC (200/min), IPFS (100/min), PoSe (60/min)
+- Governance self-vote removed (proposer must explicitly vote)
+
+### 33.5 Contract Layer (Phase E)
+- PoSeManager `ecrecover` v-value validation (`require(v == 27 || v == 28)`)
+
+### 33.6 P2P HTTP Auth Hardening (Phase E+)
+- P2P write endpoints support signed auth envelope (`_auth`) with sender/timestamp/nonce/signature
+- Signature verification binds to endpoint path + canonical payload hash
+- Timestamp window validation (`p2pAuthMaxClockSkewMs`) and nonce replay guard (bounded cache)
+- Inbound auth mode supports phased rollout: `off` / `monitor` / `enforce`
+- Auth observability counters exposed in `/p2p/node-info` stats (`authAccepted`, `authMissing`, `authInvalid`, `authRejected`)
+
+Code:
+- `COC/node/src/rate-limiter.ts` (NEW)
+- `COC/node/src/security-hardening.test.ts` (NEW - 34 tests)
+- `COC/node/src/p2p.ts` (UPDATED - auth envelope + mode + counters)
+- `COC/node/src/p2p-auth.test.ts` (NEW)
+- Multiple files updated (see Production Hardening section for full list)
+
+## 26) Whitepaper Gap Summary
+- Consensus: validator governance with stake-weighted proposer selection (Phase 22 + 26), BFT-lite round state machine with coordinator (Phase 28), GHOST fork choice (Phase 28), BFT integrated into ConsensusEngine main loop (Phase 29, opt-in), equivocation detection for double-vote slashing (Phase 30), consensus metrics tracking (Phase 30), BFT message signature verification (Phase 33).
+- P2P: peer scoring (Phase 16), peer persistence and DNS seed discovery (Phase 26), binary wire protocol and Kademlia DHT (Phase 28), TCP server/client transport and DHT network layer (Phase 29, opt-in), wire FIND_NODE message for DHT queries (Phase 30), dual HTTP+TCP block and tx propagation (Phase 30), DHT node announcement (Phase 30), wire connection manager (Phase 30), wire Block/Tx dedup via BoundedSet (Phase 32), cross-protocol relay Wire→HTTP (Phase 32), BFT dual transport HTTP+TCP (Phase 32), DHT wireClientByPeerId O(1) lookup (Phase 32), per-peer wire port from config (Phase 32), node identity authentication in wire handshake (Phase 33), per-IP connection limit (Phase 33), DHT peer verification (Phase 33), exponential peer ban (Phase 33), signed HTTP gossip auth envelope with phased enforcement (Phase 33). HTTP gossip remains primary.
+- EVM: state persistence connected (Phase 26), real stateRoot in block headers (Phase 27), state snapshot export/import (Phase 28), snap sync provider in consensus (Phase 29), state snapshot stateRoot verification (Phase 33).
+- RPC: 57+ methods with parameter validation and structured error codes (Phase 27), BFT status endpoint (Phase 28), coc_getNetworkStats endpoint (Phase 30), dev accounts gated (Phase 33).
+- PoSe: dispute automation partially addressed (Phase 19), HTTP input validation (Phase 27), rate limiting (Phase 33), PoSeManager v-value check (Phase 33).
+- IPFS: MFS and Pubsub (Phase 26), tar archive for `get` (Phase 28), Merkle path bounds validation (Phase 27), upload size limit (Phase 33), path traversal protection (Phase 33), rate limiting (Phase 33).
+- Security: node identity via crypto signing (Phase 33), BFT signature verification (Phase 33), DHT anti-poisoning (Phase 33), exponential peer banning (Phase 33), WebSocket idle timeout (Phase 33), default localhost binding (Phase 33), P2P signed request verification with monitor/enforce rollout (Phase 33).
 - Explorer: contract registry, call history, tx type classification, internal traces, governance display (Phase 27).
-- Testing: 695 tests across 78 files covering all major modules (Phase 30).
+- Devnet: multi-node devnet enables all advanced features by default (BFT, Wire, DHT, SnapSync) with per-node wire port and DHT bootstrap peers (Phase 32).
+- Testing: 755 tests across 79 files covering all major modules including security hardening (Phase 33).

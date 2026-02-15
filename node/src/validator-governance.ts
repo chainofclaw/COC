@@ -180,7 +180,7 @@ export class ValidatorGovernance {
       proposer,
       createdAtEpoch: this.currentEpoch,
       expiresAtEpoch: this.currentEpoch + this.config.proposalDurationEpochs,
-      votes: new Map([[proposer, true]]), // Proposer auto-votes yes
+      votes: new Map(), // No auto-vote — proposer must explicitly vote
       status: "pending",
     }
 

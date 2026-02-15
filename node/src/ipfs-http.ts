@@ -8,9 +8,12 @@ import type { IpfsAddResult, UnixFsFileMeta } from "./ipfs-types.ts"
 import type { IpfsMfs } from "./ipfs-mfs.ts"
 import type { IpfsPubsub } from "./ipfs-pubsub.ts"
 import { createTarArchive } from "./ipfs-tar.ts"
+import { RateLimiter } from "./rate-limiter.ts"
 import { createLogger } from "./logger.ts"
 
 const log = createLogger("ipfs")
+const ipfsRateLimiter = new RateLimiter(60_000, 100)
+setInterval(() => ipfsRateLimiter.cleanup(), 300_000).unref()
 
 export interface IpfsServerConfig {
   bind: string
@@ -42,6 +45,14 @@ export class IpfsHttpServer {
 
   start(): void {
     const server = http.createServer(async (req, res) => {
+      // Rate limiting
+      const clientIp = req.socket.remoteAddress ?? "unknown"
+      if (!ipfsRateLimiter.allow(clientIp)) {
+        res.writeHead(429, { "content-type": "application/json" })
+        res.end(JSON.stringify({ error: "rate limit exceeded" }))
+        return
+      }
+
       const url = parseUrl(req.url ?? "", true)
       if (req.method === "GET" && url.pathname?.startsWith("/ipfs/")) {
         const cid = url.pathname.replace("/ipfs/", "")
@@ -489,10 +500,18 @@ export class IpfsHttpServer {
   }
 }
 
-async function readBody(req: http.IncomingMessage): Promise<Uint8Array> {
+const DEFAULT_MAX_UPLOAD_SIZE = 10 * 1024 * 1024 // 10 MB
+
+async function readBody(req: http.IncomingMessage, maxSize = DEFAULT_MAX_UPLOAD_SIZE): Promise<Uint8Array> {
   const chunks: Buffer[] = []
+  let totalSize = 0
   for await (const chunk of req) {
-    chunks.push(Buffer.from(chunk))
+    const buf = Buffer.from(chunk)
+    totalSize += buf.byteLength
+    if (totalSize > maxSize) {
+      throw new Error(`upload exceeds max size: ${totalSize} > ${maxSize}`)
+    }
+    chunks.push(buf)
   }
   return Buffer.concat(chunks)
 }

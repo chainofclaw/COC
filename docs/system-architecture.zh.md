@@ -52,6 +52,21 @@ COC 是一个 EVM 兼容的区块链原型，结合轻量执行层与 PoSe（Pro
    - 通过 JSON-RPC 获取实时链数据。
    - Tailwind CSS 响应式 UI。
 
+9. **安全层（Phase 33）**
+   - 节点身份认证：通过 `NodeSigner`/`SignatureVerifier` 对 Wire 握手签名。
+   - BFT 消息强制签名与验证（拒绝无签名/伪造投票）。
+   - DHT 防投毒：节点加入路由表前先进行 TCP 连接探测验证。
+   - Wire 服务端每 IP 连接限制（最多 5 个）。
+   - IPFS 上传大小限制（10MB）和 MFS 路径遍历防护。
+   - 区块时间戳验证（父块排序 + 未来偏移限制）。
+   - 节点指数 ban（ban 期间不衰减，最长 24h）。
+   - WebSocket 空闲超时（1h）和开发账户门控。
+   - RPC/IPFS/PoSe 共享速率限制器。
+   - P2P HTTP 写请求签名认证信封（`_auth`），含时间窗与 nonce 防重放。
+   - 入站认证灰度模式：`off` / `monitor` / `enforce`，支持平滑迁移。
+   - 状态快照 stateRoot 导入后校验。
+   - PoSeManager ecrecover v 值校验。
+
 ## 核心组件
 - **节点运行时**：`COC/node/src/*`
 - **PoSe 合约**：`COC/contracts/settlement/*`
@@ -71,9 +86,10 @@ COC 是一个 EVM 兼容的区块链原型，结合轻量执行层与 PoSe（Pro
 7. 聚合批次提交到 PoSeManager，relayer 触发最终结算。
 
 ## 当前边界
-- 共识采用 ValidatorGovernance 权益加权出块 + 轮转降级。BFT 协调器已集成到 ConsensusEngine（通过 `enableBft` 可选启用）：在 `tryPropose()` 中启动 BFT 轮次，失败时降级为直接广播。分叉选择规则已集成到 `trySync()` 实现确定性链选择。等价检测追踪双重投票以生成惩罚证据。性能指标（出块时间、同步统计、运行时间）通过 `getMetrics()` 导出。
-- P2P 以 HTTP gossip 为主要传输 + 节点持久化 + DNS 种子发现。Wire 服务端/客户端提供可选 TCP 传输（`enableWireProtocol`），支持 FIND_NODE 请求/响应用于 DHT 查询。DHT 网络层提供可选迭代节点发现（`enableDht`），含定期节点公告。区块和交易通过双通道（HTTP+TCP）并行传播。Wire 连接管理器处理出站节点生命周期。状态快照端点可用于快速同步。
+- 共识采用 ValidatorGovernance 权益加权出块 + 轮转降级。BFT 协调器已集成到 ConsensusEngine（通过 `enableBft` 可选启用）：在 `tryPropose()` 中启动 BFT 轮次，失败时降级为直接广播。BFT 消息通过双传输层（HTTP gossip + Wire 协议 TCP）广播。分叉选择规则已集成到 `trySync()` 实现确定性链选择。等价检测追踪双重投票以生成惩罚证据。性能指标（出块时间、同步统计、运行时间）通过 `getMetrics()` 导出。
+- P2P 以 HTTP gossip 为主要传输 + 节点持久化 + DNS 种子发现。Wire 服务端/客户端提供可选 TCP 传输（`enableWireProtocol`），支持 FIND_NODE 请求/响应用于 DHT 查询。Wire 协议含 Block/Tx 去重（BoundedSet: seenTx 50K, seenBlocks 10K）及跨协议中继（Wire→HTTP 通过 onTxRelay/onBlockRelay 回调）。HTTP gossip 写路径支持签名认证信封（`_auth`）校验，具备可配置灰度模式（`off`/`monitor`/`enforce`）、时间偏移限制与 nonce 防重放。DHT 网络层提供可选迭代节点发现（`enableDht`），含定期节点公告；FIND_NODE 使用 wireClientByPeerId 映射（O(1) 查找），回退到 wireClients 扫描和本地路由表。区块和交易通过双通道（HTTP+TCP）并行传播，支持发送方排除（excludeNodeId）。每个 peer 使用独立 wire port（来自 dhtBootstrapPeers 配置）。Wire 连接管理器处理出站节点生命周期。状态快照端点可用于快速同步。
 - EVM 状态通过 PersistentStateManager + LevelDB 跨重启持久化。快照同步提供者已集成到 ConsensusEngine（通过 `enableSnapSync` 可选启用）。
 - IPFS 支持核心 HTTP API、网关、MFS、Pubsub 和 tar 归档 `get`。
 - RPC 提供 `coc_getNetworkStats`（P2P/Wire/DHT/BFT 统计）和 `coc_getBftStatus`（BFT 轮次状态含等价检测计数）。
-- 所有高级功能（BFT、线协议、DHT、快照同步）默认关闭，通过配置标志启用。
+- 安全加固（Phase 33）：Wire 握手节点身份认证（NodeSigner/SignatureVerifier）、BFT 强制消息签名、DHT 节点验证（加入路由表前 TCP 探测）、每 IP Wire 连接限制（最多 5）、IPFS 上传大小限制（10MB）、MFS 路径遍历防护、区块时间戳验证、节点指数 ban（最长 24h）、WebSocket 空闲超时（1h）、开发账户需 `COC_DEV_ACCOUNTS=1`、默认绑定 `127.0.0.1`、共享速率限制器（RPC 200/min, IPFS 100/min, PoSe 60/min）、HTTP gossip 签名认证信封（`off`/`monitor`/`enforce` 灰度模式 + 防重放）、治理自投票移除、PoSeManager ecrecover v 值校验、状态快照 stateRoot 校验。
+- 所有高级功能（BFT、Wire、DHT、SnapSync）在多节点 devnet 中通过 `start-devnet.sh` 默认启用。单节点 devnet 自动禁用 BFT（需要 >= 3 验证者）。DHT 迭代查找使用 Wire 协议 FIND_NODE（可用时），回退到本地路由表。

@@ -16,6 +16,7 @@ export interface PeerScore {
   failureCount: number
   lastSeenMs: number
   bannedUntilMs: number
+  banCount: number
 }
 
 export interface PeerScoringConfig {
@@ -72,6 +73,7 @@ export class PeerScoring {
       failureCount: 0,
       lastSeenMs: Date.now(),
       bannedUntilMs: 0,
+      banCount: 0,
     })
   }
 
@@ -96,12 +98,15 @@ export class PeerScoring {
     const peer = this.peers.get(id)
     if (!peer) return
     const newScore = Math.max(peer.score - this.cfg.failurePenalty, this.cfg.minScore)
+    const shouldBan = newScore <= this.cfg.banThreshold
+    const newBanCount = shouldBan ? peer.banCount + 1 : peer.banCount
     this.peers.set(id, {
       ...peer,
       score: newScore,
       failureCount: peer.failureCount + 1,
-      bannedUntilMs: newScore <= this.cfg.banThreshold
-        ? Date.now() + this.cfg.banDurationMs
+      banCount: newBanCount,
+      bannedUntilMs: shouldBan
+        ? Date.now() + this.exponentialBanMs(newBanCount)
         : peer.bannedUntilMs,
     })
   }
@@ -113,12 +118,15 @@ export class PeerScoring {
     const peer = this.peers.get(id)
     if (!peer) return
     const newScore = Math.max(peer.score - this.cfg.invalidDataPenalty, this.cfg.minScore)
+    const shouldBan = newScore <= this.cfg.banThreshold
+    const newBanCount = shouldBan ? peer.banCount + 1 : peer.banCount
     this.peers.set(id, {
       ...peer,
       score: newScore,
       failureCount: peer.failureCount + 1,
-      bannedUntilMs: newScore <= this.cfg.banThreshold
-        ? Date.now() + this.cfg.banDurationMs
+      banCount: newBanCount,
+      bannedUntilMs: shouldBan
+        ? Date.now() + this.exponentialBanMs(newBanCount)
         : peer.bannedUntilMs,
     })
   }
@@ -130,12 +138,15 @@ export class PeerScoring {
     const peer = this.peers.get(id)
     if (!peer) return
     const newScore = Math.max(peer.score - this.cfg.timeoutPenalty, this.cfg.minScore)
+    const shouldBan = newScore <= this.cfg.banThreshold
+    const newBanCount = shouldBan ? peer.banCount + 1 : peer.banCount
     this.peers.set(id, {
       ...peer,
       score: newScore,
       failureCount: peer.failureCount + 1,
-      bannedUntilMs: newScore <= this.cfg.banThreshold
-        ? Date.now() + this.cfg.banDurationMs
+      banCount: newBanCount,
+      bannedUntilMs: shouldBan
+        ? Date.now() + this.exponentialBanMs(newBanCount)
         : peer.bannedUntilMs,
     })
   }
@@ -201,10 +212,14 @@ export class PeerScoring {
   }
 
   /**
-   * Apply score decay toward the initial score
+   * Apply score decay toward the initial score.
+   * Skip peers that are currently banned.
    */
   applyDecay(): void {
+    const now = Date.now()
     for (const [id, peer] of this.peers) {
+      // Don't decay score while peer is banned
+      if (peer.bannedUntilMs > now) continue
       let newScore = peer.score
       if (newScore > this.cfg.initialScore) {
         newScore = Math.max(newScore - this.cfg.decayAmount, this.cfg.initialScore)
@@ -215,6 +230,13 @@ export class PeerScoring {
         this.peers.set(id, { ...peer, score: newScore })
       }
     }
+  }
+
+  /** Calculate exponential ban duration: baseBanMs * 2^min(banCount, 10), max 24h */
+  private exponentialBanMs(banCount: number): number {
+    const MAX_BAN_MS = 24 * 60 * 60 * 1000 // 24 hours
+    const multiplier = Math.pow(2, Math.min(banCount - 1, 10))
+    return Math.min(this.cfg.banDurationMs * multiplier, MAX_BAN_MS)
   }
 
   /**

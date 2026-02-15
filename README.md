@@ -51,7 +51,11 @@ COC is an EVM-compatible blockchain prototype with PoSe (Proof-of-Service) settl
 - **Dual Transport**: Parallel HTTP gossip + TCP wire protocol for block and transaction propagation
 - **Wire FIND_NODE**: DHT peer discovery via wire protocol request/response messages
 - **Network Stats RPC**: `coc_getNetworkStats` endpoint aggregating P2P, wire, DHT, BFT stats
-- **Testing**: 695 tests across 78 test files, covering chain engine, EVM, mempool, RPC, WebSocket, P2P, storage, IPFS, PoSe, BFT, DHT, wire protocol, fork choice, snap sync, equivocation detection, consensus metrics, and wire connection management
+- **Wire Dedup & Relay**: Wire protocol Block/Tx dedup via BoundedSet (50K tx, 10K blocks), cross-protocol relay (Wire→HTTP), BFT dual transport (HTTP+TCP)
+- **DHT Enhancement**: wireClientByPeerId O(1) lookup for FIND_NODE, per-peer wire port from config
+- **Devnet Full Features**: Multi-node devnet enables BFT, Wire, DHT, SnapSync by default with per-node wire port and DHT bootstrap peers
+- **Security Hardening**: Node identity authentication (wire handshake signing), BFT mandatory message signatures, DHT peer verification (TCP probe), per-IP wire connection limits, IPFS upload size limit (10MB), MFS path traversal prevention, block timestamp validation, exponential peer ban (max 24h), WebSocket idle timeout, dev accounts gating, default localhost binding, shared rate limiter (RPC/IPFS/PoSe), P2P HTTP signed auth envelope with `off/monitor/enforce` rollout modes and replay guard, governance self-vote removal, PoSeManager ecrecover v-value check, state snapshot stateRoot verification
+- **Testing**: 755 tests across 79 test files, covering chain engine, EVM, mempool, RPC, WebSocket, P2P, storage, IPFS, PoSe, BFT, DHT, wire protocol, fork choice, snap sync, equivocation detection, consensus metrics, wire connection management, wire dedup/relay, cross-protocol propagation, and security hardening
 
 ### Blockchain Explorer Features
 
@@ -152,6 +156,8 @@ The explorer (`explorer/`) is a Next.js 15 App Router application providing:
 | 54 | `c847e8b` | Consensus engine performance metrics tracking (propose/sync times, uptime) |
 | 55 | `9bc400a` | Wire protocol transaction relay + FindNode server handler wiring |
 | 56 | `be1c2ed` | Full test verification (695 tests) + documentation update |
+| 57 | — | Wire Block/Tx dedup (BoundedSet), cross-protocol relay (Wire→HTTP), BFT dual transport, DHT wireClientByPeerId, devnet full features, 726 tests |
+| 58 | — | Security hardening: node identity auth, BFT signing, DHT peer verification, per-IP limits, IPFS upload limits, MFS path traversal, timestamp validation, exponential ban, WebSocket timeout, dev accounts gate, rate limiting, governance self-vote removal, PoSeManager v-check, 755 tests |
 
 ## Quick Start
 
@@ -214,4 +220,3 @@ bash scripts/quality-gate.sh
 ## License
 
 MIT License - See LICENSE file for details
-

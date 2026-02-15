@@ -32,6 +32,7 @@ contract PoSeManager is IPoSeManager, PoSeManagerStorage {
     error TooManyNodes();
     error InvalidOwnershipProof();
     error EndpointAlreadyRegistered();
+    error NodeNotSlashable();
 
     function registerNode(
         bytes32 nodeId,
@@ -187,7 +188,8 @@ contract PoSeManager is IPoSeManager, PoSeManagerStorage {
 
     function slash(bytes32 nodeId, PoSeTypes.SlashEvidence calldata evidence) external override onlyRole(SLASHER_ROLE) {
         PoSeTypes.NodeRecord storage node = nodes[nodeId];
-        if (!node.active) revert NodeNotFound();
+        if (node.nodeId == bytes32(0)) revert NodeNotFound();
+        if (node.bondAmount == 0) revert NodeNotSlashable();
         if (evidence.evidenceHash == bytes32(0)) revert InvalidSlashEvidence();
         if (evidence.nodeId != nodeId) revert InvalidSlashEvidence();
         if (evidence.reasonCode == 0) revert InvalidSlashEvidence();
@@ -288,6 +290,7 @@ contract PoSeManager is IPoSeManager, PoSeManagerStorage {
             s := calldataload(add(sig.offset, 32))
         }
         if (v < 27) v += 27;
+        require(v == 27 || v == 28, "invalid v value");
 
         address recovered = ecrecover(ethSignedHash, v, r, s);
         if (recovered == address(0)) revert InvalidOwnershipProof();

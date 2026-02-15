@@ -1,9 +1,21 @@
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
+import { dirname } from "node:path"
 import type { CrossLayerEnvelope } from "./message-types.ts"
 import { keccak256Hex } from "./keccak256.ts"
+
+export interface ReplayGuardOptions {
+  persistencePath?: string
+}
 
 export class ReplayGuard {
   private readonly lastNonceByChannel = new Map<string, bigint>()
   private readonly replayKeys = new Set<string>()
+  private readonly persistencePath?: string
+
+  constructor(options: ReplayGuardOptions = {}) {
+    this.persistencePath = options.persistencePath
+    this.loadPersisted()
+  }
 
   buildReplayKey(envelope: CrossLayerEnvelope): string {
     const encoded = Buffer.concat([
@@ -39,6 +51,46 @@ export class ReplayGuard {
     const channelKey = `${envelope.srcChainId}:${envelope.channelId}`
     this.lastNonceByChannel.set(channelKey, envelope.nonce)
     this.replayKeys.add(replayKey)
+    this.persistState()
+  }
+
+  private loadPersisted(): void {
+    if (!this.persistencePath || !existsSync(this.persistencePath)) {
+      return
+    }
+    try {
+      const raw = readFileSync(this.persistencePath, "utf8")
+      const parsed = JSON.parse(raw) as {
+        lastNonceByChannel?: Array<[string, string]>
+        replayKeys?: string[]
+      }
+      for (const [key, nonceStr] of parsed.lastNonceByChannel ?? []) {
+        this.lastNonceByChannel.set(key, BigInt(nonceStr))
+      }
+      for (const key of parsed.replayKeys ?? []) {
+        this.replayKeys.add(key)
+      }
+    } catch {
+      // ignore corrupted persistence file and fallback to in-memory mode
+    }
+  }
+
+  private persistState(): void {
+    if (!this.persistencePath) {
+      return
+    }
+    try {
+      mkdirSync(dirname(this.persistencePath), { recursive: true })
+      const tmpPath = `${this.persistencePath}.tmp`
+      const payload = JSON.stringify({
+        lastNonceByChannel: [...this.lastNonceByChannel.entries()].map(([k, v]) => [k, v.toString()]),
+        replayKeys: [...this.replayKeys.values()],
+      })
+      writeFileSync(tmpPath, payload, "utf8")
+      renameSync(tmpPath, this.persistencePath)
+    } catch {
+      // fail-open: replay protection remains active in-memory
+    }
   }
 }
 

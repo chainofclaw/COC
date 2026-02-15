@@ -90,6 +90,7 @@ export async function exportStateSnapshot(
 export async function importStateSnapshot(
   stateTrie: IStateTrie,
   snapshot: StateSnapshot,
+  expectedStateRoot?: string,
 ): Promise<{ accountsImported: number; codeImported: number }> {
   validateSnapshot(snapshot)
 
@@ -122,6 +123,14 @@ export async function importStateSnapshot(
 
   // Commit to persist and generate new state root
   const newRoot = await stateTrie.commit()
+
+  // Verify stateRoot if expected value provided
+  if (expectedStateRoot && newRoot !== expectedStateRoot) {
+    throw new Error(
+      `state root mismatch after import: expected ${expectedStateRoot}, got ${newRoot}`,
+    )
+  }
+
   log.info("state snapshot imported", {
     accounts: accountsImported,
     code: codeImported,

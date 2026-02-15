@@ -274,13 +274,18 @@ Code:
 Algorithm:
 - On block production: broadcast via HTTP gossip (primary) AND wire protocol TCP (secondary).
 - On transaction receipt via HTTP: relay to all wire-connected peers via `broadcastFrame`.
+- On transaction/block receipt via wire: relay to HTTP gossip peers via `onTxRelay`/`onBlockRelay` callbacks.
 - Each transport path operates independently — failure in one does not block the other.
 - Wire broadcast uses late binding pattern: function reference set after wire server initialization.
-- Transaction dedup at application layer (mempool rejects duplicates).
+- Wire-level dedup via `BoundedSet` (seenTx 50K, seenBlocks 10K) prevents duplicate processing.
+- Cross-protocol relay is safe: P2P `receiveTx`/`receiveBlock` has internal dedup, wire layer also deduplicates.
+- `broadcastFrame` supports `excludeNodeId` parameter to skip the original sender.
+- BFT messages also broadcast via dual transport (HTTP gossip + wire protocol TCP).
 
 Code:
 - `COC/node/src/consensus.ts` (`broadcastBlock` with wireBroadcast callback)
-- `COC/node/src/index.ts` (`wireBroadcastFn`, `wireTxRelayFn`)
+- `COC/node/src/index.ts` (`wireBroadcastFn`, `wireTxRelayFn`, `wireBftBroadcastFn`)
+- `COC/node/src/wire-server.ts` (dedup, relay callbacks, excludeNodeId)
 
 ## 23) Consensus Metrics Collection
 **Goal**: track block production and sync performance for observability.
@@ -294,3 +299,124 @@ Algorithm:
 
 Code:
 - `COC/node/src/consensus.ts` (`ConsensusMetrics` interface, `getMetrics()`)
+
+## 24) Wire Protocol Dedup
+**Goal**: prevent duplicate Block/Tx processing at the wire protocol layer.
+
+Algorithm:
+- Maintain `seenTx = BoundedSet<Hex>(50_000)` and `seenBlocks = BoundedSet<Hex>(10_000)`.
+- On incoming Block frame: check `seenBlocks.has(block.hash)` — if seen, discard silently; otherwise add and process.
+- On incoming Transaction frame: check `seenTx.has(rawTx)` — if seen, discard silently; otherwise add and process.
+- BoundedSet evicts oldest entries when capacity reached (FIFO).
+- Stats exposed via `getStats()`: `seenTxSize`, `seenBlocksSize`.
+
+Code:
+- `COC/node/src/wire-server.ts` (`seenTx`, `seenBlocks`, `handleFrame`)
+
+## 25) Cross-Protocol Relay
+**Goal**: bridge Wire protocol and HTTP gossip for full network coverage.
+
+Algorithm:
+- Wire→HTTP: after wire-level dedup + handler, call `onTxRelay(rawTx)` / `onBlockRelay(block)` to inject into HTTP gossip layer.
+- HTTP→Wire: existing `wireTxRelayFn` / `wireBroadcastFn` relay from HTTP to wire-connected peers.
+- Relay errors are non-fatal (try-catch, ignore failures).
+- No circular relay: both layers have independent dedup (wire BoundedSet + P2P `seenTx.has()`).
+
+Code:
+- `COC/node/src/wire-server.ts` (`onTxRelay`, `onBlockRelay` config callbacks)
+- `COC/node/src/index.ts` (wiring relay callbacks to P2P `receiveTx`/`receiveBlock`)
+
+## 26) DHT Wire Client Priority Lookup
+**Goal**: efficient wire client discovery for DHT FIND_NODE queries.
+
+Algorithm:
+- Priority 1: `wireClientByPeerId` Map — O(1) direct lookup by peer ID.
+- Priority 2: scan `wireClients` array by `getRemoteNodeId()` match (backward compatibility).
+- Priority 3: fall back to local routing table `findClosest(targetId, ALPHA)`.
+- `wireClientByPeerId` built at startup: maps `config.peers[i].id → wireClients[i]`.
+- Per-peer wire port resolved from `dhtBootstrapPeers` config instead of using local `wirePort`.
+
+Code:
+- `COC/node/src/dht-network.ts` (`findNode` with 3-tier priority)
+- `COC/node/src/index.ts` (`wireClientByPeerId` construction, `peerWirePortMap`)
+
+## 27) DHT Peer Verification
+**Goal**: prevent DHT routing table poisoning by verifying peers before insertion.
+
+Algorithm:
+- When a new peer is discovered via iterative lookup, verify reachability before adding to routing table.
+- Priority 1: check if peer has an active wire client connection (`wireClientByPeerId` or `wireClients` scan) — already verified.
+- Priority 2: TCP connect probe to peer's address with 3-second timeout.
+- Successful TCP connect = peer is reachable → add to routing table and notify discovery callback.
+- Timeout or connection refused → discard peer (do not add to routing table).
+- Stale peer filtering on load: peers with `lastSeenMs` older than 24 hours are excluded.
+
+Code:
+- `COC/node/src/dht-network.ts` (`verifyPeer`, `iterativeLookup`)
+
+## 28) Exponential Peer Ban
+**Goal**: progressively penalize misbehaving peers with escalating ban durations.
+
+Algorithm:
+- Each `PeerScore` tracks a `banCount` field (number of times banned).
+- On ban trigger (invalid data, repeated failures): increment `banCount`.
+- Ban duration: `baseBanMs * 2^min(banCount - 1, 10)`, capped at 24 hours.
+- During ban period: `applyDecay()` skips the peer (no score recovery while banned).
+- After ban expires: peer can be re-evaluated, but next offense doubles ban duration.
+
+Code:
+- `COC/node/src/peer-scoring.ts` (`exponentialBanMs`, `recordInvalidData`, `applyDecay`)
+
+## 29) Node Identity Handshake
+**Goal**: cryptographically verify node identity during wire protocol TCP handshake.
+
+Algorithm:
+- Each node has a persistent private key (`nodePrivateKey` from `COC_NODE_KEY` env / `dataDir/node-key`).
+- On wire handshake, sender signs `handshake:<nodeId>:<nonce>` using `NodeSigner.sign()`.
+- Receiver verifies signature via `SignatureVerifier.recoverAddress()`.
+- Recovered address must match the claimed `nodeId` — mismatch → disconnect + `recordInvalidData()`.
+- Nonce prevents replay attacks (unique per handshake).
+- Backward compatible: nodes without signing capability still connect (warn only, Phase 1).
+
+Code:
+- `COC/node/src/wire-server.ts` (handshake verification)
+- `COC/node/src/wire-client.ts` (handshake signing)
+- `COC/node/src/config.ts` (`resolveNodeKey`)
+- `COC/node/src/crypto/signer.ts` (`NodeSigner`, `SignatureVerifier`)
+
+## 30) BFT Message Signing
+**Goal**: prevent BFT vote forgery by requiring cryptographic signatures on all consensus messages.
+
+Algorithm:
+- `BftMessage.signature` is mandatory (type `Hex`, no longer optional).
+- Canonical message format: `bft:<type>:<height>:<blockHash>` (deterministic string).
+- Sender signs canonical message via `NodeSigner.sign()`.
+- Receiver verifies via `SignatureVerifier.verifyNodeSig(canonical, signature, validatorAddress)`.
+- Messages with missing or invalid signatures are silently dropped.
+- Only messages from known active validators are accepted.
+
+Code:
+- `COC/node/src/bft.ts` (`BftMessage.signature` required)
+- `COC/node/src/bft-coordinator.ts` (`signMessage`, `bftCanonicalMessage`, verification in `handlePrepare`/`handleCommit`)
+
+## 31) P2P HTTP Auth Envelope
+**Goal**: authenticate HTTP gossip write traffic and support phased rollout without instant network split.
+
+Algorithm:
+- Sender signs canonical message `p2p:<path>:<senderId>:<timestampMs>:<nonce>:<payloadHash>` and attaches `_auth`.
+- `payloadHash` uses deterministic JSON serialization + keccak256.
+- Receiver verifies:
+  - envelope fields (`senderId/timestampMs/nonce/signature`) presence and format.
+  - timestamp within `p2pAuthMaxClockSkewMs`.
+  - nonce replay key (`senderId:nonce`) not seen before.
+  - signature recovers the claimed sender address.
+- Rollout modes:
+  - `off`: no verification.
+  - `monitor`: verify and count failures, but do not reject request.
+  - `enforce`: reject missing/invalid signatures with HTTP 401.
+- Node exposes counters for observability:
+  - `authAcceptedRequests`, `authMissingRequests`, `authInvalidRequests`, `authRejectedRequests`, `rateLimitedRequests`.
+
+Code:
+- `COC/node/src/p2p.ts` (`buildSignedP2PPayload`, `verifySignedP2PPayload`, rollout mode handling)
+- `COC/node/src/config.ts` (`p2pInboundAuthMode`, `p2pAuthMaxClockSkewMs`)

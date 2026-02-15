@@ -16,6 +16,7 @@ export interface CocRuntimeConfig {
   l2RpcUrl?: string;
   poseManagerAddress?: string;
   operatorPrivateKey?: string;
+  nonceRegistryPath?: string;
   challengerSet?: string[];
   aggregatorSet?: string[];
   nodeIds?: string[];

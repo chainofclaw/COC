@@ -1,0 +1,508 @@
+{
+  "common": {
+    "home": "Home",
+    "plan": "Plan",
+    "technology": "Technology",
+    "network": "Network Status",
+    "roadmap": "Roadmap",
+    "docs": "Docs",
+    "explorer": "Block Explorer",
+    "readMore": "Learn More",
+    "viewExplorer": "Explore Blockchain",
+    "viewDocs": "Read Docs",
+    "github": "GitHub Repository",
+    "community": "Community",
+    "resources": "Resources",
+    "development": "Development",
+    "whitepaper": "Whitepaper",
+    "allRightsReserved": "All Rights Reserved",
+    "copyright": "Copyright"
+  },
+  "home": {
+    "hero": {
+      "title": "AI-Agent–Operated\nProof-of-Service Blockchain",
+      "subtitle": "Enable everyday users to participate in blockchain networks and earn rewards through service contributions, not capital accumulation",
+      "learnMore": "Learn More",
+      "browseBlockchain": "Explore Blockchain",
+      "readDocs": "Read Docs"
+    },
+    "networkStats": {
+      "title": "Live Network Status"
+    },
+    "features": {
+      "title": "Why Choose COC?",
+      "subtitle": "COC breaks the centralization trap of traditional blockchains through an innovative Proof-of-Service mechanism",
+      "pose": {
+        "title": "Proof-of-Service",
+        "description": "Earn rewards through verifiable service challenges, not capital accumulation or computational power competition"
+      },
+      "aiAgent": {
+        "title": "AI Agent Operations",
+        "description": "OpenClaw-grade AI agents automate node operations, lowering technical barriers while maintaining determinism"
+      },
+      "hardware": {
+        "title": "Consumer Hardware Friendly",
+        "description": "Home devices can compete fairly without specialized mining equipment or large capital requirements"
+      },
+      "nonPos": {
+        "title": "Non-PoS Incentives",
+        "description": "Fixed minimal bond, earnings tied to service contribution rather than capital amount"
+      },
+      "evmCompatible": {
+        "title": "EVM Compatible",
+        "description": "Full support for Ethereum Virtual Machine, can run Solidity smart contracts"
+      },
+      "storage": {
+        "title": "Decentralized Storage",
+        "description": "Built-in IPFS-compatible interface with data availability challenges"
+      }
+    },
+    "architecture": {
+      "title": "Four-Layer Architecture",
+      "layer1": {
+        "title": "Execution Layer (EVM)",
+        "description": "Processes transactions and smart contracts, maintains blockchain state"
+      },
+      "layer2": {
+        "title": "Consensus Layer (Pluggable)",
+        "description": "Produces blocks and provides finality guarantees"
+      },
+      "layer3": {
+        "title": "PoSe Service Layer (Core)",
+        "description": "Node registration, random challenges, score calculation, reward distribution"
+      },
+      "layer4": {
+        "title": "AI Agent Operations Layer",
+        "description": "Automates node lifecycle management without affecting consensus determinism"
+      },
+      "learnMore": "Deep Dive into Technical Architecture"
+    },
+    "nodeRoles": {
+      "title": "Node Roles",
+      "fullNode": {
+        "title": "Full Node (FN)",
+        "description": "Validates blocks and state, provides basic RPC queries",
+        "reward": "60% Reward Pool"
+      },
+      "storageNode": {
+        "title": "Storage Node (SN)",
+        "description": "Stores historical data and snapshots, proves data availability",
+        "reward": "30% Reward Pool"
+      },
+      "relayNode": {
+        "title": "Relay Node (RN)",
+        "description": "Improves block and transaction network propagation",
+        "reward": "10% Reward Pool"
+      },
+      "note": "Single operators can run multiple roles and stack rewards"
+    },
+    "cta": {
+      "title": "Ready to Join the COC Network?",
+      "subtitle": "Launch your node and start earning rewards by providing network services",
+      "startNode": "Node Startup Guide",
+      "viewNetwork": "View Network Status"
+    }
+  },
+  "about": {
+    "title": "About COC",
+    "subtitle": "ChainOfClaw Whitepaper Key Points",
+    "abstract": {
+      "title": "Abstract",
+      "intro": "COC (ChainOfClaw) is a blockchain network designed for broad, sustained node participation. We observe that:",
+      "pow": "PoW systems tend to centralize around specialized hardware and cheap electricity",
+      "pos": "PoS systems tend to centralize around capital and delegated operations",
+      "pose": "COC introduces Proof-of-Service (PoSe): a verifiable challenge-response protocol that rewards nodes for providing measurable network services—uptime/RPC availability, data storage and availability, relay support—rather than rewarding stake ownership."
+    },
+    "vision": {
+      "title": "Vision & Goals",
+      "mission": "Mission",
+      "missionText": "Make decentralization practical by shifting the core participation bottleneck:\nFrom 'buy hardware + run complex ops' → 'run reliable node, backed by automated agent operations'",
+      "goals": "Six Design Goals",
+      "goal1": {
+        "title": "Permissionless Participation",
+        "desc": "Anyone can run a node and earn rewards"
+      },
+      "goal2": {
+        "title": "Non-PoS Incentives",
+        "desc": "Earnings tied to service contribution, not stake"
+      },
+      "goal3": {
+        "title": "Consumer Hardware Friendly",
+        "desc": "Home/edge hardware can compete fairly"
+      },
+      "goal4": {
+        "title": "Verifiable & Auditable",
+        "desc": "Service claims verified through challenges"
+      },
+      "goal5": {
+        "title": "Anti-Monopoly",
+        "desc": "Diminishing returns and caps prevent winner-takes-all"
+      },
+      "goal6": {
+        "title": "AI Agent Operations Reliability",
+        "desc": "AI agents reduce operational burden without sacrificing determinism"
+      }
+    },
+    "economic": {
+      "title": "Economic Model",
+      "rewardPool": "Reward Pool (per Epoch)",
+      "epochLength": "Epoch Duration",
+      "epochDefault": "Default: 1 hour",
+      "blockTime": "Block Time Target: 1-2 sec (configurable per consensus)",
+      "buckets": "Reward Buckets",
+      "bucket1": "B1: Uptime/RPC",
+      "bucket2": "B2: Storage & Availability",
+      "bucket3": "B3: Relay Support",
+      "rationale": "Rationale: maximize inclusivity; storage/relay earn extra but not mandatory",
+      "bond": "Bond (Non-PoS)",
+      "bondIntro": "Nodes post a small fixed bond D:",
+      "bondTarget": "Target value: ~50 USDT equivalent",
+      "bondUnlock": "Unlock delay: 7 days",
+      "bondPurpose": "Purpose: anti-fraud slashing only",
+      "bondNoPower": "Bond does not increase consensus power",
+      "bondNoReward": "Bond does not directly increase rewards"
+    },
+    "pose": {
+      "title": "Proof-of-Service (PoSe) Protocol",
+      "coreIdea": "Core Idea",
+      "coreText": "Nodes earn rewards by passing random, verifiable challenges over time. Each challenge produces an auditable receipt. Scores aggregate within an epoch.",
+      "types": "Challenge Types",
+      "typeU": "Uptime/RPC Challenges",
+      "typeS": "Storage Proof Challenges",
+      "typeR": "Relay/Probe Challenges",
+      "frequency": "Challenge Frequency (per Epoch)",
+      "freqU": "Uptime/RPC: avg 6 challenges/node/epoch (~1 per 10 min)",
+      "freqS": "Storage (SN only): avg 2 challenges/SN/epoch",
+      "freqR": "Relay (RN only): avg 2 challenges/RN/epoch",
+      "threshold": "Pass Thresholds:",
+      "thresholdU": "U pass rate ≥ 80% to qualify for U bucket reward",
+      "thresholdS": "S pass rate ≥ 70% to qualify for S bucket reward",
+      "scoring": "Scoring Formula"
+    },
+    "antiCheat": {
+      "title": "Anti-Cheat Mechanisms",
+      "sybil": "Sybil Attacks",
+      "sybilMit": ["Fixed bond + unlock delay", "Single-node reward soft cap", "Storage commitment diminishing returns", "Sustained service requirement"],
+      "forgery": "Receipt Forgery / Replay",
+      "forgeryMit": ["Unique challenge_id binding", "Challenger + node signatures", "Single node per epoch nonce", "Verifiable response fields"],
+      "collusion": "Challenger-Node Collusion",
+      "collusionMit": ["Challenger pool diversity", "On-chain sampling + dispute window", "Challenger/aggregator bonds", "Transparent statistics"],
+      "network": "Home Network False Negatives",
+      "networkMit": ["Moderate pass thresholds (80%)", "Median-based latency scoring", "Progressive penalties", "AI agent self-healing strategies"]
+    },
+    "agent": {
+      "title": "AI Agent Operations Layer",
+      "canDo": "Agent Responsibilities",
+      "can1": "Install, configure, update node software",
+      "can2": "Monitor health (CPU/disk/network), alert, self-heal",
+      "can3": "Manage snapshots and storage windows",
+      "can4": "Apply rate limits and firewall policies",
+      "can5": "Manage key lifecycle (recommend TPM/secure enclaves)",
+      "cantDo": "Agent Restrictions",
+      "cant1": "Modify consensus rules or state transition determinism",
+      "cant2": "Inject unverifiable 'AI decisions' into on-chain execution",
+      "cant3": "Change transaction validity rules",
+      "note": "COC maintains verifiability by keeping AI agents strictly in the operations layer"
+    },
+    "cta": {
+      "title": "Want to Learn More?",
+      "technology": "Detailed Technical Architecture",
+      "roadmap": "View Roadmap",
+      "docs": "Read Full Documentation"
+    }
+  },
+  "technology": {
+    "title": "Technical Architecture",
+    "subtitle": "Deep dive into COC's four-layer architecture design and core algorithms",
+    "layersTitle": "Four-Layer Architecture",
+    "layer1": {
+      "number": "1",
+      "title": "Execution Layer",
+      "subtitle": "EVM Runtime",
+      "features": ["Full EVM support based on @ethereumjs/vm", "Execute transactions and smart contracts", "Maintain world state (LevelDB + Merkle Patricia Trie)", "Solidity contract compatible"],
+      "note": "EVM is the runtime environment, not the decentralization mechanism itself"
+    },
+    "layer2": {
+      "number": "2",
+      "title": "Consensus Layer",
+      "subtitle": "Pluggable Design",
+      "features": ["Produces blocks, provides finality guarantees", "Current implementation: deterministic proposer rotation", "Block time target: 1-2 sec", "Future: can integrate BFT, PoA, etc."],
+      "note": "COC's incentive model does not rely on PoS, can coexist with various consensus mechanisms"
+    },
+    "layer3": {
+      "number": "3",
+      "title": "PoSe Service Layer",
+      "subtitle": "Core Innovation",
+      "features": ["Node registration and service commitments", "Random challenge generation (U/S/R types)", "Receipt verification and aggregation", "Score calculation and reward distribution", "Fraud proof and slashing mechanisms"],
+      "note": "This is the core layer that differentiates COC from traditional PoW/PoS"
+    },
+    "layer4": {
+      "number": "4",
+      "title": "AI Agent Operations Layer",
+      "subtitle": "OpenClaw-grade Automation",
+      "features": ["Automated node lifecycle management", "Health monitoring and self-healing strategies", "Software upgrades and configuration management", "Rate limiting and security hardening", "Key management (TPM/Secure Enclave)"],
+      "note": "Agents strictly isolated, do not interfere with consensus logic or state transitions"
+    },
+    "poseProtocol": {
+      "title": "PoSe Protocol Details",
+      "challengeFlow": "Challenge-Response Flow",
+      "step1": {
+        "title": "Challenge Generation",
+        "description": "Challenger selects target nodes based on VRF randomness, generates challenge messages",
+        "details": ["challenge_id = keccak(epoch_id || node_id || type || nonce || challenger_id)", "Contains query specs (U: RPC method, S: chunk_id, R: route_tag)", "Challenger signature ensures non-forgery"]
+      },
+      "step2": {
+        "title": "Node Response",
+        "description": "Node receives challenge, generates response and signs within timeout",
+        "details": ["U challenge: execute RPC query, return result (2.5s timeout)", "S challenge: provide storage proof (Merkle path, 6s timeout)", "R challenge: submit relay witness (optional)"]
+      },
+      "step3": {
+        "title": "Receipt Verification",
+        "description": "Aggregator or Verifier validates receipt validity",
+        "details": ["Verify signatures (challenger + node)", "Check challenge_id uniqueness", "Verify response content (U: re-computable, S: Merkle verification)"]
+      },
+      "step4": {
+        "title": "On-chain Submission",
+        "description": "Aggregator submits receipt Merkle tree root on-chain",
+        "details": ["Submit epoch_id + merkle_root + summary_hash", "Include k random sample receipts (k=32-128)", "Open 2-epoch dispute window"]
+      },
+      "step5": {
+        "title": "Score Settlement",
+        "description": "After epoch ends, calculate node scores based on pass rates and distribute rewards",
+        "details": ["Calculate S_u, S_s, S_r scores", "Apply diminishing returns and soft caps", "Distribute to node wallets"]
+      },
+      "scoringTitle": "Scoring Formula Details",
+      "uptimeScore": {
+        "title": "Uptime Score",
+        "formula": "S_u,i = u_i × (0.85 + 0.15 × lat_i)",
+        "variables": ["u_i = pass_u_i / total_u_i (pass rate)", "lat_i = (L_max - median_latency_i) / (L_max - L_min)", "L_min = 0.2s, L_max = 2.5s"],
+        "rationale": "Latency factor only 15% weight, avoids bandwidth arms race"
+      },
+      "storageScore": {
+        "title": "Storage Score (SN)",
+        "formula": "S_s,i = s_i × cap_i",
+        "variables": ["s_i = pass_s_i / total_s_i (pass rate)", "cap_i = √(min(storedGB_i, 500GB) / 500GB)"],
+        "rationale": "Square root function ensures diminishing returns on storage capacity, prevents whale monopoly"
+      },
+      "antiSybilTitle": "🛡️ Anti-Sybil Multi-Layer Defense",
+      "antiSybilItems": ["✓ Fixed bond (~50 USDT) + 7-day unlock", "✓ Single-node reward soft cap (5× median)", "✓ Storage capacity diminishing returns (√ function)", "✓ Sustained service challenges (unforgeable)", "✓ Per-epoch unique nonce prevents replay", "✓ Challenger diversity + random rotation", "✓ On-chain sampling + 2-epoch dispute period", "✓ Optional hardware attestation (bonus, not gate)"]
+    },
+    "performance": {
+      "title": "Performance Metrics",
+      "blockTime": { "title": "Block Time", "value": "1-2 sec", "description": "Target block interval, actual value depends on consensus layer configuration" },
+      "finality": { "title": "Confirmation Speed", "value": "~12 sec", "description": "Reaches finality after 6-12 blocks (configurable)" },
+      "storage": { "title": "Storage Requirement", "value": "500GB recommended", "description": "Diminishing returns cap for SN nodes, FN can be lower" },
+      "bandwidth": { "title": "Bandwidth Requirement", "value": "Moderate", "description": "Latency only 15% weight, regular home networks can participate" },
+      "frequency": { "title": "Challenge Frequency", "value": "~6 times/hour", "description": "FN nodes receive about 6 U challenges per epoch" },
+      "threshold": { "title": "Pass Threshold", "value": "80% (U) / 70% (S)", "description": "Below threshold loses eligibility for corresponding bucket reward" }
+    },
+    "comparison": {
+      "title": "Comparison with Traditional Mechanisms",
+      "dimensions": {
+        "barrier": "Entry Barrier",
+        "centralization": "Centralization Trend",
+        "energy": "Energy Consumption",
+        "reward": "Reward Mechanism",
+        "decentralization": "Decentralization",
+        "automation": "Automated Operations"
+      },
+      "pow": { "barrier": "High (specialized mining hardware)", "centralization": "Hash power centralization", "energy": "Extremely high", "reward": "Hash power competition", "decentralization": "Medium (mining pools)", "automation": "Difficult" },
+      "pos": { "barrier": "High (large capital stake)", "centralization": "Capital centralization", "energy": "Low", "reward": "Capital staking", "decentralization": "Low (whales + delegation)", "automation": "Medium" },
+      "coc": { "barrier": "Low (consumer hardware + small bond)", "centralization": "Service contribution distribution", "energy": "Low", "reward": "Service challenge pass rate", "decentralization": "High (regular users can participate)", "automation": "AI Agent supported" }
+    },
+    "techStack": {
+      "title": "Technology Stack",
+      "execution": { "title": "Execution Layer", "items": ["@ethereumjs/vm (EVM runtime)", "@ethereumjs/trie (Merkle Patricia Trie)", "LevelDB (state storage)", "ethers.js (client library)"] },
+      "consensus": { "title": "Consensus Layer", "items": ["Deterministic proposer rotation", "EIP-1559 dynamic gas fees", "Snapshot sync mechanism", "P2P gossip network (HTTP)"] },
+      "pose": { "title": "PoSe Layer", "items": ["VRF (Verifiable Random Function)", "Merkle Tree (receipt aggregation)", "Keccak256 (hash)", "ECDSA signatures (challenge + receipt)"] },
+      "storage": { "title": "Storage Layer", "items": ["IPFS-compatible HTTP API", "CID addressing", "Pin management", "Block/object storage"] }
+    }
+  },
+  "network": {
+    "title": "COC Network Status",
+    "subtitle": "Real-time monitoring of blockchain network health",
+    "realTimeStats": "Real-time Statistics",
+    "nodeInfo": {
+      "title": "Node Information",
+      "runtime": "Runtime",
+      "version": "Version",
+      "startTime": "Start Time",
+      "uptime": "Uptime",
+      "rpcEndpoint": "RPC Endpoint",
+      "wsEndpoint": "WebSocket",
+      "p2pEndpoint": "P2P Endpoint"
+    },
+    "performanceMetrics": {
+      "title": "Performance Metrics",
+      "avgBlockTime": "Average Block Time",
+      "avgTxPerBlock": "Average Tx/Block",
+      "avgGasUsed": "Average Gas Used"
+    },
+    "validators": {
+      "title": "Validators",
+      "address": "Address",
+      "score": "Score",
+      "blocks": "Blocks Produced"
+    },
+    "recentBlocks": {
+      "title": "Recent Blocks",
+      "viewExplorer": "View Full Explorer →",
+      "blockHeight": "Block Height",
+      "timestamp": "Timestamp",
+      "txCount": "Transactions",
+      "gasUsed": "Gas Used"
+    },
+    "quickLinks": {
+      "title": "Quick Links",
+      "explorer": { "title": "Block Explorer", "description": "View complete block and transaction details" },
+      "startNode": { "title": "Start a Node", "description": "Join COC network, run your own node" },
+      "technology": { "title": "Technical Docs", "description": "Learn about COC's technical architecture" }
+    }
+  },
+  "roadmap": {
+    "title": "Development Roadmap",
+    "subtitle": "COC project development history and future plans",
+    "whitepaper": {
+      "title": "Whitepaper Roadmap (High Level)",
+      "v0_1": {
+        "version": "v0.1",
+        "title": "PoSe Contracts + Node Registration + Challenge Mechanism",
+        "status": "Completed",
+        "items": ["PoSe management contract (registration, batch submission, disputes, slashing)", "Node registration interface (node_id, pubkey, flags, commitments)", "U/S challenge type definitions", "Receipt format specification"]
+      },
+      "v0_2": {
+        "version": "v0.2",
+        "title": "Off-chain Aggregation + On-chain Batch Submission + Dispute Window",
+        "status": "In Progress",
+        "items": ["Aggregator: receipt Merkle tree construction", "On-chain batch submission (merkle_root + summary_hash)", "2-epoch dispute window", "On-chain random sampling (k=32-128)"]
+      },
+      "v0_3": {
+        "version": "v0.3",
+        "title": "Decentralized Challenger Pool + Transparency Metrics",
+        "status": "Planned",
+        "items": ["Challenger diversity + random rotation", "Challenger bonds and quotas", "Challenger reputation system", "Transparent statistics (anomaly pattern detection)"]
+      },
+      "v0_4": {
+        "version": "v0.4",
+        "title": "OpenClaw NodeOps Standard + Multi-implementation Clients",
+        "status": "Planned",
+        "items": ["OpenClaw NodeOps API specification", "Multi-language client implementations (Rust/Go/TypeScript)", "AI Agent standard interfaces", "Cross-client compatibility testing"]
+      }
+    },
+    "implementation": {
+      "title": "Actual Development Progress (Cycle 1-25)",
+      "infrastructure": {
+        "title": "Infrastructure (Cycle 1-10)",
+        "cycles": [
+          { "num": 1, "desc": "Fixed PersistentStateTrie RLP decoding" },
+          { "num": 2, "desc": "Added 13 standard Ethereum RPC methods" },
+          { "num": 3, "desc": "Token transfer decoding (ERC-20)" },
+          { "num": 4, "desc": "Chain statistics dashboard" },
+          { "num": 5, "desc": "Contract call interface + WebSocket BigInt serialization fix" },
+          { "num": 6, "desc": "eth_getBlockReceipts + enhanced block detail page" },
+          { "num": 7, "desc": "txpool RPC methods + mempool explorer page" },
+          { "num": 8, "desc": "Network status page + global 404 page" },
+          { "num": 9, "desc": "EVM bytecode disassembler + storage scanner" },
+          { "num": 10, "desc": "Test coverage improvement: 175→190 tests" }
+        ]
+      },
+      "consolidation": {
+        "title": "Consolidation & Extension (Cycle 11-20)",
+        "cycles": [
+          { "num": 11, "desc": "Fixed TxHistory table structure, added gas column" },
+          { "num": 12, "desc": "Fixed formatBlock O(n*m) complexity" },
+          { "num": 13, "desc": "Request body limits (2MB P2P, 1MB RPC)" },
+          { "num": 14, "desc": "EIP-1559 effective gas price sorting" },
+          { "num": 15, "desc": "Added mining/hashrate/coinbase RPC" },
+          { "num": 16, "desc": "WebSocket subscription validation" },
+          { "num": 17, "desc": "Consensus error recovery + degradation mode" },
+          { "num": 18, "desc": "Fixed health checker, added diagnostics" },
+          { "num": 19, "desc": "P2P per-peer broadcast deduplication" },
+          { "num": 20, "desc": "Validators explorer page + coc_validators RPC" }
+        ]
+      },
+      "features": {
+        "title": "Features & Optimization (Cycle 21-25)",
+        "cycles": [
+          { "num": 21, "desc": "Chain statistics page (block activity, TPS, Gas visualization)" },
+          { "num": 22, "desc": "Address transaction query pagination support" },
+          { "num": 23, "desc": "EIP-1559 dynamic base fee calculation" },
+          { "num": 24, "desc": "Debug trace improvements, event log support" },
+          { "num": 25, "desc": "Contract list page, scan recent deployments" }
+        ]
+      }
+    },
+    "future": {
+      "title": "Future Plans",
+      "aiAgent": { "icon": "🤖", "title": "Deep AI Agent Integration", "items": ["Automated challenge response", "Intelligent resource scheduling", "Predictive maintenance", "Adaptive security policies"] },
+      "crossChain": { "icon": "🌐", "title": "Cross-chain Interoperability", "items": ["Bridge protocols", "Asset cross-chain", "IBC support", "Multi-chain state sync"] },
+      "analytics": { "icon": "📊", "title": "Advanced Analytics Tools", "items": ["On-chain data analytics", "Node performance scoring system", "Reward prediction tools", "Network health assessment"] },
+      "privacy": { "icon": "🔐", "title": "Privacy Enhancement", "items": ["Zero-knowledge proof challenges", "Node anonymity protection", "Endpoint privacy commitments", "TEE hardware attestation"] },
+      "performance": { "icon": "⚡", "title": "Performance Optimization", "items": ["Layer 2 scaling solutions", "Parallel EVM", "State pruning", "Snapshot compression"] },
+      "ecosystem": { "icon": "🌍", "title": "Ecosystem Building", "items": ["DApp developer tools", "Node operator incentive programs", "Community governance mechanisms", "Developer grant programs"] }
+    },
+    "cta": {
+      "title": "Want to Participate in COC's Development?",
+      "subtitle": "We welcome developers, node operators, and community members to contribute",
+      "github": "GitHub Repository",
+      "docs": "Developer Documentation"
+    }
+  },
+  "docs": {
+    "title": "Documentation Hub",
+    "subtitle": "Comprehensive technical documentation and development guides for COC blockchain",
+    "quickStart": {
+      "title": "Quick Start",
+      "runNode": { "icon": "🚀", "title": "Run Local Node", "description": "Quickly launch a COC node", "code": "cd node\nnpm install\nnpm start" },
+      "deployContract": { "icon": "📜", "title": "Deploy Contracts", "description": "Deploy PoSe smart contracts", "code": "cd contracts\nnpm install\nnpm run compile\nnpm run deploy:local" },
+      "launchExplorer": { "icon": "🌐", "title": "Launch Explorer", "description": "Run the block explorer", "code": "cd explorer\nnpm install\nnpm run dev" }
+    },
+    "coreDocs": {
+      "title": "Core Documentation",
+      "whitepaper": { "title": "📄 Whitepaper", "description": "COC's core design philosophy, PoSe protocol details, economic model and technical architecture", "link": "COC Whitepaper (Full Version)" },
+      "architecture": { "title": "🏗️ System Architecture", "description": "Four-layer architecture design, component interactions, data flow and scalability", "links": ["System Architecture (中文)", "System Architecture (EN)"] },
+      "algorithms": { "title": "🔬 Core Algorithms", "description": "PoSe challenge protocol, scoring formulas, consensus mechanisms and storage proofs", "links": ["Core Algorithms Details (中文)", "Core Algorithms (EN)"] },
+      "antiSybil": { "title": "🛡️ Anti-Sybil Mechanisms", "description": "Anti-Sybil attack strategies, bond mechanisms and challenge verification", "links": ["Anti-Sybil (中文)", "Anti-Sybil (EN)"] }
+    },
+    "devGuides": {
+      "title": "Development Guides",
+      "nodeOps": { "icon": "⚙️", "title": "Node Operation Guide", "items": ["Installation and configuration", "Run devnet (3/5/7 nodes)", "Node monitoring and maintenance", "Troubleshooting"] },
+      "contracts": { "icon": "📝", "title": "Smart Contract Development", "items": ["Solidity contract writing", "PoSe contract interfaces", "Deployment and verification", "Testing best practices"] },
+      "rpcApi": { "icon": "🔌", "title": "RPC API Reference", "items": ["Standard Ethereum RPC methods (40+)", "COC custom methods (coc_*)", "WebSocket subscriptions", "Txpool queries"] },
+      "aiAgent": { "icon": "🤖", "title": "AI Agent Operations", "items": ["OpenClaw integration", "Automated monitoring", "Strategy engine configuration", "Security best practices"] }
+    },
+    "implementationStatus": {
+      "title": "Implementation Status",
+      "chainEngine": { "label": "Chain Engine", "status": "Completed", "details": "Block production, mempool, snapshots, finality" },
+      "p2pNetwork": { "label": "P2P Network", "status": "Completed", "details": "HTTP gossip, snapshot sync" },
+      "evmExecution": { "label": "EVM Execution", "status": "Completed", "details": "In-memory + persistent state, LevelDB" },
+      "jsonRpc": { "label": "JSON-RPC", "status": "Completed", "details": "40+ standard methods, BigInt serialization" },
+      "wsRpc": { "label": "WebSocket RPC", "status": "Completed", "details": "eth_subscribe, real-time events" },
+      "poseProtocol": { "label": "PoSe Protocol", "status": "In Progress", "details": "Off-chain challenges, on-chain contracts, batch aggregation" },
+      "storage": { "label": "Storage Layer", "status": "Completed", "details": "IPFS-compatible HTTP API" },
+      "runtime": { "label": "Runtime Services", "status": "In Progress", "details": "coc-node, coc-agent, coc-relayer" },
+      "tests": { "label": "Test Coverage", "status": "Good", "details": "190 tests, 9 test suites" },
+      "detailsNote": "See project README for detailed implementation status",
+      "viewGithub": "View GitHub Repository"
+    },
+    "tools": {
+      "title": "Development Tools",
+      "wallet": { "title": "💼 CLI Wallet", "description": "Command-line wallet tool", "features": ["Create addresses", "Transfers", "Balance queries"] },
+      "explorer": { "title": "🔍 Block Explorer", "description": "Full-featured web explorer", "features": ["Block/transaction queries", "Contract calls", "Storage scanner"] },
+      "testing": { "title": "🧪 Testing Scripts", "description": "Quality assurance tools", "features": ["Unit tests", "Integration tests", "E2E tests"] },
+      "openTool": "Open Tool →"
+    },
+    "resources": {
+      "title": "More Resources",
+      "technology": { "title": "Detailed Technical Architecture", "description": "Deep dive into COC's four-layer architecture design" },
+      "roadmap": { "title": "Development Roadmap", "description": "View project progress and future plans" },
+      "network": { "title": "Network Status", "description": "Real-time monitoring of blockchain network health" },
+      "about": { "title": "About COC", "description": "Learn about project vision and core principles" }
+    }
+  },
+  "footer": {
+    "tagline": "AI-Agent–Operated\nProof-of-Service Blockchain",
+    "copyright": "Copyright",
+    "allRightsReserved": "All Rights Reserved"
+  }
+}

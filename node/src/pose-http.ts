@@ -36,32 +36,43 @@ export function registerPoseRoutes(
       method: "POST",
       path: "/pose/receipt",
       handler: (body, res) => {
-        const payload = JSON.parse(body || "{}") as { challenge?: unknown; receipt?: unknown }
-        if (!payload.challenge || !payload.receipt) {
-          return jsonResponse(res, 400, { error: "missing challenge or receipt" })
+        const payload = JSON.parse(body || "{}") as { challengeId?: string; challenge?: unknown; receipt?: unknown }
+        if (!payload.receipt) {
+          return jsonResponse(res, 400, { error: "missing receipt" })
         }
-        // Validate required fields on challenge and receipt
-        const ch = payload.challenge as Record<string, unknown>
+
         const rc = payload.receipt as Record<string, unknown>
-        if (!ch.challengeId || !ch.epochId || !ch.nodeId) {
-          return jsonResponse(res, 400, { error: "invalid challenge: missing challengeId, epochId, or nodeId" })
-        }
         if (!rc.challengeId || !rc.nodeId || !rc.nodeSig) {
           return jsonResponse(res, 400, { error: "invalid receipt: missing challengeId, nodeId, or nodeSig" })
         }
+        const challengeId = payload.challengeId
+          ?? String((payload.challenge as Record<string, unknown> | undefined)?.challengeId ?? rc.challengeId)
+        if (!challengeId.startsWith("0x")) {
+          return jsonResponse(res, 400, { error: "invalid challengeId" })
+        }
+
         try {
-          // Convert epochId and timestamp bigints from string/number
-          const challenge: ChallengeMessage = {
-            ...ch,
-            epochId: BigInt(String(ch.epochId)),
-            issuedAtMs: BigInt(String(ch.issuedAtMs ?? 0)),
-          } as ChallengeMessage
           const receipt: ReceiptMessage = {
             ...rc,
             responseAtMs: BigInt(String(rc.responseAtMs ?? 0)),
             responseBody: (rc.responseBody ?? {}) as Record<string, unknown>,
           } as ReceiptMessage
-          pose.submitReceipt(challenge, receipt)
+          if (payload.challenge) {
+            // If caller sends a full challenge object, enforce it matches the issued one.
+            const ch = payload.challenge as Record<string, unknown>
+            if (!ch.epochId || !ch.nodeId) {
+              return jsonResponse(res, 400, { error: "invalid challenge: missing epochId or nodeId" })
+            }
+            const challenge: ChallengeMessage = {
+              ...ch,
+              challengeId: challengeId as `0x${string}`,
+              epochId: BigInt(String(ch.epochId)),
+              issuedAtMs: BigInt(String(ch.issuedAtMs ?? 0)),
+            } as ChallengeMessage
+            pose.submitReceipt(challenge, receipt)
+          } else {
+            pose.submitReceiptByChallengeId(challengeId as `0x${string}`, receipt)
+          }
           return jsonResponse(res, 200, { accepted: true })
         } catch (error) {
           return jsonResponse(res, 400, { error: `receipt rejected: ${String(error)}` })

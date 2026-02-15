@@ -28,13 +28,17 @@ const intervalMs = normalizeInt(process.env.COC_AGENT_INTERVAL_MS || config.agen
 const batchSize = normalizeInt(process.env.COC_AGENT_BATCH_SIZE || config.agentBatchSize, 5);
 const sampleSize = normalizeInt(process.env.COC_AGENT_SAMPLE_SIZE || config.agentSampleSize, 2);
 const storageDir = resolveStorageDir(config.dataDir, config.storageDir);
+const nonceRegistryPath = process.env.COC_NONCE_REGISTRY_PATH || config.nonceRegistryPath || join(config.dataDir, "nonce-registry.log");
 
 const l1RpcUrl = process.env.COC_L1_RPC_URL || config.l1RpcUrl || "http://127.0.0.1:8545";
 const poseManagerAddress = process.env.COC_POSE_MANAGER || config.poseManagerAddress;
-const operatorPrivateKey =
-  process.env.COC_OPERATOR_PK ||
-  config.operatorPrivateKey ||
-  "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+const operatorPrivateKey = process.env.COC_OPERATOR_PK || config.operatorPrivateKey;
+if (!operatorPrivateKey) {
+  throw new Error("missing operator private key: set COC_OPERATOR_PK or config.operatorPrivateKey");
+}
+if (!/^0x[0-9a-fA-F]{64}$/.test(operatorPrivateKey)) {
+  throw new Error("invalid operator private key format: expected 32-byte hex string with 0x prefix");
+}
 
 const provider = new JsonRpcProvider(l1RpcUrl);
 const signer = new Wallet(operatorPrivateKey, provider);
@@ -93,7 +97,7 @@ const quota = new ChallengeQuota({
 });
 
 const verifier = new ReceiptVerifier({
-  nonceRegistry: new NonceRegistry(),
+  nonceRegistry: new NonceRegistry({ persistencePath: nonceRegistryPath }),
   verifyChallengerSig: (challenge) => {
     const payload = buildChallengeVerifyPayload(challenge);
     const challengerAddr = hex32ToAddress(challenge.challengerId);
@@ -131,7 +135,34 @@ const verifier = new ReceiptVerifier({
     return computed === root;
   },
   verifyRelayResult: (_challenge, receipt) => {
-    return Boolean(receipt.responseBody?.ok) && typeof receipt.responseBody?.witness === "string";
+    if (!receipt.responseBody?.ok) return false;
+    const witness = receipt.responseBody?.witness as Record<string, unknown> | undefined;
+    if (!witness || typeof witness !== "object") return false;
+
+    const routeTag = typeof witness.routeTag === "string" ? witness.routeTag : "";
+    const challengeId = typeof witness.challengeId === "string" ? witness.challengeId : "";
+    const relayer = typeof witness.relayer === "string" ? witness.relayer.toLowerCase() : "";
+    const signature = typeof witness.signature === "string" ? witness.signature : "";
+    const witnessResponseAtMs = witness.responseAtMs;
+    if (!routeTag || !challengeId || !relayer || !signature || witnessResponseAtMs === undefined) return false;
+
+    if (challengeId !== _challenge.challengeId) return false;
+    const expectedRouteTag = String((_challenge.querySpec as Record<string, unknown>)?.routeTag ?? "");
+    if (expectedRouteTag && routeTag !== expectedRouteTag) return false;
+
+    const receiptNodeAddr = hex32ToAddress(receipt.nodeId);
+    if (relayer !== receiptNodeAddr) return false;
+
+    let responseAtMs: bigint;
+    try {
+      responseAtMs = BigInt(String(witnessResponseAtMs));
+    } catch {
+      return false;
+    }
+    if (responseAtMs !== receipt.responseAtMs) return false;
+
+    const relayMsg = `pose:relay:${_challenge.challengeId}:${routeTag}:${responseAtMs.toString()}`;
+    return agentSigner.verifyNodeSig(relayMsg, signature, relayer);
   },
 });
 
