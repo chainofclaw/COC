@@ -19,7 +19,55 @@ function jsonStringify(obj: unknown): string {
   )
 }
 
-// 测试账户管理器（仅用于测试环境）
+/**
+ * Simple sliding-window rate limiter per IP address.
+ * Tracks request counts within a configurable time window.
+ */
+class RateLimiter {
+  private readonly windowMs: number
+  private readonly maxRequests: number
+  private readonly buckets = new Map<string, { count: number; resetAt: number }>()
+
+  constructor(windowMs = 60_000, maxRequests = 200) {
+    this.windowMs = windowMs
+    this.maxRequests = maxRequests
+  }
+
+  /**
+   * Check if a request from the given IP should be allowed.
+   * Returns true if allowed, false if rate-limited.
+   */
+  allow(ip: string): boolean {
+    const now = Date.now()
+    const bucket = this.buckets.get(ip)
+
+    if (!bucket || now >= bucket.resetAt) {
+      this.buckets.set(ip, { count: 1, resetAt: now + this.windowMs })
+      return true
+    }
+
+    bucket.count++
+    return bucket.count <= this.maxRequests
+  }
+
+  /** Periodically clean up expired buckets to prevent memory growth */
+  cleanup(): void {
+    const now = Date.now()
+    for (const [ip, bucket] of this.buckets) {
+      if (now >= bucket.resetAt) this.buckets.delete(ip)
+    }
+  }
+}
+
+const rateLimiter = new RateLimiter()
+// Cleanup expired buckets every 5 minutes
+setInterval(() => rateLimiter.cleanup(), 300_000).unref()
+
+// Test account feature gate: only enabled when COC_DEV_ACCOUNTS=1 or NODE_ENV !== 'production'
+const DEV_ACCOUNTS_ENABLED = process.env.COC_DEV_ACCOUNTS === "1" ||
+  (process.env.NODE_ENV !== "production")
+
+// Test account manager (dev/test only)
 interface TestAccount {
   address: string
   privateKey: string
@@ -78,21 +126,30 @@ interface JsonRpcResponse {
 }
 
 export function startRpcServer(bind: string, port: number, chainId: number, evm: EvmChain, chain: IChainEngine, p2p: P2PNode, pose?: PoSeEngine) {
-  initializeTestAccounts() // 初始化测试账户
+  if (DEV_ACCOUNTS_ENABLED) {
+    initializeTestAccounts()
+  }
 
   const filters = new Map<string, PendingFilter>()
   const poseRoutes = pose ? registerPoseRoutes(pose) : []
 
   const server = http.createServer(async (req, res) => {
-    // 设置 CORS 头以允许浏览器访问
+    // CORS headers
     res.setHeader("Access-Control-Allow-Origin", "*")
     res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS")
     res.setHeader("Access-Control-Allow-Headers", "Content-Type")
 
-    // 处理 OPTIONS 预检请求
     if (req.method === "OPTIONS") {
       res.writeHead(200)
       res.end()
+      return
+    }
+
+    // Rate limiting per IP
+    const clientIp = req.socket.remoteAddress ?? "unknown"
+    if (!rateLimiter.allow(clientIp)) {
+      res.writeHead(429, { "content-type": "application/json" })
+      res.end(JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32005, message: "rate limit exceeded" } }))
       return
     }
 
@@ -312,6 +369,7 @@ async function handleRpc(
     case "net_peerCount":
       return `0x${p2p ? "1" : "0"}`
     case "eth_accounts":
+      if (!DEV_ACCOUNTS_ENABLED) return []
       return Array.from(testAccounts.keys())
     case "web3_sha3": {
       const hex = String((payload.params ?? [])[0] ?? "0x")
