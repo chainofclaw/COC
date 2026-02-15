@@ -1,8 +1,9 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import Link from 'next/link'
 import { formatAddress } from '@/lib/provider'
+import { decodeMethodSelector, decodeTransferLog, formatTokenAmount } from '@/lib/decoder'
 import type { AddressTx } from '@/lib/rpc'
 
 interface TxHistoryProps {
@@ -10,24 +11,36 @@ interface TxHistoryProps {
   initialTxs: AddressTx[]
 }
 
-type TxFilter = 'all' | 'sent' | 'received' | 'contract'
+type TxFilter = 'all' | 'sent' | 'received' | 'contract' | 'token'
 
 export function TxHistory({ address, initialTxs }: TxHistoryProps) {
   const [filter, setFilter] = useState<TxFilter>('all')
   const addrLower = address.toLowerCase()
 
-  const filtered = initialTxs.filter((tx) => {
+  // Parse token transfers from logs
+  const txsWithTokens = initialTxs.map((tx) => {
+    const transfers = (tx.logs ?? [])
+      .map((log) => decodeTransferLog(log))
+      .filter((t): t is NonNullable<typeof t> => t !== null)
+    return { ...tx, tokenTransfers: transfers }
+  })
+
+  const filtered = txsWithTokens.filter((tx) => {
     if (filter === 'sent') return tx.from?.toLowerCase() === addrLower
     if (filter === 'received') return tx.to?.toLowerCase() === addrLower
     if (filter === 'contract') return tx.input && tx.input.length > 10
+    if (filter === 'token') return tx.tokenTransfers.length > 0
     return true
   })
 
-  const filters: { key: TxFilter; label: string }[] = [
+  const tokenTxCount = txsWithTokens.filter((tx) => tx.tokenTransfers.length > 0).length
+
+  const filters: { key: TxFilter; label: string; count?: number }[] = [
     { key: 'all', label: 'All' },
     { key: 'sent', label: 'Sent' },
     { key: 'received', label: 'Received' },
     { key: 'contract', label: 'Contract' },
+    { key: 'token', label: 'Token', count: tokenTxCount },
   ]
 
   return (
@@ -45,7 +58,7 @@ export function TxHistory({ address, initialTxs }: TxHistoryProps) {
                   : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
               }`}
             >
-              {f.label}
+              {f.label}{f.count ? ` (${f.count})` : ''}
             </button>
           ))}
         </div>
@@ -62,7 +75,7 @@ export function TxHistory({ address, initialTxs }: TxHistoryProps) {
                 <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Block</th>
                 <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Dir</th>
                 <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">From / To</th>
-                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
+                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Method</th>
                 <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
               </tr>
             </thead>
@@ -70,8 +83,7 @@ export function TxHistory({ address, initialTxs }: TxHistoryProps) {
               {filtered.map((tx) => {
                 const isSent = tx.from?.toLowerCase() === addrLower
                 const counterparty = isSent ? tx.to : tx.from
-                const isContractCall = tx.input && tx.input.length > 10
-                const methodSig = isContractCall ? tx.input.slice(0, 10) : null
+                const decoded = decodeMethodSelector(tx.input)
                 const blockNum = parseInt(tx.blockNumber, 16)
                 const success = tx.status === '0x1'
 
@@ -104,9 +116,9 @@ export function TxHistory({ address, initialTxs }: TxHistoryProps) {
                       )}
                     </td>
                     <td className="px-3 py-2 text-sm">
-                      {isContractCall ? (
-                        <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-xs font-mono">
-                          {methodSig}
+                      {decoded ? (
+                        <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-xs" title={decoded.name}>
+                          {decoded.name.split('(')[0]}
                         </span>
                       ) : (
                         <span className="text-gray-500 text-xs">Transfer</span>
@@ -117,6 +129,23 @@ export function TxHistory({ address, initialTxs }: TxHistoryProps) {
                         {success ? 'OK' : 'Fail'}
                       </span>
                     </td>
+                    {/* Token transfers row */}
+                    {tx.tokenTransfers.length > 0 && (
+                      <td colSpan={6} className="px-3 pb-2">
+                        <div className="flex flex-wrap gap-2">
+                          {tx.tokenTransfers.map((t, i) => (
+                            <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 bg-yellow-50 border border-yellow-200 rounded text-xs">
+                              <span className="text-yellow-600 font-medium">{t.type === 'ERC20-Transfer' ? 'Transfer' : 'Approval'}</span>
+                              <span className="font-mono">{formatTokenAmount(t.value)}</span>
+                              <span className="text-gray-400">from</span>
+                              <Link href={`/address/${t.from}`} className="text-blue-600 font-mono">{formatAddress(t.from)}</Link>
+                              <span className="text-gray-400">to</span>
+                              <Link href={`/address/${t.to}`} className="text-blue-600 font-mono">{formatAddress(t.to)}</Link>
+                            </span>
+                          ))}
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 )
               })}
