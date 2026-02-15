@@ -40,6 +40,9 @@ export interface IChainEngine {
   getLogs?(filter: LogFilter): Promise<IndexedLog[]>
   getTransactionByHash?(hash: Hex): Promise<TxWithReceipt | null>
   getTransactionsByAddress?(address: Hex, opts?: AddressTxQuery): Promise<TxWithReceipt[]>
+
+  // Optional: pruner stats
+  getPrunerStats?(): Promise<{ latestBlock: bigint; pruningHeight: bigint; retainedBlocks: bigint }>
 }
 
 /**

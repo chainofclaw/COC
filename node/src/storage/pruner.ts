@@ -5,9 +5,12 @@
  * and storage statistics collection.
  */
 
+import { Transaction } from "ethers"
 import type { IDatabase } from "./db.ts"
 import type { IBlockIndex } from "./block-index.ts"
+import { createLogger } from "../logger.ts"
 
+const log = createLogger("pruner")
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
 
@@ -120,12 +123,17 @@ export class StoragePruner {
     this.pruningHeight = pruneUpto
     await this.db.put(PRUNING_HEIGHT_KEY, encoder.encode(this.pruningHeight.toString()))
 
+    const durationMs = Date.now() - startTime
+    if (blocksRemoved > 0) {
+      log.info("pruned blocks", { blocksRemoved, txsRemoved, logsRemoved, newPruningHeight: Number(pruneUpto), durationMs })
+    }
+
     return {
       blocksRemoved,
       txsRemoved,
       logsRemoved,
       newPruningHeight: this.pruningHeight,
-      durationMs: Date.now() - startTime,
+      durationMs,
     }
   }
 
@@ -166,14 +174,20 @@ export class StoragePruner {
       ops.push({ type: "del", key: BLOCK_BY_HASH_PREFIX + block.hash })
     }
 
-    // Remove transactions
+    // Remove transactions by parsing raw tx to get hash
     let txCount = 0
-    if (block.txs) {
-      // block.txs contains raw tx hex strings, need to import Transaction to get hash
-      // For efficiency, just remove by known tx hash prefixes
-      // We can't easily get tx hashes from raw tx without parsing
-      // So we skip individual tx removal here (handled below via log cleanup)
-      txCount = 0
+    if (block.txs && Array.isArray(block.txs)) {
+      for (const rawTx of block.txs) {
+        try {
+          const parsed = Transaction.from(rawTx)
+          if (parsed.hash) {
+            ops.push({ type: "del", key: TX_BY_HASH_PREFIX + parsed.hash.toLowerCase() })
+            txCount++
+          }
+        } catch {
+          // Skip unparseable transactions
+        }
+      }
     }
 
     // Remove logs for this block

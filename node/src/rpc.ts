@@ -752,6 +752,12 @@ async function handleRpc(
         arch: process.arch,
       }
     }
+    case "coc_prunerStats": {
+      if (typeof chain.getPrunerStats === "function") {
+        return await chain.getPrunerStats()
+      }
+      return { latestBlock: 0, pruningHeight: 0, retainedBlocks: 0 }
+    }
     default:
       throw new Error(`method not supported: ${payload.method}`)
   }
