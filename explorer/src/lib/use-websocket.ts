@@ -3,13 +3,6 @@
 import { useEffect, useRef, useCallback, useState } from 'react'
 import { WS_URL } from './provider'
 
-interface WsSubscription {
-  id: string
-  method: string
-  params: unknown[]
-  onNotification: (data: unknown) => void
-}
-
 interface WsRpcResponse {
   jsonrpc: string
   id: number
@@ -19,9 +12,13 @@ interface WsRpcResponse {
   params?: { subscription: string; result: unknown }
 }
 
+const BASE_RECONNECT_MS = 1000
+const MAX_RECONNECT_MS = 30000
+
 /**
  * Hook for WebSocket JSON-RPC subscriptions.
- * Manages connection lifecycle, reconnection, and subscription tracking.
+ * Manages connection lifecycle, exponential backoff reconnection,
+ * and subscription tracking.
  */
 export function useWebSocket() {
   const wsRef = useRef<WebSocket | null>(null)
@@ -30,14 +27,28 @@ export function useWebSocket() {
   const nextIdRef = useRef(1)
   const [connected, setConnected] = useState(false)
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const backoffRef = useRef(BASE_RECONNECT_MS)
+  const mountedRef = useRef(true)
+
+  const scheduleReconnect = useCallback(() => {
+    if (!mountedRef.current) return
+    const delay = backoffRef.current
+    // Exponential backoff with jitter
+    backoffRef.current = Math.min(delay * 2, MAX_RECONNECT_MS)
+    reconnectTimerRef.current = setTimeout(() => {
+      if (mountedRef.current) connect()
+    }, delay + Math.random() * 500)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return
+    if (wsRef.current?.readyState === WebSocket.CONNECTING) return
 
     try {
       const ws = new WebSocket(WS_URL)
 
       ws.onopen = () => {
+        backoffRef.current = BASE_RECONNECT_MS // Reset backoff on success
         setConnected(true)
       }
 
@@ -68,8 +79,9 @@ export function useWebSocket() {
       ws.onclose = () => {
         setConnected(false)
         wsRef.current = null
-        // Reconnect after 3 seconds
-        reconnectTimerRef.current = setTimeout(connect, 3000)
+        // Clear stale subscriptions (server-side IDs are invalid after reconnect)
+        subsRef.current.clear()
+        scheduleReconnect()
       }
 
       ws.onerror = () => {
@@ -78,10 +90,9 @@ export function useWebSocket() {
 
       wsRef.current = ws
     } catch {
-      // Connection failed, retry
-      reconnectTimerRef.current = setTimeout(connect, 3000)
+      scheduleReconnect()
     }
-  }, [])
+  }, [scheduleReconnect])
 
   const sendRpc = useCallback((method: string, params: unknown[]): Promise<unknown> => {
     return new Promise((resolve, reject) => {
@@ -129,8 +140,10 @@ export function useWebSocket() {
   }, [sendRpc])
 
   useEffect(() => {
+    mountedRef.current = true
     connect()
     return () => {
+      mountedRef.current = false
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
       wsRef.current?.close()
     }
