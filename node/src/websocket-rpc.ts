@@ -68,6 +68,9 @@ export function startWsRpcServer(
 
 const HEARTBEAT_INTERVAL_MS = 30_000
 const MAX_CLIENTS = 100
+const MAX_SUBSCRIPTIONS_PER_CLIENT = 10
+const HEX_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/
+const HEX_TOPIC_RE = /^0x[0-9a-fA-F]{64}$/
 
 export class WsRpcServer {
   private wss: WebSocketServer | null = null
@@ -269,6 +272,10 @@ export class WsRpcServer {
     const client = this.clients.get(ws)
     if (!client) throw new Error("client not found")
 
+    if (client.subscriptions.size >= MAX_SUBSCRIPTIONS_PER_CLIENT) {
+      throw new Error(`max subscriptions per client reached (${MAX_SUBSCRIPTIONS_PER_CLIENT})`)
+    }
+
     switch (type) {
       case "newHeads": {
         const handler = (event: BlockEvent) => {
@@ -291,10 +298,7 @@ export class WsRpcServer {
       }
       case "logs": {
         const filterParam = (params[1] ?? {}) as Record<string, unknown>
-        const filter: LogSubscriptionFilter = {
-          address: filterParam.address as string | string[] | undefined,
-          topics: filterParam.topics as Array<string | string[] | null> | undefined,
-        }
+        const filter = validateLogFilter(filterParam)
 
         const handler = (event: LogEvent) => {
           if (matchesSubscriptionFilter(event.log, filter)) {
@@ -386,6 +390,61 @@ export class WsRpcServer {
 
 function generateSubscriptionId(): string {
   return "0x" + crypto.randomBytes(16).toString("hex")
+}
+
+/**
+ * Validate log subscription filter parameters
+ */
+function validateLogFilter(params: Record<string, unknown>): LogSubscriptionFilter {
+  const filter: LogSubscriptionFilter = {}
+
+  if (params.address !== undefined) {
+    if (Array.isArray(params.address)) {
+      for (const addr of params.address) {
+        if (typeof addr !== "string" || !HEX_ADDRESS_RE.test(addr)) {
+          throw new Error(`invalid address in filter: ${addr}`)
+        }
+      }
+      filter.address = params.address as string[]
+    } else if (typeof params.address === "string") {
+      if (!HEX_ADDRESS_RE.test(params.address)) {
+        throw new Error(`invalid address: ${params.address}`)
+      }
+      filter.address = params.address
+    }
+  }
+
+  if (params.topics !== undefined) {
+    if (!Array.isArray(params.topics)) {
+      throw new Error("topics must be an array")
+    }
+    if (params.topics.length > 4) {
+      throw new Error("topics array must have at most 4 elements")
+    }
+    const topics: Array<string | string[] | null> = []
+    for (const t of params.topics) {
+      if (t === null || t === undefined) {
+        topics.push(null)
+      } else if (Array.isArray(t)) {
+        for (const item of t) {
+          if (typeof item !== "string" || !HEX_TOPIC_RE.test(item)) {
+            throw new Error(`invalid topic in OR-array: ${item}`)
+          }
+        }
+        topics.push(t as string[])
+      } else if (typeof t === "string") {
+        if (!HEX_TOPIC_RE.test(t)) {
+          throw new Error(`invalid topic: ${t}`)
+        }
+        topics.push(t)
+      } else {
+        throw new Error(`invalid topic type: ${typeof t}`)
+      }
+    }
+    filter.topics = topics
+  }
+
+  return filter
 }
 
 /**
