@@ -83,7 +83,7 @@ export class HealthChecker {
     if (latestBlock) {
       const blockTimestamp = latestBlock.timestampMs
         ? Math.floor(latestBlock.timestampMs / 1000)
-        : (latestBlock as any).timestamp ?? 0
+        : 0
       const ageSec = Math.floor(Date.now() / 1000) - blockTimestamp
       checks.blockFreshness = {
         ok: ageSec < this.config.maxBlockAge,

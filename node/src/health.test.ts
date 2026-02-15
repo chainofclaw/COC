@@ -16,12 +16,13 @@ function createMockEngine(overrides?: {
   throwOnGetBlock?: boolean
 }): IChainEngine {
   const height = overrides?.height ?? 5n
-  const timestamp = overrides?.blockTimestamp ?? Math.floor(Date.now() / 1000)
+  const blockTimestamp = overrides?.blockTimestamp ?? Math.floor(Date.now() / 1000)
+  const timestampMs = blockTimestamp * 1000
   const mempoolSz = overrides?.mempoolSize ?? 3
   const shouldThrow = overrides?.throwOnGetBlock ?? false
 
   return {
-    mempool: { size: () => mempoolSz } as any,
+    mempool: { size: () => mempoolSz, stats: () => ({ pending: mempoolSz, senders: 1, totalGas: 0n }) } as any,
     events: {} as any,
     get height() { return height },
     async init() {},
@@ -29,15 +30,15 @@ function createMockEngine(overrides?: {
     getHeight() { return height },
     getBlockByNumber(n: bigint) {
       if (shouldThrow) throw new Error("db error")
-      if (n < 0n || n >= height) return null
+      if (n < 0n || n > height) return null
       return {
         number: n,
         hash: "0x1234" as Hex,
         parentHash: "0x0000" as Hex,
         proposer: "node-1",
         txs: [],
-        timestamp,
-        final: false,
+        timestampMs,
+        stateRoot: "0x" as Hex,
       } as ChainBlock
     },
     getBlockByHash() { return null },
@@ -63,7 +64,7 @@ describe("HealthChecker", () => {
     assert.equal(result.status, "healthy")
     assert.equal(result.chainId, 18780)
     assert.equal(result.nodeId, "node-1")
-    assert.equal(result.latestBlock, 4n)
+    assert.equal(result.latestBlock, 5n)
     assert.equal(result.peerCount, 5)
     assert.equal(result.mempoolSize, 3)
     assert.ok(result.checks.chain.ok)
@@ -110,7 +111,7 @@ describe("HealthChecker", () => {
     const engine = createMockEngine({ height: 1n })
     const result = await checker.check(engine, { peerCount: 5 })
 
-    assert.equal(result.latestBlock, 0n)
+    assert.equal(result.latestBlock, 1n)
     assert.ok(result.checks.chain.ok)
   })
 
