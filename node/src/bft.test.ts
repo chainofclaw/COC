@@ -2,6 +2,7 @@ import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 import {
   BftRound,
+  EquivocationDetector,
   quorumThreshold,
   accumulatedStake,
   hasQuorum,
@@ -281,5 +282,80 @@ describe("BftRound", () => {
     const finalized = round.handleCommit("v3", block.hash)
     assert.equal(finalized, true)
     assert.equal(round.state.phase, "finalized")
+  })
+})
+
+describe("EquivocationDetector", () => {
+  const hash1 = ("0x" + "aa".repeat(32)) as Hex
+  const hash2 = ("0x" + "bb".repeat(32)) as Hex
+
+  it("returns null for first vote", () => {
+    const d = new EquivocationDetector()
+    const ev = d.recordVote("v1", 1n, "prepare", hash1)
+    assert.equal(ev, null)
+  })
+
+  it("returns null for same hash vote", () => {
+    const d = new EquivocationDetector()
+    d.recordVote("v1", 1n, "prepare", hash1)
+    const ev = d.recordVote("v1", 1n, "prepare", hash1)
+    assert.equal(ev, null)
+  })
+
+  it("detects equivocation for different hashes", () => {
+    const d = new EquivocationDetector()
+    d.recordVote("v1", 1n, "prepare", hash1)
+    const ev = d.recordVote("v1", 1n, "prepare", hash2)
+    assert.ok(ev)
+    assert.equal(ev.validatorId, "v1")
+    assert.equal(ev.phase, "prepare")
+    assert.equal(ev.blockHash1, hash1)
+    assert.equal(ev.blockHash2, hash2)
+  })
+
+  it("tracks equivocation evidence", () => {
+    const d = new EquivocationDetector()
+    d.recordVote("v1", 1n, "prepare", hash1)
+    d.recordVote("v1", 1n, "prepare", hash2)
+    assert.equal(d.getEvidence().length, 1)
+    assert.equal(d.getEvidenceFor("v1").length, 1)
+    assert.equal(d.getEvidenceFor("v2").length, 0)
+  })
+
+  it("does not cross-detect between heights", () => {
+    const d = new EquivocationDetector()
+    d.recordVote("v1", 1n, "prepare", hash1)
+    const ev = d.recordVote("v1", 2n, "prepare", hash2)
+    assert.equal(ev, null)
+  })
+
+  it("does not cross-detect between phases", () => {
+    const d = new EquivocationDetector()
+    d.recordVote("v1", 1n, "prepare", hash1)
+    const ev = d.recordVote("v1", 1n, "commit", hash2)
+    assert.equal(ev, null)
+  })
+
+  it("prunes old heights", () => {
+    const d = new EquivocationDetector(5)
+    for (let i = 0; i < 10; i++) {
+      d.recordVote("v1", BigInt(i), "prepare", hash1)
+    }
+    // After adding height 9, heights 0-4 should be pruned
+    const ev = d.recordVote("v1", 0n, "prepare", hash2)
+    // Height 0 was pruned, so this is treated as a new vote, not equivocation
+    assert.equal(ev, null)
+  })
+
+  it("clearEvidenceBefore removes old evidence", () => {
+    const d = new EquivocationDetector()
+    d.recordVote("v1", 1n, "prepare", hash1)
+    d.recordVote("v1", 1n, "prepare", hash2)
+    d.recordVote("v2", 5n, "commit", hash1)
+    d.recordVote("v2", 5n, "commit", hash2)
+    assert.equal(d.getEvidence().length, 2)
+    const removed = d.clearEvidenceBefore(3n)
+    assert.equal(removed, 1)
+    assert.equal(d.getEvidence().length, 1)
   })
 })

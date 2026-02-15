@@ -5,8 +5,8 @@
  * Manages round lifecycle: start round → collect votes → finalize.
  */
 
-import { BftRound } from "./bft.ts"
-import type { BftMessage, BftRoundConfig } from "./bft.ts"
+import { BftRound, EquivocationDetector } from "./bft.ts"
+import type { BftMessage, BftRoundConfig, EquivocationEvidence } from "./bft.ts"
 import type { ChainBlock, Hex } from "./blockchain-types.ts"
 import { createLogger } from "./logger.ts"
 
@@ -24,6 +24,8 @@ export interface BftCoordinatorConfig {
   broadcastMessage: (msg: BftMessage) => Promise<void>
   /** Callback when a block is BFT-finalized */
   onFinalized: (block: ChainBlock) => Promise<void>
+  /** Callback when equivocation is detected */
+  onEquivocation?: (evidence: EquivocationEvidence) => void
 }
 
 /**
@@ -33,6 +35,7 @@ export class BftCoordinator {
   private readonly cfg: BftCoordinatorConfig
   private activeRound: BftRound | null = null
   private timeoutTimer: ReturnType<typeof setTimeout> | null = null
+  readonly equivocationDetector = new EquivocationDetector()
 
   constructor(cfg: BftCoordinatorConfig) {
     this.cfg = cfg
@@ -85,6 +88,16 @@ export class BftCoordinator {
       return
     }
 
+    // Check for equivocation on prepare/commit votes
+    if (msg.type === "prepare" || msg.type === "commit") {
+      const evidence = this.equivocationDetector.recordVote(
+        msg.senderId, msg.height, msg.type, msg.blockHash,
+      )
+      if (evidence) {
+        this.cfg.onEquivocation?.(evidence)
+      }
+    }
+
     switch (msg.type) {
       case "prepare": {
         const outgoing = this.activeRound.handlePrepare(msg.senderId, msg.blockHash)
@@ -115,9 +128,10 @@ export class BftCoordinator {
     phase: string | null
     prepareVotes: number
     commitVotes: number
+    equivocations: number
   } {
     if (!this.activeRound) {
-      return { active: false, height: null, phase: null, prepareVotes: 0, commitVotes: 0 }
+      return { active: false, height: null, phase: null, prepareVotes: 0, commitVotes: 0, equivocations: 0 }
     }
     return {
       active: true,
@@ -125,6 +139,7 @@ export class BftCoordinator {
       phase: this.activeRound.state.phase,
       prepareVotes: this.activeRound.state.prepareVotes.size,
       commitVotes: this.activeRound.state.commitVotes.size,
+      equivocations: this.equivocationDetector.getEvidence().length,
     }
   }
 

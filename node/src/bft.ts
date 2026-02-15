@@ -243,3 +243,112 @@ export class BftRound {
     return this.config.validators.some((v) => v.id === id)
   }
 }
+
+/**
+ * Equivocation evidence — a validator voted for two different blocks
+ * at the same height and phase.
+ */
+export interface EquivocationEvidence {
+  validatorId: string
+  height: bigint
+  phase: "prepare" | "commit"
+  blockHash1: Hex
+  blockHash2: Hex
+  detectedAtMs: number
+}
+
+/**
+ * BFT Equivocation Detector
+ *
+ * Tracks votes per validator per height and detects when a validator
+ * signs conflicting votes (double-voting), which is a slashable offense.
+ */
+export class EquivocationDetector {
+  /** height -> phase -> validatorId -> blockHash */
+  private readonly votes = new Map<string, Map<string, Map<string, Hex>>>()
+  private readonly evidence: EquivocationEvidence[] = []
+  private readonly maxTrackedHeights: number
+
+  constructor(maxTrackedHeights = 100) {
+    this.maxTrackedHeights = maxTrackedHeights
+  }
+
+  /**
+   * Record a vote and check for equivocation.
+   * Returns the evidence if equivocation is detected, null otherwise.
+   */
+  recordVote(
+    validatorId: string,
+    height: bigint,
+    phase: "prepare" | "commit",
+    blockHash: Hex,
+  ): EquivocationEvidence | null {
+    const heightKey = height.toString()
+    const phaseKey = phase
+
+    if (!this.votes.has(heightKey)) {
+      this.votes.set(heightKey, new Map())
+    }
+
+    const heightMap = this.votes.get(heightKey)!
+    if (!heightMap.has(phaseKey)) {
+      heightMap.set(phaseKey, new Map())
+    }
+
+    const phaseMap = heightMap.get(phaseKey)!
+    const existingHash = phaseMap.get(validatorId)
+
+    if (existingHash && existingHash !== blockHash) {
+      // Equivocation detected!
+      const ev: EquivocationEvidence = {
+        validatorId,
+        height,
+        phase,
+        blockHash1: existingHash,
+        blockHash2: blockHash,
+        detectedAtMs: Date.now(),
+      }
+      this.evidence.push(ev)
+      log.warn("equivocation detected!", {
+        validator: validatorId,
+        height: height.toString(),
+        phase,
+        hash1: existingHash,
+        hash2: blockHash,
+      })
+      return ev
+    }
+
+    phaseMap.set(validatorId, blockHash)
+    this.pruneOldHeights()
+    return null
+  }
+
+  /** Get all recorded equivocation evidence */
+  getEvidence(): readonly EquivocationEvidence[] {
+    return this.evidence
+  }
+
+  /** Get evidence for a specific validator */
+  getEvidenceFor(validatorId: string): EquivocationEvidence[] {
+    return this.evidence.filter((e) => e.validatorId === validatorId)
+  }
+
+  /** Clear evidence older than the given height */
+  clearEvidenceBefore(height: bigint): number {
+    const before = this.evidence.length
+    const remaining = this.evidence.filter((e) => e.height >= height)
+    this.evidence.length = 0
+    this.evidence.push(...remaining)
+    return before - this.evidence.length
+  }
+
+  private pruneOldHeights(): void {
+    if (this.votes.size <= this.maxTrackedHeights) return
+    const heights = [...this.votes.keys()].map(BigInt).sort((a, b) => (a < b ? -1 : 1))
+    const toRemove = heights.length - this.maxTrackedHeights
+    for (let i = 0; i < toRemove; i++) {
+      this.votes.delete(heights[i].toString())
+    }
+  }
+}
