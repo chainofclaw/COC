@@ -777,6 +777,26 @@ async function handleRpc(
         arch: process.arch,
       }
     }
+    case "coc_validators": {
+      const height = await Promise.resolve(chain.getHeight())
+      const nextHeight = height + 1n
+      const currentProposer = chain.expectedProposer(nextHeight)
+      // Return validator info from the chain engine's round-robin
+      const validators: unknown[] = []
+      const seen = new Set<string>()
+      // Sample expected proposers to discover all validators
+      for (let h = nextHeight; h < nextHeight + 200n; h++) {
+        const v = chain.expectedProposer(h)
+        if (seen.has(v)) continue
+        seen.add(v)
+        validators.push({
+          id: v,
+          isCurrentProposer: v === currentProposer,
+          nextProposalBlock: Number(h),
+        })
+      }
+      return { validators, currentHeight: height, nextProposer: currentProposer }
+    }
     case "coc_prunerStats": {
       if (typeof chain.getPrunerStats === "function") {
         return await chain.getPrunerStats()
