@@ -282,6 +282,16 @@ export class PersistentChainEngine {
           })
         }
 
+        // Register contract if this is a contract creation tx
+        if (!txTo && receipt.contractAddress) {
+          await this.blockIndex.registerContract(
+            receipt.contractAddress as Hex,
+            block.number,
+            result.txHash as Hex,
+            txFrom,
+          )
+        }
+
         // Mark transaction as confirmed
         const nonce = `tx:${result.txHash}`
         await this.txNonceStore.markUsed(nonce)

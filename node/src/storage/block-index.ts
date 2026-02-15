@@ -13,6 +13,7 @@ const BLOCK_BY_HASH_PREFIX = "h:"
 const TX_BY_HASH_PREFIX = "t:"
 const LOG_BY_BLOCK_PREFIX = "l:"
 const ADDR_TX_PREFIX = "a:"
+const CONTRACT_PREFIX = "ct:"
 const LATEST_BLOCK_KEY = "m:latest-block"
 
 const encoder = new TextEncoder()
@@ -85,7 +86,18 @@ export interface IBlockIndex {
   countTransactionsByAddress(address: Hex): Promise<number>
   putLogs(blockNumber: bigint, logs: IndexedLog[]): Promise<void>
   getLogs(filter: LogFilter): Promise<IndexedLog[]>
+  registerContract(address: Hex, blockNumber: bigint, txHash: Hex, creator: Hex): Promise<void>
+  getContracts(opts?: AddressTxQuery): Promise<ContractRecord[]>
+  getContractInfo(address: Hex): Promise<ContractRecord | null>
   close(): Promise<void>
+}
+
+export interface ContractRecord {
+  address: Hex
+  blockNumber: bigint
+  txHash: Hex
+  creator: Hex
+  deployedAt: number // timestamp ms
 }
 
 export class BlockIndex implements IBlockIndex {
@@ -268,6 +280,51 @@ export class BlockIndex implements IBlockIndex {
     }
 
     return results
+  }
+
+  async registerContract(address: Hex, blockNumber: bigint, txHash: Hex, creator: Hex): Promise<void> {
+    const record: ContractRecord = {
+      address,
+      blockNumber,
+      txHash,
+      creator,
+      deployedAt: Date.now(),
+    }
+    const key = CONTRACT_PREFIX + padBlockNumber(blockNumber) + ":" + address.toLowerCase()
+    await this.db.put(key, encoder.encode(serializeJSON(record)))
+  }
+
+  async getContracts(opts?: AddressTxQuery): Promise<ContractRecord[]> {
+    const offset = opts?.offset ?? 0
+    const limit = opts?.limit ?? 50
+    const reverse = opts?.reverse ?? true
+    const fetchLimit = offset + limit
+    const keys = await this.db.getKeysWithPrefix(CONTRACT_PREFIX, { limit: fetchLimit, reverse })
+    const paged = keys.slice(offset, offset + limit)
+
+    const results: ContractRecord[] = []
+    for (const key of paged) {
+      const data = await this.db.get(key)
+      if (!data) continue
+      const record = deserializeJSON(decoder.decode(data)) as ContractRecord
+      record.blockNumber = BigInt(record.blockNumber)
+      results.push(record)
+    }
+    return results
+  }
+
+  async getContractInfo(address: Hex): Promise<ContractRecord | null> {
+    const keys = await this.db.getKeysWithPrefix(CONTRACT_PREFIX, { limit: 10000, reverse: false })
+    for (const key of keys) {
+      if (key.endsWith(":" + address.toLowerCase())) {
+        const data = await this.db.get(key)
+        if (!data) continue
+        const record = deserializeJSON(decoder.decode(data)) as ContractRecord
+        record.blockNumber = BigInt(record.blockNumber)
+        return record
+      }
+    }
+    return null
   }
 
   async close(): Promise<void> {
