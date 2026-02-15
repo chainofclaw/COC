@@ -233,6 +233,63 @@ export class Mempool {
     })
   }
 
+  /**
+   * Gas price histogram: bucket pending txs by gas price ranges.
+   * Returns sorted buckets with count and cumulative percentage.
+   */
+  gasPriceHistogram(bucketCount = 10): {
+    buckets: Array<{ minGwei: number; maxGwei: number; count: number; cumulativePct: number }>
+    totalTxs: number
+    minGwei: number
+    maxGwei: number
+    medianGwei: number
+    p75Gwei: number
+    p90Gwei: number
+  } {
+    const prices: number[] = []
+    for (const tx of this.txs.values()) {
+      prices.push(Number(tx.gasPrice / 1_000_000_000n)) // wei → gwei
+    }
+
+    if (prices.length === 0) {
+      return { buckets: [], totalTxs: 0, minGwei: 0, maxGwei: 0, medianGwei: 0, p75Gwei: 0, p90Gwei: 0 }
+    }
+
+    prices.sort((a, b) => a - b)
+    const min = prices[0]
+    const max = prices[prices.length - 1]
+    const range = max - min || 1
+    const step = range / bucketCount
+
+    const buckets: Array<{ minGwei: number; maxGwei: number; count: number; cumulativePct: number }> = []
+    let cumulative = 0
+
+    for (let i = 0; i < bucketCount; i++) {
+      const lo = min + step * i
+      const hi = i === bucketCount - 1 ? max + 1 : min + step * (i + 1)
+      const count = prices.filter((p) => p >= lo && p < hi).length
+      cumulative += count
+      buckets.push({
+        minGwei: Math.round(lo * 100) / 100,
+        maxGwei: Math.round((i === bucketCount - 1 ? max : hi) * 100) / 100,
+        count,
+        cumulativePct: Math.round((cumulative / prices.length) * 10000) / 100,
+      })
+    }
+
+    const percentile = (pct: number) => prices[Math.min(Math.floor(prices.length * pct), prices.length - 1)]
+
+    return {
+      buckets,
+      totalTxs: prices.length,
+      minGwei: min,
+      maxGwei: max,
+      medianGwei: percentile(0.5),
+      p75Gwei: percentile(0.75),
+      p90Gwei: percentile(0.9),
+    }
+  }
+
   stats(): { size: number; senders: number; oldestMs: number } {
     let oldestMs = Date.now()
     for (const tx of this.txs.values()) {

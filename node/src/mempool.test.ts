@@ -217,6 +217,35 @@ describe("Mempool", () => {
     // Should return max nonce + 1
     assert.equal(pool.getPendingNonce(address, 5n), 7n)
   })
+
+  it("returns empty histogram when pool is empty", () => {
+    const pool = new Mempool({ chainId: CHAIN_ID })
+    const hist = pool.gasPriceHistogram()
+    assert.equal(hist.totalTxs, 0)
+    assert.equal(hist.buckets.length, 0)
+    assert.equal(hist.minGwei, 0)
+    assert.equal(hist.medianGwei, 0)
+  })
+
+  it("computes gas price histogram with transactions", () => {
+    const pool = new Mempool({ chainId: CHAIN_ID })
+    // Add txs with different gas prices (1 gwei = 0x3b9aca00)
+    signAndAdd(pool, PK1, 0, "0x3b9aca00")  // 1 gwei
+    signAndAdd(pool, PK1, 1, "0x77359400")  // 2 gwei
+    signAndAdd(pool, PK2, 0, "0xb2d05e00")  // 3 gwei
+    signAndAdd(pool, PK2, 1, "0xee6b2800")  // 4 gwei
+
+    const hist = pool.gasPriceHistogram(4)
+    assert.equal(hist.totalTxs, 4)
+    assert.equal(hist.minGwei, 1)
+    assert.equal(hist.maxGwei, 4)
+    assert.ok(hist.medianGwei >= 2)
+    assert.ok(hist.p90Gwei >= 3)
+    assert.equal(hist.buckets.length, 4)
+
+    // Last bucket cumulative should be 100%
+    assert.equal(hist.buckets[hist.buckets.length - 1].cumulativePct, 100)
+  })
 })
 
 function signAndAdd(pool: Mempool, pk: string, nonce: number, gasPrice?: string): void {
