@@ -6,7 +6,7 @@
  */
 
 import { Transaction } from "ethers"
-import type { IDatabase } from "./db.ts"
+import type { IDatabase, BatchOp } from "./db.ts"
 import type { IBlockIndex } from "./block-index.ts"
 import { createLogger } from "../logger.ts"
 
@@ -164,7 +164,7 @@ export class StoragePruner {
       return { blockRemoved: false, txsRemoved: 0, logsRemoved: false }
     }
 
-    const ops: Array<{ type: "del"; key: string }> = []
+    const ops: BatchOp[] = []
 
     // Remove block by number
     ops.push({ type: "del", key: BLOCK_BY_NUMBER_PREFIX + height.toString() })
@@ -194,7 +194,7 @@ export class StoragePruner {
     ops.push({ type: "del", key: LOG_BY_BLOCK_PREFIX + height.toString() })
 
     if (ops.length > 0) {
-      await this.db.batch(ops as any)
+      await this.db.batch(ops)
     }
 
     return { blockRemoved: true, txsRemoved: txCount, logsRemoved: true }

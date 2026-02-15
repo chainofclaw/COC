@@ -71,7 +71,8 @@ export class EvmChain {
     if (stateManager) {
       opts.stateManager = stateManager
     }
-    const vm = await createVM(opts as any)
+    // VMOpts type not directly importable in strip-types mode
+    const vm = await createVM(opts as Parameters<typeof createVM>[0])
     return new EvmChain(chainId, vm, common, stateManager)
   }
 
@@ -162,7 +163,7 @@ export class EvmChain {
     if (this.externalStateManager) {
       opts.stateManager = this.externalStateManager
     }
-    this.vm = await createVM(opts as any)
+    this.vm = await createVM(opts as Parameters<typeof createVM>[0])
     if (this.prefundAccounts.length > 0) {
       await this.prefund(this.prefundAccounts)
     }

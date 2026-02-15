@@ -23,6 +23,7 @@ import { PersistentStateTrie } from "./storage/state-trie.ts"
 import { PersistentStateManager } from "./storage/persistent-state-manager.ts"
 import { IpfsMfs } from "./ipfs-mfs.ts"
 import { IpfsPubsub } from "./ipfs-pubsub.ts"
+import type { PubsubMessage } from "./ipfs-pubsub.ts"
 
 const log = createLogger("node")
 
@@ -162,7 +163,7 @@ pubsub.setPeerForwarder({
   },
 })
 p2p.setPubsubHandler((topic, message) => {
-  pubsub.receiveFromPeer(topic, message as any)
+  pubsub.receiveFromPeer(topic, message as PubsubMessage)
 })
 
 ipfs.start()
