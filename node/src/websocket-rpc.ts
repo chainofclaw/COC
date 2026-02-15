@@ -44,6 +44,8 @@ interface LogSubscriptionFilter {
 interface ClientState {
   subscriptions: Map<string, WsSubscription>
   handlers: Map<string, (...args: unknown[]) => void>
+  alive: boolean
+  connectedAt: number
 }
 
 /**
@@ -64,9 +66,13 @@ export function startWsRpcServer(
   return server
 }
 
+const HEARTBEAT_INTERVAL_MS = 30_000
+const MAX_CLIENTS = 100
+
 export class WsRpcServer {
   private wss: WebSocketServer | null = null
   private clients = new Map<WebSocket, ClientState>()
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null
   private readonly config: WsRpcConfig
   private readonly chainId: number
   private readonly evm: EvmChain
@@ -114,9 +120,23 @@ export class WsRpcServer {
     })
 
     this.wss.on("connection", (ws: WebSocket, _req: IncomingMessage) => {
+      // Reject if at max capacity
+      if (this.clients.size >= MAX_CLIENTS) {
+        log.warn("max clients reached, rejecting connection", { current: this.clients.size })
+        ws.close(1013, "max connections reached")
+        return
+      }
+
       this.clients.set(ws, {
         subscriptions: new Map(),
         handlers: new Map(),
+        alive: true,
+        connectedAt: Date.now(),
+      })
+
+      ws.on("pong", () => {
+        const client = this.clients.get(ws)
+        if (client) client.alive = true
       })
 
       ws.on("message", (data: Buffer | string) => {
@@ -138,10 +158,29 @@ export class WsRpcServer {
     this.wss.on("listening", () => {
       log.info("WebSocket RPC listening", { bind: this.config.bind, port: this.config.port })
     })
+
+    // Heartbeat: ping all clients every 30s, terminate unresponsive ones
+    this.heartbeatTimer = setInterval(() => {
+      for (const [ws, client] of this.clients) {
+        if (!client.alive) {
+          log.info("terminating unresponsive client")
+          ws.terminate()
+          this.cleanupClient(ws)
+          continue
+        }
+        client.alive = false
+        ws.ping()
+      }
+    }, HEARTBEAT_INTERVAL_MS)
+    this.heartbeatTimer.unref()
   }
 
   stop(): void {
-    // Cleanup all client subscriptions
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer)
+      this.heartbeatTimer = null
+    }
+
     for (const [ws] of this.clients) {
       this.cleanupClient(ws)
     }
