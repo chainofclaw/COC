@@ -27,7 +27,7 @@ COC is an EVM-compatible blockchain prototype with PoSe (Proof-of-Service) settl
 - **PoSe Protocol**:
   - Off-chain: challenge factory, receipt verification, batch aggregation, epoch scoring
   - On-chain: PoSeManager contract with registration, batch submission, challenge, finalize, slash
-- **Storage Layer**: IPFS-compatible HTTP APIs (add/cat/get/block/pin/ls/stat/id/version) + `/ipfs/<cid>` gateway
+- **Storage Layer**: IPFS-compatible HTTP APIs (add/cat/get/block/pin/ls/stat/id/version) + `/ipfs/<cid>` gateway + tar archive for `get`
 - **Runtime Services**:
   - `coc-node`: PoSe challenge/receipt HTTP endpoints
   - `coc-agent`: challenge generation, batch submission, node registration
@@ -38,7 +38,12 @@ COC is an EVM-compatible blockchain prototype with PoSe (Proof-of-Service) settl
   - Devnet scripts for 3/5/7 node networks
   - Quality gate script (unit + integration + e2e tests)
 - **Blockchain Explorer**: Full-featured Next.js app (see below)
-- **Testing**: 191 tests across 66 test files, covering chain engine, EVM, mempool, RPC, WebSocket, P2P, storage, IPFS, PoSe, and configuration
+- **BFT Consensus**: BFT-lite three-phase commit (propose/prepare/commit) with stake-weighted quorum, coordinator lifecycle management
+- **Fork Choice**: GHOST-inspired deterministic fork selection (BFT finality > chain length > cumulative weight > hash tiebreaker)
+- **DHT Routing**: Kademlia DHT with XOR distance metric, 256 K-buckets (K=20), findClosest lookup
+- **Wire Protocol**: Binary framed protocol (Magic 0xC0C1, type byte, 4B length, payload) with streaming FrameDecoder
+- **State Snapshot**: EVM state export/import for fast sync (accounts, storage, code)
+- **Testing**: 640 tests across 73 test files, covering chain engine, EVM, mempool, RPC, WebSocket, P2P, storage, IPFS, PoSe, BFT, DHT, wire protocol, fork choice, and configuration
 
 ### Blockchain Explorer Features
 
@@ -108,6 +113,21 @@ The explorer (`explorer/`) is a Next.js 15 App Router application providing:
 | 33 | `b73cd00` | RPC parameter validation + structured error responses + hash/storage/blockstore tests |
 | 34 | `3f15127` | Consensus broadcast isolation + silent catch logging + PoSe HTTP validation |
 | 35 | `aab48a9` | Merkle path bounds check + snapshot-manager logging + IPFS HTTP/UnixFS/Merkle tests |
+
+### Core Protocol & BFT (Cycles 36–45)
+
+| Cycle | Commit | Summary |
+|-------|--------|---------|
+| 36 | `ad2ba99` | IPFS tar archive for `/api/v0/get` endpoint (POSIX USTAR format) |
+| 37 | `d1b2cd7` | BFT-lite consensus round state machine (three-phase commit, stake-weighted quorum) |
+| 38 | `ed0fd73` | Binary wire protocol with frame encoding/decoding and streaming FrameDecoder |
+| 39 | `8c2024f` | Kademlia DHT routing table with XOR distance, 256 K-buckets (K=20) |
+| 40 | `53eecd6` | GHOST-inspired fork choice rule (BFT finality > length > weight > hash) |
+| 41 | `770e857` | BFT coordinator bridging consensus engine and P2P layer |
+| 42 | `879d584` | EVM state snapshot export/import for fast sync |
+| 43 | `4775b4b` | P2P BFT message routing (`/p2p/bft-message` endpoint + `broadcastBft`) |
+| 44 | `333e2c2` | `coc_getBftStatus` RPC endpoint + debug-trace OpenEthereum format fix |
+| 45 | `583b541` | Full test suite verification (640 tests) + core algorithms documentation |
 
 ## Quick Start
 
