@@ -253,3 +253,44 @@ Code:
 - `COC/node/src/state-snapshot.ts` (`exportStateSnapshot`, `importStateSnapshot`)
 - `COC/node/src/consensus.ts` (`SnapSyncProvider` interface)
 - `COC/node/src/p2p.ts` (`/p2p/state-snapshot` endpoint)
+
+## 21) BFT Equivocation Detection
+**Goal**: detect double-voting by validators for slashing evidence.
+
+Algorithm:
+- Maintain a 3-level map: `height → phase → validatorId → blockHash`.
+- On each vote (prepare/commit), check if the validator already voted for a different block hash at the same height+phase.
+- If conflict found, emit `EquivocationEvidence` with both conflicting block hashes.
+- Prune old heights to limit memory (configurable `maxTrackedHeights`, default 100).
+- Pruning occurs after recording the vote (not before) to avoid race conditions.
+
+Code:
+- `COC/node/src/bft.ts` (`EquivocationDetector`)
+- `COC/node/src/bft-coordinator.ts` (integration)
+
+## 22) Dual Transport Block/Tx Propagation
+**Goal**: maximize block and transaction delivery via parallel transport paths.
+
+Algorithm:
+- On block production: broadcast via HTTP gossip (primary) AND wire protocol TCP (secondary).
+- On transaction receipt via HTTP: relay to all wire-connected peers via `broadcastFrame`.
+- Each transport path operates independently — failure in one does not block the other.
+- Wire broadcast uses late binding pattern: function reference set after wire server initialization.
+- Transaction dedup at application layer (mempool rejects duplicates).
+
+Code:
+- `COC/node/src/consensus.ts` (`broadcastBlock` with wireBroadcast callback)
+- `COC/node/src/index.ts` (`wireBroadcastFn`, `wireTxRelayFn`)
+
+## 23) Consensus Metrics Collection
+**Goal**: track block production and sync performance for observability.
+
+Algorithm:
+- On each `tryPropose()`: record start time, increment `blocksProposed` or `proposeFailed`, accumulate `totalProposeMs`.
+- On each `trySync()`: record start time, increment `syncAttempts`, track `syncAdoptions` and `blocksAdopted`.
+- On snap sync success: increment `snapSyncs`.
+- `getMetrics()` returns computed averages (total time / count), last operation times, and uptime.
+- `startedAtMs` set in `start()` for uptime calculation.
+
+Code:
+- `COC/node/src/consensus.ts` (`ConsensusMetrics` interface, `getMetrics()`)

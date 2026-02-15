@@ -703,12 +703,77 @@ Tests (4 new test files):
 - `COC/node/src/dht-network.test.ts` - Bootstrap, iterative lookup, self-lookup
 - `COC/node/src/snap-sync.test.ts` - State snapshot sync export/import
 
-## 23) Whitepaper Gap Summary
-- Consensus: validator governance with stake-weighted proposer selection (Phase 22 + 26), BFT-lite round state machine with coordinator (Phase 28), GHOST fork choice (Phase 28), BFT integrated into ConsensusEngine main loop (Phase 29, opt-in).
-- P2P: peer scoring (Phase 16), peer persistence and DNS seed discovery (Phase 26), binary wire protocol and Kademlia DHT (Phase 28), TCP server/client transport and DHT network layer (Phase 29, opt-in). HTTP gossip remains primary.
+## 23) Phase 30: Protocol Hardening & Metrics
+**Status: Implemented (2026-02-15)**
+
+### 30.1 Wire Protocol FIND_NODE
+- `FindNode` (0x40) and `FindNodeResponse` (0x41) message types added to wire protocol
+- `WireClient.findNode()` async method with request/response correlation and timeout
+- `WireServer` handles FIND_NODE requests and responds with closest peers from DHT routing table
+- DHT iterative lookup now uses wire protocol FIND_NODE instead of local routing table fallback
+
+### 30.2 BFT Equivocation Detection
+- `EquivocationDetector` class tracks validator votes per height/phase
+- Detects conflicting votes (different block hash for same height+phase) as slashing evidence
+- `EquivocationEvidence` interface: validatorId, height, phase, blockHash1, blockHash2, detectedAtMs
+- Integrated into `BftCoordinator` with `onEquivocation` callback
+- Height-based pruning to limit memory (configurable `maxTrackedHeights`)
+
+### 30.3 Wire Connection Manager
+- `WireConnectionManager` class for outbound WireClient lifecycle management
+- Max connection limits (default 25), peer add/remove, broadcast to all connected
+- Connection state tracking, remote node ID lookup, stats reporting
+
+### 30.4 Network Stats RPC
+- `coc_getNetworkStats` RPC endpoint: returns P2P, wire, DHT, BFT, and consensus stats
+- Fixed `bftCoordinator` parameter threading through `handleRpc`/`handleOne`/`handleRpcMethod`
+- Added `equivocations` count to `coc_getBftStatus` response
+
+### 30.5 Dual HTTP+TCP Block Propagation
+- `wireBroadcast` callback in `ConsensusEngine` constructor opts
+- `broadcastBlock()` sends via both HTTP gossip and wire protocol TCP
+- Late binding pattern for wire broadcast function (bound after wire server setup)
+
+### 30.6 DHT Node Announcement
+- `announce()` method sends FIND_NODE for own ID to all connected wire clients
+- Periodic announce timer (3-minute interval) alongside existing 5-minute refresh
+- `localAddress` added to `DhtNetworkConfig` for self-identification
+
+### 30.7 Consensus Metrics Tracking
+- `ConsensusMetrics` interface: blocksProposed, blocksAdopted, proposeFailed, syncAttempts, syncAdoptions, snapSyncs, avgProposeMs, avgSyncMs, lastProposeMs, lastSyncMs, startedAtMs, uptimeMs
+- `getMetrics()` method on ConsensusEngine with timing instrumentation in tryPropose/trySync
+
+### 30.8 Wire Protocol Transaction Relay
+- `wireTxRelayFn` bound to wire server for dual HTTP+TCP transaction propagation
+- P2P `onTx` handler relays accepted transactions to wire-connected peers
+- `onFindNode` handler wired from wire server to DHT routing table in index.ts
+
+Code:
+- `COC/node/src/wire-protocol.ts` (UPDATED - FindNode/FindNodeResponse)
+- `COC/node/src/wire-server.ts` (UPDATED - FindNode handler, tx broadcast test)
+- `COC/node/src/wire-client.ts` (UPDATED - findNode async method)
+- `COC/node/src/dht-network.ts` (UPDATED - announce, localAddress)
+- `COC/node/src/bft.ts` (UPDATED - EquivocationDetector)
+- `COC/node/src/bft-coordinator.ts` (UPDATED - equivocation integration)
+- `COC/node/src/consensus.ts` (UPDATED - metrics, wireBroadcast)
+- `COC/node/src/rpc.ts` (UPDATED - coc_getNetworkStats, bftCoordinator fix)
+- `COC/node/src/index.ts` (UPDATED - wireTxRelay, onFindNode, dual broadcast)
+- `COC/node/src/wire-connection-manager.ts` (NEW)
+
+Tests (28 new tests across 4 files):
+- `COC/node/src/consensus-bft.test.ts` (5 new: dual broadcast, metrics tracking)
+- `COC/node/src/wire-server.test.ts` (2 new: tx dispatch, broadcast)
+- `COC/node/src/wire-connection-manager.test.ts` (9 new)
+- `COC/node/src/wire-protocol.test.ts` (2 new: FindNode encode/decode)
+- `COC/node/src/bft.test.ts` (8 new: equivocation detection)
+- `COC/node/src/rpc-extended.test.ts` (2 new: network stats, BFT status)
+
+## 24) Whitepaper Gap Summary
+- Consensus: validator governance with stake-weighted proposer selection (Phase 22 + 26), BFT-lite round state machine with coordinator (Phase 28), GHOST fork choice (Phase 28), BFT integrated into ConsensusEngine main loop (Phase 29, opt-in), equivocation detection for double-vote slashing (Phase 30), consensus metrics tracking (Phase 30).
+- P2P: peer scoring (Phase 16), peer persistence and DNS seed discovery (Phase 26), binary wire protocol and Kademlia DHT (Phase 28), TCP server/client transport and DHT network layer (Phase 29, opt-in), wire FIND_NODE message for DHT queries (Phase 30), dual HTTP+TCP block and tx propagation (Phase 30), DHT node announcement (Phase 30), wire connection manager (Phase 30). HTTP gossip remains primary.
 - EVM: state persistence connected (Phase 26), real stateRoot in block headers (Phase 27), state snapshot export/import (Phase 28), snap sync provider in consensus (Phase 29).
-- RPC: 57+ methods with parameter validation and structured error codes (Phase 27), BFT status endpoint (Phase 28).
+- RPC: 57+ methods with parameter validation and structured error codes (Phase 27), BFT status endpoint (Phase 28), coc_getNetworkStats endpoint (Phase 30).
 - PoSe: dispute automation partially addressed (Phase 19), HTTP input validation (Phase 27).
 - IPFS: MFS and Pubsub (Phase 26), tar archive for `get` (Phase 28), Merkle path bounds validation (Phase 27).
 - Explorer: contract registry, call history, tx type classification, internal traces, governance display (Phase 27).
-- Testing: 667 tests across 77 files covering all major modules (Phase 29).
+- Testing: 695 tests across 78 files covering all major modules (Phase 30).

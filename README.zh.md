@@ -60,7 +60,12 @@ COC 是一个 EVM 兼容的区块链原型，包含 PoSe（Proof-of-Service）�
 - **TCP 传输**：Wire 服务端（入站 TCP、握手、帧分发）和 Wire 客户端（出站 TCP、指数退避重连 1s-30s）
 - **DHT 网络**：DHT 网络层（引导、迭代 FIND_NODE 查找 alpha=3、定期刷新 5 分钟）
 - **协议集成**：BFT 协调器 + 分叉选择集成到 ConsensusEngine，快照同步提供者，所有功能通过配置标志可选启用
-- **测试覆盖**：667 个测试，77 个测试文件，覆盖链引擎、EVM、mempool、RPC、WebSocket、P2P、存储、IPFS、PoSe、BFT、DHT、线协议、分叉选择、快照同步、配置等模块
+- **等价检测**：双重投票追踪与惩罚证据生成
+- **共识指标**：出块和同步性能追踪（propose/sync 时间、成功率、运行时间）
+- **双传输层**：HTTP gossip + TCP 线协议并行传播区块和交易
+- **Wire FIND_NODE**：通过线协议请求/响应消息进行 DHT 节点发现
+- **网络统计 RPC**：`coc_getNetworkStats` 端点聚合 P2P/Wire/DHT/BFT 统计
+- **测试覆盖**：695 个测试，78 个测试文件，覆盖链引擎、EVM、mempool、RPC、WebSocket、P2P、存储、IPFS、PoSe、BFT、DHT、线协议、分叉选择、快照同步、等价检测、共识指标、连接管理等模块
 - **生产加固**：RPC 参数验证（结构化错误码）、共识广播隔离、PoSe HTTP 输入验证、配置校验、Merkle 路径边界检查、结构化日志替代 console.warn
 
 ## 快速开始

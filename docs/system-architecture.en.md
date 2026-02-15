@@ -71,8 +71,9 @@ COC is an EVM-compatible blockchain prototype that combines a lightweight execut
 7. Aggregated batch is submitted to PoSeManager and finalized later by relayer.
 
 ## Current Boundaries
-- Consensus uses ValidatorGovernance stake-weighted block production + rotation fallback. BFT coordinator integrated into ConsensusEngine (opt-in via `enableBft`): starts BFT round in `tryPropose()`, falls back to direct broadcast on failure. Fork choice rule integrated into `trySync()` for deterministic chain adoption.
-- P2P uses HTTP gossip as primary transport + peer persistence + DNS seed discovery. Wire server/client provide opt-in TCP transport (`enableWireProtocol`). DHT network layer provides opt-in iterative peer discovery (`enableDht`). State snapshot endpoint available for fast sync.
+- Consensus uses ValidatorGovernance stake-weighted block production + rotation fallback. BFT coordinator integrated into ConsensusEngine (opt-in via `enableBft`): starts BFT round in `tryPropose()`, falls back to direct broadcast on failure. Fork choice rule integrated into `trySync()` for deterministic chain adoption. Equivocation detection tracks double-voting for slashing evidence. Performance metrics (block times, sync stats, uptime) via `getMetrics()`.
+- P2P uses HTTP gossip as primary transport + peer persistence + DNS seed discovery. Wire server/client provide opt-in TCP transport (`enableWireProtocol`) with FIND_NODE request/response for DHT queries. DHT network layer provides opt-in iterative peer discovery (`enableDht`) with periodic node announcement. Dual HTTP+TCP propagation for blocks and transactions. Wire connection manager handles outbound peer lifecycle. State snapshot endpoint available for fast sync.
 - EVM state persists across restarts via PersistentStateManager + LevelDB. Snap sync provider integrated into ConsensusEngine (opt-in via `enableSnapSync`).
 - IPFS supports core HTTP APIs, gateway, MFS, Pubsub, and tar archive for `get`.
+- RPC exposes `coc_getNetworkStats` for P2P/wire/DHT/BFT stats and `coc_getBftStatus` for BFT round inspection with equivocation count.
 - All advanced features (BFT, wire protocol, DHT, snap sync) are disabled by default and enabled via config flags.
