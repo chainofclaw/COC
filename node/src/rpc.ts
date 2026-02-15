@@ -862,6 +862,42 @@ async function handleRpc(
         votes: updated?.votes ? Object.fromEntries(updated.votes) : {},
       }
     }
+    case "coc_getContracts": {
+      const engine = chain as any
+      if (engine.blockIndex?.getContracts) {
+        const opts = (payload.params ?? [])[0] as Record<string, unknown> | undefined
+        const contracts = await engine.blockIndex.getContracts({
+          limit: Number(opts?.limit ?? 50),
+          offset: Number(opts?.offset ?? 0),
+          reverse: opts?.reverse !== false,
+        })
+        return contracts.map((c: any) => ({
+          address: c.address,
+          blockNumber: `0x${c.blockNumber.toString(16)}`,
+          txHash: c.txHash,
+          creator: c.creator,
+          deployedAt: c.deployedAt,
+        }))
+      }
+      return []
+    }
+    case "coc_getContractInfo": {
+      const engine = chain as any
+      const addr = (payload.params ?? [])[0] as string
+      if (!addr) throw new Error("address required")
+      if (engine.blockIndex?.getContractInfo) {
+        const info = await engine.blockIndex.getContractInfo(addr as Hex)
+        if (!info) return null
+        return {
+          address: info.address,
+          blockNumber: `0x${info.blockNumber.toString(16)}`,
+          txHash: info.txHash,
+          creator: info.creator,
+          deployedAt: info.deployedAt,
+        }
+      }
+      return null
+    }
     default:
       throw new Error(`method not supported: ${payload.method}`)
   }
