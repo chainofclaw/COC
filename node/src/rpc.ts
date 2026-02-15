@@ -413,8 +413,8 @@ async function handleRpc(
       const account = testAccounts.get(address)
       if (!account) throw new Error(`account not found: ${address}`)
 
-      // 简化实现：将 typedData 序列化后签名
-      const dataHash = keccak256(JSON.stringify(typedData))
+      // Simplified: hash the serialized typed data for signing
+      const dataHash = keccak256(Buffer.from(JSON.stringify(typedData)))
       const signature = account.signingKey.sign(dataHash)
       return signature.serialized
     }
@@ -461,6 +461,129 @@ async function handleRpc(
       const txHash = String((payload.params ?? [])[0] ?? "") as Hex
       return await traceTransactionCalls(txHash, chain, evm)
     }
+    case "eth_getBlockTransactionCountByHash": {
+      const hash = String((payload.params ?? [])[0] ?? "") as Hex
+      const block = await Promise.resolve(chain.getBlockByHash(hash))
+      return block ? `0x${block.txs.length.toString(16)}` : null
+    }
+    case "eth_getBlockTransactionCountByNumber": {
+      const tag = String((payload.params ?? [])[0] ?? "latest")
+      const height = await Promise.resolve(chain.getHeight())
+      const num = tag === "latest" ? height : tag === "earliest" ? 0n : tag === "pending" ? height : BigInt(tag)
+      const block = await Promise.resolve(chain.getBlockByNumber(num))
+      return block ? `0x${block.txs.length.toString(16)}` : null
+    }
+    case "eth_getTransactionByBlockHashAndIndex": {
+      const blockHash = String((payload.params ?? [])[0] ?? "") as Hex
+      const txIndex = Number((payload.params ?? [])[1] ?? 0)
+      const block = await Promise.resolve(chain.getBlockByHash(blockHash))
+      if (!block || txIndex >= block.txs.length) return null
+      const rawTx = block.txs[txIndex]
+      try {
+        const parsed = Transaction.from(rawTx)
+        return {
+          hash: parsed.hash,
+          from: parsed.from,
+          to: parsed.to,
+          nonce: `0x${parsed.nonce.toString(16)}`,
+          value: `0x${(parsed.value ?? 0n).toString(16)}`,
+          gas: `0x${(parsed.gasLimit ?? 21000n).toString(16)}`,
+          gasPrice: `0x${(parsed.gasPrice ?? 0n).toString(16)}`,
+          input: parsed.data ?? "0x",
+          blockHash: block.hash,
+          blockNumber: `0x${block.number.toString(16)}`,
+          transactionIndex: `0x${txIndex.toString(16)}`,
+        }
+      } catch { return null }
+    }
+    case "eth_getTransactionByBlockNumberAndIndex": {
+      const tag = String((payload.params ?? [])[0] ?? "latest")
+      const txIdx = Number((payload.params ?? [])[1] ?? 0)
+      const height = await Promise.resolve(chain.getHeight())
+      const num = tag === "latest" ? height : tag === "earliest" ? 0n : tag === "pending" ? height : BigInt(tag)
+      const block = await Promise.resolve(chain.getBlockByNumber(num))
+      if (!block || txIdx >= block.txs.length) return null
+      const rawTx = block.txs[txIdx]
+      try {
+        const parsed = Transaction.from(rawTx)
+        return {
+          hash: parsed.hash,
+          from: parsed.from,
+          to: parsed.to,
+          nonce: `0x${parsed.nonce.toString(16)}`,
+          value: `0x${(parsed.value ?? 0n).toString(16)}`,
+          gas: `0x${(parsed.gasLimit ?? 21000n).toString(16)}`,
+          gasPrice: `0x${(parsed.gasPrice ?? 0n).toString(16)}`,
+          input: parsed.data ?? "0x",
+          blockHash: block.hash,
+          blockNumber: `0x${block.number.toString(16)}`,
+          transactionIndex: `0x${txIdx.toString(16)}`,
+        }
+      } catch { return null }
+    }
+    case "eth_getUncleCountByBlockHash":
+    case "eth_getUncleCountByBlockNumber":
+    case "eth_getUncleByBlockHashAndIndex":
+    case "eth_getUncleByBlockNumberAndIndex":
+      // COC uses PoSe consensus with no uncle blocks
+      return payload.method.includes("Count") ? "0x0" : null
+    case "eth_protocolVersion":
+      return "0x41" // 65
+    case "eth_feeHistory": {
+      const blockCount = Number((payload.params ?? [])[0] ?? 1)
+      const newestBlock = String((payload.params ?? [])[1] ?? "latest")
+      const rewardPercentiles = ((payload.params ?? [])[2] ?? []) as number[]
+      const height = await Promise.resolve(chain.getHeight())
+      const newest = newestBlock === "latest" ? height : BigInt(newestBlock)
+      const count = Math.min(blockCount, Number(newest), 1024)
+      const baseFees: string[] = []
+      const gasUsedRatios: number[] = []
+      const rewards: string[][] = []
+      for (let i = 0; i < count; i++) {
+        baseFees.push("0x3b9aca00") // 1 gwei
+        gasUsedRatios.push(0.5)
+        if (rewardPercentiles.length > 0) {
+          rewards.push(rewardPercentiles.map(() => "0x3b9aca00"))
+        }
+      }
+      baseFees.push("0x3b9aca00") // extra entry for next block
+      return {
+        oldestBlock: `0x${(newest - BigInt(count) + 1n).toString(16)}`,
+        baseFeePerGas: baseFees,
+        gasUsedRatio: gasUsedRatios,
+        ...(rewardPercentiles.length > 0 ? { reward: rewards } : {}),
+      }
+    }
+    case "eth_newBlockFilter": {
+      const id = `0x${Math.floor(Math.random() * Number.MAX_SAFE_INTEGER).toString(16)}`
+      const height = await Promise.resolve(chain.getHeight())
+      const filter: PendingFilter = {
+        id,
+        fromBlock: height,
+        lastCursor: height,
+      }
+      filters.set(id, filter)
+      return id
+    }
+    case "eth_newPendingTransactionFilter": {
+      const id = `0x${Math.floor(Math.random() * Number.MAX_SAFE_INTEGER).toString(16)}`
+      const filter: PendingFilter = {
+        id,
+        fromBlock: 0n,
+        lastCursor: 0n,
+      }
+      filters.set(id, filter)
+      return id
+    }
+    case "eth_getFilterLogs": {
+      const id = String((payload.params ?? [])[0] ?? "")
+      const filter = filters.get(id)
+      if (!filter) return []
+      const height = await Promise.resolve(chain.getHeight())
+      return collectLogs(chain, filter.fromBlock, filter.toBlock ?? height, filter)
+    }
+    case "eth_maxPriorityFeePerGas":
+      return "0x3b9aca00" // 1 gwei
     case "coc_getTransactionsByAddress": {
       const addr = String((payload.params ?? [])[0] ?? "").toLowerCase() as Hex
       const limit = Number((payload.params ?? [])[1] ?? 50)
