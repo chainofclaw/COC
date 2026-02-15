@@ -60,6 +60,12 @@ export class P2PNode {
   private readonly handlers: P2PHandlers
   private readonly seenTx = new BoundedSet<Hex>(50_000)
   private readonly seenBlocks = new BoundedSet<Hex>(10_000)
+  // Per-peer tracking: avoid sending same hash to same peer
+  private readonly sentToPeer = new Map<string, BoundedSet<string>>()
+  private txReceived = 0
+  private txBroadcast = 0
+  private blocksReceived = 0
+  private blocksBroadcast = 0
   readonly scoring: PeerScoring
   readonly discovery: PeerDiscovery
 
@@ -169,15 +175,17 @@ export class P2PNode {
   async receiveTx(rawTx: Hex): Promise<void> {
     if (this.seenTx.has(rawTx)) return
     this.seenTx.add(rawTx)
+    this.txReceived++
     await this.handlers.onTx(rawTx)
-    void this.broadcast("/p2p/gossip-tx", { rawTx })
+    void this.broadcast("/p2p/gossip-tx", { rawTx }, rawTx)
   }
 
   async receiveBlock(block: ChainBlock): Promise<void> {
     if (this.seenBlocks.has(block.hash)) return
     this.seenBlocks.add(block.hash)
+    this.blocksReceived++
     await this.handlers.onBlock(block)
-    void this.broadcast("/p2p/gossip-block", { block })
+    void this.broadcast("/p2p/gossip-block", { block }, block.hash)
   }
 
   async fetchSnapshots(): Promise<ChainSnapshot[]> {
@@ -193,18 +201,46 @@ export class P2PNode {
     return results
   }
 
-  private async broadcast(path: string, payload: unknown): Promise<void> {
+  getStats(): { txReceived: number; txBroadcast: number; blocksReceived: number; blocksBroadcast: number; seenTxSize: number; seenBlocksSize: number } {
+    return {
+      txReceived: this.txReceived,
+      txBroadcast: this.txBroadcast,
+      blocksReceived: this.blocksReceived,
+      blocksBroadcast: this.blocksBroadcast,
+      seenTxSize: this.seenTx.size,
+      seenBlocksSize: this.seenBlocks.size,
+    }
+  }
+
+  private getPeerSentSet(peerId: string): BoundedSet<string> {
+    let set = this.sentToPeer.get(peerId)
+    if (!set) {
+      set = new BoundedSet<string>(5_000)
+      this.sentToPeer.set(peerId, set)
+    }
+    return set
+  }
+
+  private async broadcast(path: string, payload: unknown, dedupeHash?: string): Promise<void> {
     const peers = this.cfg.enableDiscovery !== false
       ? this.discovery.getActivePeers()
       : this.cfg.peers
 
-    // Batch broadcasts to avoid overwhelming network
     for (let i = 0; i < peers.length; i += BROADCAST_CONCURRENCY) {
       const batch = peers.slice(i, i + BROADCAST_CONCURRENCY)
       await Promise.all(batch.map(async (peer) => {
+        // Skip if we already sent this hash to this peer
+        if (dedupeHash) {
+          const peerSent = this.getPeerSentSet(peer.id)
+          if (peerSent.has(dedupeHash)) return
+          peerSent.add(dedupeHash)
+        }
+
         try {
           await requestJson(`${peer.url}${path}`, "POST", payload)
           this.scoring.recordSuccess(peer.id)
+          if (path.includes("tx")) this.txBroadcast++
+          else this.blocksBroadcast++
         } catch {
           this.scoring.recordFailure(peer.id)
         }
