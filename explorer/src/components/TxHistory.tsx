@@ -17,7 +17,6 @@ export function TxHistory({ address, initialTxs }: TxHistoryProps) {
   const [filter, setFilter] = useState<TxFilter>('all')
   const addrLower = address.toLowerCase()
 
-  // Parse token transfers from logs
   const txsWithTokens = initialTxs.map((tx) => {
     const transfers = (tx.logs ?? [])
       .map((log) => decodeTransferLog(log))
@@ -76,6 +75,7 @@ export function TxHistory({ address, initialTxs }: TxHistoryProps) {
                 <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Dir</th>
                 <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">From / To</th>
                 <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Method</th>
+                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Gas</th>
                 <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
               </tr>
             </thead>
@@ -86,6 +86,7 @@ export function TxHistory({ address, initialTxs }: TxHistoryProps) {
                 const decoded = decodeMethodSelector(tx.input)
                 const blockNum = parseInt(tx.blockNumber, 16)
                 const success = tx.status === '0x1'
+                const gasUsed = parseInt(tx.gasUsed, 16)
 
                 return (
                   <tr key={tx.hash} className="hover:bg-gray-50">
@@ -124,33 +125,42 @@ export function TxHistory({ address, initialTxs }: TxHistoryProps) {
                         <span className="text-gray-500 text-xs">Transfer</span>
                       )}
                     </td>
+                    <td className="px-3 py-2 text-sm font-mono text-xs text-gray-600">
+                      {gasUsed > 0 ? gasUsed.toLocaleString() : '-'}
+                    </td>
                     <td className="px-3 py-2 text-sm">
                       <span className={success ? 'text-green-600' : 'text-red-600'}>
                         {success ? 'OK' : 'Fail'}
                       </span>
                     </td>
-                    {/* Token transfers row */}
-                    {tx.tokenTransfers.length > 0 && (
-                      <td colSpan={6} className="px-3 pb-2">
-                        <div className="flex flex-wrap gap-2">
-                          {tx.tokenTransfers.map((t, i) => (
-                            <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 bg-yellow-50 border border-yellow-200 rounded text-xs">
-                              <span className="text-yellow-600 font-medium">{t.type === 'ERC20-Transfer' ? 'Transfer' : 'Approval'}</span>
-                              <span className="font-mono">{formatTokenAmount(t.value)}</span>
-                              <span className="text-gray-400">from</span>
-                              <Link href={`/address/${t.from}`} className="text-blue-600 font-mono">{formatAddress(t.from)}</Link>
-                              <span className="text-gray-400">to</span>
-                              <Link href={`/address/${t.to}`} className="text-blue-600 font-mono">{formatAddress(t.to)}</Link>
-                            </span>
-                          ))}
-                        </div>
-                      </td>
-                    )}
                   </tr>
                 )
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Token transfers summary */}
+      {filter === 'token' && filtered.length > 0 && (
+        <div className="mt-4 space-y-2">
+          {filtered.map((tx) =>
+            tx.tokenTransfers.map((t, i) => (
+              <div key={`${tx.hash}-${i}`} className="flex items-center gap-2 bg-yellow-50 border border-yellow-200 p-2 rounded text-xs flex-wrap">
+                <Link href={`/tx/${tx.hash}`} className="text-blue-600 font-mono">
+                  {tx.hash.slice(0, 10)}...
+                </Link>
+                <span className="px-1.5 py-0.5 bg-yellow-200 text-yellow-800 rounded font-medium">
+                  {t.type === 'ERC20-Transfer' ? 'Transfer' : 'Approval'}
+                </span>
+                <span className="font-mono font-medium">{formatTokenAmount(t.value)}</span>
+                <span className="text-gray-400">from</span>
+                <Link href={`/address/${t.from}`} className="text-blue-600 font-mono">{formatAddress(t.from)}</Link>
+                <span className="text-gray-400">to</span>
+                <Link href={`/address/${t.to}`} className="text-blue-600 font-mono">{formatAddress(t.to)}</Link>
+              </div>
+            ))
+          )}
         </div>
       )}
     </div>
