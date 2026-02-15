@@ -21,16 +21,28 @@ interface PrunerStats {
 }
 
 export default async function StatsPage() {
+  interface ChainStats {
+    blockHeight: string
+    latestBlockTime: number
+    blocksPerMinute: number
+    pendingTxCount: number
+    recentTxCount: number
+    validatorCount: number
+    chainId: string
+  }
+
   const [
     blockHeight,
     gasPrice,
     txPoolStatus,
     prunerStats,
+    chainStats,
   ] = await Promise.all([
     rpcCall<string>('eth_blockNumber').catch(() => '0x0'),
     rpcCall<string>('eth_gasPrice').catch(() => '0x0'),
     rpcCall<{ pending: string; queued: string }>('txpool_status').catch(() => ({ pending: '0x0', queued: '0x0' })),
     rpcCall<PrunerStats>('coc_prunerStats').catch(() => null),
+    rpcCall<ChainStats>('coc_chainStats').catch(() => null),
   ])
 
   const height = parseInt(blockHeight, 16)
@@ -78,6 +90,14 @@ export default async function StatsPage() {
         <StatCard label="Gas Price" value={`${gasPriceGwei.toFixed(0)} Gwei`} />
         <StatCard label="Pending Txs" value={pendingTxs.toString()} color={pendingTxs > 100 ? 'yellow' : 'default'} />
         <StatCard label="TPS (est.)" value={tps} />
+        {chainStats && (
+          <>
+            <StatCard label="Blocks/min" value={chainStats.blocksPerMinute.toFixed(1)} />
+            <StatCard label="Validators" value={String(chainStats.validatorCount)} />
+            <StatCard label="Recent Txs (100 blk)" value={chainStats.recentTxCount.toLocaleString()} />
+            <StatCard label="Chain ID" value={String(parseInt(chainStats.chainId, 16))} />
+          </>
+        )}
       </div>
 
       {/* Block stats */}

@@ -862,6 +862,41 @@ async function handleRpc(
         votes: updated?.votes ? Object.fromEntries(updated.votes) : {},
       }
     }
+    case "coc_chainStats": {
+      const height = await Promise.resolve(chain.getHeight())
+      const latest = await Promise.resolve(chain.getBlockByNumber(height))
+      const poolStats = chain.mempool.stats()
+      const validators = (chain as any).cfg?.validators ?? []
+
+      // Calculate blocks per minute from last 10 blocks
+      let blocksPerMin = 0
+      if (height > 1n) {
+        const lookback = height > 10n ? 10n : height
+        const oldBlock = await Promise.resolve(chain.getBlockByNumber(height - lookback + 1n))
+        if (oldBlock && latest) {
+          const elapsed = (latest.timestampMs - oldBlock.timestampMs) / 1000
+          blocksPerMin = elapsed > 0 ? Number(lookback) / elapsed * 60 : 0
+        }
+      }
+
+      // Count total txs from last 100 blocks
+      let recentTxCount = 0
+      const scanFrom = height > 100n ? height - 99n : 1n
+      for (let i = scanFrom; i <= height; i++) {
+        const b = await Promise.resolve(chain.getBlockByNumber(i))
+        if (b) recentTxCount += b.txs.length
+      }
+
+      return {
+        blockHeight: `0x${height.toString(16)}`,
+        latestBlockTime: latest?.timestampMs ?? 0,
+        blocksPerMinute: Math.round(blocksPerMin * 100) / 100,
+        pendingTxCount: poolStats.size,
+        recentTxCount,
+        validatorCount: validators.length,
+        chainId: `0x${(chain as any).cfg?.chainId?.toString(16) ?? "1"}`,
+      }
+    }
     case "coc_getContracts": {
       const engine = chain as any
       if (engine.blockIndex?.getContracts) {
