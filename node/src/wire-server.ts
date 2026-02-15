@@ -7,7 +7,7 @@
 
 import net from "node:net"
 import { FrameDecoder, MessageType, encodeJsonPayload, decodeJsonPayload } from "./wire-protocol.ts"
-import type { WireFrame } from "./wire-protocol.ts"
+import type { WireFrame, FindNodePayload, FindNodeResponsePayload } from "./wire-protocol.ts"
 import type { ChainBlock, Hex } from "./blockchain-types.ts"
 import type { BftMessage } from "./bft.ts"
 import { createLogger } from "./logger.ts"
@@ -28,6 +28,7 @@ export interface WireServerConfig {
   onBlock: (block: ChainBlock) => Promise<void>
   onTx: (rawTx: Hex) => Promise<void>
   onBftMessage?: (msg: BftMessage) => Promise<void>
+  onFindNode?: (targetId: string) => Array<{ id: string; address: string }>
   getHeight: () => Promise<bigint | Promise<bigint>>
 }
 
@@ -194,6 +195,23 @@ export class WireServer {
           blockHash: msg.blockHash,
           senderId: msg.senderId,
         })
+        break
+      }
+
+      case MessageType.FindNode: {
+        if (!conn.handshakeComplete) return
+        const req = decodeJsonPayload<FindNodePayload>(frame)
+        const peers = this.cfg.onFindNode?.(req.targetId) ?? []
+        const resp: FindNodeResponsePayload = {
+          requestId: req.requestId,
+          peers,
+        }
+        conn.socket.write(encodeJsonPayload(MessageType.FindNodeResponse, resp))
+        break
+      }
+
+      case MessageType.FindNodeResponse: {
+        // Handled by pending request callbacks (see WireClient)
         break
       }
 

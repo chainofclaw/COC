@@ -132,10 +132,13 @@ export class DhtNetwork {
       return this.routingTable.findClosest(targetId, ALPHA)
     }
 
-    // In a full implementation, we would send a FIND_NODE request and await response.
-    // For now, return local closest peers as the wire protocol doesn't have
-    // a request/response FIND_NODE message type yet.
-    return this.routingTable.findClosest(targetId, K)
+    // Send FIND_NODE request via wire protocol and await response
+    const remotePeers = await client.findNode(targetId, LOOKUP_TIMEOUT_MS)
+    return remotePeers.map((p) => ({
+      id: p.id,
+      address: p.address,
+      lastSeenMs: Date.now(),
+    }))
   }
 
   /** Refresh the routing table by performing random lookups */

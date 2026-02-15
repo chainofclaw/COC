@@ -6,8 +6,9 @@
  */
 
 import net from "node:net"
-import { FrameDecoder, MessageType, encodeJsonPayload, encodeFrame, decodeJsonPayload } from "./wire-protocol.ts"
-import type { WireFrame } from "./wire-protocol.ts"
+import { FrameDecoder, MessageType, encodeJsonPayload, decodeJsonPayload } from "./wire-protocol.ts"
+import type { WireFrame, FindNodePayload, FindNodeResponsePayload } from "./wire-protocol.ts"
+import crypto from "node:crypto"
 import { createLogger } from "./logger.ts"
 
 const log = createLogger("wire-client")
@@ -40,6 +41,10 @@ export class WireClient {
   private reconnectMs = MIN_RECONNECT_MS
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private stopped = false
+  private readonly pendingFindNode = new Map<string, {
+    resolve: (peers: Array<{ id: string; address: string }>) => void
+    timer: ReturnType<typeof setTimeout>
+  }>()
 
   constructor(cfg: WireClientConfig) {
     this.cfg = cfg
@@ -82,6 +87,31 @@ export class WireClient {
 
   getRemoteNodeId(): string | null {
     return this.remoteNodeId
+  }
+
+  /** Send a FIND_NODE request and await the response */
+  findNode(targetId: string, timeoutMs = 5000): Promise<Array<{ id: string; address: string }>> {
+    return new Promise((resolve, reject) => {
+      if (!this.isConnected()) {
+        resolve([])
+        return
+      }
+      const requestId = crypto.randomUUID()
+      const timer = setTimeout(() => {
+        this.pendingFindNode.delete(requestId)
+        resolve([]) // timeout returns empty
+      }, timeoutMs)
+
+      this.pendingFindNode.set(requestId, { resolve, timer })
+
+      const payload: FindNodePayload = { targetId, requestId }
+      const sent = this.sendMessage(MessageType.FindNode, payload)
+      if (!sent) {
+        clearTimeout(timer)
+        this.pendingFindNode.delete(requestId)
+        resolve([])
+      }
+    })
   }
 
   private attemptConnect(): void {
@@ -148,6 +178,17 @@ export class WireClient {
         this.remoteNodeId = hs.nodeId
         this.handshakeComplete = true
         this.cfg.onConnected?.()
+        break
+      }
+
+      case MessageType.FindNodeResponse: {
+        const resp = decodeJsonPayload<FindNodeResponsePayload>(frame)
+        const pending = this.pendingFindNode.get(resp.requestId)
+        if (pending) {
+          clearTimeout(pending.timer)
+          this.pendingFindNode.delete(resp.requestId)
+          pending.resolve(resp.peers)
+        }
         break
       }
 

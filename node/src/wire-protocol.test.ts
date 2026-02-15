@@ -179,6 +179,34 @@ describe("JSON payload helpers", () => {
     assert.equal(decoded.stake, "1000000000000000000")
   })
 
+  it("round-trips FindNode payload", () => {
+    const payload = { targetId: "0xabcdef", requestId: "req-123" }
+    const encoded = encodeJsonPayload(MessageType.FindNode, payload)
+    const result = decodeFrame(encoded)
+    assert.ok(result)
+    assert.equal(result.frame.type, MessageType.FindNode)
+    const decoded = decodeJsonPayload<typeof payload>(result.frame)
+    assert.equal(decoded.targetId, "0xabcdef")
+    assert.equal(decoded.requestId, "req-123")
+  })
+
+  it("round-trips FindNodeResponse payload", () => {
+    const payload = {
+      requestId: "req-456",
+      peers: [
+        { id: "0x111", address: "10.0.0.1:19781" },
+        { id: "0x222", address: "10.0.0.2:19781" },
+      ],
+    }
+    const encoded = encodeJsonPayload(MessageType.FindNodeResponse, payload)
+    const result = decodeFrame(encoded)
+    assert.ok(result)
+    assert.equal(result.frame.type, MessageType.FindNodeResponse)
+    const decoded = decodeJsonPayload<typeof payload>(result.frame)
+    assert.equal(decoded.peers.length, 2)
+    assert.equal(decoded.peers[0].id, "0x111")
+  })
+
   it("preserves all message types", () => {
     const types = [
       MessageType.Handshake,
@@ -186,6 +214,8 @@ describe("JSON payload helpers", () => {
       MessageType.Transaction,
       MessageType.BftPrepare,
       MessageType.BftCommit,
+      MessageType.FindNode,
+      MessageType.FindNodeResponse,
     ]
     for (const type of types) {
       const encoded = encodeJsonPayload(type, { test: true })
