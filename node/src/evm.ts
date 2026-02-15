@@ -2,6 +2,7 @@ import { VM, createVM, runTx } from "@ethereumjs/vm"
 import { Hardfork, createCustomCommon, getPresetChainConfig } from "@ethereumjs/common"
 import { Account, Address, bytesToHex, hexToBytes, bigIntToHex } from "@ethereumjs/util"
 import { createTxFromRLP } from "@ethereumjs/tx"
+import { createBlock } from "@ethereumjs/block"
 import type { PrefundAccount } from "./types.ts"
 
 export interface ExecutionResult {
@@ -67,7 +68,9 @@ export class EvmChain {
 
   async executeRawTx(rawTx: string, blockNumber?: bigint, txIndex = 0, blockHash?: string): Promise<ExecutionResult> {
     const tx = createTxFromRLP(hexToBytes(rawTx), { common: this.common })
-    const result = await runTx(this.vm, { tx })
+    // Use baseFeePerGas=0 so dev-chain txs with any gasPrice are accepted
+    const block = createBlock({ header: { baseFeePerGas: 0n } }, { common: this.common })
+    const result = await runTx(this.vm, { tx, block, skipHardForkValidation: true })
     const txHash = bytesToHex(tx.hash())
     const appliedBlock = blockNumber ?? (this.blockNumber + 1n)
     this.blockNumber = appliedBlock

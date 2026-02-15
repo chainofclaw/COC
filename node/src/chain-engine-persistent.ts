@@ -93,6 +93,10 @@ export class PersistentChainEngine {
     return this.blockIndex.getLogs(filter)
   }
 
+  async getTransactionsByAddress(address: Hex, opts?: { limit?: number; reverse?: boolean }): Promise<TxWithReceipt[]> {
+    return this.blockIndex.getTransactionsByAddress(address, opts)
+  }
+
   async getReceiptsByBlock(number: bigint): Promise<TxReceipt[]> {
     const block = await this.getBlockByNumber(number)
     if (!block) return []
@@ -156,7 +160,18 @@ export class PersistentChainEngine {
     )
 
     const block = await this.buildBlock(nextHeight, txs)
-    await this.applyBlock(block, true)
+    try {
+      await this.applyBlock(block, true)
+    } catch {
+      // If block application fails (e.g. invalid tx), remove offending txs
+      // from mempool and produce an empty block instead
+      for (const tx of txs) {
+        this.mempool.remove(tx.hash)
+      }
+      const emptyBlock = await this.buildBlock(nextHeight, [])
+      await this.applyBlock(emptyBlock, true)
+      return emptyBlock
+    }
     return block
   }
 
@@ -188,6 +203,11 @@ export class PersistentChainEngine {
       const result = await this.evm.executeRawTx(raw, block.number, i, block.hash)
       const receipt = this.evm.getReceipt(result.txHash)
 
+      // Extract from/to from the raw transaction
+      const txInfo = this.evm.getTransaction(result.txHash)
+      const txFrom = (txInfo?.from ?? "0x0") as Hex
+      const txTo = (txInfo?.to ?? null) as Hex | null
+
       if (receipt) {
         const receiptLogs = Array.isArray(receipt.logs) ? receipt.logs : []
 
@@ -198,8 +218,8 @@ export class PersistentChainEngine {
             transactionHash: receipt.transactionHash as Hex,
             blockNumber: block.number,
             blockHash: block.hash,
-            from: receipt.from as Hex,
-            to: (receipt.to as Hex) ?? ("0x0" as Hex),
+            from: txFrom,
+            to: txTo ?? ("0x0" as Hex),
             gasUsed: BigInt(receipt.gasUsed.toString()),
             status: BigInt(receipt.status ?? 1),
             logs: receiptLogs.map((log: any) => ({
@@ -342,7 +362,7 @@ export class PersistentChainEngine {
 
         if (wasFinalized !== nowFinalized) {
           block.finalized = nowFinalized
-          await this.blockIndex.putBlock(block)
+          await this.blockIndex.updateBlock(block)
         }
       }
     }

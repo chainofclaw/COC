@@ -12,6 +12,13 @@ import { createLogger } from "./logger.ts"
 
 const log = createLogger("rpc")
 
+// BigInt-safe JSON serializer for RPC responses
+function jsonStringify(obj: unknown): string {
+  return JSON.stringify(obj, (_key, value) =>
+    typeof value === "bigint" ? `0x${value.toString(16)}` : value
+  )
+}
+
 // 测试账户管理器（仅用于测试环境）
 interface TestAccount {
   address: string
@@ -50,8 +57,9 @@ function initializeTestAccounts() {
 
 function computeAddressFromPublicKey(publicKey: string): string {
   // publicKey = 0x04... (65 bytes uncompressed)
-  const publicKeyBytes = Buffer.from(publicKey.slice(2), "hex")
-  const hash = keccak256(publicKeyBytes)
+  // Ethereum address = keccak256(pubkey_without_04_prefix)[last 20 bytes]
+  const pubkeyNoPrefix = Buffer.from(publicKey.slice(4), "hex")
+  const hash = keccak256(pubkeyNoPrefix)
   return "0x" + hash.slice(-40)
 }
 
@@ -115,7 +123,7 @@ export function startRpcServer(bind: string, port: number, chainId: number, evm:
         if (!res.headersSent) {
           res.writeHead(200, { "content-type": "application/json" })
         }
-        res.end(JSON.stringify(response))
+        res.end(jsonStringify(response))
       } catch (error) {
         sendError(res, null, String(error))
       }
@@ -205,7 +213,28 @@ async function handleRpc(
       // Try persistent index first, then fall back to EVM memory
       if (typeof chain.getTransactionByHash === "function") {
         const tx = await chain.getTransactionByHash(hash as Hex)
-        if (tx?.receipt) return tx.receipt
+        if (tx?.receipt) {
+          const r = tx.receipt
+          return {
+            transactionHash: r.transactionHash,
+            blockNumber: `0x${r.blockNumber.toString(16)}`,
+            blockHash: r.blockHash,
+            from: r.from,
+            to: r.to,
+            gasUsed: `0x${r.gasUsed.toString(16)}`,
+            status: r.status === 1n ? "0x1" : "0x0",
+            logs: (r.logs ?? []).map((log: any, idx: number) => ({
+              address: log.address,
+              topics: log.topics,
+              data: log.data,
+              blockNumber: `0x${r.blockNumber.toString(16)}`,
+              blockHash: r.blockHash,
+              transactionHash: r.transactionHash,
+              logIndex: `0x${idx.toString(16)}`,
+              removed: false,
+            })),
+          }
+        }
       }
       return evm.getReceipt(hash)
     }
@@ -338,9 +367,10 @@ async function handleRpc(
       const account = testAccounts.get(from)
       if (!account) throw new Error(`account not found: ${from}. Use eth_accounts to list available test accounts.`)
 
-      const nonce = await evm.getNonce(from)
+      const onchainNonce = await evm.getNonce(from)
+      const nonce = chain.mempool.getPendingNonce(from as Hex, onchainNonce)
       const gasPrice = txParams.gasPrice ?? "0x3b9aca00" // 1 gwei
-      const gasLimit = txParams.gas ?? (await evm.estimateGas({
+      const gasLimitRaw = txParams.gas ?? "0x" + (await evm.estimateGas({
         from: txParams.from,
         to: txParams.to ?? "",
         data: txParams.data ?? "0x",
@@ -352,14 +382,17 @@ async function handleRpc(
         value: txParams.value ?? "0x0",
         data: txParams.data ?? "0x",
         nonce: Number(nonce),
-        gasLimit: `0x${gasLimit}`,
+        gasLimit: gasLimitRaw,
         gasPrice,
         chainId,
       })
 
-      const signedTx = await account.signingKey.signTransaction(tx)
-      const result = await chain.addRawTx(signedTx as Hex)
-      await p2p.receiveTx(signedTx as Hex)
+      const sig = account.signingKey.sign(tx.unsignedHash)
+      const signed = tx.clone()
+      signed.signature = sig
+      const serialized = signed.serialized as Hex
+      const result = await chain.addRawTx(serialized)
+      await p2p.receiveTx(serialized)
       return result.hash
     }
     case "eth_sign": {
@@ -433,9 +466,9 @@ async function handleRpc(
       const limit = Number((payload.params ?? [])[1] ?? 50)
       const reverse = (payload.params ?? [])[2] !== false
 
-      if (typeof (chain as any).blockIndex?.getTransactionsByAddress === "function") {
-        const txs = await (chain as any).blockIndex.getTransactionsByAddress(addr, { limit, reverse })
-        return txs.map((tx: any) => ({
+      if (typeof chain.getTransactionsByAddress === "function") {
+        const txs = await chain.getTransactionsByAddress(addr, { limit, reverse })
+        return txs.map((tx) => ({
           hash: tx.receipt.transactionHash,
           from: tx.receipt.from,
           to: tx.receipt.to,

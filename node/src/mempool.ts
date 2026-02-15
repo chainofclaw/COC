@@ -202,6 +202,21 @@ export class Mempool {
   }
 
   /**
+   * Get the next available nonce for a sender (on-chain nonce + pending count)
+   */
+  getPendingNonce(from: Hex, onchainNonce: bigint): bigint {
+    const senderTxs = this.bySender.get(from)
+    if (!senderTxs || senderTxs.size === 0) return onchainNonce
+
+    let maxNonce = onchainNonce - 1n
+    for (const hash of senderTxs) {
+      const tx = this.txs.get(hash)
+      if (tx && tx.nonce > maxNonce) maxNonce = tx.nonce
+    }
+    return maxNonce + 1n
+  }
+
+  /**
    * Get pool statistics
    */
   stats(): { size: number; senders: number; oldestMs: number } {

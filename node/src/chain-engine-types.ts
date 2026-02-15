@@ -8,7 +8,7 @@
 
 import type { ChainBlock, ChainSnapshot, Hex, MempoolTx } from "./blockchain-types.ts"
 import type { TxReceipt } from "./evm.ts"
-import type { TxWithReceipt, IndexedLog, LogFilter } from "./storage/block-index.ts"
+import type { TxWithReceipt, IndexedLog, LogFilter, AddressTxQuery } from "./storage/block-index.ts"
 import type { Mempool } from "./mempool.ts"
 import type { ChainEventEmitter } from "./chain-events.ts"
 
@@ -39,6 +39,7 @@ export interface IChainEngine {
   // Optional: persistent log and transaction queries
   getLogs?(filter: LogFilter): Promise<IndexedLog[]>
   getTransactionByHash?(hash: Hex): Promise<TxWithReceipt | null>
+  getTransactionsByAddress?(address: Hex, opts?: AddressTxQuery): Promise<TxWithReceipt[]>
 }
 
 /**

@@ -74,6 +74,7 @@ export interface AddressTxQuery {
 
 export interface IBlockIndex {
   putBlock(block: ChainBlock): Promise<void>
+  updateBlock(block: ChainBlock): Promise<void>
   getBlockByNumber(num: bigint): Promise<ChainBlock | null>
   getBlockByHash(hash: Hex): Promise<ChainBlock | null>
   getLatestBlock(): Promise<ChainBlock | null>
@@ -113,6 +114,27 @@ export class BlockIndex implements IBlockIndex {
         type: "put",
         key: LATEST_BLOCK_KEY,
         value: blockData,
+      },
+    ])
+  }
+
+  /**
+   * Update block data without changing LATEST_BLOCK_KEY.
+   * Used by updateFinalityFlags to avoid resetting chain tip.
+   */
+  async updateBlock(block: ChainBlock): Promise<void> {
+    const blockData = encoder.encode(serializeJSON(block))
+
+    await this.db.batch([
+      {
+        type: "put",
+        key: BLOCK_BY_NUMBER_PREFIX + block.number.toString(),
+        value: blockData,
+      },
+      {
+        type: "put",
+        key: BLOCK_BY_HASH_PREFIX + block.hash,
+        value: encoder.encode(block.number.toString()),
       },
     ])
   }

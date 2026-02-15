@@ -113,7 +113,16 @@ export class ChainEngine {
     )
 
     const block = this.buildBlock(nextHeight, txs)
-    await this.applyBlock(block, true)
+    try {
+      await this.applyBlock(block, true)
+    } catch {
+      for (const tx of txs) {
+        this.mempool.remove(tx.hash)
+      }
+      const emptyBlock = this.buildBlock(nextHeight, [])
+      await this.applyBlock(emptyBlock, true)
+      return emptyBlock
+    }
     return block
   }
 
