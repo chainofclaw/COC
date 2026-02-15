@@ -59,6 +59,7 @@ class RateLimiter {
   }
 }
 
+const MAX_RPC_BODY = 1024 * 1024 // 1 MB max request body for RPC
 const rateLimiter = new RateLimiter()
 // Cleanup expired buckets every 5 minutes
 setInterval(() => rateLimiter.cleanup(), 300_000).unref()
@@ -165,8 +166,21 @@ export function startRpcServer(bind: string, port: number, chainId: number, evm:
     }
 
     let body = ""
-    req.on("data", (chunk) => (body += chunk))
+    let bodySize = 0
+    let aborted = false
+    req.on("data", (chunk: Buffer | string) => {
+      bodySize += typeof chunk === "string" ? chunk.length : chunk.byteLength
+      if (bodySize > MAX_RPC_BODY) {
+        aborted = true
+        res.writeHead(413, { "content-type": "application/json" })
+        res.end(JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "request body too large" } }))
+        req.destroy()
+        return
+      }
+      body += chunk
+    })
     req.on("end", async () => {
+      if (aborted) return
       try {
         if (!body || body.trim().length === 0) {
           return sendError(res, null, "empty request")
