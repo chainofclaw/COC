@@ -26,12 +26,16 @@ export function useWebSocket() {
   const pendingRef = useRef<Map<number, (result: unknown) => void>>(new Map())
   const nextIdRef = useRef(1)
   const [connected, setConnected] = useState(false)
+  const [reconnecting, setReconnecting] = useState(false)
+  const [reconnectAttempt, setReconnectAttempt] = useState(0)
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const backoffRef = useRef(BASE_RECONNECT_MS)
   const mountedRef = useRef(true)
 
   const scheduleReconnect = useCallback(() => {
     if (!mountedRef.current) return
+    setReconnecting(true)
+    setReconnectAttempt((prev) => prev + 1)
     const delay = backoffRef.current
     // Exponential backoff with jitter
     backoffRef.current = Math.min(delay * 2, MAX_RECONNECT_MS)
@@ -50,6 +54,8 @@ export function useWebSocket() {
       ws.onopen = () => {
         backoffRef.current = BASE_RECONNECT_MS // Reset backoff on success
         setConnected(true)
+        setReconnecting(false)
+        setReconnectAttempt(0)
       }
 
       ws.onmessage = (event) => {
@@ -149,5 +155,5 @@ export function useWebSocket() {
     }
   }, [connect])
 
-  return { connected, subscribe, unsubscribe, sendRpc }
+  return { connected, reconnecting, reconnectAttempt, subscribe, unsubscribe, sendRpc }
 }
