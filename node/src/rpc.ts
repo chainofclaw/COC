@@ -551,7 +551,7 @@ async function handleRpc(
       }
     }
     case "debug_traceTransaction": {
-      if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
+      if (!DEBUG_RPC_ENABLED) throw new Error("debug methods disabled (set COC_DEBUG_RPC=1)")
       const txHash = String((payload.params ?? [])[0] ?? "") as Hex
       const traceOpts = ((payload.params ?? [])[1] ?? {}) as Record<string, unknown>
       return await traceTransaction(txHash, chain, evm, {

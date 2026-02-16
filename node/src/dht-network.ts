@@ -176,6 +176,7 @@ export class DhtNetwork {
       // Verify claimed ID matches actual remote node ID from wire handshake
       const remoteId = client.getRemoteNodeId()
       if (remoteId && remoteId.toLowerCase() !== peer.id.toLowerCase()) {
+  log.warn(`Peer ID mismatch: ${peer.id} vs ${remoteId}`);
         this.verifyFailures += 1
         log.warn("DHT peer ID mismatch with wire handshake", { claimed: peer.id, actual: remoteId })
         return false

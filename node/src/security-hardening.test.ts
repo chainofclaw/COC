@@ -404,18 +404,18 @@ describe("C3: Peer scoring exponential ban", () => {
     scoring.addPeer("peer-1", "http://peer1:8080")
 
     // First ban
-    scoring.recordInvalidData("peer-1")
-    const peer1 = scoring.getAllPeers().find((p) => p.id === "peer-1")!
-    assert.equal(peer1.banCount, 1)
-    const firstBanDuration = peer1.bannedUntilMs - Date.now()
-    assert.ok(firstBanDuration > 0, "should be banned")
+scoring.recordInvalidData("peer-1")
+const peer1 = scoring.getAllPeers().find(p => p.id === "peer-1")!
+assert.equal(peer1.banCount, 1)
+const firstBanDuration = peer1.bannedUntilMs - Date.now()
+assert.ok(firstBanDuration > 0, "should be banned")
 
     // Reset score to trigger ban again
     scoring.addPeer("peer-2", "http://peer2:8080")
-    scoring.recordInvalidData("peer-2")
-    // First ban for peer-2
-    const p2first = scoring.getAllPeers().find((p) => p.id === "peer-2")!
-    assert.equal(p2first.banCount, 1)
+scoring.recordInvalidData("peer-2")
+// First ban for peer-2
+const p2first = scoring.getAllPeers().find(p => p.id === "peer-2")!
+assert.equal(p2first.banCount, 1)
   })
 
   it("should not decay score while banned", () => {

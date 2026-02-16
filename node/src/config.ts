@@ -38,16 +38,16 @@ export interface NodeConfig {
   poseNonceRegistryPath: string
   poseNonceRegistryTtlMs: number
   poseNonceRegistryMaxEntries: number
-  // P2P peer discovery
-  dnsSeeds: string[]
-  peerStorePath: string
-  peerMaxAgeMs: number
-  p2pMaxPeers: number
-  p2pMaxDiscoveredPerBatch: number
-  p2pRateLimitWindowMs: number
-  p2pRateLimitMaxRequests: number
-  p2pRequireInboundAuth: boolean
-  p2pInboundAuthMode: "off" | "monitor" | "enforce"
+// P2P peer discovery
+dnsSeeds: string[]
+peerStorePath: string
+peerMaxAgeMs: number
+p2pMaxPeers: number
+p2pMaxDiscoveredPerBatch: number
+p2pRateLimitWindowMs: number
+p2pRateLimitMaxRequests: number
+p2pRequireInboundAuth: boolean
+p2pInboundAuthMode: "off" | "monitor" | "enforce"
   p2pAuthMaxClockSkewMs: number
   p2pAuthNonceRegistryPath: string
   p2pAuthNonceTtlMs: number
