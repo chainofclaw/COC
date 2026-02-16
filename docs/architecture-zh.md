@@ -1,7 +1,7 @@
 # COC (ChainOfClaw) 技术架构文档
 
 > **版本**: v1.2.0
-> **更新日期**: 2026-02-15
+> **更新日期**: 2026-02-16
 > **状态**: 生产就绪（190 测试通过）
 
 ---
@@ -465,8 +465,9 @@ class NonceRegistry {
 ### 4.7 网络入口与发现层加固（新增）
 
 - PoSe HTTP 入站鉴权支持 `off/monitor/enforce`，并可通过 `challengerAuthorizer` 扩展为动态角色校验（含缓存）。
+  - 动态源支持治理活跃集，以及 PoSeManager `operatorNodeCount(address)` 的 on-chain 授权检查。
 - DHT peer 验证默认 `fail-closed`：当握手鉴权不可用时拒绝 peer，仅在显式关闭开关时才允许 TCP fallback。
-- P2P 入站来源接入 `PeerScoring`，鉴权失败/限流命中可触发临时封禁；discovery 身份失败联动惩罚打分。
+- P2P 入站来源接入 `PeerScoring`，鉴权失败/限流命中可触发临时封禁；来源识别使用 `IP + senderId` 复合键，discovery 身份失败联动惩罚打分。
 
 ---
 

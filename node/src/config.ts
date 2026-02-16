@@ -60,6 +60,12 @@ export interface NodeConfig {
   poseAuthNonceMaxEntries: number
   poseAllowedChallengers: string[]
   poseUseGovernanceChallengerAuth: boolean
+  poseUseOnchainChallengerAuth: boolean
+  poseOnchainAuthRpcUrl: string
+  poseOnchainAuthPoseManagerAddress: string
+  poseOnchainAuthMinOperatorNodes: number
+  poseOnchainAuthTimeoutMs: number
+  poseOnchainAuthFailOpen: boolean
   poseChallengerAuthCacheTtlMs: number
   // BFT consensus
   enableBft: boolean
@@ -203,6 +209,32 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
       ?? (user as Record<string, unknown>).poseUseGovernanceChallengerAuth,
     false,
   )
+  const poseUseOnchainChallengerAuth = parseBooleanFlag(
+    process.env.COC_POSE_USE_ONCHAIN_CHALLENGER_AUTH
+      ?? (user as Record<string, unknown>).poseUseOnchainChallengerAuth,
+    false,
+  )
+  const poseOnchainAuthRpcUrl = typeof process.env.COC_POSE_ONCHAIN_AUTH_RPC_URL === "string"
+    ? process.env.COC_POSE_ONCHAIN_AUTH_RPC_URL
+    : typeof (user as Record<string, unknown>).poseOnchainAuthRpcUrl === "string"
+      ? ((user as Record<string, unknown>).poseOnchainAuthRpcUrl as string)
+      : ""
+  const poseOnchainAuthPoseManagerAddress = typeof process.env.COC_POSE_ONCHAIN_AUTH_POSE_MANAGER === "string"
+    ? process.env.COC_POSE_ONCHAIN_AUTH_POSE_MANAGER
+    : typeof (user as Record<string, unknown>).poseOnchainAuthPoseManagerAddress === "string"
+      ? ((user as Record<string, unknown>).poseOnchainAuthPoseManagerAddress as string)
+      : ""
+  const poseOnchainAuthMinOperatorNodes = process.env.COC_POSE_ONCHAIN_AUTH_MIN_OPERATOR_NODES !== undefined
+    ? Number(process.env.COC_POSE_ONCHAIN_AUTH_MIN_OPERATOR_NODES)
+    : Number((user as Record<string, unknown>).poseOnchainAuthMinOperatorNodes ?? 1)
+  const poseOnchainAuthTimeoutMs = process.env.COC_POSE_ONCHAIN_AUTH_TIMEOUT_MS !== undefined
+    ? Number(process.env.COC_POSE_ONCHAIN_AUTH_TIMEOUT_MS)
+    : Number((user as Record<string, unknown>).poseOnchainAuthTimeoutMs ?? 3_000)
+  const poseOnchainAuthFailOpen = parseBooleanFlag(
+    process.env.COC_POSE_ONCHAIN_AUTH_FAIL_OPEN
+      ?? (user as Record<string, unknown>).poseOnchainAuthFailOpen,
+    false,
+  )
   const poseChallengerAuthCacheTtlMsEnv = process.env.COC_POSE_CHALLENGER_AUTH_CACHE_TTL_MS
   const poseChallengerAuthCacheTtlMs = poseChallengerAuthCacheTtlMsEnv !== undefined
     ? Number(poseChallengerAuthCacheTtlMsEnv)
@@ -266,6 +298,12 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     poseAuthNonceMaxEntries,
     poseAllowedChallengers,
     poseUseGovernanceChallengerAuth,
+    poseUseOnchainChallengerAuth,
+    poseOnchainAuthRpcUrl,
+    poseOnchainAuthPoseManagerAddress,
+    poseOnchainAuthMinOperatorNodes,
+    poseOnchainAuthTimeoutMs,
+    poseOnchainAuthFailOpen,
     poseChallengerAuthCacheTtlMs,
     enableBft: false,
     bftPrepareTimeoutMs: 5000,
@@ -296,6 +334,12 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     poseAuthNonceMaxEntries,
     poseAllowedChallengers,
     poseUseGovernanceChallengerAuth,
+    poseUseOnchainChallengerAuth,
+    poseOnchainAuthRpcUrl,
+    poseOnchainAuthPoseManagerAddress,
+    poseOnchainAuthMinOperatorNodes,
+    poseOnchainAuthTimeoutMs,
+    poseOnchainAuthFailOpen,
     poseChallengerAuthCacheTtlMs,
     dhtRequireAuthenticatedVerify,
     storage: { ...storageDefaults, ...userStorage },
@@ -485,6 +529,47 @@ export function validateConfig(cfg: Partial<NodeConfig>): string[] {
 
   if (cfg.poseUseGovernanceChallengerAuth !== undefined && typeof cfg.poseUseGovernanceChallengerAuth !== "boolean") {
     errors.push("poseUseGovernanceChallengerAuth must be a boolean")
+  }
+
+  if (cfg.poseUseOnchainChallengerAuth !== undefined && typeof cfg.poseUseOnchainChallengerAuth !== "boolean") {
+    errors.push("poseUseOnchainChallengerAuth must be a boolean")
+  }
+
+  if (cfg.poseOnchainAuthRpcUrl !== undefined && typeof cfg.poseOnchainAuthRpcUrl !== "string") {
+    errors.push("poseOnchainAuthRpcUrl must be a string")
+  }
+
+  if (cfg.poseOnchainAuthPoseManagerAddress !== undefined) {
+    const addrRe = /^0x[0-9a-fA-F]{40}$/
+    if (typeof cfg.poseOnchainAuthPoseManagerAddress !== "string" || !addrRe.test(cfg.poseOnchainAuthPoseManagerAddress)) {
+      errors.push("poseOnchainAuthPoseManagerAddress must be a valid hex address")
+    }
+  }
+
+  if (cfg.poseOnchainAuthMinOperatorNodes !== undefined) {
+    if (!Number.isInteger(cfg.poseOnchainAuthMinOperatorNodes) || cfg.poseOnchainAuthMinOperatorNodes < 1) {
+      errors.push("poseOnchainAuthMinOperatorNodes must be >= 1")
+    }
+  }
+
+  if (cfg.poseOnchainAuthTimeoutMs !== undefined) {
+    if (!Number.isInteger(cfg.poseOnchainAuthTimeoutMs) || cfg.poseOnchainAuthTimeoutMs < 100) {
+      errors.push("poseOnchainAuthTimeoutMs must be >= 100")
+    }
+  }
+
+  if (cfg.poseOnchainAuthFailOpen !== undefined && typeof cfg.poseOnchainAuthFailOpen !== "boolean") {
+    errors.push("poseOnchainAuthFailOpen must be a boolean")
+  }
+
+  if (cfg.poseUseOnchainChallengerAuth) {
+    if (!cfg.poseOnchainAuthRpcUrl || cfg.poseOnchainAuthRpcUrl.trim().length === 0) {
+      errors.push("poseOnchainAuthRpcUrl is required when poseUseOnchainChallengerAuth=true")
+    }
+    const addrRe = /^0x[0-9a-fA-F]{40}$/
+    if (!cfg.poseOnchainAuthPoseManagerAddress || !addrRe.test(cfg.poseOnchainAuthPoseManagerAddress)) {
+      errors.push("poseOnchainAuthPoseManagerAddress is required when poseUseOnchainChallengerAuth=true")
+    }
   }
 
   if (cfg.poseChallengerAuthCacheTtlMs !== undefined) {
