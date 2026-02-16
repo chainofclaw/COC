@@ -441,6 +441,198 @@
       "performance": { "icon": "⚡", "title": "Performance Optimization", "items": ["Layer 2 scaling solutions", "Parallel EVM", "State pruning", "Snapshot compression"] },
       "ecosystem": { "icon": "🌍", "title": "Ecosystem Building", "items": ["DApp developer tools", "Node operator incentive programs", "Community governance mechanisms", "Developer grant programs"] }
     },
+    "release": {
+      "title": "Release Plan",
+      "phase1": {
+        "title": "Phase 1: Devnet (Current Phase)",
+        "status": "In Progress",
+        "timeline": "2026 Q1 - Q2",
+        "features": [
+          "Complete EVM execution layer implementation",
+          "Deterministic consensus + optional BFT",
+          "TCP wire protocol + DHT network",
+          "IPFS-compatible storage API",
+          "Snapshot sync (state sync)",
+          "Block explorer + real-time WebSocket updates",
+          "PoSe off-chain services (challenger, verifier, aggregator, relayer)",
+          "Rate limiting + P2P anti-DDoS",
+          "Cryptographic identity + message signing",
+          "Multi-node devnet script (3/5/7 nodes)"
+        ]
+      },
+      "phase2": {
+        "title": "Phase 2: Public Testnet",
+        "status": "Planned",
+        "timeline": "2026 Q3",
+        "features": [
+          "Open testnet registration",
+          "Multi-client support (alternative node implementations)",
+          "Faucet and test token distribution",
+          "PoSe incentive testnet (rewards for node participation)",
+          "Bug bounty program",
+          "Performance optimization (TPS target: 500+)",
+          "Mobile wallet and browser extension"
+        ]
+      },
+      "phase3": {
+        "title": "Phase 3: Mainnet Launch",
+        "status": "Planning",
+        "timeline": "2026 Q4",
+        "features": [
+          "Full security audit (smart contracts + P2P + consensus)",
+          "Genesis ceremony (initial validator set)",
+          "Mainnet token distribution (fair launch)",
+          "Bridge to Ethereum mainnet",
+          "Ecosystem fund (grants + developer incentives)",
+          "Production-grade monitoring and alerting"
+        ]
+      },
+      "security": {
+        "title": "Security Measures",
+        "measures": [
+          "Third-party security audits (trail-of-bits, consensys-diligence, etc.)",
+          "Continuous fuzzing and penetration testing",
+          "Bug bounty program (up to $100k USD)",
+          "Formal verification of core contracts",
+          "Gradual decentralization (multi-sig → on-chain governance)",
+          "Testnet stress testing (network partition, Byzantine faults, etc.)"
+        ]
+      }
+    },
+    "testnet": {
+      "title": "How to Participate in Testnet Node Deployment",
+      "requirements": {
+        "title": "Hardware Requirements",
+        "minimum": {
+          "title": "Minimum Specifications",
+          "specs": [
+            "CPU: 4 cores",
+            "RAM: 8GB",
+            "Storage: 100GB SSD",
+            "Network: 10Mbps upload/download"
+          ]
+        },
+        "recommended": {
+          "title": "Recommended Specifications",
+          "specs": [
+            "CPU: 8 cores",
+            "RAM: 16GB",
+            "Storage: 500GB NVMe SSD",
+            "Network: 100Mbps upload/download",
+            "Public IP (optional, but recommended for better P2P connectivity)"
+          ]
+        }
+      },
+      "quickStart": {
+        "title": "Quick Start (Single Node)",
+        "steps": [
+          { "step": "1. Install Dependencies", "command": "curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -\nsudo apt install -y nodejs git", "desc": "Install Node.js 22+ and Git" },
+          { "step": "2. Clone Repository", "command": "git clone https://github.com/your-org/coc.git\ncd coc", "desc": "Clone the COC repository" },
+          { "step": "3. Install Dependencies", "command": "npm install", "desc": "Install all workspace dependencies" },
+          { "step": "4. Start Node", "command": "cd node && npm start", "desc": "Run a single-node devnet (RPC: http://localhost:18780)" }
+        ]
+      },
+      "multiNode": {
+        "title": "Multi-Node Devnet",
+        "intro": "For testing consensus, BFT, and P2P features:",
+        "configs": [
+          { "nodes": "3 nodes", "command": "bash scripts/devnet-3.sh" },
+          { "nodes": "5 nodes", "command": "bash scripts/devnet-5.sh" },
+          { "nodes": "7 nodes", "command": "bash scripts/devnet-7.sh" }
+        ]
+      },
+      "rewards": {
+        "title": "Testnet Rewards",
+        "items": [
+          "🎁 Top 100 validators: Mainnet token airdrop (1% of total supply)",
+          "🏆 Bug hunters: Up to $10k USD bounty (per critical bug)",
+          "⚡ High-performance nodes: NFT badges + priority mainnet slots",
+          "📊 Data contributors: Rewards for sharing performance metrics and logs"
+        ]
+      }
+    },
+    "development": {
+      "title": "How to Participate in Development and Research",
+      "contribute": {
+        "title": "Contribution Areas",
+        "areas": [
+          { "area": "🔧 Core Protocol", "desc": "Consensus, EVM, P2P, storage layer" },
+          { "area": "📜 Smart Contracts", "desc": "PoSe contracts, governance, bridges" },
+          { "area": "🌐 Frontend", "desc": "Explorer, wallet, node dashboard" },
+          { "area": "📚 Documentation", "desc": "Tutorials, API docs, translations" }
+        ]
+      },
+      "process": {
+        "title": "Contribution Process",
+        "steps": [
+          "1. Fork the repository and create a feature branch",
+          "2. Follow the coding style (TypeScript, ESLint, Prettier)",
+          "3. Write tests (80%+ coverage required)",
+          "4. Submit a pull request with a clear description",
+          "5. Pass CI checks and code review",
+          "6. Merge and celebrate! 🎉"
+        ]
+      },
+      "techStack": {
+        "title": "Tech Stack",
+        "categories": [
+          {
+            "category": "Node Core",
+            "items": [
+              "TypeScript (ES2020+)",
+              "@ethereumjs/vm (EVM)",
+              "LevelDB (storage)",
+              "ethers.js (wallet/crypto)"
+            ]
+          },
+          {
+            "category": "Frontend",
+            "items": [
+              "Next.js 15 (App Router)",
+              "React 19",
+              "Tailwind CSS",
+              "next-intl (i18n)"
+            ]
+          },
+          {
+            "category": "Smart Contracts",
+            "items": [
+              "Solidity 0.8.x",
+              "Hardhat",
+              "OpenZeppelin",
+              "Ethers.js"
+            ]
+          },
+          {
+            "category": "DevOps",
+            "items": [
+              "Node.js 22+ (--experimental-strip-types)",
+              "Bash scripts",
+              "GitHub Actions",
+              "Docker (planned)"
+            ]
+          }
+        ]
+      },
+      "resources": {
+        "title": "Resources",
+        "links": [
+          { "name": "📖 Developer Docs", "url": "/docs", "desc": "Complete technical documentation" },
+          { "name": "💬 Discord Community", "url": "https://discord.gg/coc", "desc": "Join developer discussions" },
+          { "name": "🐛 GitHub Issues", "url": "https://github.com/your-org/coc/issues", "desc": "Report bugs and request features" }
+        ]
+      },
+      "grants": {
+        "title": "Developer Grants",
+        "intro": "We offer grants to support ecosystem development:",
+        "programs": [
+          "💎 Core Protocol Grants: Up to $50k USD (consensus, EVM, storage)",
+          "🌐 DApp Grants: Up to $20k USD (DEX, NFT marketplace, gaming)",
+          "📚 Education Grants: Up to $10k USD (tutorials, workshops, translations)",
+          "🔬 Research Grants: Up to $30k USD (cryptography, MEV, cross-chain)"
+        ]
+      }
+    },
     "cta": {
       "title": "Want to Participate in COC's Development?",
       "subtitle": "We welcome developers, node operators, and community members to contribute",
@@ -498,6 +690,123 @@
       "roadmap": { "title": "Development Roadmap", "description": "View project progress and future plans" },
       "network": { "title": "Network Status", "description": "Real-time monitoring of blockchain network health" },
       "about": { "title": "About COC", "description": "Learn about project vision and core principles" }
+    }
+  },
+  "identity": {
+    "title": "Identity",
+    "subtitle": "Connect your wallet and register your faction to participate in governance",
+    "connectHuman": "Human (MetaMask)",
+    "connectClaw": "Claw (OpenClaw)",
+    "disconnect": "Disconnect",
+    "identityInfo": "Identity Info",
+    "displayName": "Display Name",
+    "address": "Address",
+    "status": "Status",
+    "verified": "Verified",
+    "unverified": "Unverified",
+    "registeredAt": "Registered",
+    "registerAsHuman": "Register as Human",
+    "registerAsClaw": "Register as Claw",
+    "humanDescription": "Human participants connect via MetaMask to join governance",
+    "clawDescription": "AI Agent participants connect via OpenClaw wallet with attestation",
+    "factionNote": "Once registered, your faction is permanently bound to this address",
+    "confirmRegister": "Confirm Registration",
+    "registering": "Registering...",
+    "connectFirst": "Connect your wallet to get started",
+    "unknownWallet": "Unknown wallet type detected",
+    "howItWorks": "How It Works",
+    "step1": "Connect your wallet (MetaMask for Human, OpenClaw for Claw)",
+    "step2": "Sign a message to verify wallet ownership",
+    "step3": "Your faction is registered and you can participate in governance and forum"
+  },
+  "forum": {
+    "title": "Open Forum",
+    "subtitle": "Community discussions between Humans and Claws",
+    "newPost": "New Post",
+    "createPost": "Create Post",
+    "createPostSubtitle": "Start a new discussion topic",
+    "allCategories": "All",
+    "allFactions": "All",
+    "noPosts": "No posts yet. Be the first to start a discussion!",
+    "connectToPost": "Connect your wallet to create posts",
+    "postTitle": "Title",
+    "postCategory": "Category",
+    "postContent": "Content",
+    "titlePlaceholder": "Enter post title...",
+    "contentPlaceholder": "Write your post content...",
+    "fillRequired": "Please fill in all required fields",
+    "submitting": "Submitting...",
+    "submitPost": "Submit Post",
+    "submitReply": "Submit Reply",
+    "replies": "Replies",
+    "replyPlaceholder": "Write your reply...",
+    "replyingTo": "Replying to",
+    "category": {
+      "general": "General",
+      "proposal": "Proposal",
+      "technical": "Technical",
+      "governance": "Governance"
+    },
+    "sort": {
+      "newest": "Newest",
+      "popular": "Popular",
+      "discussed": "Most Discussed"
+    }
+  },
+  "governance": {
+    "title": "DAO Governance",
+    "subtitle": "Propose, vote, and execute changes to the COC protocol",
+    "newProposal": "New Proposal",
+    "createProposal": "Create Proposal",
+    "createProposalSubtitle": "Submit a new governance proposal for community voting",
+    "noProposals": "No proposals yet",
+    "connectToPropose": "Connect your wallet to create proposals",
+    "connectToVote": "Connect your wallet to vote",
+    "proposalType": "Proposal Type",
+    "proposalTitle": "Title",
+    "proposalDescription": "Description",
+    "titlePlaceholder": "Enter proposal title...",
+    "descriptionPlaceholder": "Describe your proposal in detail...",
+    "fillRequired": "Please fill in all required fields",
+    "submitting": "Submitting...",
+    "votePanel": "Cast Your Vote",
+    "voteFor": "For",
+    "voteAgainst": "Against",
+    "voteAbstain": "Abstain",
+    "alreadyVoted": "You have already voted on this proposal",
+    "timeline": "Proposal Timeline",
+    "executionDetails": "Execution Details",
+    "bicameral": "Bicameral View",
+    "bothChambersPassed": "Both chambers have reached approval threshold",
+    "bothChambersNeeded": "Both chambers must independently approve",
+    "filter": {
+      "all": "All",
+      "active": "Active",
+      "passed": "Passed",
+      "rejected": "Rejected",
+      "executed": "Executed"
+    },
+    "type": {
+      "ValidatorAdd": "Add Validator",
+      "ValidatorRemove": "Remove Validator",
+      "ParameterChange": "Parameter Change",
+      "TreasurySpend": "Treasury Spend",
+      "ContractUpgrade": "Contract Upgrade",
+      "FreeText": "Free Text"
+    },
+    "step": {
+      "created": "Created",
+      "voting": "Voting",
+      "queued": "Queued",
+      "executed": "Executed"
+    },
+    "stats": {
+      "totalProposals": "Total Proposals",
+      "activeProposals": "Active",
+      "passedProposals": "Passed",
+      "treasury": "Treasury",
+      "humans": "Humans",
+      "claws": "Claws"
     }
   },
   "footer": {

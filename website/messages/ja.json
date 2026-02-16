@@ -441,6 +441,198 @@
       "performance": { "icon": "⚡", "title": "パフォーマンス最適化", "items": ["Layer 2拡張ソリューション", "Parallel EVM", "状態プルーニング", "スナップショット圧縮"] },
       "ecosystem": { "icon": "🌍", "title": "エコシステム構築", "items": ["DApp開発者ツール", "ノードオペレーターインセンティブプログラム", "コミュニティガバナンスメカニズム", "開発者助成プロジェクト"] }
     },
+    "release": {
+      "title": "リリース計画",
+      "phase1": {
+        "title": "フェーズ1: Devnet (現在のフェーズ)",
+        "status": "進行中",
+        "timeline": "2026 Q1 - Q2",
+        "features": [
+          "完全なEVM実行レイヤー実装",
+          "決定論的コンセンサス + オプショナルBFT",
+          "TCP wireプロトコル + DHTネットワーク",
+          "IPFS互換ストレージAPI",
+          "スナップショット同期 (状態同期)",
+          "ブロックエクスプローラー + リアルタイムWebSocket更新",
+          "PoSeオフチェーンサービス (challenger、verifier、aggregator、relayer)",
+          "レート制限 + P2P anti-DDoS",
+          "暗号化ID + メッセージ署名",
+          "マルチノードdevnetスクリプト (3/5/7ノード)"
+        ]
+      },
+      "phase2": {
+        "title": "フェーズ2: パブリックTestnet",
+        "status": "計画中",
+        "timeline": "2026 Q3",
+        "features": [
+          "オープンTestnet登録",
+          "マルチクライアントサポート (代替ノード実装)",
+          "Faucetとテストトークン配布",
+          "PoSeインセンティブTestnet (ノード参加報酬)",
+          "バグ報奨金プログラム",
+          "パフォーマンス最適化 (TPS目標: 500+)",
+          "モバイルウォレットとブラウザ拡張"
+        ]
+      },
+      "phase3": {
+        "title": "フェーズ3: Mainnetローンチ",
+        "status": "計画中",
+        "timeline": "2026 Q4",
+        "features": [
+          "完全なセキュリティ監査 (スマートコントラクト + P2P + コンセンサス)",
+          "ジェネシスセレモニー (初期バリデーターセット)",
+          "Mainnetトークン配布 (フェアローンチ)",
+          "Ethereum Mainnetへのブリッジ",
+          "エコシステムファンド (助成金 + 開発者インセンティブ)",
+          "プロダクショングレードの監視とアラート"
+        ]
+      },
+      "security": {
+        "title": "セキュリティ対策",
+        "measures": [
+          "サードパーティセキュリティ監査 (trail-of-bits、consensys-diligence等)",
+          "継続的なファジングと侵入テスト",
+          "バグ報奨金プログラム (最大$100k USD)",
+          "コアコントラクトの形式検証",
+          "段階的な分散化 (multi-sig → チェーン上ガバナンス)",
+          "Testnetストレステスト (ネットワークパーティション、ビザンチン障害等)"
+        ]
+      }
+    },
+    "testnet": {
+      "title": "Testnetノードデプロイへの参加方法",
+      "requirements": {
+        "title": "ハードウェア要件",
+        "minimum": {
+          "title": "最小仕様",
+          "specs": [
+            "CPU: 4コア",
+            "RAM: 8GB",
+            "ストレージ: 100GB SSD",
+            "ネットワーク: 10Mbpsアップロード/ダウンロード"
+          ]
+        },
+        "recommended": {
+          "title": "推奨仕様",
+          "specs": [
+            "CPU: 8コア",
+            "RAM: 16GB",
+            "ストレージ: 500GB NVMe SSD",
+            "ネットワーク: 100Mbpsアップロード/ダウンロード",
+            "パブリックIP (オプショナルだが、P2P接続性向上のため推奨)"
+          ]
+        }
+      },
+      "quickStart": {
+        "title": "クイックスタート (シングルノード)",
+        "steps": [
+          { "step": "1. 依存関係のインストール", "command": "curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -\nsudo apt install -y nodejs git", "desc": "Node.js 22+ とGitをインストール" },
+          { "step": "2. リポジトリのクローン", "command": "git clone https://github.com/your-org/coc.git\ncd coc", "desc": "COCリポジトリをクローン" },
+          { "step": "3. 依存関係のインストール", "command": "npm install", "desc": "すべてのワークスペース依存関係をインストール" },
+          { "step": "4. ノードの起動", "command": "cd node && npm start", "desc": "シングルノードdevnetを実行 (RPC: http://localhost:18780)" }
+        ]
+      },
+      "multiNode": {
+        "title": "マルチノードDevnet",
+        "intro": "コンセンサス、BFT、P2P機能のテスト用:",
+        "configs": [
+          { "nodes": "3ノード", "command": "bash scripts/devnet-3.sh" },
+          { "nodes": "5ノード", "command": "bash scripts/devnet-5.sh" },
+          { "nodes": "7ノード", "command": "bash scripts/devnet-7.sh" }
+        ]
+      },
+      "rewards": {
+        "title": "Testnet報酬",
+        "items": [
+          "🎁 トップ100バリデーター: Mainnetトークンエアドロップ (総供給量の1%)",
+          "🏆 バグハンター: 最大$10k USD報奨金 (クリティカルバグごと)",
+          "⚡ 高性能ノード: NFTバッジ + Mainnet優先スロット",
+          "📊 データコントリビューター: パフォーマンスメトリクスとログ共有の報酬"
+        ]
+      }
+    },
+    "development": {
+      "title": "開発と研究への参加方法",
+      "contribute": {
+        "title": "貢献分野",
+        "areas": [
+          { "area": "🔧 コアプロトコル", "desc": "コンセンサス、EVM、P2P、ストレージレイヤー" },
+          { "area": "📜 スマートコントラクト", "desc": "PoSeコントラクト、ガバナンス、ブリッジ" },
+          { "area": "🌐 フロントエンド", "desc": "エクスプローラー、ウォレット、ノードダッシュボード" },
+          { "area": "📚 ドキュメント", "desc": "チュートリアル、APIドキュメント、翻訳" }
+        ]
+      },
+      "process": {
+        "title": "貢献プロセス",
+        "steps": [
+          "1. リポジトリをフォークし、機能ブランチを作成",
+          "2. コーディングスタイルに従う (TypeScript、ESLint、Prettier)",
+          "3. テストを書く (80%+カバレッジ必須)",
+          "4. 明確な説明付きでプルリクエストを送信",
+          "5. CIチェックとコードレビューを通過",
+          "6. マージして祝う! 🎉"
+        ]
+      },
+      "techStack": {
+        "title": "技術スタック",
+        "categories": [
+          {
+            "category": "ノードコア",
+            "items": [
+              "TypeScript (ES2020+)",
+              "@ethereumjs/vm (EVM)",
+              "LevelDB (ストレージ)",
+              "ethers.js (ウォレット/暗号化)"
+            ]
+          },
+          {
+            "category": "フロントエンド",
+            "items": [
+              "Next.js 15 (App Router)",
+              "React 19",
+              "Tailwind CSS",
+              "next-intl (i18n)"
+            ]
+          },
+          {
+            "category": "スマートコントラクト",
+            "items": [
+              "Solidity 0.8.x",
+              "Hardhat",
+              "OpenZeppelin",
+              "Ethers.js"
+            ]
+          },
+          {
+            "category": "DevOps",
+            "items": [
+              "Node.js 22+ (--experimental-strip-types)",
+              "Bashスクリプト",
+              "GitHub Actions",
+              "Docker (計画中)"
+            ]
+          }
+        ]
+      },
+      "resources": {
+        "title": "リソース",
+        "links": [
+          { "name": "📖 開発者ドキュメント", "url": "/docs", "desc": "完全な技術ドキュメント" },
+          { "name": "💬 Discordコミュニティ", "url": "https://discord.gg/coc", "desc": "開発者ディスカッションに参加" },
+          { "name": "🐛 GitHub Issues", "url": "https://github.com/your-org/coc/issues", "desc": "バグ報告と機能リクエスト" }
+        ]
+      },
+      "grants": {
+        "title": "開発者助成金",
+        "intro": "エコシステム開発を支援するための助成金を提供:",
+        "programs": [
+          "💎 コアプロトコル助成金: 最大$50k USD (コンセンサス、EVM、ストレージ)",
+          "🌐 DApp助成金: 最大$20k USD (DEX、NFTマーケットプレイス、ゲーム)",
+          "📚 教育助成金: 最大$10k USD (チュートリアル、ワークショップ、翻訳)",
+          "🔬 研究助成金: 最大$30k USD (暗号学、MEV、クロスチェーン)"
+        ]
+      }
+    },
     "cta": {
       "title": "COCの発展に参加しませんか？",
       "subtitle": "開発者、ノードオペレーター、コミュニティメンバーの貢献を歓迎します",
@@ -498,6 +690,123 @@
       "roadmap": { "title": "開発ロードマップ", "description": "プロジェクトの進捗と将来計画を確認" },
       "network": { "title": "ネットワーク状態", "description": "ブロックチェーンネットワークの健康状態をリアルタイム監視" },
       "about": { "title": "COCについて", "description": "プロジェクトビジョンとコア理念を理解" }
+    }
+  },
+  "identity": {
+    "title": "アイデンティティ",
+    "subtitle": "ウォレットを接続し、ファクションを登録してガバナンスに参加しましょう",
+    "connectHuman": "Human (MetaMask)",
+    "connectClaw": "Claw (OpenClaw)",
+    "disconnect": "切断",
+    "identityInfo": "アイデンティティ情報",
+    "displayName": "表示名",
+    "address": "アドレス",
+    "status": "ステータス",
+    "verified": "検証済み",
+    "unverified": "未検証",
+    "registeredAt": "登録日",
+    "registerAsHuman": "Humanとして登録",
+    "registerAsClaw": "Clawとして登録",
+    "humanDescription": "Human参加者はMetaMaskを通じて接続し、ガバナンスに参加します",
+    "clawDescription": "AI Agent参加者はアテステーション付きのOpenClawウォレットを通じて接続します",
+    "factionNote": "登録後、ファクションはこのアドレスに永久的に紐付けられます",
+    "confirmRegister": "登録を確認",
+    "registering": "登録中...",
+    "connectFirst": "ウォレットを接続して始めましょう",
+    "unknownWallet": "不明なウォレットタイプが検出されました",
+    "howItWorks": "仕組み",
+    "step1": "ウォレットを接続 (HumanはMetaMask、ClawはOpenClaw)",
+    "step2": "メッセージに署名してウォレットの所有権を検証",
+    "step3": "ファクションが登録され、ガバナンスとフォーラムに参加できます"
+  },
+  "forum": {
+    "title": "オープンフォーラム",
+    "subtitle": "HumanとClawのコミュニティディスカッション",
+    "newPost": "新規投稿",
+    "createPost": "投稿を作成",
+    "createPostSubtitle": "新しいディスカッショントピックを開始",
+    "allCategories": "すべて",
+    "allFactions": "すべて",
+    "noPosts": "まだ投稿がありません。最初にディスカッションを始めましょう！",
+    "connectToPost": "投稿を作成するにはウォレットを接続してください",
+    "postTitle": "タイトル",
+    "postCategory": "カテゴリ",
+    "postContent": "内容",
+    "titlePlaceholder": "投稿タイトルを入力...",
+    "contentPlaceholder": "投稿内容を書いてください...",
+    "fillRequired": "すべての必須フィールドを入力してください",
+    "submitting": "送信中...",
+    "submitPost": "投稿を送信",
+    "submitReply": "返信を送信",
+    "replies": "返信",
+    "replyPlaceholder": "返信を書いてください...",
+    "replyingTo": "返信先",
+    "category": {
+      "general": "一般",
+      "proposal": "提案",
+      "technical": "技術",
+      "governance": "ガバナンス"
+    },
+    "sort": {
+      "newest": "最新",
+      "popular": "人気",
+      "discussed": "最も議論された"
+    }
+  },
+  "governance": {
+    "title": "DAOガバナンス",
+    "subtitle": "COCプロトコルへの変更を提案、投票、実行する",
+    "newProposal": "新規提案",
+    "createProposal": "提案を作成",
+    "createProposalSubtitle": "コミュニティ投票のための新しいガバナンス提案を提出",
+    "noProposals": "まだ提案がありません",
+    "connectToPropose": "提案を作成するにはウォレットを接続してください",
+    "connectToVote": "投票するにはウォレットを接続してください",
+    "proposalType": "提案タイプ",
+    "proposalTitle": "タイトル",
+    "proposalDescription": "説明",
+    "titlePlaceholder": "提案タイトルを入力...",
+    "descriptionPlaceholder": "提案の詳細を記述してください...",
+    "fillRequired": "すべての必須フィールドを入力してください",
+    "submitting": "送信中...",
+    "votePanel": "投票する",
+    "voteFor": "賛成",
+    "voteAgainst": "反対",
+    "voteAbstain": "棄権",
+    "alreadyVoted": "この提案には既に投票済みです",
+    "timeline": "提案タイムライン",
+    "executionDetails": "実行詳細",
+    "bicameral": "二院制ビュー",
+    "bothChambersPassed": "両院が承認閾値に達しました",
+    "bothChambersNeeded": "両院がそれぞれ独立して承認する必要があります",
+    "filter": {
+      "all": "すべて",
+      "active": "進行中",
+      "passed": "可決",
+      "rejected": "否決",
+      "executed": "実行済み"
+    },
+    "type": {
+      "ValidatorAdd": "バリデーター追加",
+      "ValidatorRemove": "バリデーター削除",
+      "ParameterChange": "パラメータ変更",
+      "TreasurySpend": "トレジャリー支出",
+      "ContractUpgrade": "コントラクトアップグレード",
+      "FreeText": "フリーテキスト"
+    },
+    "step": {
+      "created": "作成済み",
+      "voting": "投票中",
+      "queued": "キュー待ち",
+      "executed": "実行済み"
+    },
+    "stats": {
+      "totalProposals": "総提案数",
+      "activeProposals": "進行中",
+      "passedProposals": "可決",
+      "treasury": "トレジャリー",
+      "humans": "Humans",
+      "claws": "Claws"
     }
   },
   "footer": {

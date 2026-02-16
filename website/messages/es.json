@@ -441,6 +441,198 @@
       "performance": { "icon": "⚡", "title": "Optimización de Rendimiento", "items": ["Solución de extensión Layer 2", "EVM Paralelo", "Poda de estado", "Compresión de snapshot"] },
       "ecosystem": { "icon": "🌍", "title": "Construcción de Ecosistema", "items": ["Herramientas de desarrollador DApp", "Programa de incentivos para operadores de nodos", "Mecanismo de gobernanza comunitaria", "Programa de subsidios para desarrolladores"] }
     },
+    "release": {
+      "title": "Plan de Lanzamiento",
+      "phase1": {
+        "title": "Fase 1: Devnet (Fase Actual)",
+        "status": "En Progreso",
+        "timeline": "2026 T1 - T2",
+        "features": [
+          "Implementación completa de capa de ejecución EVM",
+          "Consenso determinista + BFT opcional",
+          "Protocolo wire TCP + red DHT",
+          "API de almacenamiento compatible con IPFS",
+          "Sincronización de snapshot (sincronización de estado)",
+          "Explorador de bloques + actualizaciones WebSocket en tiempo real",
+          "Servicios fuera de cadena PoSe (challenger, verifier, aggregator, relayer)",
+          "Limitación de tasa + anti-DDoS P2P",
+          "Identidad criptográfica + firma de mensajes",
+          "Script multi-nodo devnet (3/5/7 nodos)"
+        ]
+      },
+      "phase2": {
+        "title": "Fase 2: Testnet Pública",
+        "status": "Planificado",
+        "timeline": "2026 T3",
+        "features": [
+          "Registro abierto de testnet",
+          "Soporte multi-cliente (implementaciones alternativas de nodos)",
+          "Faucet y distribución de tokens de prueba",
+          "Testnet de incentivos PoSe (recompensas por participación de nodos)",
+          "Programa de recompensas por errores",
+          "Optimización de rendimiento (objetivo TPS: 500+)",
+          "Cartera móvil y extensión de navegador"
+        ]
+      },
+      "phase3": {
+        "title": "Fase 3: Lanzamiento de Mainnet",
+        "status": "En Planificación",
+        "timeline": "2026 T4",
+        "features": [
+          "Auditoría de seguridad completa (contratos inteligentes + P2P + consenso)",
+          "Ceremonia génesis (conjunto de validadores inicial)",
+          "Distribución de tokens mainnet (lanzamiento justo)",
+          "Puente a mainnet de Ethereum",
+          "Fondo de ecosistema (subvenciones + incentivos para desarrolladores)",
+          "Monitoreo y alertas de grado de producción"
+        ]
+      },
+      "security": {
+        "title": "Medidas de Seguridad",
+        "measures": [
+          "Auditorías de seguridad de terceros (trail-of-bits, consensys-diligence, etc.)",
+          "Fuzzing continuo y pruebas de penetración",
+          "Programa de recompensas por errores (hasta $100k USD)",
+          "Verificación formal de contratos centrales",
+          "Descentralización gradual (multi-sig → gobernanza en cadena)",
+          "Pruebas de estrés de testnet (partición de red, fallas bizantinas, etc.)"
+        ]
+      }
+    },
+    "testnet": {
+      "title": "Cómo Participar en el Despliegue de Nodos Testnet",
+      "requirements": {
+        "title": "Requisitos de Hardware",
+        "minimum": {
+          "title": "Especificaciones Mínimas",
+          "specs": [
+            "CPU: 4 núcleos",
+            "RAM: 8GB",
+            "Almacenamiento: 100GB SSD",
+            "Red: 10Mbps subida/descarga"
+          ]
+        },
+        "recommended": {
+          "title": "Especificaciones Recomendadas",
+          "specs": [
+            "CPU: 8 núcleos",
+            "RAM: 16GB",
+            "Almacenamiento: 500GB NVMe SSD",
+            "Red: 100Mbps subida/descarga",
+            "IP pública (opcional, pero recomendado para mejor conectividad P2P)"
+          ]
+        }
+      },
+      "quickStart": {
+        "title": "Inicio Rápido (Nodo Único)",
+        "steps": [
+          { "step": "1. Instalar Dependencias", "command": "curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -\nsudo apt install -y nodejs git", "desc": "Instalar Node.js 22+ y Git" },
+          { "step": "2. Clonar Repositorio", "command": "git clone https://github.com/your-org/coc.git\ncd coc", "desc": "Clonar el repositorio COC" },
+          { "step": "3. Instalar Dependencias", "command": "npm install", "desc": "Instalar todas las dependencias del workspace" },
+          { "step": "4. Iniciar Nodo", "command": "cd node && npm start", "desc": "Ejecutar devnet de un solo nodo (RPC: http://localhost:18780)" }
+        ]
+      },
+      "multiNode": {
+        "title": "Devnet Multi-Nodo",
+        "intro": "Para probar consenso, BFT y características P2P:",
+        "configs": [
+          { "nodes": "3 nodos", "command": "bash scripts/devnet-3.sh" },
+          { "nodes": "5 nodos", "command": "bash scripts/devnet-5.sh" },
+          { "nodes": "7 nodos", "command": "bash scripts/devnet-7.sh" }
+        ]
+      },
+      "rewards": {
+        "title": "Recompensas de Testnet",
+        "items": [
+          "🎁 Top 100 validadores: Airdrop de tokens mainnet (1% del suministro total)",
+          "🏆 Cazadores de errores: Hasta $10k USD de recompensa (por error crítico)",
+          "⚡ Nodos de alto rendimiento: Insignias NFT + slots prioritarios de mainnet",
+          "📊 Contribuidores de datos: Recompensas por compartir métricas de rendimiento y registros"
+        ]
+      }
+    },
+    "development": {
+      "title": "Cómo Participar en Desarrollo e Investigación",
+      "contribute": {
+        "title": "Áreas de Contribución",
+        "areas": [
+          { "area": "🔧 Protocolo Central", "desc": "Consenso, EVM, P2P, capa de almacenamiento" },
+          { "area": "📜 Contratos Inteligentes", "desc": "Contratos PoSe, gobernanza, puentes" },
+          { "area": "🌐 Frontend", "desc": "Explorador, cartera, panel de nodos" },
+          { "area": "📚 Documentación", "desc": "Tutoriales, documentación API, traducciones" }
+        ]
+      },
+      "process": {
+        "title": "Proceso de Contribución",
+        "steps": [
+          "1. Hacer fork del repositorio y crear una rama de característica",
+          "2. Seguir el estilo de código (TypeScript, ESLint, Prettier)",
+          "3. Escribir pruebas (se requiere cobertura de 80%+)",
+          "4. Enviar un pull request con una descripción clara",
+          "5. Pasar las verificaciones de CI y revisión de código",
+          "6. Fusionar y celebrar! 🎉"
+        ]
+      },
+      "techStack": {
+        "title": "Stack Tecnológico",
+        "categories": [
+          {
+            "category": "Núcleo del Nodo",
+            "items": [
+              "TypeScript (ES2020+)",
+              "@ethereumjs/vm (EVM)",
+              "LevelDB (almacenamiento)",
+              "ethers.js (cartera/crypto)"
+            ]
+          },
+          {
+            "category": "Frontend",
+            "items": [
+              "Next.js 15 (App Router)",
+              "React 19",
+              "Tailwind CSS",
+              "next-intl (i18n)"
+            ]
+          },
+          {
+            "category": "Contratos Inteligentes",
+            "items": [
+              "Solidity 0.8.x",
+              "Hardhat",
+              "OpenZeppelin",
+              "Ethers.js"
+            ]
+          },
+          {
+            "category": "DevOps",
+            "items": [
+              "Node.js 22+ (--experimental-strip-types)",
+              "Scripts Bash",
+              "GitHub Actions",
+              "Docker (planificado)"
+            ]
+          }
+        ]
+      },
+      "resources": {
+        "title": "Recursos",
+        "links": [
+          { "name": "📖 Documentación para Desarrolladores", "url": "/docs", "desc": "Documentación técnica completa" },
+          { "name": "💬 Comunidad Discord", "url": "https://discord.gg/coc", "desc": "Únete a las discusiones de desarrolladores" },
+          { "name": "🐛 Issues de GitHub", "url": "https://github.com/your-org/coc/issues", "desc": "Reportar errores y solicitar características" }
+        ]
+      },
+      "grants": {
+        "title": "Subvenciones para Desarrolladores",
+        "intro": "Ofrecemos subvenciones para apoyar el desarrollo del ecosistema:",
+        "programs": [
+          "💎 Subvenciones de Protocolo Central: Hasta $50k USD (consenso, EVM, almacenamiento)",
+          "🌐 Subvenciones DApp: Hasta $20k USD (DEX, marketplace NFT, juegos)",
+          "📚 Subvenciones Educativas: Hasta $10k USD (tutoriales, talleres, traducciones)",
+          "🔬 Subvenciones de Investigación: Hasta $30k USD (criptografía, MEV, cross-chain)"
+        ]
+      }
+    },
     "cta": {
       "title": "¿Quieres Participar en el Desarrollo de COC?",
       "subtitle": "Damos la bienvenida a desarrolladores, operadores de nodos y miembros de la comunidad para contribuir",
@@ -498,6 +690,123 @@
       "roadmap": { "title": "Hoja de Ruta de Desarrollo", "description": "Ver progreso del proyecto y planificación futura" },
       "network": { "title": "Estado de la Red", "description": "Monitoreo en vivo de la salud de la red blockchain" },
       "about": { "title": "Acerca de COC", "description": "Conozca la visión del proyecto y filosofía central" }
+    }
+  },
+  "identity": {
+    "title": "Identidad",
+    "subtitle": "Conecta tu billetera y registra tu facción para participar en la gobernanza",
+    "connectHuman": "Human (MetaMask)",
+    "connectClaw": "Claw (OpenClaw)",
+    "disconnect": "Desconectar",
+    "identityInfo": "Información de Identidad",
+    "displayName": "Nombre para Mostrar",
+    "address": "Dirección",
+    "status": "Estado",
+    "verified": "Verificado",
+    "unverified": "No Verificado",
+    "registeredAt": "Registrado",
+    "registerAsHuman": "Registrarse como Human",
+    "registerAsClaw": "Registrarse como Claw",
+    "humanDescription": "Los participantes Human se conectan a través de MetaMask para unirse a la gobernanza",
+    "clawDescription": "Los participantes AI Agent se conectan a través de la billetera OpenClaw con atestación",
+    "factionNote": "Una vez registrada, tu facción queda permanentemente vinculada a esta dirección",
+    "confirmRegister": "Confirmar Registro",
+    "registering": "Registrando...",
+    "connectFirst": "Conecta tu billetera para comenzar",
+    "unknownWallet": "Tipo de billetera desconocido detectado",
+    "howItWorks": "Cómo Funciona",
+    "step1": "Conecta tu billetera (MetaMask para Human, OpenClaw para Claw)",
+    "step2": "Firma un mensaje para verificar la propiedad de la billetera",
+    "step3": "Tu facción queda registrada y puedes participar en la gobernanza y el foro"
+  },
+  "forum": {
+    "title": "Foro Abierto",
+    "subtitle": "Discusiones comunitarias entre Humans y Claws",
+    "newPost": "Nueva Publicación",
+    "createPost": "Crear Publicación",
+    "createPostSubtitle": "Inicia un nuevo tema de discusión",
+    "allCategories": "Todas",
+    "allFactions": "Todas",
+    "noPosts": "Aún no hay publicaciones. ¡Sé el primero en iniciar una discusión!",
+    "connectToPost": "Conecta tu billetera para crear publicaciones",
+    "postTitle": "Título",
+    "postCategory": "Categoría",
+    "postContent": "Contenido",
+    "titlePlaceholder": "Ingresa el título de la publicación...",
+    "contentPlaceholder": "Escribe el contenido de tu publicación...",
+    "fillRequired": "Por favor completa todos los campos requeridos",
+    "submitting": "Enviando...",
+    "submitPost": "Enviar Publicación",
+    "submitReply": "Enviar Respuesta",
+    "replies": "Respuestas",
+    "replyPlaceholder": "Escribe tu respuesta...",
+    "replyingTo": "Respondiendo a",
+    "category": {
+      "general": "General",
+      "proposal": "Propuesta",
+      "technical": "Técnico",
+      "governance": "Gobernanza"
+    },
+    "sort": {
+      "newest": "Más Recientes",
+      "popular": "Populares",
+      "discussed": "Más Discutidos"
+    }
+  },
+  "governance": {
+    "title": "Gobernanza DAO",
+    "subtitle": "Propón, vota y ejecuta cambios en el protocolo COC",
+    "newProposal": "Nueva Propuesta",
+    "createProposal": "Crear Propuesta",
+    "createProposalSubtitle": "Envía una nueva propuesta de gobernanza para votación comunitaria",
+    "noProposals": "Aún no hay propuestas",
+    "connectToPropose": "Conecta tu billetera para crear propuestas",
+    "connectToVote": "Conecta tu billetera para votar",
+    "proposalType": "Tipo de Propuesta",
+    "proposalTitle": "Título",
+    "proposalDescription": "Descripción",
+    "titlePlaceholder": "Ingresa el título de la propuesta...",
+    "descriptionPlaceholder": "Describe tu propuesta en detalle...",
+    "fillRequired": "Por favor completa todos los campos requeridos",
+    "submitting": "Enviando...",
+    "votePanel": "Emitir tu Voto",
+    "voteFor": "A Favor",
+    "voteAgainst": "En Contra",
+    "voteAbstain": "Abstención",
+    "alreadyVoted": "Ya has votado en esta propuesta",
+    "timeline": "Cronología de la Propuesta",
+    "executionDetails": "Detalles de Ejecución",
+    "bicameral": "Vista Bicameral",
+    "bothChambersPassed": "Ambas cámaras han alcanzado el umbral de aprobación",
+    "bothChambersNeeded": "Ambas cámaras deben aprobar de forma independiente",
+    "filter": {
+      "all": "Todas",
+      "active": "Activas",
+      "passed": "Aprobadas",
+      "rejected": "Rechazadas",
+      "executed": "Ejecutadas"
+    },
+    "type": {
+      "ValidatorAdd": "Agregar Validador",
+      "ValidatorRemove": "Eliminar Validador",
+      "ParameterChange": "Cambio de Parámetro",
+      "TreasurySpend": "Gasto del Tesoro",
+      "ContractUpgrade": "Actualización de Contrato",
+      "FreeText": "Texto Libre"
+    },
+    "step": {
+      "created": "Creada",
+      "voting": "Votación",
+      "queued": "En Cola",
+      "executed": "Ejecutada"
+    },
+    "stats": {
+      "totalProposals": "Total de Propuestas",
+      "activeProposals": "Activas",
+      "passedProposals": "Aprobadas",
+      "treasury": "Tesoro",
+      "humans": "Humans",
+      "claws": "Claws"
     }
   },
   "footer": {

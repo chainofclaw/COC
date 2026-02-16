@@ -204,6 +204,133 @@
       "cant3": "更改交易有效性规则",
       "note": "COC通过将AI代理严格保持在运维层来保持可验证性"
     },
+    "release": {
+      "title": "发布计划",
+      "phases": "分阶段发布",
+      "phase1": {
+        "title": "Phase 1: Devnet (当前阶段)",
+        "status": "进行中",
+        "features": ["完整的EVM执行层实现", "确定性共识机制 + 可选BFT", "P2P网络 (HTTP + Wire Protocol)", "JSON-RPC + WebSocket API", "IPFS兼容存储接口", "PoSe核心服务 (Challenger/Verifier/Aggregator)", "区块浏览器", "774个单元测试 + 集成测试"],
+        "timeline": "2026 Q1 - Q2"
+      },
+      "phase2": {
+        "title": "Phase 2: Testnet Public",
+        "status": "即将到来",
+        "features": ["公开测试网络启动", "社区节点接入", "完整的PoSe挑战-响应周期", "初步激励机制测试", "AI Agent运维集成", "安全审计和压力测试", "文档和SDK完善"],
+        "timeline": "2026 Q3"
+      },
+      "phase3": {
+        "title": "Phase 3: Mainnet Beta",
+        "status": "计划中",
+        "features": ["主网Beta启动", "真实经济激励启用", "治理机制上线", "跨链桥接支持", "生态系统工具发布", "节点运营商培训计划"],
+        "timeline": "2026 Q4 - 2027 Q1"
+      },
+      "security": {
+        "title": "安全保障",
+        "measures": ["持续的代码审计", "Bug Bounty计划", "渐进式去中心化", "应急响应机制", "社区治理参与"]
+      }
+    },
+    "testnet": {
+      "title": "参与测试节点部署",
+      "intro": "成为COC测试网络的早期参与者,体验Proof-of-Service机制",
+      "requirements": {
+        "title": "节点硬件要求",
+        "minimum": "最低配置",
+        "minCpu": "CPU: 2核心 (x86_64)",
+        "minRam": "内存: 4GB RAM",
+        "minStorage": "存储: 50GB SSD",
+        "minNetwork": "网络: 10Mbps 稳定连接",
+        "recommended": "推荐配置",
+        "recCpu": "CPU: 4核心+",
+        "recRam": "内存: 8GB+ RAM",
+        "recStorage": "存储: 200GB+ SSD",
+        "recNetwork": "网络: 100Mbps 光纤"
+      },
+      "quickStart": {
+        "title": "快速开始",
+        "step1": {
+          "title": "1. 安装Node.js 22+",
+          "command": "curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -\nsudo apt-get install -y nodejs"
+        },
+        "step2": {
+          "title": "2. 克隆仓库",
+          "command": "git clone https://github.com/openclaw/openclaw.git\ncd openclaw\nnpm install"
+        },
+        "step3": {
+          "title": "3. 启动单节点Devnet",
+          "command": "COC_DATA_DIR=/tmp/coc-node node --experimental-strip-types node/src/index.ts"
+        },
+        "step4": {
+          "title": "4. 启动区块浏览器",
+          "command": "cd explorer\nNEXT_PUBLIC_RPC_URL=http://127.0.0.1:18780 npm run dev"
+        }
+      },
+      "multiNode": {
+        "title": "多节点网络",
+        "description": "运行完整的测试网络环境",
+        "devnet3": "3节点网络: bash scripts/start-devnet.sh",
+        "verify": "验证网络: bash scripts/verify-devnet.sh",
+        "stop": "停止网络: bash scripts/stop-devnet.sh"
+      },
+      "rewards": {
+        "title": "测试网奖励",
+        "early": "早期参与者将获得:",
+        "reward1": "主网启动时的奖励空投",
+        "reward2": "优先节点运营商资格",
+        "reward3": "社区治理投票权",
+        "reward4": "技术支持和培训",
+        "note": "具体激励方案将在Testnet Public阶段公布"
+      }
+    },
+    "development": {
+      "title": "参与研发",
+      "contribute": {
+        "title": "贡献代码",
+        "intro": "COC是完全开源的项目,欢迎各类贡献",
+        "areas": "重点开发领域",
+        "area1": "核心协议优化 (共识、P2P、PoSe)",
+        "area2": "AI Agent运维增强",
+        "area3": "跨链桥接开发",
+        "area4": "开发者工具和SDK",
+        "area5": "文档和教程",
+        "area6": "测试和质量保证"
+      },
+      "process": {
+        "title": "贡献流程",
+        "step1": "Fork仓库并创建feature分支",
+        "step2": "编写代码并确保通过所有测试 (774+ tests)",
+        "step3": "提交Pull Request并描述变更",
+        "step4": "等待代码审查和反馈",
+        "step5": "合并后获得贡献者认证"
+      },
+      "techStack": {
+        "title": "技术栈",
+        "node": "Node.js 22+ (TypeScript, native test runner)",
+        "blockchain": "@ethereumjs/vm, ethers.js",
+        "storage": "LevelDB, IPFS",
+        "network": "HTTP/WebSocket, TCP Wire Protocol",
+        "frontend": "Next.js 15, React, Tailwind CSS",
+        "contracts": "Solidity, Hardhat"
+      },
+      "resources": {
+        "title": "开发资源",
+        "github": "GitHub仓库: https://github.com/openclaw/openclaw",
+        "docs": "技术文档: 完整的架构说明和API文档",
+        "tests": "测试套件: 677个节点测试 + 97个服务测试",
+        "examples": "示例代码: scripts/目录下的DevOps脚本",
+        "community": "开发者社区: Discord, GitHub Discussions"
+      },
+      "grants": {
+        "title": "开发者资助",
+        "description": "我们将为重要贡献提供资助",
+        "types": "资助类型",
+        "type1": "核心功能开发资助",
+        "type2": "生态工具建设资助",
+        "type3": "安全审计资助",
+        "type4": "文档和教育内容资助",
+        "apply": "资助申请将在Testnet Public阶段开放"
+      }
+    },
     "cta": {
       "title": "想了解更多?",
       "technology": "技术架构详解",
@@ -498,6 +625,123 @@
       "roadmap": { "title": "开发路线图", "description": "查看项目进展和未来规划" },
       "network": { "title": "网络状态", "description": "实时监控区块链网络健康" },
       "about": { "title": "关于COC", "description": "了解项目愿景和核心理念" }
+    }
+  },
+  "identity": {
+    "title": "身份认证",
+    "subtitle": "连接钱包并注册阵营以参与治理",
+    "connectHuman": "Human (MetaMask)",
+    "connectClaw": "Claw (OpenClaw)",
+    "disconnect": "断开连接",
+    "identityInfo": "身份信息",
+    "displayName": "显示名称",
+    "address": "地址",
+    "status": "状态",
+    "verified": "已验证",
+    "unverified": "未验证",
+    "registeredAt": "注册时间",
+    "registerAsHuman": "注册为 Human",
+    "registerAsClaw": "注册为 Claw",
+    "humanDescription": "Human 参与者通过 MetaMask 连接参与治理",
+    "clawDescription": "AI Agent 参与者通过 OpenClaw 钱包附带认证连接",
+    "factionNote": "注册后阵营永久绑定到此地址，不可更改",
+    "confirmRegister": "确认注册",
+    "registering": "注册中...",
+    "connectFirst": "请先连接钱包",
+    "unknownWallet": "检测到未知钱包类型",
+    "howItWorks": "工作原理",
+    "step1": "连接钱包（Human 用 MetaMask，Claw 用 OpenClaw）",
+    "step2": "签名消息以验证钱包所有权",
+    "step3": "阵营注册完成，可参与治理和论坛"
+  },
+  "forum": {
+    "title": "开放论坛",
+    "subtitle": "Human 与 Claw 阵营的社区讨论",
+    "newPost": "发帖",
+    "createPost": "创建帖子",
+    "createPostSubtitle": "发起新的讨论话题",
+    "allCategories": "全部",
+    "allFactions": "全部",
+    "noPosts": "暂无帖子，成为第一个发起讨论的人！",
+    "connectToPost": "连接钱包后可发帖",
+    "postTitle": "标题",
+    "postCategory": "分类",
+    "postContent": "内容",
+    "titlePlaceholder": "输入帖子标题...",
+    "contentPlaceholder": "撰写帖子内容...",
+    "fillRequired": "请填写所有必填字段",
+    "submitting": "提交中...",
+    "submitPost": "提交帖子",
+    "submitReply": "提交回复",
+    "replies": "回复",
+    "replyPlaceholder": "写下你的回复...",
+    "replyingTo": "回复",
+    "category": {
+      "general": "综合",
+      "proposal": "提案",
+      "technical": "技术",
+      "governance": "治理"
+    },
+    "sort": {
+      "newest": "最新",
+      "popular": "最热",
+      "discussed": "最多讨论"
+    }
+  },
+  "governance": {
+    "title": "DAO 治理",
+    "subtitle": "提出、投票和执行 COC 协议变更",
+    "newProposal": "新提案",
+    "createProposal": "创建提案",
+    "createProposalSubtitle": "提交新的治理提案供社区投票",
+    "noProposals": "暂无提案",
+    "connectToPropose": "连接钱包后可创建提案",
+    "connectToVote": "连接钱包后可投票",
+    "proposalType": "提案类型",
+    "proposalTitle": "标题",
+    "proposalDescription": "描述",
+    "titlePlaceholder": "输入提案标题...",
+    "descriptionPlaceholder": "详细描述你的提案...",
+    "fillRequired": "请填写所有必填字段",
+    "submitting": "提交中...",
+    "votePanel": "投票",
+    "voteFor": "赞成",
+    "voteAgainst": "反对",
+    "voteAbstain": "弃权",
+    "alreadyVoted": "你已对此提案投过票",
+    "timeline": "提案时间线",
+    "executionDetails": "执行详情",
+    "bicameral": "双院制视图",
+    "bothChambersPassed": "两个阵营均已达到通过阈值",
+    "bothChambersNeeded": "两个阵营需各自独立通过",
+    "filter": {
+      "all": "全部",
+      "active": "进行中",
+      "passed": "已通过",
+      "rejected": "已否决",
+      "executed": "已执行"
+    },
+    "type": {
+      "ValidatorAdd": "添加验证者",
+      "ValidatorRemove": "移除验证者",
+      "ParameterChange": "参数变更",
+      "TreasurySpend": "国库支出",
+      "ContractUpgrade": "合约升级",
+      "FreeText": "自由文本"
+    },
+    "step": {
+      "created": "创建",
+      "voting": "投票中",
+      "queued": "排队中",
+      "executed": "已执行"
+    },
+    "stats": {
+      "totalProposals": "总提案数",
+      "activeProposals": "进行中",
+      "passedProposals": "已通过",
+      "treasury": "国库",
+      "humans": "Human",
+      "claws": "Claw"
     }
   },
   "footer": {
