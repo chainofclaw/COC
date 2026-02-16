@@ -1,0 +1,42 @@
+{
+  "chainId": 18780,
+  "chainName": "COC Prowl Testnet",
+  "blockTimeMs": 3000,
+  "syncIntervalMs": 5000,
+  "validators": [
+    "0x8ab748d4bd33b3f50c1ec3b9bcd82af946e71ffd",
+    "0xa1f0b1f1e97be8e5c2bfdbac2aaa6d6c3d2fa209",
+    "0xc5c307a63fc145aa8d8199e825339978f83d44b7",
+    "0x4b8880d7bd3e7b9fed3ba1e795cb0e78b473de20",
+    "0x0fca0d3e2f16a49525b2b78721abdd96a524b236",
+    "0xa8893e2dcc788b1435e2cee410e6c6e22dd1f89f",
+    "0xf1b1465a6c1151627343fe78d36bc7512a22fc28",
+    "0x945a0dd0e85876d346912b9de961367470724371",
+    "0x0ea96d93446daea7869e4484e70e1952d7bdd558",
+    "0x9b10cc91251fd40f6dfd49f2f3f87e16c4c05f3c"
+  ],
+  "prefund": [
+    {
+      "address": "0xbb15826957dd0c95A689c54e1682813D5B723AD8",
+      "balanceEth": "1000000"
+    },
+    {
+      "address": "0x2E41B24c648e38d23e962203F58f3b491F64bbDf",
+      "balanceEth": "100000"
+    },
+    {
+      "address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      "balanceEth": "10000"
+    }
+  ],
+  "enableBft": true,
+  "enableWireProtocol": true,
+  "enableDht": true,
+  "enableSnapSync": true,
+  "finalityDepth": 3,
+  "maxTxPerBlock": 100,
+  "minGasPriceWei": "1",
+  "poseEpochMs": 3600000,
+  "p2pInboundAuthMode": "enforce",
+  "poseInboundAuthMode": "enforce"
+}

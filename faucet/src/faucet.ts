@@ -130,11 +130,13 @@ export class Faucet {
 }
 
 export class FaucetError extends Error {
+  readonly statusCode: number
   constructor(
     message: string,
-    public readonly statusCode: number,
+    statusCode: number,
   ) {
     super(message)
     this.name = "FaucetError"
+    this.statusCode = statusCode
   }
 }
