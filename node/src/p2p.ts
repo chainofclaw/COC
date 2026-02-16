@@ -380,16 +380,16 @@ export class P2PNode {
       }
 
       const clientIp = req.socket.remoteAddress ?? "unknown"
-      const inboundSourcePeerId = this.inboundSourcePeerId(clientIp)
-      this.scoring.addPeer(inboundSourcePeerId, `inbound://${clientIp}`)
-      if ((req.url ?? "").startsWith("/p2p/") && this.scoring.isBanned(inboundSourcePeerId)) {
+      const inboundIpPeerId = this.inboundIpPeerId(clientIp)
+      this.scoring.addPeer(inboundIpPeerId, `inbound://${clientIp}`)
+      if ((req.url ?? "").startsWith("/p2p/") && this.scoring.isBanned(inboundIpPeerId)) {
         res.writeHead(429, { "content-type": "application/json" })
         res.end(serializeJson({ error: "peer temporarily banned" }))
         return
       }
       if ((req.url ?? "").startsWith("/p2p/") && !this.inboundRateLimiter.allow(clientIp)) {
         this.rateLimitedRequests += 1
-        this.scoring.recordTimeout(inboundSourcePeerId)
+        this.scoring.recordTimeout(inboundIpPeerId)
         res.writeHead(429, { "content-type": "application/json" })
         res.end(serializeJson({ error: "rate limit exceeded" }))
         return
@@ -516,6 +516,16 @@ export class P2PNode {
         this.bytesReceived += bodySize
         try {
           const parsedBody = JSON.parse(body || "{}") as Record<string, unknown>
+          const declaredSenderId = extractAuthSenderId(parsedBody)
+          const inboundSenderPeerId = declaredSenderId ? this.inboundSenderPeerId(declaredSenderId) : undefined
+          if (inboundSenderPeerId) {
+            this.scoring.addPeer(inboundSenderPeerId, `sender://${declaredSenderId}`)
+            if (this.scoring.isBanned(inboundSenderPeerId)) {
+              res.writeHead(429)
+              res.end(serializeJson({ error: "peer temporarily banned" }))
+              return
+            }
+          }
 
           const authMode = resolveInboundAuthMode(this.cfg)
           if (authMode !== "off") {
@@ -529,7 +539,7 @@ export class P2PNode {
               this.authMissingRequests += 1
               if (authMode === "enforce") {
                 this.authRejectedRequests += 1
-                this.scoring.recordFailure(inboundSourcePeerId)
+                this.recordInboundAuthFailure("missing", inboundIpPeerId, inboundSenderPeerId)
                 res.writeHead(401)
                 res.end(serializeJson({ error: "missing auth envelope" }))
                 return
@@ -543,14 +553,14 @@ export class P2PNode {
                 this.authInvalidRequests += 1
                 if (authMode === "enforce") {
                   this.authRejectedRequests += 1
-                  this.scoring.recordInvalidData(inboundSourcePeerId)
+                  this.recordInboundAuthFailure("invalid", inboundIpPeerId, inboundSenderPeerId)
                   res.writeHead(401)
                   res.end(serializeJson({ error: authCheck.reason }))
                   return
                 }
               } else {
                 this.authAcceptedRequests += 1
-                this.scoring.recordSuccess(inboundSourcePeerId)
+                this.recordInboundAuthSuccess(inboundIpPeerId, inboundSenderPeerId)
               }
             }
           }
@@ -808,11 +818,37 @@ export class P2PNode {
     }
   }
 
-  private inboundSourcePeerId(clientIp: string): string {
+  private inboundIpPeerId(clientIp: string): string {
     const normalized = clientIp.startsWith("::ffff:")
       ? clientIp.slice(7)
       : clientIp
-    return `inbound:${normalized}`
+    return `inbound:ip:${normalized}`
+  }
+
+  private inboundSenderPeerId(senderId: string): string {
+    return `inbound:sender:${senderId.toLowerCase()}`
+  }
+
+  private recordInboundAuthFailure(
+    kind: "missing" | "invalid",
+    inboundIpPeerId: string,
+    inboundSenderPeerId?: string,
+  ): void {
+    if (kind === "invalid") {
+      this.scoring.recordInvalidData(inboundIpPeerId)
+      if (inboundSenderPeerId) this.scoring.recordInvalidData(inboundSenderPeerId)
+      return
+    }
+    this.scoring.recordFailure(inboundIpPeerId)
+    if (inboundSenderPeerId) this.scoring.recordFailure(inboundSenderPeerId)
+  }
+
+  private recordInboundAuthSuccess(
+    inboundIpPeerId: string,
+    inboundSenderPeerId?: string,
+  ): void {
+    this.scoring.recordSuccess(inboundIpPeerId)
+    if (inboundSenderPeerId) this.scoring.recordSuccess(inboundSenderPeerId)
   }
 
   private recordDiscoveryIdentityFailure(peer: NodePeer, kind: "invalid" | "failure"): void {
@@ -896,6 +932,14 @@ function hashP2PPayload(payload: Record<string, unknown>): Hex {
 
 function hasAuthEnvelope(payload: Record<string, unknown>): boolean {
   return !!payload._auth && typeof payload._auth === "object" && !Array.isArray(payload._auth)
+}
+
+function extractAuthSenderId(payload: Record<string, unknown>): string | undefined {
+  const auth = payload._auth
+  if (!auth || typeof auth !== "object" || Array.isArray(auth)) return undefined
+  const senderId = String((auth as Record<string, unknown>).senderId ?? "").trim().toLowerCase()
+  if (!senderId) return undefined
+  return senderId
 }
 
 function resolveInboundAuthMode(cfg: P2PConfig): "off" | "monitor" | "enforce" {

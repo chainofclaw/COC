@@ -69,6 +69,13 @@ describe("validateConfig", () => {
     assert.ok(validateConfig({ poseAllowedChallengers: "0x1234" as any }).length > 0)
     assert.ok(validateConfig({ poseAllowedChallengers: ["0x1234"] }).length > 0)
     assert.ok(validateConfig({ poseUseGovernanceChallengerAuth: "true" as any }).length > 0)
+    assert.ok(validateConfig({ poseUseOnchainChallengerAuth: "true" as any }).length > 0)
+    assert.ok(validateConfig({ poseOnchainAuthRpcUrl: 123 as any }).length > 0)
+    assert.ok(validateConfig({ poseOnchainAuthPoseManagerAddress: "0x1234" }).length > 0)
+    assert.ok(validateConfig({ poseOnchainAuthMinOperatorNodes: 0 }).length > 0)
+    assert.ok(validateConfig({ poseOnchainAuthTimeoutMs: 99 }).length > 0)
+    assert.ok(validateConfig({ poseOnchainAuthFailOpen: "true" as any }).length > 0)
+    assert.ok(validateConfig({ poseUseOnchainChallengerAuth: true }).length > 0)
     assert.ok(validateConfig({ poseChallengerAuthCacheTtlMs: 999 }).length > 0)
     assert.equal(
       validateConfig({
@@ -80,6 +87,12 @@ describe("validateConfig", () => {
         poseAuthNonceMaxEntries: 100_000,
         poseAllowedChallengers: ["0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"],
         poseUseGovernanceChallengerAuth: true,
+        poseUseOnchainChallengerAuth: true,
+        poseOnchainAuthRpcUrl: "http://127.0.0.1:8545",
+        poseOnchainAuthPoseManagerAddress: "0x1111111111111111111111111111111111111111",
+        poseOnchainAuthMinOperatorNodes: 1,
+        poseOnchainAuthTimeoutMs: 3000,
+        poseOnchainAuthFailOpen: false,
         poseChallengerAuthCacheTtlMs: 30_000,
       }).length,
       0,

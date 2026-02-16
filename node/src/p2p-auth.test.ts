@@ -172,4 +172,29 @@ describe("P2P auth envelope", () => {
     assert.equal(ok, false)
     assert.ok(p2p.scoring.getScore(peer.id) < 100)
   })
+
+  it("tracks inbound auth failures by IP and sender composite keys", () => {
+    const p2p = new P2PNode(
+      {
+        bind: "127.0.0.1",
+        port: 0,
+        peers: [],
+        enableDiscovery: false,
+      },
+      {
+        onTx: async () => {},
+        onBlock: async () => {},
+        onSnapshotRequest: () => ({ blocks: [], updatedAtMs: Date.now() }),
+      },
+    )
+    const ipPeerId = (p2p as any).inboundIpPeerId("::ffff:127.0.0.1")
+    const senderPeerId = (p2p as any).inboundSenderPeerId("0xabc")
+    p2p.scoring.addPeer(ipPeerId, "inbound://127.0.0.1")
+    p2p.scoring.addPeer(senderPeerId, "sender://0xabc")
+
+    ;(p2p as any).recordInboundAuthFailure("invalid", ipPeerId, senderPeerId)
+
+    assert.ok(p2p.scoring.getScore(ipPeerId) < 100)
+    assert.ok(p2p.scoring.getScore(senderPeerId) < 100)
+  })
 })

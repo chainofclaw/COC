@@ -17,6 +17,7 @@ import { IpfsHttpServer } from "./ipfs-http.ts"
 import { createNodeSigner } from "./crypto/signer.ts"
 import { PersistentPoseAuthNonceTracker } from "./pose-http.ts"
 import { createPoseChallengerAuthorizer } from "./pose-authorizer.ts"
+import { createOnchainOperatorResolver } from "./pose-onchain-authorizer.ts"
 import { migrateLegacySnapshot } from "./storage/migrate-legacy.ts"
 import { startWsRpcServer } from "./websocket-rpc.ts"
 import { handleRpcMethod } from "./rpc.ts"
@@ -342,20 +343,13 @@ setInterval(() => poseAuthNonceTracker.cleanup(), 300_000).unref()
 if (config.poseAuthNonceRegistryPath) {
   setInterval(() => poseAuthNonceTracker.compact(), 60 * 60 * 1000).unref()
 }
-const poseChallengerAuthorizer = config.poseUseGovernanceChallengerAuth
+const poseChallengerDynamicResolver = resolvePoseChallengerDynamicResolver(config, chain)
+const poseChallengerAuthorizer = poseChallengerDynamicResolver
   ? createPoseChallengerAuthorizer({
       staticAllowlist: config.poseAllowedChallengers,
       cacheTtlMs: config.poseChallengerAuthCacheTtlMs,
-      dynamicResolver: async (senderId) => {
-        if (!hasGovernance(chain)) return false
-        const activeValidators = chain.governance.getActiveValidators()
-        return activeValidators.some((v) =>
-          v.active && (
-            v.id.toLowerCase() === senderId ||
-            v.address.toLowerCase() === senderId
-          ),
-        )
-      },
+      failOpen: config.poseOnchainAuthFailOpen,
+      dynamicResolver: poseChallengerDynamicResolver,
     })
   : undefined
 
@@ -534,3 +528,39 @@ process.on("SIGINT", async () => {
   }
   process.exit(0)
 })
+
+function resolvePoseChallengerDynamicResolver(
+  config: Awaited<ReturnType<typeof loadNodeConfig>>,
+  chain: IChainEngine,
+): ((senderId: string) => Promise<boolean>) | undefined {
+  if (config.poseUseOnchainChallengerAuth) {
+    try {
+      return createOnchainOperatorResolver({
+        rpcUrl: config.poseOnchainAuthRpcUrl,
+        poseManagerAddress: config.poseOnchainAuthPoseManagerAddress,
+        minOperatorNodes: config.poseOnchainAuthMinOperatorNodes,
+        timeoutMs: config.poseOnchainAuthTimeoutMs,
+      })
+    } catch (error) {
+      log.error("failed to initialize on-chain challenger authorizer; using deny-all fallback", {
+        error: String(error),
+      })
+      return async () => false
+    }
+  }
+
+  if (config.poseUseGovernanceChallengerAuth) {
+    return async (senderId) => {
+      if (!hasGovernance(chain)) return false
+      const activeValidators = chain.governance.getActiveValidators()
+      return activeValidators.some((v) =>
+        v.active && (
+          v.id.toLowerCase() === senderId ||
+          v.address.toLowerCase() === senderId
+        ),
+      )
+    }
+  }
+
+  return undefined
+}

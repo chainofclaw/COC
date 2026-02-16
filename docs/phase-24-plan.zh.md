@@ -112,12 +112,15 @@ Phase 24 添加生产就绪工具：健康检查探针、配置验证和 RPC 速
 - `node/src/pose-engine.ts` 已支持按挑战桶（`U/S/R`）+ 节点信誉层（`default/trusted/restricted`）配额。
 - 下一步：将 tier resolver 与真实链上信誉分值/历史履约率打通。
 
-2. 链上角色联动（已完成治理活跃集版本）
+2. 链上角色联动（已完成治理活跃集 + on-chain operator 版本）
 - `node/src/pose-authorizer.ts` + `node/src/index.ts` 已支持“静态 allowlist + 动态 resolver + TTL 缓存”。
-- 当前动态源为治理活跃验证者集；下一步接入 PoSeManager 活跃角色查询。
+- 当前动态源支持两种：
+  - 治理活跃验证者集（`poseUseGovernanceChallengerAuth`）
+  - PoSeManager `operatorNodeCount(address)` on-chain 校验（`poseUseOnchainChallengerAuth`）
 
-3. 策略联动自动化（已完成第一阶段）
+3. 策略联动自动化（已完成第二阶段）
 - `node/src/p2p.ts` 已实现来源评分联动：入站鉴权失败/限流命中会写入 `PeerScoring` 并触发临时封禁。
+- 来源键由“单 IP”升级为“IP + senderId 复合键”，降低 NAT 误伤并抬高换 IP 绕过成本。
 - discovery 身份失败已联动 `recordInvalidData/recordFailure`，形成自动处置闭环。
 
 ## 本轮新增落地（2026-02-15，补丁 B）
@@ -138,6 +141,26 @@ Phase 24 添加生产就绪工具：健康检查探针、配置验证和 RPC 速
   - discovery 身份校验失败联动惩罚打分，不再仅计数。
 - `node/src/pose-engine.ts`、`node/src/pose-engine.test.ts`
   - `issueChallenge` 新增按挑战桶参数发放；支持 tier 化预算配置与 resolver 注入。
+
+## 本轮新增落地（2026-02-16，补丁 C）
+
+- `node/src/pose-onchain-authorizer.ts`、`node/src/pose-onchain-authorizer.test.ts`
+  - 新增 on-chain challenger 授权解析器：
+    - 读取 `PoSeManager.operatorNodeCount(address)` 判定 challenger 是否具备最小节点资格。
+    - 支持超时控制（fail-fast）和参数校验。
+- `node/src/config.ts`、`node/src/config.test.ts`
+  - 新增配置项：
+    - `poseUseOnchainChallengerAuth`
+    - `poseOnchainAuthRpcUrl`
+    - `poseOnchainAuthPoseManagerAddress`
+    - `poseOnchainAuthMinOperatorNodes`
+    - `poseOnchainAuthTimeoutMs`
+    - `poseOnchainAuthFailOpen`
+  - 新增“on-chain 授权启用时必填项”校验（RPC URL + 合约地址）。
+- `node/src/index.ts`
+  - challenger 动态授权策略改为“on-chain 优先，governance 兜底”；on-chain 初始化失败时进入 deny-all 安全回退。
+- `node/src/p2p.ts`、`node/src/p2p-auth.test.ts`
+  - 入站安全联动升级为复合来源键：`inbound:ip:*` + `inbound:sender:*`，并在认证成功/失败路径双键记分。
 
 ## 基于代码实况的残留风险（2026-02-15）
 
