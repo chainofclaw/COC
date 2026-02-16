@@ -1,0 +1,9 @@
+# Validator private keys
+*.env
+
+# Special accounts (faucet/deployer keys)
+special-accounts.json
+
+# Generic key files
+*.key
+*.pem

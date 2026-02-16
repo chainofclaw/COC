@@ -1,0 +1,38 @@
+groups:
+  - name: coc-node-alerts
+    rules:
+      - alert: BlockProductionStopped
+        expr: increase(coc_block_height[5m]) == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Block production stopped on {{ $labels.instance }}"
+          description: "No new blocks produced in the last 5 minutes."
+
+      - alert: ConsensusDegraded
+        expr: coc_consensus_state != 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Consensus degraded on {{ $labels.instance }}"
+          description: "Consensus state is {{ $value }} (expected 0 = healthy) for over 2 minutes."
+
+      - alert: HighMemory
+        expr: coc_process_memory_bytes > 2147483648
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage on {{ $labels.instance }}"
+          description: "Process memory exceeds 2GB (current: {{ $value | humanize1024 }})."
+
+      - alert: PeerCountLow
+        expr: coc_peers_connected < 2
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low peer count on {{ $labels.instance }}"
+          description: "Connected peers is {{ $value }}, below threshold of 2."
