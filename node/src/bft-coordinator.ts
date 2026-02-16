@@ -13,8 +13,8 @@ import { createLogger } from "./logger.ts"
 
 const log = createLogger("bft-coordinator")
 
-const DEFAULT_PREPARE_TIMEOUT_MS = 5_000
-const DEFAULT_COMMIT_TIMEOUT_MS = 5_000
+const DEFAULT_PREPARE_TIMEOUT_MS = 2_000
+const DEFAULT_COMMIT_TIMEOUT_MS = 2_000
 
 export interface BftCoordinatorConfig {
   localId: string
@@ -40,6 +40,8 @@ export class BftCoordinator {
   private readonly cfg: BftCoordinatorConfig
   private activeRound: BftRound | null = null
   private timeoutTimer: ReturnType<typeof setTimeout> | null = null
+  private pendingMessages: BftMessage[] = []
+  private deferredBlock: ChainBlock | null = null
   readonly equivocationDetector = new EquivocationDetector()
 
   constructor(cfg: BftCoordinatorConfig) {
@@ -50,8 +52,9 @@ export class BftCoordinator {
    * Start a new BFT round for a proposed block.
    */
   async startRound(block: ChainBlock): Promise<void> {
-    // Clean up any existing round
+    // Clean up any existing round (pendingMessages preserved across rounds)
     this.clearRound()
+    this.deferredBlock = null
 
     const roundCfg: BftRoundConfig = {
       validators: this.cfg.validators,
@@ -74,7 +77,28 @@ export class BftCoordinator {
     // Set timeout
     this.startTimeout()
 
-    log.info("BFT round started", { height: block.number.toString(), proposer: block.proposer })
+    // Process buffered messages for this height
+    // Order: prepare first, then commit (commits arriving before prepare quorum would be dropped)
+    const buffered = this.pendingMessages.filter(m => m.height === block.number)
+    this.pendingMessages = this.pendingMessages.filter(m => m.height !== block.number)
+    const prepares = buffered.filter(m => m.type !== "commit")
+    const commits = buffered.filter(m => m.type === "commit")
+    for (const msg of prepares) {
+      await this.handleMessage(msg)
+    }
+    for (const msg of commits) {
+      await this.handleMessage(msg)
+    }
+
+    if (this.activeRound) {
+      log.info("BFT round started", {
+        height: block.number.toString(),
+        phase: this.activeRound.state.phase,
+        prepareVotes: this.activeRound.state.prepareVotes.size,
+        commitVotes: this.activeRound.state.commitVotes.size,
+        buffered: buffered.length,
+      })
+    }
   }
 
   /**
@@ -82,15 +106,18 @@ export class BftCoordinator {
    */
   async handleMessage(msg: BftMessage): Promise<void> {
     if (!this.activeRound) {
-      log.debug("no active round, ignoring message", { type: msg.type, height: msg.height.toString() })
+      // Buffer messages that arrive before the round starts (race condition)
+      if (this.pendingMessages.length < 50) {
+        this.pendingMessages.push(msg)
+      }
       return
     }
 
     if (msg.height !== this.activeRound.state.height) {
-      log.debug("message height mismatch", {
-        expected: this.activeRound.state.height.toString(),
-        got: msg.height.toString(),
-      })
+      // Buffer future-height messages for later processing
+      if (msg.height > this.activeRound.state.height && this.pendingMessages.length < 50) {
+        this.pendingMessages.push(msg)
+      }
       return
     }
 
@@ -133,6 +160,7 @@ export class BftCoordinator {
           const block = this.activeRound.state.proposedBlock
           this.clearRound()
           await this.cfg.onFinalized(block)
+          await this.processDeferredBlock()
         }
         break
       }
@@ -164,6 +192,33 @@ export class BftCoordinator {
   }
 
   /**
+   * Handle a block received via gossip (non-proposer path).
+   * Joins the BFT round for the received block.
+   */
+  async handleReceivedBlock(block: ChainBlock): Promise<void> {
+    // Proposer handles BFT via consensus engine, not gossip
+    if (block.proposer.toLowerCase() === this.cfg.localId.toLowerCase()) return
+
+    if (this.activeRound) {
+      if (block.number <= this.activeRound.state.height) {
+        return
+      }
+      // Defer if current round is in commit phase (close to finalization)
+      if (this.activeRound.state.phase === "commit") {
+        this.deferredBlock = block
+        log.info("BFT deferring block (commit phase active)", {
+          deferredHeight: block.number.toString(),
+          activeHeight: this.activeRound.state.height.toString(),
+        })
+        return
+      }
+      this.clearRound()
+    }
+
+    await this.startRound(block)
+  }
+
+  /**
    * Update the validator set (e.g., after governance changes).
    */
   updateValidators(validators: Array<{ id: string; stake: bigint }>): void {
@@ -184,6 +239,7 @@ export class BftCoordinator {
         })
         this.activeRound.fail()
         this.clearRound()
+        void this.processDeferredBlock()
       }
     }, totalTimeout)
   }
@@ -194,8 +250,18 @@ export class BftCoordinator {
     msg.signature = this.cfg.signer.sign(canonical) as Hex
   }
 
+  private async processDeferredBlock(): Promise<void> {
+    const block = this.deferredBlock
+    this.deferredBlock = null
+    if (block) {
+      log.info("BFT processing deferred block", { height: block.number.toString() })
+      await this.startRound(block)
+    }
+  }
+
   private clearRound(): void {
     this.activeRound = null
+    // Keep pendingMessages — they may contain messages for future heights
     if (this.timeoutTimer) {
       clearTimeout(this.timeoutTimer)
       this.timeoutTimer = null

@@ -579,6 +579,10 @@ export class P2PNode {
           if (req.url === "/p2p/gossip-block") {
             const payload = unsignedPayload as { block?: ChainBlock }
             if (!payload.block) throw new Error("missing block")
+            // Restore BigInt fields lost during JSON serialization
+            if (payload.block.number !== undefined) {
+              payload.block.number = BigInt(payload.block.number)
+            }
             await this.receiveBlock(payload.block)
             res.writeHead(200)
             res.end(serializeJson({ ok: true }))
@@ -600,6 +604,10 @@ export class P2PNode {
             const payload = unsignedPayload as BftMessagePayload
             if (!payload.type || !payload.blockHash || !payload.senderId) {
               throw new Error("missing BFT message fields")
+            }
+            // Restore BigInt height lost during JSON serialization
+            if (payload.height !== undefined) {
+              payload.height = BigInt(payload.height)
             }
             if (this.handlers.onBftMessage) {
               await this.handlers.onBftMessage(payload)
@@ -687,11 +695,50 @@ export class P2PNode {
   }
 
   /**
-   * Broadcast a BFT consensus message to all peers.
+   * Broadcast a BFT consensus message to all configured peers.
+   * Uses static peer list to ensure all validators receive BFT messages,
+   * regardless of discovery status.
    */
   async broadcastBft(msg: BftMessagePayload): Promise<void> {
     const dedupeKey = `bft:${msg.type}:${msg.height}:${msg.senderId}`
-    await this.broadcast("/p2p/bft-message", msg, dedupeKey)
+
+    // BFT must reach ALL validators — use static peers + discovered peers
+    const staticPeers = this.cfg.peers
+    const discoveredPeers = this.cfg.enableDiscovery !== false
+      ? this.discovery.getActivePeers()
+      : []
+    const seenIds = new Set<string>()
+    const allPeers: NodePeer[] = []
+    for (const p of [...staticPeers, ...discoveredPeers]) {
+      if (!seenIds.has(p.id)) {
+        seenIds.add(p.id)
+        allPeers.push(p)
+      }
+    }
+
+    const payloadRecord = ensurePayloadObject(msg as unknown as Record<string, unknown>)
+    const signedPayload = this.cfg.signer
+      ? buildSignedP2PPayload("/p2p/bft-message", payloadRecord, this.cfg.signer)
+      : payloadRecord
+    const payloadSize = serializeJson(signedPayload).length
+
+    for (let i = 0; i < allPeers.length; i += BROADCAST_CONCURRENCY) {
+      const batch = allPeers.slice(i, i + BROADCAST_CONCURRENCY)
+      await Promise.all(batch.map(async (peer) => {
+        if (dedupeKey) {
+          const peerSent = this.getPeerSentSet(peer.id)
+          if (peerSent.has(dedupeKey)) return
+          peerSent.add(dedupeKey)
+        }
+        try {
+          await requestJson(`${peer.url}/p2p/bft-message`, "POST", signedPayload)
+          this.scoring.recordSuccess(peer.id)
+          this.bytesSent += payloadSize
+        } catch {
+          this.scoring.recordFailure(peer.id)
+        }
+      }))
+    }
   }
 
   getStats(): {
@@ -767,7 +814,7 @@ export class P2PNode {
           this.bytesSent += payloadSize
           if (path.includes("tx")) this.txBroadcast++
           else this.blocksBroadcast++
-        } catch {
+        } catch (err) {
           this.scoring.recordFailure(peer.id)
         }
       }))

@@ -203,20 +203,19 @@ export class ConsensusEngine {
       this.proposeFailures = 0
       this.blocksProposed++
 
-      // If BFT is enabled, start a BFT round instead of directly broadcasting
+      // Broadcast block via gossip so all peers receive it
+      await this.broadcastBlock(block)
+
+      // If BFT is enabled, start a round (non-proposers join via handleReceivedBlock)
       if (this.bft) {
         try {
           await this.bft.startRound(block)
         } catch (bftErr) {
-          // BFT failed to start — fallback to direct broadcast
-          log.warn("BFT round start failed, falling back to direct broadcast", {
+          log.warn("BFT round start failed", {
             error: String(bftErr),
             block: block.number.toString(),
           })
-          await this.broadcastBlock(block)
         }
-      } else {
-        await this.broadcastBlock(block)
       }
 
       this.lastProposeMs = Date.now() - t0
