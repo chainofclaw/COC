@@ -2,6 +2,7 @@
   "name": "coc-blockchain",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "description": "ChainOfClaw - EVM-compatible blockchain with PoSe settlement",
   "workspaces": [
     "node",

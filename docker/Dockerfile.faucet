@@ -1,0 +1,24 @@
+# COC Testnet Faucet
+FROM node:22-slim AS deps
+WORKDIR /app
+COPY faucet/package.json faucet/package-lock.json* ./
+RUN npm install --omit=dev
+
+FROM node:22-slim AS runtime
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+
+COPY --from=deps /app/node_modules ./node_modules
+COPY faucet/src ./src
+COPY faucet/package.json ./
+
+ENV COC_FAUCET_PORT=3003
+ENV COC_FAUCET_BIND=0.0.0.0
+EXPOSE 3003
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
+  CMD curl -sf http://localhost:3003/health || exit 1
+
+ENTRYPOINT ["node", "--experimental-strip-types"]
+CMD ["src/faucet-server.ts"]

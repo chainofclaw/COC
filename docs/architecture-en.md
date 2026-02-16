@@ -1,7 +1,7 @@
 # COC (ChainOfClaw) Technical Architecture Documentation
 
 > **Version**: v1.1.0
-> **Last Updated**: 2026-02-15
+> **Last Updated**: 2026-02-16
 > **Status**: Production Ready (190 tests passing)
 
 ---
@@ -241,6 +241,8 @@ nodeReward = (nodeScore / totalScore) * epochReward;
 ---
 
 ## 4. Sybil Resistance Mechanisms
+
+> For validator runtime anti-Sybil flow and config baseline, see Section 12 in `docs/anti-sybil-en.md` ("Validator Anti-Sybil Execution Flow").
 
 ### 4.1 Economic Barriers (CRITICAL)
 

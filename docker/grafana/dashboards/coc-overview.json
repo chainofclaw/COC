@@ -1,0 +1,96 @@
+{
+  "dashboard": {
+    "title": "COC Prowl Testnet",
+    "uid": "coc-prowl-overview",
+    "timezone": "utc",
+    "refresh": "10s",
+    "time": { "from": "now-1h", "to": "now" },
+    "panels": [
+      {
+        "title": "Block Height",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+        "targets": [{ "expr": "coc_block_height", "legendFormat": "{{instance}}" }],
+        "fieldConfig": { "defaults": { "unit": "none" } }
+      },
+      {
+        "title": "Consensus State",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+        "targets": [{ "expr": "coc_consensus_state", "legendFormat": "{{instance}}" }],
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [
+              { "type": "value", "options": { "0": { "text": "Healthy", "color": "green" }, "1": { "text": "Degraded", "color": "orange" }, "2": { "text": "Recovering", "color": "yellow" } } }
+            ]
+          }
+        }
+      },
+      {
+        "title": "Connected Peers",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+        "targets": [{ "expr": "coc_peers_connected", "legendFormat": "{{instance}}" }]
+      },
+      {
+        "title": "Uptime",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+        "targets": [{ "expr": "coc_uptime_seconds", "legendFormat": "{{instance}}" }],
+        "fieldConfig": { "defaults": { "unit": "s" } }
+      },
+      {
+        "title": "Block Height Over Time",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+        "targets": [{ "expr": "coc_block_height", "legendFormat": "{{instance}}" }]
+      },
+      {
+        "title": "Mempool (Pending / Queued)",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+        "targets": [
+          { "expr": "coc_tx_pool_pending", "legendFormat": "pending {{instance}}" },
+          { "expr": "coc_tx_pool_queued", "legendFormat": "queued {{instance}}" }
+        ]
+      },
+      {
+        "title": "Wire Connections",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 8, "x": 0, "y": 12 },
+        "targets": [{ "expr": "coc_wire_connections", "legendFormat": "{{instance}}" }]
+      },
+      {
+        "title": "DHT Peers",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 8, "x": 8, "y": 12 },
+        "targets": [{ "expr": "coc_dht_peers_total", "legendFormat": "{{instance}}" }]
+      },
+      {
+        "title": "Process Memory",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 8, "x": 16, "y": 12 },
+        "targets": [
+          { "expr": "coc_process_memory_bytes", "legendFormat": "RSS {{instance}}" },
+          { "expr": "coc_process_heap_bytes", "legendFormat": "Heap {{instance}}" }
+        ],
+        "fieldConfig": { "defaults": { "unit": "bytes" } }
+      },
+      {
+        "title": "RPC Requests",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+        "targets": [
+          { "expr": "rate(coc_rpc_requests_total[5m])", "legendFormat": "requests/s {{instance}}" },
+          { "expr": "rate(coc_rpc_errors_total[5m])", "legendFormat": "errors/s {{instance}}" }
+        ]
+      },
+      {
+        "title": "Block Time Distribution",
+        "type": "histogram",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+        "targets": [{ "expr": "coc_block_time_seconds_bucket", "legendFormat": "{{le}}" }]
+      }
+    ]
+  }
+}

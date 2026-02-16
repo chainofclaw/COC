@@ -1,0 +1,29 @@
+{
+  "nodeId": "node-3",
+  "chainId": 18780,
+  "rpcBind": "0.0.0.0",
+  "rpcPort": 18780,
+  "p2pBind": "0.0.0.0",
+  "p2pPort": 19780,
+  "wsPort": 18781,
+  "wirePort": 19781,
+  "validators": ["node-1", "node-2", "node-3"],
+  "peers": [
+    {"id": "node-1", "url": "http://node-1:19780"},
+    {"id": "node-2", "url": "http://node-2:19780"}
+  ],
+  "enableBft": true,
+  "enableWireProtocol": true,
+  "enableDht": true,
+  "enableSnapSync": true,
+  "blockTimeMs": 3000,
+  "finalityDepth": 3,
+  "maxTxPerBlock": 100,
+  "dhtBootstrapPeers": [
+    {"id": "node-1", "address": "node-1", "port": 19781},
+    {"id": "node-2", "address": "node-2", "port": 19781}
+  ],
+  "prefund": [
+    {"address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", "balanceEth": "10000"}
+  ]
+}

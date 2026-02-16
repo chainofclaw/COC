@@ -243,6 +243,8 @@ nodeReward = (nodeScore / totalScore) * epochReward;
 
 ## 4. 防女巫攻击机制
 
+> 验证者运行时的防女巫执行链路与配置基线，见 `docs/anti-sybil-zh.md` 第 12 节「验证者防女巫作弊执行流程」。
+
 ### 4.1 经济门槛（CRITICAL）
 
 #### 4.1.1 渐进式质押

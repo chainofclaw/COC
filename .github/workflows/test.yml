@@ -1,0 +1,50 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test-node:
+    name: Node Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: cd node && npm install
+      - name: Run node tests
+        run: |
+          cd node
+          node --experimental-strip-types --test --test-force-exit src/*.test.ts src/**/*.test.ts
+        env:
+          NODE_ENV: test
+
+  test-services:
+    name: Service Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm install --workspaces
+      - name: Run service tests
+        run: |
+          node --experimental-strip-types --test --test-force-exit services/**/*.test.ts nodeops/*.test.ts tests/**/*.test.ts
+        env:
+          NODE_ENV: test
+
+  test-contracts:
+    name: Contract Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: cd contracts && npm install
+      - run: cd contracts && npm test

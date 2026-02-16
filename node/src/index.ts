@@ -26,7 +26,9 @@ import { createLogger } from "./logger.ts"
 import { LevelDatabase } from "./storage/db.ts"
 import { PersistentStateTrie } from "./storage/state-trie.ts"
 import { PersistentStateManager } from "./storage/persistent-state-manager.ts"
-import { NonceRegistry } from "../services/verifier/nonce-registry.ts"
+import { NonceRegistry } from "../../services/verifier/nonce-registry.ts"
+import { EvidenceStore } from "../../runtime/lib/evidence-store.ts"
+import type { EquivocationEvidence } from "./bft.ts"
 import { IpfsMfs } from "./ipfs-mfs.ts"
 import { IpfsPubsub } from "./ipfs-pubsub.ts"
 import type { PubsubMessage } from "./ipfs-pubsub.ts"
@@ -39,6 +41,8 @@ import { DhtNetwork } from "./dht-network.ts"
 import { exportStateSnapshot, importStateSnapshot } from "./state-snapshot.ts"
 import type { StateSnapshot } from "./state-snapshot.ts"
 import type { IStateTrie } from "./storage/state-trie.ts"
+import { startMetricsServer } from "./metrics-server.ts"
+import { metrics } from "./metrics.ts"
 
 const log = createLogger("node")
 
@@ -205,6 +209,10 @@ const p2p = new P2PNode(
 )
 p2p.start()
 
+// BFT equivocation evidence store — persists slash evidence for relayer consumption
+const bftEvidencePath = `${config.dataDir}/evidence-bft.jsonl`
+const bftEvidenceStore = new EvidenceStore(1000, bftEvidencePath)
+
 // Initialize BFT coordinator after P2P is ready
 if (bftEnabled) {
   const validators = config.validators.map((id) => ({
@@ -219,6 +227,36 @@ if (bftEnabled) {
     commitTimeoutMs: config.bftCommitTimeoutMs,
     signer: nodeSigner,
     verifier: nodeSigner,
+    onEquivocation: (evidence: EquivocationEvidence) => {
+      log.warn("BFT equivocation detected", {
+        validator: evidence.validatorId,
+        height: evidence.height.toString(),
+        phase: evidence.phase,
+        hash1: evidence.blockHash1,
+        hash2: evidence.blockHash2,
+      })
+      // Persist as SlashEvidence for relayer pickup
+      const nodeIdHex = evidence.validatorId.startsWith("0x")
+        ? evidence.validatorId.padEnd(66, "0")
+        : `0x${evidence.validatorId.padStart(64, "0")}`
+      const rawEvidence: Record<string, unknown> = {
+        type: "bft-equivocation",
+        validatorId: evidence.validatorId,
+        height: evidence.height.toString(),
+        phase: evidence.phase,
+        blockHash1: evidence.blockHash1,
+        blockHash2: evidence.blockHash2,
+        detectedAtMs: evidence.detectedAtMs,
+      }
+      const evidenceJson = JSON.stringify(rawEvidence)
+      const evidenceHash = `0x${Buffer.from(evidenceJson).toString("hex").slice(0, 64).padEnd(64, "0")}` as `0x${string}`
+      bftEvidenceStore.push({
+        nodeId: nodeIdHex as `0x${string}`,
+        reasonCode: 6, // BFT equivocation (new reason code beyond existing 1-5)
+        evidenceHash,
+        rawEvidence,
+      })
+    },
     broadcastMessage: async (msg: BftMessage) => {
       await p2p.broadcastBft({
         type: msg.type,
@@ -515,9 +553,27 @@ if (config.enableDht) {
   log.info("DHT peer discovery started", { bootstrapPeers: config.dhtBootstrapPeers.length })
 }
 
+// Prometheus metrics server
+const metricsPort = Number(process.env.COC_METRICS_PORT ?? 9100)
+const metricsHandle = startMetricsServer({
+  getBlockHeight: () => chain.getHeight(),
+  getTxPoolPending: () => chain.mempool.stats().size,
+  getTxPoolQueued: () => 0,
+  getPeersConnected: () => p2p.discovery.getActivePeers().length,
+  getWireConnections: wireServer ? () => wireServer!.getStats().connections : undefined,
+  getBftRoundHeight: bftCoordinator ? () => {
+    const state = bftCoordinator!.getRoundState()
+    return state.height !== null ? Number(state.height) : 0
+  } : undefined,
+  getConsensusState: () => consensus.getStatus().status,
+  getDhtPeers: dhtNetwork ? () => dhtNetwork!.getStats().totalPeers : undefined,
+  getP2PAuthRejected: () => p2p.getStats().authRejectedRequests,
+}, { port: metricsPort })
+
 // Graceful shutdown
 process.on("SIGINT", async () => {
   log.info("shutting down...")
+  metricsHandle.stop()
   wsServer.stop()
   if (wireServer) wireServer.stop()
   for (const client of wireClients) client.disconnect()

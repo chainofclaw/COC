@@ -1,0 +1,41 @@
+name: Deploy Testnet
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        default: "prowl-testnet"
+        type: choice
+        options:
+          - prowl-testnet
+      image_tag:
+        description: "Docker image tag to deploy"
+        required: true
+        default: "latest"
+
+jobs:
+  deploy:
+    name: Deploy to ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            cd /opt/coc
+            git pull origin main
+            export IMAGE_TAG=${{ inputs.image_tag }}
+            docker compose -f docker/docker-compose.testnet.yml pull
+            docker compose -f docker/docker-compose.testnet.yml up -d
+            echo "Deployment complete. Waiting for health check..."
+            sleep 30
+            curl -sf http://localhost:28780/health || echo "Health check failed"

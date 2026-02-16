@@ -1,0 +1,12 @@
+{
+  "name": "coc-faucet",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node --experimental-strip-types src/faucet-server.ts"
+  },
+  "dependencies": {
+    "ethers": "^6.13.5"
+  }
+}
