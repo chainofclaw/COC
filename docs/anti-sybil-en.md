@@ -1,7 +1,7 @@
 # COC Anti-Sybil Attack Mechanisms
 
 > **Version**: v1.0.0
-> **Last Updated**: 2026-02-14
+> **Last Updated**: 2026-02-16
 > **Defense Coverage**: 70-75%, P0+P1 Complete
 
 ---
@@ -18,6 +18,8 @@
 8. [Attack Scenario Analysis](#8-attack-scenario-analysis)
 9. [Residual Risks](#9-residual-risks)
 10. [Enhancement Roadmap](#10-enhancement-roadmap)
+11. [Summary](#11-summary)
+12. [Validator Anti-Sybil Execution Flow](#12-validator-anti-sybil-execution-flow)
 
 ---
 
@@ -1155,6 +1157,80 @@ verifyRelayResult: async (challenge, receipt) => {
 2. **Q3 Complete P2-Med** — VRF + Cross-address detection
 3. **Continuous Monitoring** — Real-time detection of anomalous registration patterns
 4. **Progressive MIN_BOND increase** — Adjust based on network scale
+
+---
+
+## 12. Validator Anti-Sybil Execution Flow
+
+This section explains how validators block Sybil cheating at runtime, mapped to current code paths and config switches.
+
+### 12.1 Security Objectives
+
+- Prevent fake identities from entering discovery and communication surfaces.
+- Prevent unauthorized challengers from draining challenge budget.
+- Prevent replay and low-cost flooding patterns.
+- Apply automated mitigation (de-prioritize/ban) instead of manual-only operations.
+
+### 12.2 Validator Runtime Flow (by request lifecycle)
+
+1. Registration and economic barriers
+- Validators rely on `PoSeManager` controls: `MIN_BOND`, `MAX_NODES_PER_OPERATOR`, and `requiredBond()`.
+- Effect: expansion cost grows exponentially for the same operator.
+
+2. Inbound authentication (P2P/PoSe)
+- P2P and PoSe write paths support default-enforce signature auth with time-skew and nonce checks.
+- Key implementation: `node/src/p2p.ts`, `node/src/pose-http.ts`.
+
+3. Dynamic challenger authorization
+- Validators enforce layered challenger authorization:
+  - static allowlist
+  - dynamic resolver (governance active set or on-chain `operatorNodeCount(address)`)
+- Key implementation: `node/src/pose-authorizer.ts`, `node/src/pose-onchain-authorizer.ts`, `node/src/index.ts`.
+
+4. Discovery identity proof
+- Newly discovered peers are promoted only after `/p2p/identity-proof` challenge-signature validation.
+- DHT is fail-closed by default: if authenticated handshake is unavailable, peers are rejected.
+- Key implementation: `node/src/p2p.ts`, `node/src/dht-network.ts`.
+
+5. Challenge budget and quota controls
+- Validators enforce combined limits: global epoch budget + challenge buckets (U/S/R) + tiers (default/trusted/restricted).
+- Key implementation: `node/src/pose-engine.ts`.
+
+6. Replay protection with persistence
+- Nonce registry supports persistence, TTL, and bounded capacity to reduce restart replay windows.
+- Key implementation: `services/verifier/nonce-registry.ts`, `node/src/p2p.ts`.
+
+7. Automated mitigation linkage
+- Inbound anomalies are not only counted; they feed into `PeerScoring`.
+- Source identity uses composite keys (`IP + senderId`) to better resist proxy rotation and sender spoofing.
+- Key implementation: `node/src/p2p.ts`.
+
+### 12.3 Validator Critical Config Baseline
+
+| Config | Recommended | Purpose |
+|------|------|------|
+| `p2pInboundAuthMode` | `enforce` | Reject unsigned/invalid signed P2P writes |
+| `poseInboundAuthMode` | `enforce` | Enforce PoSe write auth |
+| `dhtRequireAuthenticatedVerify` | `true` | Disable DHT identity downgrade |
+| `poseUseOnchainChallengerAuth` | `true` | Authorize challengers by on-chain eligibility |
+| `poseOnchainAuthTimeoutMs` | `3000` | Bound on-chain auth latency impact |
+| `poseChallengerAuthCacheTtlMs` | `30000` | Balance freshness vs performance |
+
+### 12.4 Decision and Mitigation Matrix
+
+| Attack Pattern | Validator Checkpoint | Default Action |
+|------|------|------|
+| Forged P2P write | P2P `_auth` signature check fails | `401` + composite source score penalty |
+| Replay request | nonce hit | reject + increment security counters |
+| Unauthorized challenger | dynamic authorizer returns false | `403` reject |
+| Forged discovery identity | identity-proof/handshake mismatch | no promotion + score penalty |
+| DHT anonymous fallback attempt | handshake unavailable | fail-closed reject |
+
+### 12.5 Operational Guidance
+
+1. Wire `coc_getNetworkStats` to alerts with focus on `authRejected`, `discoveryIdentityFailures`, and `dht.verifyFailures`.  
+2. Use dedicated RPC for on-chain authorization queries and enforce request timeout.  
+3. During rollout, run `monitor` for 24h first, then switch to `enforce` with rollback playbook ready.  
 
 ---
 

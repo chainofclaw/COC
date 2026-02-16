@@ -1,0 +1,30 @@
+[Unit]
+Description=COC Blockchain Node (Prowl Testnet)
+After=network.target
+Documentation=https://github.com/chainofclaw/coc
+
+[Service]
+Type=simple
+User=coc
+Group=coc
+WorkingDirectory=/opt/coc
+ExecStart=/usr/bin/node --experimental-strip-types node/src/index.ts
+Restart=always
+RestartSec=10
+LimitNOFILE=65535
+
+Environment=COC_DATA_DIR=/var/lib/coc
+Environment=COC_NODE_CONFIG=/etc/coc/node-config.json
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/coc /var/log/coc
+PrivateTmp=true
+
+StandardOutput=append:/var/log/coc/node.log
+StandardError=append:/var/log/coc/node-error.log
+
+[Install]
+WantedBy=multi-user.target

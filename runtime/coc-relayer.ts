@@ -26,8 +26,9 @@ const poseAbi = [
 const pose = poseManagerAddress && signer ? new Contract(poseManagerAddress, poseAbi, signer) : null;
 let lastFinalizeEpoch = 0;
 
-// Shared evidence store — coc-agent writes, coc-relayer consumes
-export const evidenceStore = new EvidenceStore();
+// Shared evidence store — persistent across restarts
+const evidencePath = process.env.COC_EVIDENCE_PATH || (config.dataDir ? `${config.dataDir}/evidence-relayer.jsonl` : undefined);
+export const evidenceStore = new EvidenceStore(1000, evidencePath);
 
 async function tick(): Promise<void> {
   try {

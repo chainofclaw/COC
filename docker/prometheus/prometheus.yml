@@ -1,0 +1,22 @@
+# Prometheus scrape configuration for COC Prowl Testnet
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "coc-node"
+    static_configs:
+      - targets:
+          - "node:9100"
+        labels:
+          instance: "node-1"
+
+  # For multi-node testnet
+  - job_name: "coc-testnet"
+    static_configs:
+      - targets:
+          - "node-1:9100"
+          - "node-2:9100"
+          - "node-3:9100"
+        labels:
+          network: "prowl-testnet"

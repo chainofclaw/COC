@@ -1,7 +1,7 @@
 # COC 防女巫攻击机制详解
 
 > **版本**: v1.1.0
-> **更新日期**: 2026-02-15
+> **更新日期**: 2026-02-16
 > **防护等级**: 80%+ 覆盖（新增入口强制鉴权、发现层挑战签名、nonce 生命周期治理）
 
 ---
@@ -18,6 +18,8 @@
 8. [攻击场景分析](#8-攻击场景分析)
 9. [残留风险](#9-残留风险)
 10. [增强路线图](#10-增强路线图)
+11. [总结](#11-总结)
+12. [验证者防女巫作弊执行流程](#12-验证者防女巫作弊执行流程)
 
 ---
 
@@ -1155,6 +1157,80 @@ verifyRelayResult: (challenge, receipt) => {
 2. **Q3 完成 P2-中** — VRF + 跨地址检测
 3. **持续监控** — 实时检测异常注册模式
 4. **渐进式提高 MIN_BOND** — 根据网络规模调整
+
+---
+
+## 12. 验证者防女巫作弊执行流程
+
+本节聚焦“验证者在运行时如何阻断女巫作弊”，对应当前代码中的执行路径与配置开关。
+
+### 12.1 防护目标
+
+- 阻止伪身份节点进入发现池和通信面。
+- 阻止未授权 challenger 消耗挑战预算。
+- 阻止重放请求和批量低成本刷流量攻击。
+- 在攻击发生时自动降权/封禁，避免依赖人工处置。
+
+### 12.2 验证者执行链路（按请求生命周期）
+
+1. 注册与经济门槛
+- 验证者依赖 `PoSeManager` 的 `MIN_BOND`、`MAX_NODES_PER_OPERATOR`、`requiredBond()` 建立基础成本门槛。
+- 结果：同一运营商规模扩张成本指数上升。
+
+2. 入站认证（P2P/PoSe）
+- P2P 与 PoSe 写路径默认支持 `enforce` 模式签名鉴权，校验时间窗与 nonce。
+- 关键实现：`node/src/p2p.ts`、`node/src/pose-http.ts`。
+
+3. challenger 动态授权
+- 验证者对 PoSe challenger 执行“双层授权”：
+  - 静态 allowlist（配置）
+  - 动态 resolver（治理活跃集或 on-chain `operatorNodeCount(address)`）
+- 关键实现：`node/src/pose-authorizer.ts`、`node/src/pose-onchain-authorizer.ts`、`node/src/index.ts`。
+
+4. 发现层身份证明
+- discovery 新 peer 需通过 `/p2p/identity-proof` 挑战签名验证后才提升到活跃池。
+- DHT 默认 `fail-closed`：握手鉴权不可用即拒绝，不退化到匿名连通性验证。
+- 关键实现：`node/src/p2p.ts`、`node/src/dht-network.ts`。
+
+5. 挑战预算与配额抑制
+- 验证者对挑战发放执行“全局预算 + 挑战桶(U/S/R) + tier(default/trusted/restricted)”限制。
+- 关键实现：`node/src/pose-engine.ts`。
+
+6. 防重放与状态持续性
+- nonce 注册支持持久化、TTL 与容量上限，降低重启后回放窗口。
+- 关键实现：`services/verifier/nonce-registry.ts`、`node/src/p2p.ts`。
+
+7. 自动惩罚联动
+- 入站异常不只计数，还会联动 `PeerScoring`。
+- 来源键为 `IP + senderId` 复合键，增强对代理轮换和伪造 sender 的识别与封禁效果。
+- 关键实现：`node/src/p2p.ts`。
+
+### 12.3 验证者关键配置（建议基线）
+
+| 配置项 | 建议 | 作用 |
+|------|------|------|
+| `p2pInboundAuthMode` | `enforce` | 未签名/签名错误直接拒绝 |
+| `poseInboundAuthMode` | `enforce` | PoSe 写接口强制认证 |
+| `dhtRequireAuthenticatedVerify` | `true` | 禁止 DHT 身份验证降级 |
+| `poseUseOnchainChallengerAuth` | `true` | 按链上资格判定 challenger |
+| `poseOnchainAuthTimeoutMs` | `3000` | 限制链上授权查询拖慢入口 |
+| `poseChallengerAuthCacheTtlMs` | `30000` | 平衡授权实时性与性能 |
+
+### 12.4 判定与处置矩阵
+
+| 攻击行为 | 验证者判定点 | 默认动作 |
+|------|------|------|
+| 伪造 P2P 写请求 | P2P `_auth` 验签失败 | `401` + 复合来源降权 |
+| 重放请求 | nonce 命中 | 拒绝请求 + 记安全计数 |
+| 未授权 challenger | 动态授权器返回 false | `403` 拒绝 |
+| 伪造 discovery 身份 | identity-proof/握手不匹配 | 不入活跃池 + 惩罚评分 |
+| DHT 匿名探测回退 | 握手不可用 | fail-closed 直接拒绝 |
+
+### 12.5 运维建议
+
+1. 将 `coc_getNetworkStats` 纳入告警，重点跟踪 `authRejected`、`discoveryIdentityFailures`、`dht.verifyFailures`。  
+2. 对 on-chain 授权查询设置专用 RPC 节点与超时，避免授权依赖拖慢核心路径。  
+3. 在灰度期先开启 `monitor` 观测 24 小时，再切 `enforce`，并保留回滚预案。  
 
 ---
 

@@ -1,0 +1,90 @@
+# COC 3-Node BFT Testnet
+# Usage: docker compose -f docker/docker-compose.testnet.yml up -d
+version: "3.9"
+
+x-node-base: &node-base
+  build:
+    context: ..
+    dockerfile: docker/Dockerfile.node
+  restart: unless-stopped
+  networks:
+    - coc-p2p
+    - coc-rpc
+
+services:
+  node-1:
+    <<: *node-base
+    container_name: coc-node-1
+    ports:
+      - "28780:18780"
+      - "28781:18781"
+      - "29780:19780"
+      - "29781:19781"
+      - "9101:9100"
+    volumes:
+      - node1-data:/data/coc
+      - ./testnet-configs/node-1.json:/data/coc/node-config.json:ro
+    environment:
+      - COC_DATA_DIR=/data/coc
+      - COC_NODE_CONFIG=/data/coc/node-config.json
+
+  node-2:
+    <<: *node-base
+    container_name: coc-node-2
+    ports:
+      - "28782:18780"
+      - "28783:18781"
+      - "29782:19780"
+      - "29783:19781"
+      - "9102:9100"
+    volumes:
+      - node2-data:/data/coc
+      - ./testnet-configs/node-2.json:/data/coc/node-config.json:ro
+    environment:
+      - COC_DATA_DIR=/data/coc
+      - COC_NODE_CONFIG=/data/coc/node-config.json
+
+  node-3:
+    <<: *node-base
+    container_name: coc-node-3
+    ports:
+      - "28784:18780"
+      - "28785:18781"
+      - "29784:19780"
+      - "29785:19781"
+      - "9103:9100"
+    volumes:
+      - node3-data:/data/coc
+      - ./testnet-configs/node-3.json:/data/coc/node-config.json:ro
+    environment:
+      - COC_DATA_DIR=/data/coc
+      - COC_NODE_CONFIG=/data/coc/node-config.json
+
+  explorer:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.explorer
+    container_name: coc-explorer
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_RPC_URL=http://node-1:18780
+      - NEXT_PUBLIC_WS_URL=ws://node-1:18781
+    depends_on:
+      node-1:
+        condition: service_healthy
+    networks:
+      - coc-rpc
+    restart: unless-stopped
+
+volumes:
+  node1-data:
+  node2-data:
+  node3-data:
+
+networks:
+  coc-p2p:
+    driver: bridge
+    internal: true
+  coc-rpc:
+    driver: bridge

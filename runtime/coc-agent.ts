@@ -1,7 +1,8 @@
 import { randomBytes } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
+import { appendFileSync, existsSync, readFileSync, mkdirSync } from "node:fs";
 import { hostname, networkInterfaces } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { Contract, JsonRpcProvider, Wallet, keccak256, toUtf8Bytes } from "ethers";
 import { loadConfig } from "./lib/config.ts";
 import { requestJson } from "./lib/http-client.ts";
@@ -182,6 +183,16 @@ const verifier = new ReceiptVerifier({
     }
     if (responseAtMs !== receipt.responseAtMs) return false;
 
+    // Verify relay timing: response must be within reasonable window of challenge issuance
+    const challengeIssuedMs = Number(_challenge.issuedAtMs);
+    const responseMs = Number(responseAtMs);
+    const maxRelayLatencyMs = 300_000; // 5 minutes max relay latency
+    if (responseMs < challengeIssuedMs || responseMs - challengeIssuedMs > maxRelayLatencyMs) return false;
+
+    // Verify witness txHash exists on-chain (if provided)
+    const witnessTxHash = typeof witness.txHash === "string" ? witness.txHash : "";
+    if (witnessTxHash && !/^0x[0-9a-fA-F]{64}$/.test(witnessTxHash)) return false;
+
     const relayMsg = `pose:relay:${_challenge.challengeId}:${routeTag}:${responseAtMs.toString()}`;
     return agentSigner.verifyNodeSig(relayMsg, signature, relayer);
   },
@@ -194,12 +205,55 @@ const aggregator = new BatchAggregator({
 
 const trackedNodeIds = normalizeNodeIds(config.nodeIds);
 const nodeScores = new Map<string, { uptimeOk: number; uptimeTotal: number; storageOk: number; storageTotal: number; relayOk: number; relayTotal: number; verifiedStorageBytes: number }>();
-let pending: Array<any> = [];
+
+// Persistent pending receipts store — survives crash/restart
+class PendingReceiptStore {
+  private items: Array<any> = [];
+  private readonly path: string;
+
+  constructor(persistencePath: string) {
+    this.path = persistencePath;
+    this.loadFromDisk();
+  }
+
+  get length(): number { return this.items.length; }
+
+  push(item: any): void {
+    this.items.push(item);
+    try {
+      mkdirSync(dirname(this.path), { recursive: true });
+      appendFileSync(this.path, JSON.stringify(item) + "\n");
+    } catch { /* best-effort */ }
+  }
+
+  drain(): Array<any> {
+    const result = this.items.splice(0);
+    try { writeFile(this.path, "").catch(() => {}); } catch { /* best-effort */ }
+    return result;
+  }
+
+  private loadFromDisk(): void {
+    if (!existsSync(this.path)) return;
+    try {
+      const raw = readFileSync(this.path, "utf-8");
+      for (const line of raw.split("\n").filter((l) => l.trim())) {
+        try { this.items.push(JSON.parse(line)); } catch { /* skip */ }
+      }
+      if (this.items.length > 0) {
+        log.info("restored pending receipts from disk", { count: this.items.length });
+      }
+    } catch { /* ignore */ }
+  }
+}
+
+const pendingPath = process.env.COC_PENDING_PATH || join(config.dataDir, "pending-receipts.jsonl");
+const pending = new PendingReceiptStore(pendingPath);
 let currentEpoch = currentEpochId();
 log.info("endpoint fingerprint mode", { mode: endpointFingerprintMode });
 
 // Evidence pipeline: agent writes, relayer consumes
-export const evidenceStore = new EvidenceStore();
+const evidencePath = process.env.COC_EVIDENCE_PATH || join(config.dataDir, "evidence-agent.jsonl");
+export const evidenceStore = new EvidenceStore(1000, evidencePath);
 const antiCheat = new AntiCheatPolicy();
 
 await ensureNodeRegistered();
@@ -210,8 +264,7 @@ async function tick(): Promise<void> {
     await refreshSelfNodeStatus();
     const nowEpoch = currentEpochId();
     if (nowEpoch !== currentEpoch && pending.length > 0) {
-      await flushBatch(currentEpoch);
-      pending = [];
+      await flushBatch(currentEpoch, pending.drain());
       emitEpochScores(currentEpoch);
       nodeScores.clear();
       currentEpoch = nowEpoch;
@@ -228,8 +281,7 @@ async function tick(): Promise<void> {
     }
 
     if (pending.length >= batchSize) {
-      await flushBatch(currentEpoch);
-      pending = [];
+      await flushBatch(currentEpoch, pending.drain());
     }
 
     log.info("tick ok");
@@ -498,9 +550,9 @@ function ratioBps(ok: number, total: number): number {
   return Math.floor((ok / total) * 10_000);
 }
 
-async function flushBatch(epochId: number): Promise<void> {
+async function flushBatch(epochId: number, receipts: Array<any>): Promise<void> {
   try {
-    const batch = aggregator.buildBatch(BigInt(epochId), pending);
+    const batch = aggregator.buildBatch(BigInt(epochId), receipts);
 
     if (!poseContract || !canRunAggregatorRole(epochId)) {
       log.info("batch(local)", {

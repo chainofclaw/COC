@@ -1,0 +1,23 @@
+[Unit]
+Description=COC Block Explorer
+After=network.target coc-node.service
+
+[Service]
+Type=simple
+User=coc
+Group=coc
+WorkingDirectory=/opt/coc/explorer
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=10
+
+Environment=PORT=3000
+Environment=HOSTNAME=0.0.0.0
+Environment=NEXT_PUBLIC_RPC_URL=http://127.0.0.1:18780
+Environment=NEXT_PUBLIC_WS_URL=ws://127.0.0.1:18781
+
+StandardOutput=append:/var/log/coc/explorer.log
+StandardError=append:/var/log/coc/explorer-error.log
+
+[Install]
+WantedBy=multi-user.target
