@@ -173,6 +173,14 @@ const p2p = new P2PNode(
       } catch {
         // ignore invalid/duplicate blocks from peers
       }
+      // Non-proposer nodes: join BFT round for blocks received via gossip
+      if (bftCoordinator) {
+        try {
+          await bftCoordinator.handleReceivedBlock(block)
+        } catch {
+          // ignore if round already active or block invalid
+        }
+      }
     },
     onSnapshotRequest: () => {
       // Legacy snapshot support for in-memory engine
@@ -442,6 +450,13 @@ if (config.enableWireProtocol) {
         await chain.applyBlock(block)
       } catch {
         // ignore
+      }
+      if (bftCoordinator) {
+        try {
+          await bftCoordinator.handleReceivedBlock(block)
+        } catch {
+          // ignore
+        }
       }
     },
     onTx: async (rawTx) => {
