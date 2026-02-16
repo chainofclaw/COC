@@ -74,8 +74,8 @@ Policy files are located at `nodeops/policies/*.yaml` and can be loaded and eval
 
 ## Test Strategy
 
-Uses Node.js built-in test framework (715+102 tests across 82 test files):
-- **Node layer tests**: `node/src/*.test.ts node/src/**/*.test.ts` (715 tests, 61 files) - chain engine, EVM, RPC, WebSocket, P2P, mempool, storage, IPFS, PoSe, BFT consensus, DHT, wire protocol, fork choice, state snapshot, wire server, DHT network, snap sync, consensus-BFT integration, consensus metrics, wire connection manager, wire tx relay, sync progress, gas histogram, governance stats, wire dedup/relay, security hardening, P2P auth, wire auth handshake, replay guard, nonce registry, PoSe auth
+Uses Node.js built-in test framework (729+102 tests across 83 test files):
+- **Node layer tests**: `node/src/*.test.ts node/src/**/*.test.ts` (729 tests, 62 files) - chain engine, EVM, RPC, WebSocket, P2P, mempool, storage, IPFS, PoSe, BFT consensus, DHT, wire protocol, fork choice, state snapshot, wire server, DHT network, snap sync, consensus-BFT integration, consensus metrics, wire connection manager, wire tx relay, sync progress, gas histogram, governance stats, wire dedup/relay, security hardening, P2P auth, wire auth handshake, replay guard, nonce registry, PoSe auth
 - **Service layer tests**: `services/**/*.test.ts` + `nodeops/*.test.ts` + `tests/**/*.test.ts` (102 tests, 21 files)
 - **Storage layer tests**: `node/src/storage/*.test.ts` (included in node layer)
 
