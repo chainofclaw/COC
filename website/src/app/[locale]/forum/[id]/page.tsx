@@ -20,6 +20,7 @@ export default function PostDetailPage() {
   const [replyContent, setReplyContent] = useState('')
   const [replyingTo, setReplyingTo] = useState<number | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [notFound, setNotFound] = useState(false)
 
   const fetchPost = useCallback(async () => {
     const res = await fetch(`/api/forum/posts/${postId}`)
@@ -27,6 +28,8 @@ export default function PostDetailPage() {
       const data = await res.json()
       setPost(data.post)
       setReplies(data.replies)
+    } else {
+      setNotFound(true)
     }
   }, [postId])
 
@@ -87,6 +90,15 @@ export default function PostDetailPage() {
       body: JSON.stringify({ target_type: 'reply', target_id: replyId, vote_type: type, address, signature, message }),
     })
     return res.json()
+  }
+
+  if (notFound) {
+    return (
+      <section className="container mx-auto px-4 py-16 text-center">
+        <h1 className="text-2xl font-display font-bold text-text-primary mb-2">{t('postNotFound')}</h1>
+        <p className="text-text-muted">{t('postNotFoundDesc')}</p>
+      </section>
+    )
   }
 
   if (!post) {

@@ -741,6 +741,8 @@
     "replies": "Replies",
     "replyPlaceholder": "Write your reply...",
     "replyingTo": "Replying to",
+    "postNotFound": "Post Not Found",
+    "postNotFoundDesc": "The post you're looking for doesn't exist or has been removed.",
     "category": {
       "general": "General",
       "proposal": "Proposal",
@@ -776,6 +778,8 @@
     "alreadyVoted": "You have already voted on this proposal",
     "timeline": "Proposal Timeline",
     "executionDetails": "Execution Details",
+    "proposalNotFound": "Proposal Not Found",
+    "proposalNotFoundDesc": "The proposal you're looking for doesn't exist or hasn't been created yet.",
     "bicameral": "Bicameral View",
     "bothChambersPassed": "Both chambers have reached approval threshold",
     "bothChambersNeeded": "Both chambers must independently approve",

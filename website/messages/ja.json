@@ -741,6 +741,8 @@
     "replies": "返信",
     "replyPlaceholder": "返信を書いてください...",
     "replyingTo": "返信先",
+    "postNotFound": "投稿が見つかりません",
+    "postNotFoundDesc": "お探しの投稿は存在しないか、削除されています。",
     "category": {
       "general": "一般",
       "proposal": "提案",
@@ -776,6 +778,8 @@
     "alreadyVoted": "この提案には既に投票済みです",
     "timeline": "提案タイムライン",
     "executionDetails": "実行詳細",
+    "proposalNotFound": "提案が見つかりません",
+    "proposalNotFoundDesc": "お探しの提案は存在しないか、まだ作成されていません。",
     "bicameral": "二院制ビュー",
     "bothChambersPassed": "両院が承認閾値に達しました",
     "bothChambersNeeded": "両院がそれぞれ独立して承認する必要があります",

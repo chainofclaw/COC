@@ -741,6 +741,8 @@
     "replies": "답글",
     "replyPlaceholder": "답글을 작성하세요...",
     "replyingTo": "답글 대상",
+    "postNotFound": "게시물을 찾을 수 없습니다",
+    "postNotFoundDesc": "찾고 있는 게시물이 존재하지 않거나 삭제되었습니다.",
     "category": {
       "general": "일반",
       "proposal": "제안",
@@ -776,6 +778,8 @@
     "alreadyVoted": "이 제안에 이미 투표하셨습니다",
     "timeline": "제안 타임라인",
     "executionDetails": "실행 세부 정보",
+    "proposalNotFound": "제안을 찾을 수 없습니다",
+    "proposalNotFoundDesc": "찾고 있는 제안이 존재하지 않거나 아직 생성되지 않았습니다.",
     "bicameral": "양원제 보기",
     "bothChambersPassed": "양원 모두 승인 임계값에 도달했습니다",
     "bothChambersNeeded": "양원이 각각 독립적으로 승인해야 합니다",

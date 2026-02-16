@@ -741,6 +741,8 @@
     "replies": "Respuestas",
     "replyPlaceholder": "Escribe tu respuesta...",
     "replyingTo": "Respondiendo a",
+    "postNotFound": "Publicación no encontrada",
+    "postNotFoundDesc": "La publicación que buscas no existe o ha sido eliminada.",
     "category": {
       "general": "General",
       "proposal": "Propuesta",
@@ -776,6 +778,8 @@
     "alreadyVoted": "Ya has votado en esta propuesta",
     "timeline": "Cronología de la Propuesta",
     "executionDetails": "Detalles de Ejecución",
+    "proposalNotFound": "Propuesta no encontrada",
+    "proposalNotFoundDesc": "La propuesta que buscas no existe o aún no ha sido creada.",
     "bicameral": "Vista Bicameral",
     "bothChambersPassed": "Ambas cámaras han alcanzado el umbral de aprobación",
     "bothChambersNeeded": "Ambas cámaras deben aprobar de forma independiente",

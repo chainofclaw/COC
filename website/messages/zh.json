@@ -231,104 +231,137 @@
       }
     },
     "testnet": {
-      "title": "参与测试节点部署",
-      "intro": "成为COC测试网络的早期参与者,体验Proof-of-Service机制",
+      "title": "如何参与测试节点的部署",
       "requirements": {
-        "title": "节点硬件要求",
-        "minimum": "最低配置",
-        "minCpu": "CPU: 2核心 (x86_64)",
-        "minRam": "内存: 4GB RAM",
-        "minStorage": "存储: 50GB SSD",
-        "minNetwork": "网络: 10Mbps 稳定连接",
-        "recommended": "推荐配置",
-        "recCpu": "CPU: 4核心+",
-        "recRam": "内存: 8GB+ RAM",
-        "recStorage": "存储: 200GB+ SSD",
-        "recNetwork": "网络: 100Mbps 光纤"
-      },
-      "quickStart": {
-        "title": "快速开始",
-        "step1": {
-          "title": "1. 安装Node.js 22+",
-          "command": "curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -\nsudo apt-get install -y nodejs"
+        "title": "硬件要求",
+        "minimum": {
+          "title": "最低规格",
+          "specs": [
+            "CPU: 4核心",
+            "RAM: 8GB",
+            "存储: 100GB SSD",
+            "网络: 10Mbps 上传/下载"
+          ]
         },
-        "step2": {
-          "title": "2. 克隆仓库",
-          "command": "git clone https://github.com/openclaw/openclaw.git\ncd openclaw\nnpm install"
-        },
-        "step3": {
-          "title": "3. 启动单节点Devnet",
-          "command": "COC_DATA_DIR=/tmp/coc-node node --experimental-strip-types node/src/index.ts"
-        },
-        "step4": {
-          "title": "4. 启动区块浏览器",
-          "command": "cd explorer\nNEXT_PUBLIC_RPC_URL=http://127.0.0.1:18780 npm run dev"
+        "recommended": {
+          "title": "推荐规格",
+          "specs": [
+            "CPU: 8核心",
+            "RAM: 16GB",
+            "存储: 500GB NVMe SSD",
+            "网络: 100Mbps 上传/下载",
+            "公网IP (可选,但推荐以获得更好的P2P连接性)"
+          ]
         }
       },
+      "quickStart": {
+        "title": "快速开始 (单节点)",
+        "steps": [
+          { "step": "1. 安装依赖", "command": "curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -\nsudo apt install -y nodejs git", "desc": "安装 Node.js 22+ 和 Git" },
+          { "step": "2. 克隆仓库", "command": "git clone https://github.com/your-org/coc.git\ncd coc", "desc": "克隆 COC 仓库" },
+          { "step": "3. 安装依赖", "command": "npm install", "desc": "安装所有 workspace 依赖" },
+          { "step": "4. 启动节点", "command": "cd node && npm start", "desc": "运行单节点 devnet (RPC: http://localhost:18780)" }
+        ]
+      },
       "multiNode": {
-        "title": "多节点网络",
-        "description": "运行完整的测试网络环境",
-        "devnet3": "3节点网络: bash scripts/start-devnet.sh",
-        "verify": "验证网络: bash scripts/verify-devnet.sh",
-        "stop": "停止网络: bash scripts/stop-devnet.sh"
+        "title": "多节点 Devnet",
+        "intro": "用于测试共识、BFT 和 P2P 功能:",
+        "configs": [
+          { "nodes": "3 节点", "command": "bash scripts/devnet-3.sh" },
+          { "nodes": "5 节点", "command": "bash scripts/devnet-5.sh" },
+          { "nodes": "7 节点", "command": "bash scripts/devnet-7.sh" }
+        ]
       },
       "rewards": {
         "title": "测试网奖励",
-        "early": "早期参与者将获得:",
-        "reward1": "主网启动时的奖励空投",
-        "reward2": "优先节点运营商资格",
-        "reward3": "社区治理投票权",
-        "reward4": "技术支持和培训",
-        "note": "具体激励方案将在Testnet Public阶段公布"
+        "items": [
+          "🎁 前100名验证者: 主网代币空投 (总供应量的1%)",
+          "🏆 Bug 猎人: 每个关键bug最高 $10k USD 奖金",
+          "⚡ 高性能节点: NFT徽章 + 主网优先槽位",
+          "📊 数据贡献者: 分享性能指标和日志获得奖励"
+        ]
       }
     },
     "development": {
-      "title": "参与研发",
+      "title": "如何参与开发和研发",
       "contribute": {
-        "title": "贡献代码",
-        "intro": "COC是完全开源的项目,欢迎各类贡献",
-        "areas": "重点开发领域",
-        "area1": "核心协议优化 (共识、P2P、PoSe)",
-        "area2": "AI Agent运维增强",
-        "area3": "跨链桥接开发",
-        "area4": "开发者工具和SDK",
-        "area5": "文档和教程",
-        "area6": "测试和质量保证"
+        "title": "贡献领域",
+        "areas": [
+          { "area": "🔧 核心协议", "desc": "共识、EVM、P2P、存储层" },
+          { "area": "📜 智能合约", "desc": "PoSe 合约、治理、桥接" },
+          { "area": "🌐 前端", "desc": "浏览器、钱包、节点仪表板" },
+          { "area": "📚 文档", "desc": "教程、API 文档、翻译" }
+        ]
       },
       "process": {
         "title": "贡献流程",
-        "step1": "Fork仓库并创建feature分支",
-        "step2": "编写代码并确保通过所有测试 (774+ tests)",
-        "step3": "提交Pull Request并描述变更",
-        "step4": "等待代码审查和反馈",
-        "step5": "合并后获得贡献者认证"
+        "steps": [
+          "1. Fork 仓库并创建功能分支",
+          "2. 遵循代码风格 (TypeScript, ESLint, Prettier)",
+          "3. 编写测试 (要求 80%+ 覆盖率)",
+          "4. 提交清晰描述的 pull request",
+          "5. 通过 CI 检查和代码审查",
+          "6. 合并并庆祝! 🎉"
+        ]
       },
       "techStack": {
         "title": "技术栈",
-        "node": "Node.js 22+ (TypeScript, native test runner)",
-        "blockchain": "@ethereumjs/vm, ethers.js",
-        "storage": "LevelDB, IPFS",
-        "network": "HTTP/WebSocket, TCP Wire Protocol",
-        "frontend": "Next.js 15, React, Tailwind CSS",
-        "contracts": "Solidity, Hardhat"
+        "categories": [
+          {
+            "category": "节点核心",
+            "items": [
+              "TypeScript (ES2020+)",
+              "@ethereumjs/vm (EVM)",
+              "LevelDB (存储)",
+              "ethers.js (钱包/加密)"
+            ]
+          },
+          {
+            "category": "前端",
+            "items": [
+              "Next.js 15 (App Router)",
+              "React 19",
+              "Tailwind CSS",
+              "next-intl (i18n)"
+            ]
+          },
+          {
+            "category": "智能合约",
+            "items": [
+              "Solidity 0.8.x",
+              "Hardhat",
+              "OpenZeppelin",
+              "Ethers.js"
+            ]
+          },
+          {
+            "category": "DevOps",
+            "items": [
+              "Node.js 22+ (--experimental-strip-types)",
+              "Bash 脚本",
+              "GitHub Actions",
+              "Docker (计划中)"
+            ]
+          }
+        ]
       },
       "resources": {
-        "title": "开发资源",
-        "github": "GitHub仓库: https://github.com/openclaw/openclaw",
-        "docs": "技术文档: 完整的架构说明和API文档",
-        "tests": "测试套件: 677个节点测试 + 97个服务测试",
-        "examples": "示例代码: scripts/目录下的DevOps脚本",
-        "community": "开发者社区: Discord, GitHub Discussions"
+        "title": "资源",
+        "links": [
+          { "name": "📖 开发者文档", "url": "/docs", "desc": "完整的技术文档" },
+          { "name": "💬 Discord 社区", "url": "https://discord.gg/coc", "desc": "加入开发者讨论" },
+          { "name": "🐛 GitHub Issues", "url": "https://github.com/your-org/coc/issues", "desc": "报告 bug 和功能请求" }
+        ]
       },
       "grants": {
         "title": "开发者资助",
-        "description": "我们将为重要贡献提供资助",
-        "types": "资助类型",
-        "type1": "核心功能开发资助",
-        "type2": "生态工具建设资助",
-        "type3": "安全审计资助",
-        "type4": "文档和教育内容资助",
-        "apply": "资助申请将在Testnet Public阶段开放"
+        "intro": "我们提供资助来支持生态系统发展:",
+        "programs": [
+          "💎 核心协议资助: 最高 $50k USD (共识、EVM、存储)",
+          "🌐 DApp 资助: 最高 $20k USD (DEX、NFT 市场、游戏)",
+          "📚 教育资助: 最高 $10k USD (教程、研讨会、翻译)",
+          "🔬 研究资助: 最高 $30k USD (密码学、MEV、跨链)"
+        ]
       }
     },
     "cta": {
@@ -676,6 +709,8 @@
     "replies": "回复",
     "replyPlaceholder": "写下你的回复...",
     "replyingTo": "回复",
+    "postNotFound": "帖子不存在",
+    "postNotFoundDesc": "您查找的帖子不存在或已被删除。",
     "category": {
       "general": "综合",
       "proposal": "提案",
@@ -711,6 +746,8 @@
     "alreadyVoted": "你已对此提案投过票",
     "timeline": "提案时间线",
     "executionDetails": "执行详情",
+    "proposalNotFound": "提案不存在",
+    "proposalNotFoundDesc": "您查找的提案不存在或尚未创建。",
     "bicameral": "双院制视图",
     "bothChambersPassed": "两个阵营均已达到通过阈值",
     "bothChambersNeeded": "两个阵营需各自独立通过",
