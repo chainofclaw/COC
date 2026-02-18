@@ -19,6 +19,14 @@ export interface ValidatorInfo {
 
 export type ProposalType = "add_validator" | "remove_validator" | "update_stake"
 
+export type FactionId = "builders" | "guardians" | "explorers" | "neutral"
+
+export interface FactionInfo {
+  address: string
+  faction: FactionId
+  joinedAtEpoch: bigint
+}
+
 export interface GovernanceProposal {
   id: string
   type: ProposalType
@@ -52,6 +60,8 @@ export class ValidatorGovernance {
   private readonly config: GovernanceConfig
   private readonly validators: Map<string, ValidatorInfo> = new Map()
   private readonly proposals: Map<string, GovernanceProposal> = new Map()
+  private readonly factions: Map<string, FactionInfo> = new Map() // address -> faction
+  private treasuryBalance = 0n
   private currentEpoch = 0n
   private nextProposalId = 1
 
@@ -127,6 +137,51 @@ export class ValidatorGovernance {
       totalProposals: this.proposals.size,
       currentEpoch: this.currentEpoch,
     }
+  }
+
+  /**
+   * Get treasury balance.
+   */
+  getTreasuryBalance(): bigint {
+    return this.treasuryBalance
+  }
+
+  /**
+   * Deposit into treasury (e.g., from block rewards or slashing).
+   */
+  depositTreasury(amount: bigint): void {
+    if (amount <= 0n) throw new Error("deposit amount must be positive")
+    this.treasuryBalance = this.treasuryBalance + amount
+  }
+
+  /**
+   * Set faction for an address.
+   */
+  setFaction(address: string, faction: FactionId): void {
+    const normalized = address.toLowerCase()
+    this.factions.set(normalized, {
+      address: normalized,
+      faction,
+      joinedAtEpoch: this.currentEpoch,
+    })
+  }
+
+  /**
+   * Get faction for an address.
+   */
+  getFaction(address: string): FactionInfo | null {
+    return this.factions.get(address.toLowerCase()) ?? null
+  }
+
+  /**
+   * Get faction member counts.
+   */
+  getFactionStats(): Record<FactionId, number> {
+    const counts: Record<FactionId, number> = { builders: 0, guardians: 0, explorers: 0, neutral: 0 }
+    for (const info of this.factions.values()) {
+      counts[info.faction]++
+    }
+    return counts
   }
 
   /**

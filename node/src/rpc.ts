@@ -935,6 +935,103 @@ async function handleRpc(
         voteCount: p.votes.size,
       }))
     }
+    case "coc_getDaoProposal": {
+      if (!hasGovernance(chain)) throw new Error("governance not enabled")
+      const proposalId = (payload.params ?? [])[0]
+      if (typeof proposalId !== "string" || !proposalId) {
+        throw { code: -32602, message: "invalid proposal id: expected non-empty string" }
+      }
+      const gov = chain.governance
+      const proposal = gov.getProposal(proposalId)
+      if (!proposal) throw { code: -32602, message: `proposal not found: ${proposalId}` }
+      // Return full proposal with vote details
+      const fullProposal = gov.getProposals?.()?.find((p: { id: string }) => p.id === proposalId)
+      if (fullProposal) {
+        return {
+          id: fullProposal.id,
+          type: fullProposal.type,
+          targetId: fullProposal.targetId,
+          targetAddress: fullProposal.targetAddress ?? null,
+          stakeAmount: fullProposal.stakeAmount !== undefined ? `0x${fullProposal.stakeAmount.toString(16)}` : null,
+          proposer: fullProposal.proposer,
+          createdAtEpoch: `0x${fullProposal.createdAtEpoch.toString(16)}`,
+          expiresAtEpoch: `0x${fullProposal.expiresAtEpoch.toString(16)}`,
+          status: fullProposal.status,
+          votes: Object.fromEntries(fullProposal.votes),
+          voteCount: fullProposal.votes.size,
+        }
+      }
+      return { id: proposal.id, status: proposal.status, votes: Object.fromEntries(proposal.votes) }
+    }
+    case "coc_getDaoProposals": {
+      if (!hasGovernance(chain)) return []
+      const gov2 = chain.governance
+      if (!gov2.getProposals) return []
+      const filterParam = (payload.params ?? [])[0] as Record<string, unknown> | string | undefined
+      let statusFilter2: string | undefined
+      let typeFilter: string | undefined
+      let proposerFilter: string | undefined
+      if (typeof filterParam === "string") {
+        statusFilter2 = filterParam
+      } else if (filterParam && typeof filterParam === "object") {
+        statusFilter2 = filterParam.status as string | undefined
+        typeFilter = filterParam.type as string | undefined
+        proposerFilter = filterParam.proposer as string | undefined
+      }
+      const validStatuses2 = ["pending", "approved", "rejected", "expired"]
+      const sFilter = statusFilter2 && validStatuses2.includes(statusFilter2) ? statusFilter2 : undefined
+      let results = gov2.getProposals(sFilter)
+      if (typeFilter) results = results.filter((p: { type: string }) => p.type === typeFilter)
+      if (proposerFilter) results = results.filter((p: { proposer: string }) => p.proposer === proposerFilter)
+      return results.map((p) => ({
+        id: p.id,
+        type: p.type,
+        targetId: p.targetId,
+        targetAddress: p.targetAddress ?? null,
+        stakeAmount: p.stakeAmount !== undefined ? `0x${p.stakeAmount.toString(16)}` : null,
+        proposer: p.proposer,
+        createdAtEpoch: `0x${p.createdAtEpoch.toString(16)}`,
+        expiresAtEpoch: `0x${p.expiresAtEpoch.toString(16)}`,
+        status: p.status,
+        voteCount: p.votes.size,
+      }))
+    }
+    case "coc_getDaoStats": {
+      if (!hasGovernance(chain)) return { enabled: false }
+      const gov3 = chain.governance
+      const stats = gov3.getGovernanceStats?.() ?? { activeValidators: 0, totalStake: 0n, pendingProposals: 0, totalProposals: 0, currentEpoch: 0n }
+      const factionStats = gov3.getFactionStats?.() ?? {}
+      const treasury = gov3.getTreasuryBalance?.() ?? 0n
+      return {
+        enabled: true,
+        activeValidators: stats.activeValidators,
+        totalStake: `0x${stats.totalStake.toString(16)}`,
+        pendingProposals: stats.pendingProposals,
+        totalProposals: stats.totalProposals,
+        currentEpoch: `0x${stats.currentEpoch.toString(16)}`,
+        treasuryBalance: `0x${treasury.toString(16)}`,
+        factions: factionStats,
+      }
+    }
+    case "coc_getTreasuryBalance": {
+      if (!hasGovernance(chain)) return { balance: "0x0" }
+      const treasury2 = chain.governance.getTreasuryBalance?.() ?? 0n
+      return { balance: `0x${treasury2.toString(16)}` }
+    }
+    case "coc_getFaction": {
+      if (!hasGovernance(chain)) return null
+      const address = (payload.params ?? [])[0]
+      if (typeof address !== "string" || !address.startsWith("0x")) {
+        throw { code: -32602, message: "invalid address: expected hex string" }
+      }
+      const factionInfo = chain.governance.getFaction?.(address)
+      if (!factionInfo) return null
+      return {
+        address: factionInfo.address,
+        faction: factionInfo.faction,
+        joinedAtEpoch: `0x${factionInfo.joinedAtEpoch.toString(16)}`,
+      }
+    }
     case "coc_getBftStatus": {
       if (!bftCoordinator) {
         return { enabled: false, active: false }
