@@ -1,0 +1,79 @@
+{
+  "dashboard": {
+    "title": "COC Network & P2P",
+    "uid": "coc-network",
+    "timezone": "utc",
+    "refresh": "10s",
+    "time": { "from": "now-1h", "to": "now" },
+    "panels": [
+      {
+        "title": "Connected Peers",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 8, "x": 0, "y": 0 },
+        "targets": [{ "expr": "coc_peers_connected", "legendFormat": "{{instance}}" }]
+      },
+      {
+        "title": "Wire Connections",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 8, "x": 8, "y": 0 },
+        "targets": [{ "expr": "coc_wire_connections", "legendFormat": "{{instance}}" }]
+      },
+      {
+        "title": "DHT Peers",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 8, "x": 16, "y": 0 },
+        "targets": [{ "expr": "coc_dht_peers_total", "legendFormat": "{{instance}}" }]
+      },
+      {
+        "title": "P2P Peers Over Time",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+        "targets": [{ "expr": "coc_peers_connected", "legendFormat": "{{instance}}" }],
+        "fieldConfig": { "defaults": { "custom": { "lineWidth": 2, "fillOpacity": 10 } } }
+      },
+      {
+        "title": "Wire Connections Over Time",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+        "targets": [{ "expr": "coc_wire_connections", "legendFormat": "{{instance}}" }],
+        "fieldConfig": { "defaults": { "custom": { "lineWidth": 2, "fillOpacity": 10 } } }
+      },
+      {
+        "title": "DHT Routing Table Size",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+        "targets": [{ "expr": "coc_dht_peers_total", "legendFormat": "{{instance}}" }]
+      },
+      {
+        "title": "P2P Auth Rejections",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+        "targets": [{ "expr": "coc_p2p_auth_rejected_total", "legendFormat": "{{instance}}" }],
+        "fieldConfig": {
+          "defaults": {
+            "color": { "mode": "fixed", "fixedColor": "red" },
+            "custom": { "fillOpacity": 20 }
+          }
+        }
+      },
+      {
+        "title": "RPC Request Rate",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+        "targets": [
+          { "expr": "rate(coc_rpc_requests_total[5m])", "legendFormat": "req/s {{instance}}" },
+          { "expr": "rate(coc_rpc_errors_total[5m])", "legendFormat": "err/s {{instance}}" }
+        ]
+      },
+      {
+        "title": "Mempool Size",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+        "targets": [
+          { "expr": "coc_tx_pool_pending", "legendFormat": "pending {{instance}}" },
+          { "expr": "coc_tx_pool_queued", "legendFormat": "queued {{instance}}" }
+        ]
+      }
+    ]
+  }
+}

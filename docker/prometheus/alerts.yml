@@ -36,3 +36,30 @@ groups:
         annotations:
           summary: "Low peer count on {{ $labels.instance }}"
           description: "Connected peers is {{ $value }}, below threshold of 2."
+
+      - alert: ForkDetected
+        expr: max(coc_block_height) - min(coc_block_height) > 3
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Potential fork detected"
+          description: "Block height delta across nodes exceeds 3 (delta: {{ $value }}). Nodes may have diverged."
+
+      - alert: NodeOffline
+        expr: up{job=~"coc-.*"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Node {{ $labels.instance }} is offline"
+          description: "Prometheus cannot reach {{ $labels.instance }} for over 1 minute."
+
+      - alert: MempoolBacklog
+        expr: coc_tx_pool_pending > 1000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Large mempool backlog on {{ $labels.instance }}"
+          description: "Pending transactions ({{ $value }}) exceed 1000 for over 5 minutes."

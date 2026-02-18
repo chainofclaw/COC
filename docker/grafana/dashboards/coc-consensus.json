@@ -1,0 +1,100 @@
+{
+  "dashboard": {
+    "title": "COC Consensus & BFT",
+    "uid": "coc-consensus",
+    "timezone": "utc",
+    "refresh": "10s",
+    "time": { "from": "now-1h", "to": "now" },
+    "panels": [
+      {
+        "title": "BFT Round Height",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 8, "x": 0, "y": 0 },
+        "targets": [{ "expr": "coc_bft_round_height", "legendFormat": "{{instance}}" }],
+        "fieldConfig": { "defaults": { "unit": "none" } }
+      },
+      {
+        "title": "Consensus State",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 8, "x": 8, "y": 0 },
+        "targets": [{ "expr": "coc_consensus_state", "legendFormat": "{{instance}}" }],
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [
+              { "type": "value", "options": { "0": { "text": "Healthy", "color": "green" }, "1": { "text": "Degraded", "color": "orange" }, "2": { "text": "Recovering", "color": "yellow" } } }
+            ]
+          }
+        }
+      },
+      {
+        "title": "Block Height",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 8, "x": 16, "y": 0 },
+        "targets": [{ "expr": "coc_block_height", "legendFormat": "{{instance}}" }]
+      },
+      {
+        "title": "Block Height (All Nodes)",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+        "targets": [{ "expr": "coc_block_height", "legendFormat": "{{instance}}" }],
+        "fieldConfig": { "defaults": { "custom": { "lineWidth": 2 } } }
+      },
+      {
+        "title": "Block Height Delta (Fork Detection)",
+        "description": "Difference between max and min block height across nodes. Spikes indicate potential forks.",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+        "targets": [{ "expr": "max(coc_block_height) - min(coc_block_height)", "legendFormat": "height delta" }],
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "value": 0, "color": "green" },
+                { "value": 2, "color": "orange" },
+                { "value": 5, "color": "red" }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "title": "BFT Round Progress",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+        "targets": [{ "expr": "coc_bft_round_height", "legendFormat": "{{instance}}" }]
+      },
+      {
+        "title": "Block Time Distribution",
+        "type": "histogram",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+        "targets": [{ "expr": "coc_block_time_seconds_bucket", "legendFormat": "{{le}}" }]
+      },
+      {
+        "title": "Consensus State Over Time",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+        "targets": [{ "expr": "coc_consensus_state", "legendFormat": "{{instance}}" }],
+        "fieldConfig": {
+          "defaults": {
+            "custom": { "fillOpacity": 30 },
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "value": 0, "color": "green" },
+                { "value": 1, "color": "orange" },
+                { "value": 2, "color": "red" }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "title": "Blocks Produced per Minute",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+        "targets": [{ "expr": "increase(coc_block_height[1m])", "legendFormat": "{{instance}}" }]
+      }
+    ]
+  }
+}
