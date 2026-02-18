@@ -6,45 +6,91 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test-node:
-    name: Node Tests
+    name: Node Tests (744+)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - run: cd node && npm install
+          cache: npm
+          cache-dependency-path: node/package-lock.json
+      - run: cd node && npm ci
       - name: Run node tests
         run: |
           cd node
-          node --experimental-strip-types --test --test-force-exit src/*.test.ts src/**/*.test.ts
+          node --experimental-strip-types --test --test-force-exit --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=node-results.xml src/*.test.ts src/**/*.test.ts
         env:
           NODE_ENV: test
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: node-test-results
+          path: node/node-results.xml
+          retention-days: 7
 
   test-services:
-    name: Service Tests
+    name: Service Tests (102+)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - run: npm install --workspaces
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci --workspaces --include-workspace-root
       - name: Run service tests
         run: |
-          node --experimental-strip-types --test --test-force-exit services/**/*.test.ts nodeops/*.test.ts tests/**/*.test.ts
+          node --experimental-strip-types --test --test-force-exit --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=service-results.xml services/**/*.test.ts nodeops/*.test.ts tests/**/*.test.ts
         env:
           NODE_ENV: test
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: service-test-results
+          path: service-results.xml
+          retention-days: 7
 
   test-contracts:
     name: Contract Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - run: cd contracts && npm install
+          cache: npm
+          cache-dependency-path: contracts/package-lock.json
+      - run: cd contracts && npm ci
       - run: cd contracts && npm test
+
+  test-gate:
+    name: Test Gate
+    needs: [test-node, test-services, test-contracts]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check test results
+        run: |
+          if [ "${{ needs.test-node.result }}" != "success" ] || \
+             [ "${{ needs.test-services.result }}" != "success" ] || \
+             [ "${{ needs.test-contracts.result }}" != "success" ]; then
+            echo "::error::One or more test suites failed"
+            echo "Node: ${{ needs.test-node.result }}"
+            echo "Services: ${{ needs.test-services.result }}"
+            echo "Contracts: ${{ needs.test-contracts.result }}"
+            exit 1
+          fi
+          echo "All test suites passed"
