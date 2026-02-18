@@ -1,0 +1,83 @@
+{
+  "dashboard": {
+    "title": "COC Node Resources",
+    "uid": "coc-resources",
+    "timezone": "utc",
+    "refresh": "10s",
+    "time": { "from": "now-1h", "to": "now" },
+    "panels": [
+      {
+        "title": "Process RSS Memory",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 8, "x": 0, "y": 0 },
+        "targets": [{ "expr": "coc_process_memory_bytes", "legendFormat": "{{instance}}" }],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "bytes",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "value": 0, "color": "green" },
+                { "value": 1073741824, "color": "orange" },
+                { "value": 2147483648, "color": "red" }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "title": "Heap Used",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 8, "x": 8, "y": 0 },
+        "targets": [{ "expr": "coc_process_heap_bytes", "legendFormat": "{{instance}}" }],
+        "fieldConfig": { "defaults": { "unit": "bytes" } }
+      },
+      {
+        "title": "Uptime",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 8, "x": 16, "y": 0 },
+        "targets": [{ "expr": "coc_uptime_seconds", "legendFormat": "{{instance}}" }],
+        "fieldConfig": { "defaults": { "unit": "s" } }
+      },
+      {
+        "title": "RSS Memory Over Time",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+        "targets": [{ "expr": "coc_process_memory_bytes", "legendFormat": "RSS {{instance}}" }],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "bytes",
+            "custom": { "lineWidth": 2, "fillOpacity": 15 }
+          }
+        }
+      },
+      {
+        "title": "Heap Memory Over Time",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+        "targets": [{ "expr": "coc_process_heap_bytes", "legendFormat": "Heap {{instance}}" }],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "bytes",
+            "custom": { "lineWidth": 2, "fillOpacity": 15 }
+          }
+        }
+      },
+      {
+        "title": "Memory Growth Rate",
+        "description": "RSS memory change per minute. Sustained positive values may indicate a memory leak.",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+        "targets": [{ "expr": "deriv(coc_process_memory_bytes[5m]) * 60", "legendFormat": "bytes/min {{instance}}" }],
+        "fieldConfig": { "defaults": { "unit": "bytes" } }
+      },
+      {
+        "title": "Uptime",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+        "targets": [{ "expr": "coc_uptime_seconds / 3600", "legendFormat": "{{instance}}" }],
+        "fieldConfig": { "defaults": { "unit": "h" } }
+      }
+    ]
+  }
+}
