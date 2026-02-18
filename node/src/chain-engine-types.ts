@@ -83,6 +83,18 @@ export interface IGovernanceEngine extends IChainEngine {
     ): { id: string; type: string; targetId: string; status: string }
     vote(proposalId: string, voterId: string, approve: boolean): void
     getProposal(proposalId: string): { id: string; status: string; votes: Map<string, boolean> } | null
+    getProposals?(status?: string): Array<{
+      id: string; type: string; targetId: string; targetAddress?: string
+      stakeAmount?: bigint; proposer: string; createdAtEpoch: bigint
+      expiresAtEpoch: bigint; votes: Map<string, boolean>; status: string
+    }>
+    getGovernanceStats?(): {
+      activeValidators: number; totalStake: bigint
+      pendingProposals: number; totalProposals: number; currentEpoch: bigint
+    }
+    getTreasuryBalance?(): bigint
+    getFaction?(address: string): { address: string; faction: string; joinedAtEpoch: bigint } | null
+    getFactionStats?(): Record<string, number>
   }
 }
 

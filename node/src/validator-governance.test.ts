@@ -5,6 +5,7 @@
 import { describe, it, beforeEach } from "node:test"
 import assert from "node:assert/strict"
 import { ValidatorGovernance } from "./validator-governance.ts"
+import type { FactionId } from "./validator-governance.ts"
 
 const STAKE = 10000000000000000000n // 10 ETH
 
@@ -246,5 +247,61 @@ describe("ValidatorGovernance", () => {
     assert.equal(stats.totalStake, STAKE * 4n)
     assert.equal(stats.pendingProposals, 0)
     assert.equal(stats.totalProposals, 1)
+  })
+
+  it("treasury starts at zero", () => {
+    assert.equal(gov.getTreasuryBalance(), 0n)
+  })
+
+  it("deposits into treasury", () => {
+    gov.depositTreasury(5000000000000000000n)
+    assert.equal(gov.getTreasuryBalance(), 5000000000000000000n)
+    gov.depositTreasury(3000000000000000000n)
+    assert.equal(gov.getTreasuryBalance(), 8000000000000000000n)
+  })
+
+  it("rejects non-positive treasury deposit", () => {
+    assert.throws(() => gov.depositTreasury(0n), /deposit amount must be positive/)
+    assert.throws(() => gov.depositTreasury(-1n), /deposit amount must be positive/)
+  })
+
+  it("sets and gets faction for address", () => {
+    gov.setFaction("0xAbCd", "builders")
+    const info = gov.getFaction("0xabcd") // case-insensitive
+    assert.ok(info)
+    assert.equal(info.faction, "builders")
+    assert.equal(info.address, "0xabcd")
+  })
+
+  it("returns null for unknown faction address", () => {
+    assert.equal(gov.getFaction("0x9999"), null)
+  })
+
+  it("tracks faction stats", () => {
+    gov.setFaction("0xaaaa", "builders")
+    gov.setFaction("0xbbbb", "guardians")
+    gov.setFaction("0xcccc", "builders")
+    gov.setFaction("0xdddd", "explorers")
+
+    const stats = gov.getFactionStats()
+    assert.equal(stats.builders, 2)
+    assert.equal(stats.guardians, 1)
+    assert.equal(stats.explorers, 1)
+    assert.equal(stats.neutral, 0)
+  })
+
+  it("faction joinedAtEpoch tracks current epoch", () => {
+    gov.advanceEpoch(10n)
+    gov.setFaction("0xaaaa", "neutral")
+    const info = gov.getFaction("0xaaaa")!
+    assert.equal(info.joinedAtEpoch, 10n)
+  })
+
+  it("allows changing faction", () => {
+    gov.setFaction("0xaaaa", "builders")
+    gov.setFaction("0xaaaa", "guardians")
+    assert.equal(gov.getFaction("0xaaaa")!.faction, "guardians")
+    assert.equal(gov.getFactionStats().builders, 0)
+    assert.equal(gov.getFactionStats().guardians, 1)
   })
 })
