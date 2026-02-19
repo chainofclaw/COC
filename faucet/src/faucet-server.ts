@@ -1,6 +1,12 @@
 // COC Testnet Faucet HTTP Server
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http"
+import { readFileSync } from "node:fs"
+import { join, dirname } from "node:path"
+import { fileURLToPath } from "node:url"
 import { Faucet, FaucetError } from "./faucet.ts"
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+const INDEX_HTML = readFileSync(join(__dirname, "..", "public", "index.html"), "utf-8")
 
 const PORT = Number(process.env.COC_FAUCET_PORT ?? 3003)
 const BIND = process.env.COC_FAUCET_BIND ?? "0.0.0.0"
@@ -86,6 +92,16 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
   }
 
   try {
+    // Serve web UI at root
+    if ((req.url === "/" || req.url === "/index.html") && req.method === "GET") {
+      res.writeHead(200, {
+        "Content-Type": "text/html; charset=utf-8",
+        "Content-Length": Buffer.byteLength(INDEX_HTML),
+      })
+      res.end(INDEX_HTML)
+      return
+    }
+
     if (req.url === "/health" && req.method === "GET") {
       jsonResponse(res, 200, { status: "ok", faucetAddress: faucet.address })
       return
