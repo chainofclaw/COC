@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>COC Testnet Faucet</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f0f4f8;
+      color: #1a202c;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    .header {
+      background: linear-gradient(135deg, #2563eb, #7c3aed);
+      color: white;
+      padding: 2rem;
+      text-align: center;
+    }
+    .header h1 { font-size: 1.75rem; font-weight: 700; }
+    .header p { margin-top: 0.5rem; opacity: 0.85; font-size: 0.95rem; }
+    .container {
+      max-width: 540px;
+      margin: -2rem auto 2rem;
+      padding: 0 1rem;
+      flex: 1;
+      width: 100%;
+    }
+    .card {
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+      padding: 1.5rem;
+      margin-bottom: 1rem;
+    }
+    .card h2 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      margin-bottom: 1rem;
+      color: #374151;
+    }
+    .form-group { margin-bottom: 1rem; }
+    .form-group label {
+      display: block;
+      font-size: 0.85rem;
+      font-weight: 500;
+      color: #6b7280;
+      margin-bottom: 0.35rem;
+    }
+    .form-group input {
+      width: 100%;
+      padding: 0.65rem 0.75rem;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-family: ui-monospace, monospace;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .form-group input:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,0.1); }
+    .form-group input::placeholder { color: #9ca3af; font-family: inherit; }
+    .btn {
+      display: block;
+      width: 100%;
+      padding: 0.75rem;
+      background: linear-gradient(135deg, #2563eb, #7c3aed);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    .btn:hover { opacity: 0.9; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .result {
+      margin-top: 1rem;
+      padding: 0.75rem;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      word-break: break-all;
+    }
+    .result.success { background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; }
+    .result.error { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+    .stats-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.75rem;
+    }
+    .stat-item {
+      padding: 0.75rem;
+      background: #f9fafb;
+      border-radius: 8px;
+    }
+    .stat-item .label { font-size: 0.75rem; color: #6b7280; text-transform: uppercase; font-weight: 500; }
+    .stat-item .value { font-size: 1.1rem; font-weight: 700; margin-top: 0.25rem; color: #1f2937; }
+    .stat-item .value.mono { font-family: ui-monospace, monospace; font-size: 0.9rem; }
+    .footer {
+      text-align: center;
+      padding: 1rem;
+      font-size: 0.8rem;
+      color: #9ca3af;
+    }
+    .loading { display: inline-block; width: 1rem; height: 1rem; border: 2px solid #fff; border-top-color: transparent; border-radius: 50%; animation: spin 0.6s linear infinite; vertical-align: middle; margin-right: 0.5rem; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>COC Testnet Faucet</h1>
+    <p>Get free COC tokens for testing on the Prowl testnet</p>
+  </div>
+
+  <div class="container">
+    <div class="card">
+      <h2>Request Tokens</h2>
+      <form id="faucetForm">
+        <div class="form-group">
+          <label for="address">Wallet Address</label>
+          <input type="text" id="address" placeholder="0x..." autocomplete="off" spellcheck="false" required>
+        </div>
+        <button type="submit" class="btn" id="submitBtn">Request COC</button>
+      </form>
+      <div id="result" class="result" style="display:none"></div>
+    </div>
+
+    <div class="card">
+      <h2>Faucet Status</h2>
+      <div class="stats-grid" id="statsGrid">
+        <div class="stat-item">
+          <div class="label">Balance</div>
+          <div class="value" id="statBalance">--</div>
+        </div>
+        <div class="stat-item">
+          <div class="label">Drip Amount</div>
+          <div class="value" id="statDrip">--</div>
+        </div>
+        <div class="stat-item">
+          <div class="label">Daily Drips</div>
+          <div class="value" id="statDaily">--</div>
+        </div>
+        <div class="stat-item">
+          <div class="label">Total Drips</div>
+          <div class="value" id="statTotal">--</div>
+        </div>
+      </div>
+      <div style="margin-top: 0.75rem;">
+        <div class="stat-item">
+          <div class="label">Faucet Address</div>
+          <div class="value mono" id="statAddress">--</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    COC Testnet Faucet &mdash; Tokens have no real value
+  </div>
+
+  <script>
+    const API_BASE = window.location.origin;
+
+    async function loadStatus() {
+      try {
+        const [statusRes, healthRes] = await Promise.all([
+          fetch(API_BASE + '/faucet/status'),
+          fetch(API_BASE + '/health'),
+        ]);
+        if (statusRes.ok) {
+          const s = await statusRes.json();
+          document.getElementById('statBalance').textContent = s.balance + ' COC';
+          document.getElementById('statDrip').textContent = s.dripAmount + ' COC';
+          document.getElementById('statDaily').textContent = s.dailyDrips + ' / ' + s.dailyLimit;
+          document.getElementById('statTotal').textContent = String(s.totalDrips);
+        }
+        if (healthRes.ok) {
+          const h = await healthRes.json();
+          document.getElementById('statAddress').textContent = h.faucetAddress;
+        }
+      } catch {
+        document.getElementById('statBalance').textContent = 'Offline';
+      }
+    }
+
+    document.getElementById('faucetForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const address = document.getElementById('address').value.trim();
+      const btn = document.getElementById('submitBtn');
+      const result = document.getElementById('result');
+
+      if (!address) return;
+
+      btn.disabled = true;
+      btn.innerHTML = '<span class="loading"></span>Sending...';
+      result.style.display = 'none';
+
+      try {
+        const res = await fetch(API_BASE + '/faucet/request', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ address }),
+        });
+        const data = await res.json();
+
+        if (res.ok) {
+          result.className = 'result success';
+          result.innerHTML = 'Sent <strong>' + data.amount + ' ' + data.unit + '</strong><br>Tx: <code>' + data.txHash + '</code>';
+        } else {
+          result.className = 'result error';
+          result.textContent = data.error || 'Request failed';
+        }
+        result.style.display = 'block';
+        loadStatus();
+      } catch (err) {
+        result.className = 'result error';
+        result.textContent = 'Network error: ' + err.message;
+        result.style.display = 'block';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Request COC';
+      }
+    });
+
+    loadStatus();
+    setInterval(loadStatus, 30000);
+  </script>
+</body>
+</html>
