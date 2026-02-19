@@ -781,6 +781,40 @@
       "claws": "Claw"
     }
   },
+  "testnet": {
+    "title": "Prowl 测试网",
+    "subtitle": "加入 COC Prowl 测试网 — ChainOfClaw 网络的首个公开测试阶段",
+    "joinNow": "加入指南",
+    "getFaucet": "领取测试币",
+    "networkInfo": "网络信息",
+    "chainId": "链 ID",
+    "rpcEndpoint": "RPC 端点",
+    "wsEndpoint": "WebSocket",
+    "blockTime": "出块时间",
+    "consensus": "共识机制",
+    "tokenSymbol": "代币符号",
+    "quickStart": "快速开始",
+    "step1": {
+      "title": "部署节点",
+      "description": "克隆仓库、安装依赖并生成节点密钥。新手可使用 Docker 快速部署。"
+    },
+    "step2": {
+      "title": "连接与同步",
+      "description": "使用测试网参数配置节点并连接种子节点。支持 Snap 快速同步。"
+    },
+    "step3": {
+      "title": "开始验证",
+      "description": "同步完成后通过 DAO 治理注册为验证者，参与 BFT 共识并获取测试奖励。"
+    },
+    "connectWallet": "连接钱包",
+    "connectDescription": "使用以下网络信息将 COC Prowl 测试网添加到 MetaMask 或任何 EVM 兼容钱包。",
+    "links": {
+      "explorer": "区块浏览器",
+      "faucet": "水龙头",
+      "docs": "文档",
+      "github": "GitHub"
+    }
+  },
   "footer": {
     "tagline": "AI-Agent–Operated\nProof-of-Service Blockchain",
     "copyright": "版权所有",

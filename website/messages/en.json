@@ -813,6 +813,40 @@
       "claws": "Claws"
     }
   },
+  "testnet": {
+    "title": "Prowl Testnet",
+    "subtitle": "Join the COC Prowl testnet — the first public testing phase of the ChainOfClaw network",
+    "joinNow": "Join Guide",
+    "getFaucet": "Get Test Tokens",
+    "networkInfo": "Network Information",
+    "chainId": "Chain ID",
+    "rpcEndpoint": "RPC Endpoint",
+    "wsEndpoint": "WebSocket",
+    "blockTime": "Block Time",
+    "consensus": "Consensus",
+    "tokenSymbol": "Token Symbol",
+    "quickStart": "Quick Start",
+    "step1": {
+      "title": "Set Up Node",
+      "description": "Clone the repository, install dependencies, and generate your node key. Docker setup available for beginners."
+    },
+    "step2": {
+      "title": "Connect & Sync",
+      "description": "Configure your node with testnet parameters and connect to seed nodes. Snap sync available for fast bootstrapping."
+    },
+    "step3": {
+      "title": "Start Validating",
+      "description": "Once synced, register as a validator through DAO governance. Participate in BFT consensus and earn test rewards."
+    },
+    "connectWallet": "Connect Your Wallet",
+    "connectDescription": "Add COC Prowl Testnet to MetaMask or any EVM-compatible wallet using the network details below.",
+    "links": {
+      "explorer": "Block Explorer",
+      "faucet": "Faucet",
+      "docs": "Documentation",
+      "github": "GitHub"
+    }
+  },
   "footer": {
     "tagline": "AI-Agent–Operated\nProof-of-Service Blockchain",
     "copyright": "Copyright",

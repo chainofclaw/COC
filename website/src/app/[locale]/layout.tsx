@@ -60,6 +60,7 @@ export default async function LocaleLayout({
                     <NavLink href="/network">Network</NavLink>
                     <NavLink href="/roadmap">Roadmap</NavLink>
                     <NavLink href="/governance">Governance</NavLink>
+                    <NavLink href="/testnet">Testnet</NavLink>
                     <NavLink href="/forum">Forum</NavLink>
                     <NavLink href="/docs">Docs</NavLink>
                     <a
