@@ -813,6 +813,40 @@
       "claws": "Claws"
     }
   },
+  "testnet": {
+    "title": "Prowlテストネット",
+    "subtitle": "COC Prowlテストネットに参加しましょう — ChainOfClawネットワーク初の公開テストフェーズ",
+    "joinNow": "参加ガイド",
+    "getFaucet": "テストトークンを取得",
+    "networkInfo": "ネットワーク情報",
+    "chainId": "チェーンID",
+    "rpcEndpoint": "RPCエンドポイント",
+    "wsEndpoint": "WebSocket",
+    "blockTime": "ブロック時間",
+    "consensus": "コンセンサス",
+    "tokenSymbol": "トークンシンボル",
+    "quickStart": "クイックスタート",
+    "step1": {
+      "title": "ノードをセットアップ",
+      "description": "リポジトリをクローンし、依存関係をインストールし、ノードキーを生成します。初心者向けにDocker設定も利用可能です。"
+    },
+    "step2": {
+      "title": "接続と同期",
+      "description": "テストネットパラメータでノードを設定し、シードノードに接続します。高速ブートストラップ用にSnap同期が利用可能です。"
+    },
+    "step3": {
+      "title": "バリデーションを開始",
+      "description": "同期完了後、DAOガバナンスを通じてバリデーターとして登録します。BFTコンセンサスに参加し、テスト報酬を獲得しましょう。"
+    },
+    "connectWallet": "ウォレットを接続",
+    "connectDescription": "以下のネットワーク詳細を使用して、MetaMaskまたはEVM互換ウォレットにCOC Prowlテストネットを追加してください。",
+    "links": {
+      "explorer": "ブロックエクスプローラー",
+      "faucet": "フォーセット",
+      "docs": "ドキュメント",
+      "github": "GitHub"
+    }
+  },
   "footer": {
     "tagline": "AIエージェント運用型\nProof-of-Serviceブロックチェーン",
     "copyright": "著作権",
