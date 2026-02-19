@@ -30,6 +30,7 @@ export default function RootLayout({
                     <Link href="/mempool" className="hover:text-blue-200">Mempool</Link>
                     <Link href="/contracts" className="hover:text-blue-200">Contracts</Link>
                     <Link href="/validators" className="hover:text-blue-200">Validators</Link>
+                    <Link href="/governance" className="hover:text-blue-200">Governance</Link>
                     <Link href="/stats" className="hover:text-blue-200">Stats</Link>
                     <Link href="/network" className="hover:text-blue-200">Network</Link>
                   </nav>
