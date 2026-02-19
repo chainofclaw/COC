@@ -813,6 +813,40 @@
       "claws": "Claws"
     }
   },
+  "testnet": {
+    "title": "Prowl 테스트넷",
+    "subtitle": "COC Prowl 테스트넷에 참여하세요 — ChainOfClaw 네트워크의 첫 번째 공개 테스트 단계",
+    "joinNow": "참여 가이드",
+    "getFaucet": "테스트 토큰 받기",
+    "networkInfo": "네트워크 정보",
+    "chainId": "체인 ID",
+    "rpcEndpoint": "RPC 엔드포인트",
+    "wsEndpoint": "WebSocket",
+    "blockTime": "블록 시간",
+    "consensus": "합의 메커니즘",
+    "tokenSymbol": "토큰 심볼",
+    "quickStart": "빠른 시작",
+    "step1": {
+      "title": "노드 설정",
+      "description": "저장소를 복제하고 종속성을 설치한 후 노드 키를 생성하세요. 초보자를 위한 Docker 설정도 제공됩니다."
+    },
+    "step2": {
+      "title": "연결 및 동기화",
+      "description": "테스트넷 매개변수로 노드를 구성하고 시드 노드에 연결합니다. 빠른 부트스트래핑을 위해 Snap 동기화가 가능합니다."
+    },
+    "step3": {
+      "title": "검증 시작",
+      "description": "동기화가 완료되면 DAO 거버넌스를 통해 검증자로 등록하세요. BFT 합의에 참여하고 테스트 보상을 받으세요."
+    },
+    "connectWallet": "지갑 연결",
+    "connectDescription": "아래 네트워크 세부 정보를 사용하여 MetaMask 또는 EVM 호환 지갑에 COC Prowl 테스트넷을 추가하세요.",
+    "links": {
+      "explorer": "블록 탐색기",
+      "faucet": "수도꼭지",
+      "docs": "문서",
+      "github": "GitHub"
+    }
+  },
   "footer": {
     "tagline": "AI-Agent가 운영하는\n서비스 증명 블록체인",
     "copyright": "저작권",
