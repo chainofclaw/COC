@@ -100,18 +100,18 @@ export default async function HomePage() {
       </div>
 
       {/* Historical blocks */}
-      <div className="bg-white rounded-lg shadow p-6">
-        <h2 className="text-2xl font-bold mb-4">Latest Blocks</h2>
+      <div className="bg-white rounded-lg shadow p-4 sm:p-6">
+        <h2 className="text-xl sm:text-2xl font-bold mb-4">Latest Blocks</h2>
 
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto -mx-4 sm:mx-0">
           <table className="min-w-full">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Block</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Hash</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Timestamp</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Txs</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Gas Used</th>
+                <th className="px-3 sm:px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Block</th>
+                <th className="px-3 sm:px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase hidden md:table-cell">Hash</th>
+                <th className="px-3 sm:px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Time</th>
+                <th className="px-3 sm:px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Txs</th>
+                <th className="px-3 sm:px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase hidden sm:table-cell">Gas Used</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
@@ -119,24 +119,24 @@ export default async function HomePage() {
                 if (!block) return null
                 return (
                   <tr key={block.number} className="hover:bg-gray-50">
-                    <td className="px-4 py-3 whitespace-nowrap">
+                    <td className="px-3 sm:px-4 py-3 whitespace-nowrap">
                       <Link
                         href={`/block/${block.number}`}
-                        className="text-blue-600 hover:text-blue-800 font-mono"
+                        className="text-blue-600 hover:text-blue-800 font-mono text-sm"
                       >
                         {block.number}
                       </Link>
                     </td>
-                    <td className="px-4 py-3 whitespace-nowrap font-mono text-sm">
+                    <td className="px-3 sm:px-4 py-3 whitespace-nowrap font-mono text-sm hidden md:table-cell">
                       {block.hash ? formatHash(block.hash) : 'N/A'}
                     </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
+                    <td className="px-3 sm:px-4 py-3 whitespace-nowrap text-xs sm:text-sm text-gray-600">
                       {formatTimestamp(block.timestamp)}
                     </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-center">
+                    <td className="px-3 sm:px-4 py-3 whitespace-nowrap text-center text-sm">
                       {block.transactions.length}
                     </td>
-                    <td className="px-4 py-3 whitespace-nowrap font-mono text-sm">
+                    <td className="px-3 sm:px-4 py-3 whitespace-nowrap font-mono text-sm hidden sm:table-cell">
                       {block.gasUsed?.toString() || '0'}
                     </td>
                   </tr>
@@ -148,12 +148,12 @@ export default async function HomePage() {
       </div>
 
       {/* Connection info */}
-      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-        <h3 className="font-semibold text-blue-900 mb-2">Connection Info</h3>
-        <div className="text-sm space-y-1">
-          <p><span className="font-medium">HTTP RPC:</span> <code className="bg-blue-100 px-2 py-1 rounded">{RPC_URL}</code></p>
-          <p><span className="font-medium">WebSocket:</span> <code className="bg-blue-100 px-2 py-1 rounded">{WS_URL}</code></p>
-          <p><span className="font-medium">Chain ID:</span> <code className="bg-blue-100 px-2 py-1 rounded">{stats.chainId} (0x{stats.chainId.toString(16)})</code></p>
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 sm:p-4">
+        <h3 className="font-semibold text-blue-900 mb-2 text-sm sm:text-base">Connection Info</h3>
+        <div className="text-xs sm:text-sm space-y-1">
+          <p><span className="font-medium">HTTP RPC:</span> <code className="bg-blue-100 px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[11px] sm:text-sm break-all">{RPC_URL}</code></p>
+          <p><span className="font-medium">WebSocket:</span> <code className="bg-blue-100 px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[11px] sm:text-sm break-all">{WS_URL}</code></p>
+          <p><span className="font-medium">Chain ID:</span> <code className="bg-blue-100 px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[11px] sm:text-sm">{stats.chainId} (0x{stats.chainId.toString(16)})</code></p>
           <p><span className="font-medium">Network:</span> ChainOfClaw (COC)</p>
         </div>
       </div>
@@ -163,10 +163,10 @@ export default async function HomePage() {
 
 function StatCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
-    <div className="bg-white rounded-lg shadow p-4">
-      <div className="text-xs font-medium text-gray-500 uppercase">{label}</div>
-      <div className="mt-1 text-lg font-bold text-gray-900">{value}</div>
-      {sub && <div className="text-xs text-gray-400">{sub}</div>}
+    <div className="bg-white rounded-lg shadow p-3 sm:p-4">
+      <div className="text-[10px] sm:text-xs font-medium text-gray-500 uppercase truncate">{label}</div>
+      <div className="mt-1 text-base sm:text-lg font-bold text-gray-900 truncate">{value}</div>
+      {sub && <div className="text-[10px] sm:text-xs text-gray-400">{sub}</div>}
     </div>
   )
 }

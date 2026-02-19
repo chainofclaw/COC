@@ -54,7 +54,7 @@ export function SearchBar() {
         // Try block hash
         const block = await rpcCheck('eth_getBlockByHash', [q, false])
         if (block) {
-          const blockNum = parseInt((block as Record<string, string>).number, 16)
+          const blockNum = parseInt((block as Record<string, string>).number ?? '0', 16)
           router.push(`/block/${blockNum}`)
           setQuery('')
           return
@@ -80,7 +80,7 @@ export function SearchBar() {
   }
 
   return (
-    <form onSubmit={handleSearch} className="flex-1 max-w-md">
+    <form onSubmit={handleSearch} className="flex-1 w-full sm:max-w-md">
       <div className="relative">
         <input
           type="text"

@@ -64,9 +64,9 @@ export default async function BlockPage({ params }: BlockPageProps) {
 
   return (
     <div className="space-y-6">
-      <div className="bg-white rounded-lg shadow p-6">
+      <div className="bg-white rounded-lg shadow p-4 sm:p-6">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-2xl font-bold">Block #{block.number}</h2>
+          <h2 className="text-xl sm:text-2xl font-bold">Block #{block.number}</h2>
           <div className="flex gap-2">
             {prevBlock !== null && (
               <Link href={`/block/${prevBlock}`} className="px-3 py-1 bg-gray-100 hover:bg-gray-200 rounded text-sm">
@@ -158,12 +158,12 @@ export default async function BlockPage({ params }: BlockPageProps) {
               <thead className="bg-gray-50">
                 <tr>
                   <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Hash</th>
-                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Method</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase hidden sm:table-cell">Method</th>
                   <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">From</th>
-                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">To</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase hidden md:table-cell">To</th>
                   <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Value</th>
                   <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Gas Used</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase hidden lg:table-cell">Gas Used</th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
@@ -179,7 +179,7 @@ export default async function BlockPage({ params }: BlockPageProps) {
                           {formatHash(txHash)}
                         </Link>
                       </td>
-                      <td className="px-3 py-2 whitespace-nowrap">
+                      <td className="px-3 py-2 whitespace-nowrap hidden sm:table-cell">
                         {decoded ? (
                           <span className="px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded text-xs font-mono">
                             {decoded.name.split('(')[0]}
@@ -197,7 +197,7 @@ export default async function BlockPage({ params }: BlockPageProps) {
                           </Link>
                         ) : '-'}
                       </td>
-                      <td className="px-3 py-2 whitespace-nowrap">
+                      <td className="px-3 py-2 whitespace-nowrap hidden md:table-cell">
                         {tx?.to ? (
                           <Link href={`/address/${tx.to}`} className="text-blue-600 hover:text-blue-800 font-mono text-xs">
                             {formatAddress(tx.to)}
@@ -220,7 +220,7 @@ export default async function BlockPage({ params }: BlockPageProps) {
                           <span className="text-xs text-gray-400">-</span>
                         )}
                       </td>
-                      <td className="px-3 py-2 whitespace-nowrap font-mono text-xs">
+                      <td className="px-3 py-2 whitespace-nowrap font-mono text-xs hidden lg:table-cell">
                         {receipt ? parseInt(receipt.gasUsed, 16).toLocaleString() : '-'}
                       </td>
                     </tr>

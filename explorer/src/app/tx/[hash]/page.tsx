@@ -48,9 +48,9 @@ export default async function TxPage({ params }: TxPageProps) {
 
   return (
     <div className="space-y-6">
-      <div className="bg-white rounded-lg shadow p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-2xl font-bold">Transaction Details</h2>
+      <div className="bg-white rounded-lg shadow p-4 sm:p-6">
+        <div className="flex items-center justify-between mb-4 gap-2">
+          <h2 className="text-xl sm:text-2xl font-bold">Transaction Details</h2>
           {receipt && (
             <span className={`px-3 py-1 rounded text-sm font-medium ${
               receipt.status === 1 ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
@@ -157,20 +157,20 @@ export default async function TxPage({ params }: TxPageProps) {
           <h3 className="text-xl font-bold mb-4">Token Transfers ({tokenTransfers.length})</h3>
           <div className="space-y-3">
             {tokenTransfers.map((t, i) => (
-              <div key={i} className="flex items-center gap-3 bg-yellow-50 border border-yellow-200 p-3 rounded text-sm">
+              <div key={i} className="flex items-center gap-2 sm:gap-3 bg-yellow-50 border border-yellow-200 p-2 sm:p-3 rounded text-sm flex-wrap">
                 <span className="px-2 py-0.5 bg-yellow-200 text-yellow-800 rounded text-xs font-medium">
                   {t.type === 'ERC20-Transfer' ? 'Transfer' : 'Approval'}
                 </span>
-                <span className="font-mono font-medium">{formatTokenAmount(t.value)}</span>
-                <span className="text-gray-500">from</span>
+                <span className="font-mono font-medium text-xs sm:text-sm">{formatTokenAmount(t.value)}</span>
+                <span className="text-gray-500 text-xs">from</span>
                 <Link href={`/address/${t.from}`} className="text-blue-600 font-mono text-xs">
                   {formatAddress(t.from)}
                 </Link>
-                <span className="text-gray-500">to</span>
+                <span className="text-gray-500 text-xs">to</span>
                 <Link href={`/address/${t.to}`} className="text-blue-600 font-mono text-xs">
                   {formatAddress(t.to)}
                 </Link>
-                <span className="text-gray-400 text-xs">
+                <span className="text-gray-400 text-xs hidden sm:inline">
                   via <Link href={`/address/${t.contractAddress}`} className="text-blue-600">{formatAddress(t.contractAddress)}</Link>
                 </span>
               </div>
@@ -189,9 +189,9 @@ export default async function TxPage({ params }: TxPageProps) {
                 <tr>
                   <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
                   <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">From</th>
-                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">To</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase hidden sm:table-cell">To</th>
                   <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Value</th>
-                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Gas Used</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase hidden md:table-cell">Gas Used</th>
                   <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
                 </tr>
               </thead>
@@ -212,7 +212,7 @@ export default async function TxPage({ params }: TxPageProps) {
                           {formatAddress(trace.from)}
                         </Link>
                       </td>
-                      <td className="px-3 py-2 text-sm">
+                      <td className="px-3 py-2 text-sm hidden sm:table-cell">
                         <Link href={`/address/${trace.to}`} className="text-blue-600 hover:text-blue-800 font-mono text-xs">
                           {formatAddress(trace.to)}
                         </Link>
@@ -220,7 +220,7 @@ export default async function TxPage({ params }: TxPageProps) {
                       <td className="px-3 py-2 text-sm font-mono text-xs">
                         {traceValue > 0n ? formatEther(traceValue) : '0'}
                       </td>
-                      <td className="px-3 py-2 text-sm font-mono text-xs">
+                      <td className="px-3 py-2 text-sm font-mono text-xs hidden md:table-cell">
                         {parseInt(trace.gasUsed, 16).toLocaleString()}
                       </td>
                       <td className="px-3 py-2 text-sm">
