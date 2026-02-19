@@ -8,6 +8,8 @@
     "coverage": "hardhat coverage",
     "coverage:check": "hardhat coverage && node scripts/check-coverage.js",
     "deploy:local": "hardhat run scripts/deploy-posemanager.js --network hardhat",
+    "deploy:governance": "hardhat run scripts/deploy-governance.js --network prowl",
+    "deploy:governance:local": "hardhat run scripts/deploy-governance.js --network hardhat",
     "verify:pose": "hardhat run scripts/verify-pose.js --network localhost"
   },
   "devDependencies": {
