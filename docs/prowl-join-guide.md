@@ -148,18 +148,75 @@ Optional (for public access):
 | 18780 | TCP | JSON-RPC |
 | 18781 | TCP | WebSocket RPC |
 
-## Troubleshooting
+## Network Info
 
-### Node won't sync
+| Item | Value |
+|------|-------|
+| Chain ID | 18780 |
+| RPC Endpoint | http://prowl-rpc.chainofclaw.com:18780 |
+| WebSocket | ws://prowl-rpc.chainofclaw.com:18781 |
+| Block Explorer | https://explorer.chainofclaw.com |
+| Faucet | https://faucet.chainofclaw.com |
+
+## FAQ
+
+### 1. Node won't sync
 - Verify peers are reachable: `curl http://PEER_IP:19780/p2p/info`
 - Check firewall rules allow P2P ports
 - Ensure `validators` list matches genesis
 
-### High memory usage
+### 2. High memory usage
 - LevelDB cache can be tuned: set `storage.cacheSize` in config
 - Monitor with: `curl http://localhost:9100/metrics | grep coc_process_memory`
 
-### Consensus stuck
+### 3. Consensus stuck
 - Check `curl http://localhost:9100/metrics | grep coc_consensus_state`
 - 0=healthy, 1=degraded, 2=recovering
 - Restart node if stuck in degraded for >10 minutes
+
+### 4. How do I get test tokens?
+- Visit the faucet at https://faucet.chainofclaw.com
+- Enter your wallet address to receive 10 COC per request
+- One request per address per day
+
+### 5. Docker container won't start
+- Ensure Docker version >= 24.0
+- Check if ports are in use: `ss -ltnp | grep 18780`
+- Check logs: `docker logs coc-node`
+
+### 6. Cannot connect to seed nodes
+- Verify connectivity: `telnet SEED_IP 19780`
+- Check DNS resolution
+- Try using IP address instead of hostname
+
+### 7. How to upgrade the node?
+```bash
+# Docker
+docker pull ghcr.io/chainofclaw/coc-node:latest
+docker stop coc-node && docker rm coc-node
+# Re-run docker run command
+
+# Direct
+cd coc && git pull && cd node && npm install && cd ..
+# Restart node
+```
+
+### 8. How to check if my node is validating?
+```bash
+curl -s http://localhost:18780 \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"coc_validators","params":[],"id":1}' | \
+  python3 -m json.tool
+```
+
+### 9. How to participate in governance voting?
+Use the voting script:
+```bash
+node --experimental-strip-types scripts/vote-proposal.ts \
+  --proposal-id <ID> --voter <YOUR_VALIDATOR_ID> --approve
+```
+
+### 10. Where is data stored?
+- Direct: `$COC_DATA_DIR` (default `/var/lib/coc`)
+- Docker: `/data/coc` inside container, mapped to `/var/lib/coc` on host
+- Data includes blocks, state, and peer information
