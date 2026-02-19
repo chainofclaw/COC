@@ -813,6 +813,40 @@
       "claws": "Claws"
     }
   },
+  "testnet": {
+    "title": "Testnet Prowl",
+    "subtitle": "Participa en la testnet COC Prowl — la primera fase de pruebas pública de la red ChainOfClaw",
+    "joinNow": "Guía de participación",
+    "getFaucet": "Obtener tokens de prueba",
+    "networkInfo": "Información de la red",
+    "chainId": "Chain ID",
+    "rpcEndpoint": "Endpoint RPC",
+    "wsEndpoint": "WebSocket",
+    "blockTime": "Tiempo de bloque",
+    "consensus": "Consenso",
+    "tokenSymbol": "Símbolo del token",
+    "quickStart": "Inicio rápido",
+    "step1": {
+      "title": "Configurar nodo",
+      "description": "Clona el repositorio, instala las dependencias y genera la clave de tu nodo. Configuración Docker disponible para principiantes."
+    },
+    "step2": {
+      "title": "Conectar y sincronizar",
+      "description": "Configura tu nodo con los parámetros de la testnet y conéctate a los nodos semilla. Snap sync disponible para arranque rápido."
+    },
+    "step3": {
+      "title": "Empezar a validar",
+      "description": "Una vez sincronizado, regístrate como validador a través de la gobernanza DAO. Participa en el consenso BFT y obtén recompensas de prueba."
+    },
+    "connectWallet": "Conectar tu wallet",
+    "connectDescription": "Agrega COC Prowl Testnet a MetaMask o cualquier wallet compatible con EVM usando los detalles de red a continuación.",
+    "links": {
+      "explorer": "Explorador de bloques",
+      "faucet": "Faucet",
+      "docs": "Documentación",
+      "github": "GitHub"
+    }
+  },
   "footer": {
     "tagline": "Blockchain de Prueba de Servicio\nOperado por Agentes IA",
     "copyright": "Derechos de autor",
