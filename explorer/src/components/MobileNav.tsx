@@ -33,6 +33,16 @@ export function MobileNav() {
     return () => { document.body.style.overflow = '' }
   }, [open])
 
+  // Close on Escape key
+  useEffect(() => {
+    if (!open) return
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [open])
+
   return (
     <div className="sm:hidden">
       <button
@@ -58,12 +68,13 @@ export function MobileNav() {
           <div
             className="fixed inset-0 bg-black/50 z-40"
             onClick={() => setOpen(false)}
+            aria-hidden="true"
           />
           {/* Slide-in menu */}
           <nav className="fixed top-0 right-0 h-full w-64 bg-blue-700 z-50 shadow-xl flex flex-col pt-16 px-4">
             <button
               onClick={() => setOpen(false)}
-              className="absolute top-4 right-4 p-2 hover:bg-blue-600 rounded-lg"
+              className="absolute top-4 right-4 p-2 hover:bg-blue-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-300"
               aria-label="Close menu"
             >
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">

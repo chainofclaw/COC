@@ -6,7 +6,7 @@
     "compile": "hardhat compile",
     "test": "hardhat test",
     "coverage": "hardhat coverage",
-    "coverage:check": "hardhat coverage && node scripts/check-coverage.js",
+    "coverage:check": "hardhat coverage && node scripts/check-coverage.cjs",
     "deploy:local": "hardhat run scripts/deploy-posemanager.js --network hardhat",
     "deploy:governance": "hardhat run scripts/deploy-governance.js --network prowl",
     "deploy:governance:local": "hardhat run scripts/deploy-governance.js --network hardhat",
