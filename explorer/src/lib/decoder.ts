@@ -114,8 +114,8 @@ export function decodeTransferLog(
   if (topic0 === TRANSFER_TOPIC) {
     return {
       type: 'ERC20-Transfer',
-      from: topicToAddress(log.topics[1]),
-      to: topicToAddress(log.topics[2]),
+      from: topicToAddress(log.topics[1] ?? '0x'),
+      to: topicToAddress(log.topics[2] ?? '0x'),
       value: hexToDecimal(log.data),
       contractAddress: log.address,
     }
@@ -124,8 +124,8 @@ export function decodeTransferLog(
   if (topic0 === APPROVAL_TOPIC) {
     return {
       type: 'ERC20-Approval',
-      from: topicToAddress(log.topics[1]),
-      to: topicToAddress(log.topics[2]),
+      from: topicToAddress(log.topics[1] ?? '0x'),
+      to: topicToAddress(log.topics[2] ?? '0x'),
       value: hexToDecimal(log.data),
       contractAddress: log.address,
     }

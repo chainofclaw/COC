@@ -70,8 +70,8 @@ export default async function StatsPage() {
   // Block time calculation
   let avgBlockTimeMs = 0
   if (blocks.length >= 2) {
-    const newest = parseInt(blocks[0].timestamp, 16)
-    const oldest = parseInt(blocks[blocks.length - 1].timestamp, 16)
+    const newest = parseInt(blocks[0]!.timestamp, 16)
+    const oldest = parseInt(blocks[blocks.length - 1]!.timestamp, 16)
     avgBlockTimeMs = ((newest - oldest) / (blocks.length - 1)) * 1000
   }
 

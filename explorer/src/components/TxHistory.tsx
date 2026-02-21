@@ -111,7 +111,7 @@ export function TxHistory({ address, initialTxs }: TxHistoryProps) {
                 const blockNum = parseInt(tx.blockNumber, 16)
                 const success = tx.status === '0x1'
                 const gasUsed = parseInt(tx.gasUsed, 16)
-                const badge = TYPE_BADGE[tx.txType]
+                const badge = TYPE_BADGE[tx.txType] ?? { label: tx.txType, bg: 'bg-gray-100', text: 'text-gray-700' }
 
                 return (
                   <tr key={tx.hash} className="hover:bg-gray-50">
