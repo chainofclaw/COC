@@ -8,7 +8,16 @@ FROM node:22-slim AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY explorer/ ./
+
+# Next.js bakes NEXT_PUBLIC_* vars into the client bundle at build time
+ARG NEXT_PUBLIC_RPC_URL=http://127.0.0.1:18780
+ARG NEXT_PUBLIC_WS_URL=ws://127.0.0.1:18781
+ENV NEXT_PUBLIC_RPC_URL=${NEXT_PUBLIC_RPC_URL}
+ENV NEXT_PUBLIC_WS_URL=${NEXT_PUBLIC_WS_URL}
 ENV NEXT_TELEMETRY_DISABLED=1
+
+# Ensure public dir exists for standalone output
+RUN mkdir -p public
 RUN npm run build
 
 FROM node:22-slim AS runtime

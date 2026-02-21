@@ -27,12 +27,12 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.explorer
+      args:
+        NEXT_PUBLIC_RPC_URL: http://node:18780
+        NEXT_PUBLIC_WS_URL: ws://node:18781
     container_name: coc-explorer
     ports:
       - "3000:3000"
-    environment:
-      - NEXT_PUBLIC_RPC_URL=http://node:18780
-      - NEXT_PUBLIC_WS_URL=ws://node:18781
     depends_on:
       node:
         condition: service_healthy

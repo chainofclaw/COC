@@ -3,8 +3,14 @@
 
 FROM node:22-slim AS deps
 WORKDIR /app
-COPY node/package.json node/package-lock.json* ./node/
-COPY package.json package-lock.json* ./
+
+# Install build tools for native modules (classic-level requires C++ compilation)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends build-essential python3 && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install node package dependencies (standalone, outside workspace context)
+COPY node/package.json ./node/
 RUN cd node && npm install --omit=dev
 
 FROM node:22-slim AS runtime
@@ -12,20 +18,27 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
 
+# Create non-root user for security
+RUN groupadd -r coc && useradd -r -g coc -d /app -s /bin/false coc
+
 COPY --from=deps /app/node/node_modules ./node/node_modules
 COPY node/src ./node/src
 COPY node/package.json ./node/
 COPY services ./services
+COPY runtime/lib ./runtime/lib
+COPY package.json ./
 
 ENV COC_DATA_DIR=/data/coc
 ENV COC_NODE_CONFIG=/data/coc/node-config.json
 
+RUN mkdir -p /data/coc && chown -R coc:coc /data/coc
 VOLUME /data/coc
 
 EXPOSE 18780 18781 19780 19781 5001 9100
 
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
-  CMD curl -sf http://localhost:18780/health || exit 1
+  CMD curl -sf -X POST -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","method":"eth_blockNumber","id":1}' http://localhost:18780/ || exit 1
 
+USER coc
 ENTRYPOINT ["node", "--experimental-strip-types"]
 CMD ["node/src/index.ts"]
