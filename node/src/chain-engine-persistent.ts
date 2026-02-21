@@ -101,6 +101,30 @@ export class PersistentChainEngine {
       } else {
         await this.rebuildFromPersisted(latestBlock.number)
       }
+    } else if (this.cfg.validators.length >= 2) {
+      // Multi-validator network: create deterministic genesis block.
+      // All validators produce the same genesis so they start from the same state.
+      const genesisProposer = this.cfg.validators[0]
+      const parentHash = zeroHash()
+      const genesisTimestampMs = 0 // deterministic: all nodes produce identical hash
+      const hash = hashBlockPayload({
+        number: 1n,
+        parentHash,
+        proposer: genesisProposer,
+        timestampMs: genesisTimestampMs,
+        txs: [],
+      })
+      const genesis: ChainBlock = {
+        number: 1n,
+        hash,
+        parentHash,
+        proposer: genesisProposer,
+        timestampMs: genesisTimestampMs,
+        txs: [],
+        finalized: false,
+      }
+      await this.blockIndex.putBlock(genesis)
+      log.info("genesis block created", { height: "1", hash, proposer: genesisProposer })
     }
   }
 
