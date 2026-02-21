@@ -69,8 +69,8 @@ Implemented:
 
 - **Phase 32**: BFT messages broadcast via dual transport (HTTP gossip + wire protocol TCP)
 
-- **Phase 25**: BFT slashing handler: equivocation → stake slash → treasury deposit → auto-remove
-- **Phase 25**: ValidatorGovernance slashing API (applySlash, deactivateValidator, getMinStake)
+- **Phase 34**: BFT slashing handler: equivocation → stake slash → treasury deposit → auto-remove
+- **Phase 34**: ValidatorGovernance slashing API (applySlash, deactivateValidator, getMinStake)
 
 Missing/Partial:
 - On-chain slashing via PoSeManager contract integration
@@ -262,7 +262,7 @@ Implemented:
 - 3/5/7 node devnet scripts
 - End‑to‑end verify script: block production + tx propagation
 - Quality gate script for automated testing (unit + integration + e2e)
-- Comprehensive test coverage (79 test files, 755 tests across all modules)
+- Comprehensive test coverage (95 test files, 897 tests across all modules)
 
 Code:
 - `COC/scripts/start-devnet.sh`
@@ -857,21 +857,21 @@ Code:
 - `COC/node/src/p2p-auth.test.ts` (NEW)
 - Multiple files updated (see Production Hardening section for full list)
 
-## 26) Phase 25: Public Testnet Go/No-Go Readiness
+## 26) Phase 34: Public Testnet Go/No-Go Readiness
 **Status: Conditional Go (2026-02-22)**
 
-### 25.1 Security Closure Items
+### 34.1 Security Closure Items
 - Relay witness strict verification: 17 security tests covering forged witnesses, timestamp manipulation, replay protection, cross-node witness reuse
 - BFT malicious-behavior penalty: `BftSlashingHandler` connecting EquivocationDetector → ValidatorGovernance (slash stake, deposit treasury, auto-remove)
 - BFT slashing integration: 9 tests covering full equivocation → slash → penalty pipeline
 
-### 25.2 Operations Infrastructure
+### 34.2 Operations Infrastructure
 - Prometheus alert rules: 12 rules across 4 groups (availability, security, performance, network)
 - On-call runbook with triage flowchart, troubleshooting sections, escalation matrix
 - Rollback runbook with 4 procedures (Docker rollback, binary rollback, snapshot recovery, genesis reset)
 - Testnet configs with full security fields (`ops/testnet/node-config-{1,2,3}.json`)
 
-### 25.3 ValidatorGovernance Slashing API
+### 34.3 ValidatorGovernance Slashing API
 - `applySlash(validatorId, amount)`: Direct stake reduction for slashing penalties
 - `deactivateValidator(validatorId)`: Immediate validator removal
 - `getMinStake()`: Minimum stake threshold accessor
@@ -888,8 +888,68 @@ Code:
 - `COC/docker/testnet-configs/node-{1,2,3}.json` (UPDATED - security fields)
 
 Documentation:
-- `COC/docs/phase-25-plan.en.md` (UPDATED)
-- `COC/docs/phase-25-plan.zh.md` (UPDATED)
+- `COC/docs/phase-34-plan.en.md`
+- `COC/docs/phase-34-plan.zh.md`
+
+## 28) Phase 35: Node Installation, Configuration & Type Selection
+**Status: Implemented (2026-02-22)**
+
+OpenClaw `coc-nodeops` extension expanded with node type presets, interactive setup wizard, and multi-node instance management.
+
+### 35.1 Node Type System
+- 5 node type presets: `validator`, `fullnode`, `archive`, `gateway`, `dev`
+- Each preset defines config overrides (BFT, wire, DHT, snap sync, storage backend) and attached services
+- Validator: BFT + wire + DHT + snap sync + leveldb + agent service
+- Full node: wire + DHT + snap sync + leveldb, no block production
+- Archive: same as fullnode with pruning disabled
+- Gateway: memory backend, no protocols, lightweight RPC proxy
+- Dev: single-node, test accounts prefunded, no protocols
+
+### 35.2 Network Presets
+- 4 network configurations: `testnet`, `mainnet`, `local`, `custom`
+- Testnet: chainId 18780, public bootstrap peers
+- Local: chainId 18780, localhost, auto ports
+- Custom: user specifies all parameters interactively
+
+### 35.3 Interactive Init Wizard
+- `openclaw coc init` interactive wizard using `@clack/prompts`
+- Step-by-step: node type → network → name → RPC port → (validator key / custom params)
+- Also supports non-interactive: `openclaw coc init --type validator --network testnet --name val-1`
+- Generates `node-config.json`, `node-key`, registers to `nodes.json`
+
+### 35.4 Multi-Node Manager
+- `NodeManager` class with persistent registry (`~/.clawdbot/coc/nodes.json`)
+- Per-node data directories under `~/.clawdbot/coc/nodes/<name>/`
+- Node lifecycle: start/stop/restart with per-service process management
+- Status with live RPC queries (block height, peer count)
+- Node removal with optional data deletion
+
+### 35.5 CLI Commands
+- `coc init` - Initialize new node (interactive or parametric)
+- `coc list` - List all managed node instances
+- `coc start [name]` - Start specific or all nodes
+- `coc stop [name]` - Stop specific or all nodes
+- `coc restart [name]` - Restart specific or all nodes
+- `coc status [name]` - Status with RPC stats
+- `coc remove <name>` - Remove node instance
+- `coc config show [name]` - Display node configuration
+- `coc config edit <name>` - Edit config in $EDITOR
+- `coc logs <name>` - View node logs (with --follow)
+
+Code:
+- `COC/extensions/coc-nodeops/src/node-types.ts` (NEW)
+- `COC/extensions/coc-nodeops/src/network-presets.ts` (NEW)
+- `COC/extensions/coc-nodeops/src/cli/init-wizard.ts` (NEW)
+- `COC/extensions/coc-nodeops/src/runtime/node-manager.ts` (NEW)
+- `COC/extensions/coc-nodeops/src/cli/commands.ts` (UPDATED - all new subcommands)
+- `COC/extensions/coc-nodeops/src/config-schema.ts` (UPDATED - nodes registry)
+- `COC/extensions/coc-nodeops/index.ts` (UPDATED - NodeManager init)
+- `COC/extensions/coc-nodeops/package.json` (UPDATED - @clack/prompts dep)
+
+Tests (24 new tests across 3 files):
+- `COC/extensions/coc-nodeops/src/node-types.test.ts` (7 tests)
+- `COC/extensions/coc-nodeops/src/network-presets.test.ts` (7 tests)
+- `COC/extensions/coc-nodeops/src/runtime/node-manager.test.ts` (10 tests)
 
 ## 27) Whitepaper Gap Summary
 - Consensus: validator governance with stake-weighted proposer selection (Phase 22 + 26), BFT-lite round state machine with coordinator (Phase 28), GHOST fork choice (Phase 28), BFT integrated into ConsensusEngine main loop (Phase 29, opt-in), equivocation detection for double-vote slashing (Phase 30), consensus metrics tracking (Phase 30), BFT message signature verification (Phase 33).
@@ -901,7 +961,8 @@ Documentation:
 - Security: node identity via crypto signing (Phase 33), BFT signature verification (Phase 33), DHT anti-poisoning (Phase 33), exponential peer banning (Phase 33), WebSocket idle timeout (Phase 33), default localhost binding (Phase 33), P2P signed request verification with monitor/enforce rollout (Phase 33).
 - Explorer: contract registry, call history, tx type classification, internal traces, governance display (Phase 27).
 - Devnet: multi-node devnet enables all advanced features by default (BFT, Wire, DHT, SnapSync) with per-node wire port and DHT bootstrap peers (Phase 32).
-- BFT Slashing: equivocation detection → stake slash → treasury deposit → auto-remove below threshold (Phase 25).
-- Relay Witness: strict verification with forged witness rejection, timestamp validation, replay protection (Phase 25).
-- Operations: Prometheus alerts (12 rules), on-call runbook, rollback runbook, testnet security configs (Phase 25).
-- Testing: 781+ tests across 87+ files covering all major modules including security hardening (Phase 33) and Go/No-Go readiness (Phase 25).
+- BFT Slashing: equivocation detection → stake slash → treasury deposit → auto-remove below threshold (Phase 34).
+- Relay Witness: strict verification with forged witness rejection, timestamp validation, replay protection (Phase 34).
+- Operations: Prometheus alerts (12 rules), on-call runbook, rollback runbook, testnet security configs (Phase 34).
+- Node Ops: OpenClaw coc-nodeops extension with 5 node type presets, network presets, interactive init wizard, multi-node instance management, full CLI (Phase 35).
+- Testing: 897 tests across 95 files covering all major modules including security hardening (Phase 33), Go/No-Go readiness (Phase 34), and node ops extension (Phase 35).
