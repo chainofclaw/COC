@@ -6,6 +6,7 @@ x-node-base: &node-base
     context: ..
     dockerfile: docker/Dockerfile.node
   restart: unless-stopped
+  stop_grace_period: 30s
   networks:
     - coc-p2p
     - coc-rpc

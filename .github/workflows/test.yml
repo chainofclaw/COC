@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   test-node:
-    name: Node Tests (744+)
+    name: Node Tests (757+)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -38,7 +38,7 @@ jobs:
           retention-days: 7
 
   test-services:
-    name: Service Tests (102+)
+    name: Service Tests (119+)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

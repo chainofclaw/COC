@@ -23,6 +23,7 @@
   "enableWireProtocol": true,
   "enableDht": true,
   "enableSnapSync": true,
+  "enableAdminRpc": true,
   "blockTimeMs": 3000,
   "finalityDepth": 3,
   "maxTxPerBlock": 100,
@@ -36,9 +37,6 @@
   "p2pInboundAuthMode": "enforce",
   "poseInboundAuthMode": "enforce",
   "dhtRequireAuthenticatedVerify": true,
-  "poseUseOnchainChallengerAuth": true,
-  "poseOnchainAuthFailOpen": false,
-  "poseOnchainAuthRpcUrl": "http://localhost:8545",
-  "poseOnchainAuthPoseManagerAddress": "0x5FbDB2315678afecb367f032d93F642f64180aa3",
-  "poseUseGovernanceChallengerAuth": true
+  "poseUseGovernanceChallengerAuth": true,
+  "poseUseOnchainChallengerAuth": false
 }
