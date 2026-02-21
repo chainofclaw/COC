@@ -1,0 +1,28 @@
+{
+  "name": "@openclaw/coc-nodeops",
+  "version": "0.2.0",
+  "type": "module",
+  "description": "OpenClaw COC node operations and configuration management",
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "service": {
+      "id": "coc-nodeops",
+      "label": "COC Node Ops",
+      "description": "COC node installation, configuration, and lifecycle management"
+    },
+    "install": {
+      "npmSpec": "@openclaw/coc-nodeops",
+      "localPath": "extensions/coc-nodeops",
+      "defaultChoice": "local"
+    }
+  },
+  "dependencies": {
+    "@clack/prompts": "^0.10.0",
+    "zod": "^4.3.6"
+  },
+  "peerDependencies": {
+    "openclaw": "*"
+  }
+}

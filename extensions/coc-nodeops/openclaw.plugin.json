@@ -1,0 +1,108 @@
+{
+  "id": "coc-nodeops",
+  "name": "COC 节点运维",
+  "version": "0.1.0",
+  "description": "COC 节点/Agent/Relayer 安装、配置与运维",
+  "author": "OpenClaw Contributors",
+  "services": [
+    "coc"
+  ],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "启用 COC 节点运维扩展"
+      },
+      "dataDir": {
+        "type": "string",
+        "default": "~/.clawdbot/coc",
+        "description": "COC 运行时数据目录"
+      },
+      "runtimeDir": {
+        "type": "string",
+        "description": "COC runtime 脚本目录"
+      },
+      "node": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "启用 coc-node"
+          },
+          "port": {
+            "type": "number",
+            "default": 18780,
+            "description": "coc-node HTTP 端口"
+          },
+          "bind": {
+            "type": "string",
+            "default": "127.0.0.1",
+            "description": "coc-node 绑定地址"
+          }
+        }
+      },
+      "agent": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "启用 coc-agent"
+          },
+          "intervalMs": {
+            "type": "number",
+            "default": 60000,
+            "description": "agent 轮询间隔"
+          },
+          "batchSize": {
+            "type": "number",
+            "default": 5,
+            "description": "agent 每批聚合的 receipt 数量"
+          },
+          "sampleSize": {
+            "type": "number",
+            "default": 2,
+            "description": "agent 每批提交到链上的 sample proof 数量"
+          }
+        }
+      },
+      "relayer": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "启用 coc-relayer"
+          },
+          "intervalMs": {
+            "type": "number",
+            "default": 60000,
+            "description": "relayer 轮询间隔"
+          },
+          "l1RpcUrl": {
+            "type": "string",
+            "description": "L1 RPC 地址"
+          },
+          "l2RpcUrl": {
+            "type": "string",
+            "description": "L2 RPC 地址"
+          }
+        }
+      },
+      "endpoints": {
+        "type": "object",
+        "properties": {
+          "nodeUrl": {
+            "type": "string",
+            "default": "http://127.0.0.1:18780",
+            "description": "coc-node 访问地址"
+          }
+        }
+      }
+    }
+  }
+}
