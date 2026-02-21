@@ -69,8 +69,11 @@ Implemented:
 
 - **Phase 32**: BFT messages broadcast via dual transport (HTTP gossip + wire protocol TCP)
 
+- **Phase 25**: BFT slashing handler: equivocation → stake slash → treasury deposit → auto-remove
+- **Phase 25**: ValidatorGovernance slashing API (applySlash, deactivateValidator, getMinStake)
+
 Missing/Partial:
-- Slashing rules for BFT misbehavior
+- On-chain slashing via PoSeManager contract integration
 
 Code:
 - `COC/node/src/chain-engine.ts`
@@ -854,7 +857,41 @@ Code:
 - `COC/node/src/p2p-auth.test.ts` (NEW)
 - Multiple files updated (see Production Hardening section for full list)
 
-## 26) Whitepaper Gap Summary
+## 26) Phase 25: Public Testnet Go/No-Go Readiness
+**Status: Conditional Go (2026-02-22)**
+
+### 25.1 Security Closure Items
+- Relay witness strict verification: 17 security tests covering forged witnesses, timestamp manipulation, replay protection, cross-node witness reuse
+- BFT malicious-behavior penalty: `BftSlashingHandler` connecting EquivocationDetector → ValidatorGovernance (slash stake, deposit treasury, auto-remove)
+- BFT slashing integration: 9 tests covering full equivocation → slash → penalty pipeline
+
+### 25.2 Operations Infrastructure
+- Prometheus alert rules: 12 rules across 4 groups (availability, security, performance, network)
+- On-call runbook with triage flowchart, troubleshooting sections, escalation matrix
+- Rollback runbook with 4 procedures (Docker rollback, binary rollback, snapshot recovery, genesis reset)
+- Testnet configs with full security fields (`ops/testnet/node-config-{1,2,3}.json`)
+
+### 25.3 ValidatorGovernance Slashing API
+- `applySlash(validatorId, amount)`: Direct stake reduction for slashing penalties
+- `deactivateValidator(validatorId)`: Immediate validator removal
+- `getMinStake()`: Minimum stake threshold accessor
+
+Code:
+- `COC/services/verifier/relay-witness-security.test.ts` (NEW - 17 tests)
+- `COC/node/src/bft-slashing.ts` (NEW)
+- `COC/node/src/bft-slashing.integration.test.ts` (NEW - 9 tests)
+- `COC/node/src/validator-governance.ts` (UPDATED - slashing API)
+- `COC/ops/alerts/prometheus-rules.yml` (NEW)
+- `COC/ops/runbooks/testnet-oncall.md` (NEW)
+- `COC/ops/runbooks/testnet-rollback.md` (NEW)
+- `COC/ops/testnet/node-config-{1,2,3}.json` (NEW)
+- `COC/docker/testnet-configs/node-{1,2,3}.json` (UPDATED - security fields)
+
+Documentation:
+- `COC/docs/phase-25-plan.en.md` (UPDATED)
+- `COC/docs/phase-25-plan.zh.md` (UPDATED)
+
+## 27) Whitepaper Gap Summary
 - Consensus: validator governance with stake-weighted proposer selection (Phase 22 + 26), BFT-lite round state machine with coordinator (Phase 28), GHOST fork choice (Phase 28), BFT integrated into ConsensusEngine main loop (Phase 29, opt-in), equivocation detection for double-vote slashing (Phase 30), consensus metrics tracking (Phase 30), BFT message signature verification (Phase 33).
 - P2P: peer scoring (Phase 16), peer persistence and DNS seed discovery (Phase 26), binary wire protocol and Kademlia DHT (Phase 28), TCP server/client transport and DHT network layer (Phase 29, opt-in), wire FIND_NODE message for DHT queries (Phase 30), dual HTTP+TCP block and tx propagation (Phase 30), DHT node announcement (Phase 30), wire connection manager (Phase 30), wire Block/Tx dedup via BoundedSet (Phase 32), cross-protocol relay Wire→HTTP (Phase 32), BFT dual transport HTTP+TCP (Phase 32), DHT wireClientByPeerId O(1) lookup (Phase 32), per-peer wire port from config (Phase 32), node identity authentication in wire handshake (Phase 33), per-IP connection limit (Phase 33), DHT peer verification (Phase 33), exponential peer ban (Phase 33), signed HTTP gossip auth envelope with phased enforcement (Phase 33). HTTP gossip remains primary.
 - EVM: state persistence connected (Phase 26), real stateRoot in block headers (Phase 27), state snapshot export/import (Phase 28), snap sync provider in consensus (Phase 29), state snapshot stateRoot verification (Phase 33).
@@ -864,4 +901,7 @@ Code:
 - Security: node identity via crypto signing (Phase 33), BFT signature verification (Phase 33), DHT anti-poisoning (Phase 33), exponential peer banning (Phase 33), WebSocket idle timeout (Phase 33), default localhost binding (Phase 33), P2P signed request verification with monitor/enforce rollout (Phase 33).
 - Explorer: contract registry, call history, tx type classification, internal traces, governance display (Phase 27).
 - Devnet: multi-node devnet enables all advanced features by default (BFT, Wire, DHT, SnapSync) with per-node wire port and DHT bootstrap peers (Phase 32).
-- Testing: 755 tests across 79 files covering all major modules including security hardening (Phase 33).
+- BFT Slashing: equivocation detection → stake slash → treasury deposit → auto-remove below threshold (Phase 25).
+- Relay Witness: strict verification with forged witness rejection, timestamp validation, replay protection (Phase 25).
+- Operations: Prometheus alerts (12 rules), on-call runbook, rollback runbook, testnet security configs (Phase 25).
+- Testing: 781+ tests across 87+ files covering all major modules including security hardening (Phase 33) and Go/No-Go readiness (Phase 25).

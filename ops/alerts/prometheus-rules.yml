@@ -1,0 +1,116 @@
+groups:
+  - name: coc_availability
+    rules:
+      - alert: NodeDown
+        expr: up{job="coc-node"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "COC node {{ $labels.instance }} is down"
+          description: "Node has been unreachable for 2 minutes."
+
+      - alert: BlockProductionStalled
+        expr: increase(coc_block_height[5m]) == 0
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Block production stalled on {{ $labels.instance }}"
+          description: "No new blocks produced in 5 minutes."
+
+      - alert: ConsensusStateDegraded
+        expr: coc_consensus_state != 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Consensus degraded on {{ $labels.instance }}"
+          description: "Consensus state is {{ $value }} (1=degraded, 2=recovering) for 5+ minutes."
+
+  - name: coc_security
+    rules:
+      - alert: HighAuthRejections
+        expr: rate(coc_p2p_auth_rejected_total[5m]) > 10
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High P2P auth rejection rate on {{ $labels.instance }}"
+          description: "More than 10 auth rejections per second for 3+ minutes. Possible attack."
+
+      - alert: DiscoveryIdentityFailures
+        expr: increase(coc_discovery_identity_failures_total[10m]) > 50
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Discovery identity failures on {{ $labels.instance }}"
+          description: "{{ $value }} identity verification failures in 10 minutes. Possible Sybil attempt."
+
+      - alert: DhtVerifyFailures
+        expr: increase(coc_dht_verify_failures_total[10m]) > 20
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "DHT verify failures on {{ $labels.instance }}"
+          description: "{{ $value }} DHT peer verification failures in 10 minutes."
+
+      - alert: EquivocationDetected
+        expr: increase(coc_bft_equivocations_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "BFT equivocation detected on {{ $labels.instance }}"
+          description: "A validator double-voted. Slashing should be triggered."
+
+  - name: coc_performance
+    rules:
+      - alert: SlowBlockProduction
+        expr: coc_block_time_seconds_bucket{le="6"} / coc_block_time_seconds_count < 0.95
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Slow block production on {{ $labels.instance }}"
+          description: "More than 5% of blocks taking longer than 6 seconds."
+
+      - alert: HighMempoolBacklog
+        expr: coc_tx_pool_pending > 500
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High mempool backlog on {{ $labels.instance }}"
+          description: "{{ $value }} pending transactions for 5+ minutes."
+
+      - alert: HighMemoryUsage
+        expr: coc_process_memory_bytes > 2e9
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage on {{ $labels.instance }}"
+          description: "Process RSS is {{ $value | humanize1024 }}B."
+
+  - name: coc_network
+    rules:
+      - alert: LowPeerCount
+        expr: coc_peers_connected < 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low peer count on {{ $labels.instance }}"
+          description: "Only {{ $value }} peers connected. Network may be partitioned."
+
+      - alert: NoWireConnections
+        expr: coc_wire_connections == 0 and coc_peers_connected > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "No wire protocol connections on {{ $labels.instance }}"
+          description: "Wire protocol has 0 connections but HTTP peers are available."
