@@ -407,7 +407,7 @@ startRpcServer(
   chain,
   p2p,
   pose,
-  undefined,
+  bftCoordinator,
   config.nodeId,
   {
     enableInboundAuth: config.poseRequireInboundAuth,
