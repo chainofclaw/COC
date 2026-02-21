@@ -73,6 +73,7 @@ export interface NodeConfig {
   bftCommitTimeoutMs: number
   // Wire protocol (TCP transport)
   enableWireProtocol: boolean
+  wireBind: string
   wirePort: number
   // DHT peer discovery
   enableDht: boolean
@@ -309,6 +310,7 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     bftPrepareTimeoutMs: 5000,
     bftCommitTimeoutMs: 5000,
     enableWireProtocol: false,
+    wireBind: "127.0.0.1",
     wirePort: 19781,
     enableDht: false,
     dhtBootstrapPeers: [],
