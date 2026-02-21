@@ -10,14 +10,15 @@
   "ipfsBind": "0.0.0.0",
   "wireBind": "0.0.0.0",
   "wirePort": 19781,
+  "metricsPort": 9100,
   "validators": [
     "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
     "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
     "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc"
   ],
   "peers": [
-    {"id": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266", "url": "http://node-1:19780"},
-    {"id": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8", "url": "http://node-2:19780"}
+    "http://node-1:19780",
+    "http://node-2:19780"
   ],
   "enableBft": true,
   "enableWireProtocol": true,
@@ -27,18 +28,28 @@
   "finalityDepth": 3,
   "maxTxPerBlock": 100,
   "dhtBootstrapPeers": [
-    {"id": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266", "address": "node-1", "port": 19781},
-    {"id": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8", "address": "node-2", "port": 19781}
+    {
+      "address": "node-1",
+      "port": 19781
+    },
+    {
+      "address": "node-2",
+      "port": 19781
+    }
   ],
-  "prefund": [
-    {"address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", "balanceEth": "10000"}
-  ],
+  "dhtRequireAuthenticatedVerify": true,
   "p2pInboundAuthMode": "enforce",
   "poseInboundAuthMode": "enforce",
-  "dhtRequireAuthenticatedVerify": true,
   "poseUseOnchainChallengerAuth": true,
   "poseOnchainAuthFailOpen": false,
   "poseOnchainAuthRpcUrl": "http://localhost:8545",
   "poseOnchainAuthPoseManagerAddress": "0x5FbDB2315678afecb367f032d93F642f64180aa3",
-  "poseUseGovernanceChallengerAuth": true
+  "poseOnchainAuthMinOperatorNodes": 1,
+  "poseUseGovernanceChallengerAuth": true,
+  "prefund": [
+    {
+      "address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      "balanceEth": "10000"
+    }
+  ]
 }

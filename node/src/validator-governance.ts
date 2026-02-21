@@ -381,6 +381,35 @@ export class ValidatorGovernance {
     }
   }
 
+  /**
+   * Apply a slashing penalty to a validator's stake (direct reduction).
+   * Used by BFT slashing handler for equivocation penalties.
+   */
+  applySlash(validatorId: string, amount: bigint): void {
+    const v = this.validators.get(validatorId)
+    if (!v || !v.active) return
+    const newStake = v.stake > amount ? v.stake - amount : 0n
+    this.validators.set(validatorId, { ...v, stake: newStake })
+    this.recalcVotingPower()
+  }
+
+  /**
+   * Deactivate a validator directly (e.g., after slash below minimum stake).
+   */
+  deactivateValidator(validatorId: string): void {
+    const v = this.validators.get(validatorId)
+    if (!v || !v.active) return
+    this.validators.set(validatorId, { ...v, active: false })
+    this.recalcVotingPower()
+  }
+
+  /**
+   * Get the minimum stake threshold from config.
+   */
+  getMinStake(): bigint {
+    return this.config.minStake
+  }
+
   private recalcVotingPower(): void {
     const active = this.getActiveValidators()
     const totalStake = active.reduce((sum, v) => sum + v.stake, 0n)
