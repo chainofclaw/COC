@@ -32,13 +32,15 @@ export function LanguageSwitcher() {
     <div className="relative">
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white bg-opacity-10 hover:bg-opacity-20 transition"
+        className="group flex items-center gap-2 px-3 py-2 rounded-lg bg-accent-cyan/5 border border-accent-cyan/20 hover:bg-accent-cyan/10 hover:border-accent-cyan/40 transition-all font-display"
         disabled={isPending}
       >
-        <span className="text-xl">{currentLanguage.flag}</span>
-        <span className="hidden sm:inline">{currentLanguage.name}</span>
+        <span className="text-xl filter grayscale-0">{currentLanguage.flag}</span>
+        <span className="hidden sm:inline text-sm text-text-secondary group-hover:text-accent-cyan transition-colors">
+          {currentLanguage.name}
+        </span>
         <svg
-          className={`w-4 h-4 transition-transform ${isOpen ? 'rotate-180' : ''}`}
+          className={`w-4 h-4 text-text-muted group-hover:text-accent-cyan transition-all ${isOpen ? 'rotate-180' : ''}`}
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
@@ -53,21 +55,21 @@ export function LanguageSwitcher() {
           <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} />
 
           {/* Dropdown */}
-          <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 z-50">
-            {languages.map((lang) => (
+          <div className="absolute right-0 mt-2 w-56 bg-bg-elevated rounded-xl shadow-glow-md border border-accent-cyan/20 z-50 overflow-hidden backdrop-blur-xl">
+            {languages.map((lang, index) => (
               <button
                 key={lang.code}
                 onClick={() => handleLanguageChange(lang.code)}
-                className={`w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition ${
-                  lang.code === locale ? 'bg-blue-50 text-blue-700' : 'text-gray-700'
-                } ${lang.code === languages[0].code ? 'rounded-t-lg' : ''} ${
-                  lang.code === languages[languages.length - 1].code ? 'rounded-b-lg' : ''
-                }`}
+                className={`group w-full flex items-center gap-3 px-4 py-3 hover:bg-accent-cyan/10 transition-all ${
+                  lang.code === locale
+                    ? 'bg-accent-cyan/5 text-accent-cyan border-l-2 border-accent-cyan'
+                    : 'text-text-secondary hover:text-text-primary border-l-2 border-transparent'
+                } ${index === 0 ? 'rounded-t-xl' : ''} ${index === languages.length - 1 ? 'rounded-b-xl' : ''}`}
               >
-                <span className="text-2xl">{lang.flag}</span>
-                <span className="font-medium">{lang.name}</span>
+                <span className="text-2xl filter grayscale group-hover:grayscale-0 transition-all">{lang.flag}</span>
+                <span className="font-display font-medium text-sm flex-1 text-left">{lang.name}</span>
                 {lang.code === locale && (
-                  <svg className="w-5 h-5 ml-auto" fill="currentColor" viewBox="0 0 20 20">
+                  <svg className="w-5 h-5 text-accent-cyan" fill="currentColor" viewBox="0 0 20 20">
                     <path
                       fillRule="evenodd"
                       d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"

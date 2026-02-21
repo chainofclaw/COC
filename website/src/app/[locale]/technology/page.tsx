@@ -6,19 +6,48 @@ export default function TechnologyPage() {
   const t = useTranslations('technology')
 
   return (
-    <div className="bg-white">
-      {/* Header */}
-      <section className="bg-gradient-to-r from-purple-600 to-indigo-700 text-white py-16">
-        <div className="container mx-auto px-4">
-          <h1 className="text-4xl md:text-5xl font-bold mb-4">{t('title')}</h1>
-          <p className="text-xl text-purple-100">{t('subtitle')}</p>
+    <div className="relative">
+      {/* Header - Tech Futurism */}
+      <section className="relative min-h-[60vh] flex items-center overflow-hidden">
+        {/* Animated Background */}
+        <div className="absolute inset-0 bg-gradient-to-br from-bg-primary via-bg-secondary to-bg-primary">
+          <div className="absolute inset-0 opacity-20">
+            <div className="absolute top-20 right-20 w-96 h-96 bg-accent-purple rounded-full blur-[120px] animate-pulse-slow" />
+            <div className="absolute bottom-20 left-20 w-96 h-96 bg-accent-blue rounded-full blur-[120px] animate-pulse-slow delay-1000" />
+          </div>
         </div>
+
+        <div className="container mx-auto px-4 py-20 relative z-10">
+          <div className="max-w-4xl mx-auto text-center">
+            {/* Pre-title */}
+            <div className="inline-block mb-6 fade-in">
+              <div className="px-4 py-2 rounded-full border border-accent-purple/30 bg-accent-purple/5 backdrop-blur-sm">
+                <span className="font-display text-sm text-accent-purple tracking-wider">
+                  &gt; TECHNICAL_ARCHITECTURE
+                </span>
+              </div>
+            </div>
+
+            <h1 className="text-5xl md:text-6xl font-display font-bold mb-6 fade-in-delay-1">
+              <span className="gradient-text glow-text">{t('title')}</span>
+            </h1>
+            <p className="text-xl text-text-secondary font-body fade-in-delay-2">{t('subtitle')}</p>
+          </div>
+        </div>
+
+        {/* Bottom Glow Line */}
+        <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-accent-purple to-transparent" />
       </section>
 
-      <div className="container mx-auto px-4 py-12 max-w-5xl">
+      <div className="container mx-auto px-4 py-16 max-w-6xl">
         {/* Architecture Layers */}
-        <section className="mb-16">
-          <h2 className="text-3xl font-bold mb-8 text-center text-gray-900">{t('layersTitle')}</h2>
+        <section className="mb-20">
+          <div className="text-center mb-12 fade-in-up">
+            <h2 className="text-3xl md:text-4xl font-display font-bold mb-2">
+              <span className="gradient-text">{t('layersTitle')}</span>
+            </h2>
+            <div className="w-24 h-1 bg-gradient-cyber mx-auto mt-4 rounded-full" />
+          </div>
           <div className="space-y-6">
             <LayerCard
               number={t('layer1.number')}
@@ -59,13 +88,18 @@ export default function TechnologyPage() {
         </section>
 
         {/* PoSe Protocol Deep Dive */}
-        <section className="mb-16">
-          <h2 className="text-3xl font-bold mb-8 text-gray-900">{t('poseProtocol.title')}</h2>
+        <section className="mb-20">
+          <div className="text-center mb-12 fade-in-up">
+            <h2 className="text-3xl md:text-4xl font-display font-bold mb-2">
+              <span className="gradient-text">{t('poseProtocol.title')}</span>
+            </h2>
+            <div className="w-24 h-1 bg-gradient-cyber mx-auto mt-4 rounded-full" />
+          </div>
 
           <div className="space-y-8">
             {/* Challenge Flow */}
-            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 p-8 rounded-xl border border-blue-200">
-              <h3 className="text-2xl font-semibold mb-6 text-gray-900">{t('poseProtocol.challengeFlow')}</h3>
+            <div className="relative bg-bg-elevated p-8 rounded-xl border border-accent-blue/30 hover:border-accent-blue/50 transition-all duration-500 noise-texture glow-border fade-in-delay-1">
+              <h3 className="text-2xl font-display font-semibold mb-6 text-accent-blue">{t('poseProtocol.challengeFlow')}</h3>
               <div className="space-y-4">
                 <FlowStep
                   step="1"
@@ -101,8 +135,8 @@ export default function TechnologyPage() {
             </div>
 
             {/* Scoring Formulas */}
-            <div>
-              <h3 className="text-2xl font-semibold mb-4 text-gray-900">{t('poseProtocol.scoringTitle')}</h3>
+            <div className="fade-in-delay-2">
+              <h3 className="text-2xl font-display font-semibold mb-6 text-text-primary">{t('poseProtocol.scoringTitle')}</h3>
               <div className="grid md:grid-cols-2 gap-6">
                 <FormulaCard
                   title={t('poseProtocol.uptimeScore.title')}
@@ -120,17 +154,23 @@ export default function TechnologyPage() {
             </div>
 
             {/* Anti-Sybil */}
-            <div className="bg-yellow-50 p-6 rounded-lg border border-yellow-200">
-              <h3 className="text-xl font-semibold mb-4 text-gray-900">{t('poseProtocol.antiSybilTitle')}</h3>
+            <div className="relative bg-bg-elevated p-6 rounded-lg border border-accent-cyan/30 hover:border-accent-cyan/50 transition-all duration-500 noise-texture fade-in-delay-3">
+              <h3 className="text-xl font-display font-semibold mb-4 text-accent-cyan">{t('poseProtocol.antiSybilTitle')}</h3>
               <div className="grid md:grid-cols-2 gap-4">
-                <ul className="space-y-2 text-gray-700">
+                <ul className="space-y-2 text-text-secondary font-body">
                   {(t.raw('poseProtocol.antiSybilItems') as string[]).slice(0, 4).map((item, i) => (
-                    <li key={i}>{item}</li>
+                    <li key={i} className="flex items-start gap-2">
+                      <span className="text-accent-cyan mt-1">▸</span>
+                      <span>{item}</span>
+                    </li>
                   ))}
                 </ul>
-                <ul className="space-y-2 text-gray-700">
+                <ul className="space-y-2 text-text-secondary font-body">
                   {(t.raw('poseProtocol.antiSybilItems') as string[]).slice(4).map((item, i) => (
-                    <li key={i}>{item}</li>
+                    <li key={i} className="flex items-start gap-2">
+                      <span className="text-accent-cyan mt-1">▸</span>
+                      <span>{item}</span>
+                    </li>
                   ))}
                 </ul>
               </div>
@@ -139,8 +179,13 @@ export default function TechnologyPage() {
         </section>
 
         {/* Performance Metrics */}
-        <section className="mb-16">
-          <h2 className="text-3xl font-bold mb-8 text-gray-900">{t('performance.title')}</h2>
+        <section className="mb-20">
+          <div className="text-center mb-12 fade-in-up">
+            <h2 className="text-3xl md:text-4xl font-display font-bold mb-2">
+              <span className="gradient-text">{t('performance.title')}</span>
+            </h2>
+            <div className="w-24 h-1 bg-gradient-cyber mx-auto mt-4 rounded-full" />
+          </div>
           <div className="grid md:grid-cols-3 gap-6">
             <MetricCard
               title={t('performance.blockTime.title')}
@@ -176,19 +221,24 @@ export default function TechnologyPage() {
         </section>
 
         {/* Comparison */}
-        <section className="mb-16">
-          <h2 className="text-3xl font-bold mb-8 text-gray-900">{t('comparison.title')}</h2>
-          <div className="overflow-x-auto">
-            <table className="min-w-full bg-white border border-gray-200 rounded-lg">
-              <thead className="bg-gray-50">
+        <section className="mb-20">
+          <div className="text-center mb-12 fade-in-up">
+            <h2 className="text-3xl md:text-4xl font-display font-bold mb-2">
+              <span className="gradient-text">{t('comparison.title')}</span>
+            </h2>
+            <div className="w-24 h-1 bg-gradient-cyber mx-auto mt-4 rounded-full" />
+          </div>
+          <div className="overflow-x-auto fade-in-delay-1">
+            <table className="min-w-full bg-bg-elevated border border-text-muted/20 rounded-lg overflow-hidden">
+              <thead className="bg-bg-secondary/50">
                 <tr>
-                  <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">{t('comparison.dimensions.barrier')}</th>
-                  <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">PoW</th>
-                  <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">PoS</th>
-                  <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 bg-blue-50">COC (PoSe)</th>
+                  <th className="px-6 py-4 text-left text-sm font-display font-semibold text-text-primary">{t('comparison.dimensions.barrier')}</th>
+                  <th className="px-6 py-4 text-left text-sm font-display font-semibold text-text-primary">PoW</th>
+                  <th className="px-6 py-4 text-left text-sm font-display font-semibold text-text-primary">PoS</th>
+                  <th className="px-6 py-4 text-left text-sm font-display font-semibold text-accent-cyan border-l-2 border-accent-cyan/30">COC (PoSe)</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-200">
+              <tbody className="divide-y divide-text-muted/10">
                 <ComparisonRow
                   dimension={t('comparison.dimensions.barrier')}
                   pow={t('comparison.pow.barrier')}
@@ -236,8 +286,13 @@ export default function TechnologyPage() {
         </section>
 
         {/* Tech Stack */}
-        <section>
-          <h2 className="text-3xl font-bold mb-8 text-gray-900">{t('techStack.title')}</h2>
+        <section className="pb-8">
+          <div className="text-center mb-12 fade-in-up">
+            <h2 className="text-3xl md:text-4xl font-display font-bold mb-2">
+              <span className="gradient-text">{t('techStack.title')}</span>
+            </h2>
+            <div className="w-24 h-1 bg-gradient-cyber mx-auto mt-4 rounded-full" />
+          </div>
           <div className="grid md:grid-cols-2 gap-6">
             <TechStackCard
               title={t('techStack.execution.title')}
@@ -277,37 +332,40 @@ function LayerCard({
   features: string[]
   note: string
 }) {
-  const colorMap: Record<string, string> = {
-    blue: 'from-blue-500 to-blue-600',
-    indigo: 'from-indigo-500 to-indigo-600',
-    purple: 'from-purple-500 to-purple-600',
-    pink: 'from-pink-500 to-pink-600',
+  const colorMap: Record<string, { gradient: string; accent: string; border: string }> = {
+    blue: { gradient: 'from-accent-blue to-accent-cyan', accent: 'text-accent-blue', border: 'border-accent-blue/50' },
+    indigo: { gradient: 'from-accent-cyan to-accent-blue', accent: 'text-accent-cyan', border: 'border-accent-cyan/50' },
+    purple: { gradient: 'from-accent-purple to-accent-blue', accent: 'text-accent-purple', border: 'border-accent-purple/50' },
+    pink: { gradient: 'from-pink-500 to-accent-purple', accent: 'text-pink-400', border: 'border-pink-500/50' },
   }
 
+  const colors = colorMap[color]
+
   return (
-    <div className="bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden">
-      <div className={`bg-gradient-to-r ${colorMap[color]} text-white p-6`}>
-        <div className="flex items-center gap-4 mb-2">
-          <div className="bg-white bg-opacity-20 rounded-full w-12 h-12 flex items-center justify-center font-bold text-2xl">
+    <div className="group bg-bg-elevated rounded-xl border border-text-muted/10 hover:border-accent-cyan/50 overflow-hidden transition-all duration-500 hover:shadow-glow-md noise-texture fade-in-up">
+      <div className={`relative bg-gradient-to-r ${colors.gradient} p-6 overflow-hidden`}>
+        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 data-flow" />
+        <div className="flex items-center gap-4 mb-2 relative z-10">
+          <div className="bg-white/10 backdrop-blur-sm rounded-lg w-14 h-14 flex items-center justify-center font-display font-bold text-2xl text-white border border-white/20 group-hover:scale-110 transition-transform duration-500">
             {number}
           </div>
           <div>
-            <h3 className="text-2xl font-bold">{title}</h3>
-            <p className="text-sm opacity-90">{subtitle}</p>
+            <h3 className="text-2xl font-display font-bold text-white">{title}</h3>
+            <p className="text-sm text-white/80 font-body">{subtitle}</p>
           </div>
         </div>
       </div>
       <div className="p-6">
-        <ul className="space-y-2 mb-4">
+        <ul className="space-y-3 mb-6">
           {features.map((f, i) => (
-            <li key={i} className="flex items-start gap-2 text-gray-700">
-              <span className="text-green-600 mt-1">✓</span>
+            <li key={i} className="flex items-start gap-2 text-text-secondary font-body">
+              <span className="text-accent-cyan mt-1 font-bold">✓</span>
               <span>{f}</span>
             </li>
           ))}
         </ul>
-        <div className="bg-gray-50 p-3 rounded border-l-4 border-gray-400">
-          <p className="text-sm text-gray-600 italic">{note}</p>
+        <div className={`relative bg-bg-secondary/50 p-4 rounded-lg border-l-4 ${colors.border}`}>
+          <p className="text-sm text-text-muted italic font-body">{note}</p>
         </div>
       </div>
     </div>
@@ -326,17 +384,17 @@ function FlowStep({
   details: string[]
 }) {
   return (
-    <div className="flex gap-4">
-      <div className="bg-blue-600 text-white rounded-full w-10 h-10 flex items-center justify-center font-bold flex-shrink-0">
+    <div className="flex gap-4 group">
+      <div className="bg-gradient-to-br from-accent-blue to-accent-cyan text-white rounded-lg w-12 h-12 flex items-center justify-center font-display font-bold flex-shrink-0 shadow-glow-sm group-hover:shadow-glow-md transition-all duration-500 group-hover:scale-110">
         {step}
       </div>
       <div className="flex-1">
-        <h4 className="font-bold text-gray-900 mb-1">{title}</h4>
-        <p className="text-gray-700 mb-2">{description}</p>
-        <ul className="space-y-1">
+        <h4 className="font-display font-bold text-text-primary mb-2 group-hover:text-accent-cyan transition-colors">{title}</h4>
+        <p className="text-text-secondary mb-3 font-body">{description}</p>
+        <ul className="space-y-2">
           {details.map((d, i) => (
-            <li key={i} className="text-sm text-gray-600 font-mono bg-white p-2 rounded">
-              {d}
+            <li key={i} className="text-sm text-text-muted font-display bg-bg-secondary/50 p-3 rounded-lg border border-text-muted/10 hover:border-accent-blue/30 transition-all">
+              <span className="text-accent-blue">▸</span> {d}
             </li>
           ))}
         </ul>
@@ -357,18 +415,21 @@ function FormulaCard({
   rationale: string
 }) {
   return (
-    <div className="bg-white p-6 rounded-lg border border-gray-200 shadow">
-      <h4 className="font-bold text-gray-900 mb-3">{title}</h4>
-      <div className="bg-blue-50 p-3 rounded mb-3 font-mono text-sm">{formula}</div>
-      <div className="space-y-1 mb-3">
+    <div className="group bg-bg-elevated p-6 rounded-lg border border-text-muted/10 hover:border-accent-purple/50 transition-all duration-500 hover:shadow-glow-md noise-texture">
+      <h4 className="font-display font-bold text-text-primary mb-4 group-hover:text-accent-purple transition-colors">{title}</h4>
+      <div className="bg-accent-blue/10 p-4 rounded-lg mb-4 font-display text-sm text-accent-blue border border-accent-blue/20 overflow-x-auto">
+        {formula}
+      </div>
+      <div className="space-y-2 mb-4">
         {variables.map((v, i) => (
-          <p key={i} className="text-sm text-gray-600">
-            • {v}
+          <p key={i} className="text-sm text-text-secondary font-body flex items-start gap-2">
+            <span className="text-accent-cyan mt-0.5">•</span>
+            <span>{v}</span>
           </p>
         ))}
       </div>
-      <div className="bg-yellow-50 p-3 rounded border-l-4 border-yellow-400">
-        <p className="text-sm text-gray-700 italic">{rationale}</p>
+      <div className="relative bg-accent-cyan/5 p-4 rounded-lg border-l-4 border-accent-cyan/50">
+        <p className="text-sm text-text-muted italic font-body">{rationale}</p>
       </div>
     </div>
   )
@@ -384,10 +445,13 @@ function MetricCard({
   description: string
 }) {
   return (
-    <div className="bg-white p-6 rounded-lg border border-gray-200 shadow text-center">
-      <h4 className="text-sm font-medium text-gray-500 uppercase mb-2">{title}</h4>
-      <p className="text-3xl font-bold text-blue-600 mb-2">{value}</p>
-      <p className="text-sm text-gray-600">{description}</p>
+    <div className="group bg-bg-elevated p-6 rounded-lg border border-text-muted/10 hover:border-accent-cyan/50 transition-all duration-500 text-center hover:shadow-glow-md noise-texture fade-in-up">
+      <div className="absolute inset-0 bg-gradient-cyber opacity-0 group-hover:opacity-5 rounded-lg transition-opacity duration-500" />
+      <h4 className="text-xs font-display font-medium text-text-muted uppercase tracking-wider mb-3">{title}</h4>
+      <p className="text-4xl font-display font-bold gradient-text mb-3 group-hover:glow-text transition-all">
+        {value}
+      </p>
+      <p className="text-sm text-text-secondary font-body">{description}</p>
     </div>
   )
 }
@@ -406,11 +470,16 @@ function ComparisonRow({
   cocBetter?: boolean
 }) {
   return (
-    <tr>
-      <td className="px-6 py-4 font-semibold text-gray-900">{dimension}</td>
-      <td className="px-6 py-4 text-gray-600">{pow}</td>
-      <td className="px-6 py-4 text-gray-600">{pos}</td>
-      <td className={`px-6 py-4 ${cocBetter ? 'bg-blue-50 font-semibold text-blue-900' : 'text-gray-600'}`}>
+    <tr className="hover:bg-bg-secondary/30 transition-colors">
+      <td className="px-6 py-4 font-display font-semibold text-text-primary">{dimension}</td>
+      <td className="px-6 py-4 text-text-secondary font-body">{pow}</td>
+      <td className="px-6 py-4 text-text-secondary font-body">{pos}</td>
+      <td className={`px-6 py-4 border-l-2 border-accent-cyan/30 font-body ${
+        cocBetter
+          ? 'bg-accent-cyan/10 font-semibold text-accent-cyan'
+          : 'text-text-secondary'
+      }`}>
+        {cocBetter && <span className="text-accent-cyan mr-2">✓</span>}
         {coc}
       </td>
     </tr>
@@ -419,13 +488,16 @@ function ComparisonRow({
 
 function TechStackCard({ title, items }: { title: string; items: string[] }) {
   return (
-    <div className="bg-white p-6 rounded-lg border border-gray-200 shadow">
-      <h3 className="text-lg font-bold mb-4 text-gray-900">{title}</h3>
-      <ul className="space-y-2">
+    <div className="group bg-bg-elevated p-6 rounded-lg border border-text-muted/10 hover:border-accent-blue/50 transition-all duration-500 hover:shadow-glow-md noise-texture fade-in-up">
+      <div className="absolute inset-0 bg-gradient-cyber opacity-0 group-hover:opacity-5 rounded-lg transition-opacity duration-500" />
+      <h3 className="text-lg font-display font-bold mb-4 text-text-primary group-hover:text-accent-blue transition-colors">
+        {title}
+      </h3>
+      <ul className="space-y-3">
         {items.map((item, i) => (
-          <li key={i} className="flex items-start gap-2 text-gray-700">
-            <span className="text-blue-600">▸</span>
-            <span className="font-mono text-sm">{item}</span>
+          <li key={i} className="flex items-start gap-2 text-text-secondary font-body group/item hover:text-text-primary transition-colors">
+            <span className="text-accent-cyan group-hover/item:text-accent-blue transition-colors">▸</span>
+            <span className="font-display text-sm">{item}</span>
           </li>
         ))}
       </ul>
