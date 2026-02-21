@@ -84,6 +84,10 @@ export interface NodeConfig {
   snapSyncThreshold: number
   // Node identity key (hex private key for signing)
   nodePrivateKey?: string
+  // RPC authentication (optional Bearer token)
+  rpcAuthToken?: string
+  // Admin RPC methods enabled
+  enableAdminRpc: boolean
 }
 
 export async function loadNodeConfig(): Promise<NodeConfig> {
@@ -246,6 +250,31 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     true,
   )
 
+  // Bind addresses: env vars override config, default to 0.0.0.0 (or 127.0.0.1 in dev mode)
+  const devMode = parseBooleanFlag(process.env.COC_DEV_MODE ?? (user as Record<string, unknown>).devMode, false)
+  const defaultBind = devMode ? "127.0.0.1" : "0.0.0.0"
+  const rpcBind = process.env.COC_RPC_BIND
+    ?? (typeof (user as Record<string, unknown>).rpcBind === "string" ? (user as Record<string, unknown>).rpcBind as string : defaultBind)
+  const p2pBind = process.env.COC_P2P_BIND
+    ?? (typeof (user as Record<string, unknown>).p2pBind === "string" ? (user as Record<string, unknown>).p2pBind as string : defaultBind)
+  const wsBind = process.env.COC_WS_BIND
+    ?? (typeof (user as Record<string, unknown>).wsBind === "string" ? (user as Record<string, unknown>).wsBind as string : defaultBind)
+  const ipfsBind = process.env.COC_IPFS_BIND
+    ?? (typeof (user as Record<string, unknown>).ipfsBind === "string" ? (user as Record<string, unknown>).ipfsBind as string : defaultBind)
+  const wireBind = process.env.COC_WIRE_BIND
+    ?? (typeof (user as Record<string, unknown>).wireBind === "string" ? (user as Record<string, unknown>).wireBind as string : defaultBind)
+
+  // RPC authentication token (optional)
+  const rpcAuthToken = process.env.COC_RPC_AUTH_TOKEN
+    ?? (typeof (user as Record<string, unknown>).rpcAuthToken === "string"
+      ? (user as Record<string, unknown>).rpcAuthToken as string : undefined)
+
+  // Admin RPC namespace
+  const enableAdminRpc = parseBooleanFlag(
+    process.env.COC_ENABLE_ADMIN_RPC ?? (user as Record<string, unknown>).enableAdminRpc,
+    false,
+  )
+
   // Resolve node private key: env var → file → auto-generate
   const nodePrivateKey = await resolveNodeKey(dataDir)
 
@@ -253,15 +282,15 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     dataDir,
     nodeId: "node-1",
     chainId: 18780,
-    rpcBind: "127.0.0.1",
+    rpcBind,
     rpcPort: 18780,
-    wsBind: "127.0.0.1",
+    wsBind,
     wsPort: 18781,
-    ipfsBind: "127.0.0.1",
+    ipfsBind,
     ipfsPort: 5001,
     storageDir: join(dataDir, "storage"),
     storage: { ...storageDefaults, ...userStorage },
-    p2pBind: "127.0.0.1",
+    p2pBind,
     p2pPort: 19780,
     peers: [],
     validators: ["node-1"],
@@ -310,7 +339,7 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     bftPrepareTimeoutMs: 5000,
     bftCommitTimeoutMs: 5000,
     enableWireProtocol: false,
-    wireBind: "127.0.0.1",
+    wireBind,
     wirePort: 19781,
     enableDht: false,
     dhtBootstrapPeers: [],
@@ -318,6 +347,8 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     enableSnapSync: false,
     snapSyncThreshold: 100,
     nodePrivateKey,
+    rpcAuthToken,
+    enableAdminRpc,
     ...user,
     poseNonceRegistryPath,
     poseNonceRegistryTtlMs,
@@ -344,6 +375,13 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     poseOnchainAuthFailOpen,
     poseChallengerAuthCacheTtlMs,
     dhtRequireAuthenticatedVerify,
+    rpcBind,
+    p2pBind,
+    wsBind,
+    ipfsBind,
+    wireBind,
+    rpcAuthToken,
+    enableAdminRpc,
     storage: { ...storageDefaults, ...userStorage },
   }
 }

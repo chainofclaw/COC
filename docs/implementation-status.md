@@ -951,6 +951,25 @@ Tests (24 new tests across 3 files):
 - `COC/extensions/coc-nodeops/src/network-presets.test.ts` (7 tests)
 - `COC/extensions/coc-nodeops/src/runtime/node-manager.test.ts` (10 tests)
 
+## 29) Phase 36: Testnet Operational Hardening
+**Status: Implemented**
+
+Implemented:
+- **SIGTERM graceful shutdown**: shared shutdown handler for both SIGINT and SIGTERM, properly stops consensus, wire, DHT, pubsub, and closes persistent storage
+- **Configurable bind addresses**: COC_RPC_BIND, COC_P2P_BIND, COC_WS_BIND, COC_IPFS_BIND, COC_WIRE_BIND env vars; defaults to 0.0.0.0 (production) or 127.0.0.1 (dev mode via COC_DEV_MODE=1)
+- **LevelDB corruption recovery**: auto-detects corruption on open, calls classic-level repair, re-opens database; `LevelDatabase.repair()` static method
+- **RPC authentication**: optional Bearer token via COC_RPC_AUTH_TOKEN env var or config; rejects unauthorized requests with 401
+- **Admin RPC namespace**: admin_nodeInfo, admin_addPeer, admin_removePeer, admin_peers; gated by enableAdminRpc config flag
+- **PeerDiscovery.removePeer**: new method for admin peer management
+
+Files:
+- `node/src/index.ts` (UPDATED - SIGTERM handler, auth options pass-through)
+- `node/src/config.ts` (UPDATED - bind env vars, rpcAuthToken, enableAdminRpc)
+- `node/src/storage/db.ts` (UPDATED - corruption recovery, repair static method)
+- `node/src/rpc.ts` (UPDATED - auth middleware, admin namespace)
+- `node/src/peer-discovery.ts` (UPDATED - removePeer method)
+- `node/src/phase36.test.ts` (NEW - 6 tests)
+
 ## 27) Whitepaper Gap Summary
 - Consensus: validator governance with stake-weighted proposer selection (Phase 22 + 26), BFT-lite round state machine with coordinator (Phase 28), GHOST fork choice (Phase 28), BFT integrated into ConsensusEngine main loop (Phase 29, opt-in), equivocation detection for double-vote slashing (Phase 30), consensus metrics tracking (Phase 30), BFT message signature verification (Phase 33).
 - P2P: peer scoring (Phase 16), peer persistence and DNS seed discovery (Phase 26), binary wire protocol and Kademlia DHT (Phase 28), TCP server/client transport and DHT network layer (Phase 29, opt-in), wire FIND_NODE message for DHT queries (Phase 30), dual HTTP+TCP block and tx propagation (Phase 30), DHT node announcement (Phase 30), wire connection manager (Phase 30), wire Block/Tx dedup via BoundedSet (Phase 32), cross-protocol relay Wire→HTTP (Phase 32), BFT dual transport HTTP+TCP (Phase 32), DHT wireClientByPeerId O(1) lookup (Phase 32), per-peer wire port from config (Phase 32), node identity authentication in wire handshake (Phase 33), per-IP connection limit (Phase 33), DHT peer verification (Phase 33), exponential peer ban (Phase 33), signed HTTP gossip auth envelope with phased enforcement (Phase 33). HTTP gossip remains primary.
@@ -965,4 +984,5 @@ Tests (24 new tests across 3 files):
 - Relay Witness: strict verification with forged witness rejection, timestamp validation, replay protection (Phase 34).
 - Operations: Prometheus alerts (12 rules), on-call runbook, rollback runbook, testnet security configs (Phase 34).
 - Node Ops: OpenClaw coc-nodeops extension with 5 node type presets, network presets, interactive init wizard, multi-node instance management, full CLI (Phase 35).
-- Testing: 897 tests across 95 files covering all major modules including security hardening (Phase 33), Go/No-Go readiness (Phase 34), and node ops extension (Phase 35).
+- Ops Hardening: SIGTERM/SIGINT dual shutdown, configurable bind addresses, LevelDB corruption recovery, RPC Bearer auth, admin RPC namespace (Phase 36).
+- Testing: 900 tests across 96 files covering all major modules including security hardening (Phase 33), Go/No-Go readiness (Phase 34), node ops extension (Phase 35), and ops hardening (Phase 36).

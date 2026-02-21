@@ -110,6 +110,13 @@ interface JsonRpcResponse {
   error?: { message: string }
 }
 
+interface RpcAuthOptions {
+  /** Bearer token for RPC authentication. Undefined = no auth required. */
+  authToken?: string
+  /** Enable admin RPC namespace (admin_*) */
+  enableAdminRpc?: boolean
+}
+
 interface RpcRuntimeOptions {
   nodeId?: string
   getP2PStats?: () => unknown
@@ -129,6 +136,7 @@ export function startRpcServer(
   nodeId?: string,
   poseAuthOptions?: PoseInboundAuthOptions,
   runtimeOptions?: RpcRuntimeOptions,
+  rpcAuthOptions?: RpcAuthOptions,
 ) {
   if (isDevAccountsEnabled()) {
     initializeTestAccounts()
@@ -155,6 +163,17 @@ export function startRpcServer(
       res.writeHead(429, { "content-type": "application/json" })
       res.end(JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32005, message: "rate limit exceeded" } }))
       return
+    }
+
+    // RPC authentication (Bearer token)
+    if (rpcAuthOptions?.authToken) {
+      const authHeader = req.headers["authorization"] ?? ""
+      const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : ""
+      if (token !== rpcAuthOptions.authToken) {
+        res.writeHead(401, { "content-type": "application/json" })
+        res.end(JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32003, message: "unauthorized" } }))
+        return
+      }
     }
 
     // Handle PoSe routes first
@@ -191,6 +210,9 @@ export function startRpcServer(
 
         const payload = JSON.parse(body)
         const rpcOpts: Record<string, unknown> = {}
+        if (rpcAuthOptions?.enableAdminRpc) {
+          rpcOpts.enableAdminRpc = true
+        }
         const resolvedNodeId = nodeId ?? runtimeOptions?.nodeId
         if (resolvedNodeId) {
           rpcOpts.nodeId = resolvedNodeId
@@ -1156,6 +1178,63 @@ async function handleRpc(
         }
       }
       return null
+    }
+    // --- Admin RPC namespace ---
+    case "admin_nodeInfo": {
+      if (!(opts as Record<string, unknown>)?.enableAdminRpc) {
+        throw { code: -32601, message: "admin methods disabled (set enableAdminRpc=true)" }
+      }
+      const height = await Promise.resolve(chain.getHeight())
+      const mempoolStats = chain.mempool.stats()
+      return {
+        nodeId: (opts as Record<string, unknown>)?.nodeId ?? "unknown",
+        enode: `coc://${(opts as Record<string, unknown>)?.nodeId ?? "unknown"}@0.0.0.0:0`,
+        clientVersion: "COC/0.2",
+        chainId,
+        blockHeight: `0x${height.toString(16)}`,
+        peerCount: p2p?.getPeers?.()?.length ?? 0,
+        mempool: mempoolStats,
+        uptime: Math.floor(process.uptime()),
+        platform: process.platform,
+        arch: process.arch,
+        nodeVersion: process.version,
+        p2pStats: (opts as Record<string, unknown>)?.p2pStats ?? null,
+        wireStats: (opts as Record<string, unknown>)?.wireStats ?? null,
+        dhtStats: (opts as Record<string, unknown>)?.dhtStats ?? null,
+      }
+    }
+    case "admin_addPeer": {
+      if (!(opts as Record<string, unknown>)?.enableAdminRpc) {
+        throw { code: -32601, message: "admin methods disabled" }
+      }
+      const peerUrl = String((payload.params ?? [])[0] ?? "")
+      const peerId = String((payload.params ?? [])[1] ?? `peer-${Date.now()}`)
+      if (!peerUrl.startsWith("http")) {
+        throw { code: -32602, message: "invalid peer URL: must start with http" }
+      }
+      p2p.discovery.addDiscoveredPeers([{ id: peerId, url: peerUrl }])
+      return true
+    }
+    case "admin_removePeer": {
+      if (!(opts as Record<string, unknown>)?.enableAdminRpc) {
+        throw { code: -32601, message: "admin methods disabled" }
+      }
+      const removePeerId = String((payload.params ?? [])[0] ?? "")
+      if (!removePeerId) {
+        throw { code: -32602, message: "peer id required" }
+      }
+      p2p.discovery.removePeer(removePeerId)
+      return true
+    }
+    case "admin_peers": {
+      if (!(opts as Record<string, unknown>)?.enableAdminRpc) {
+        throw { code: -32601, message: "admin methods disabled" }
+      }
+      const peers = p2p.getPeers?.() ?? p2p.discovery.getActivePeers()
+      return peers.map((peer: { id: string; url?: string }) => ({
+        id: peer.id,
+        url: peer.url ?? "unknown",
+      }))
     }
     default:
       throw new Error(`method not supported: ${payload.method}`)

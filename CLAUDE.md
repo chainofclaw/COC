@@ -74,8 +74,8 @@ Policy files are located at `nodeops/policies/*.yaml` and can be loaded and eval
 
 ## Test Strategy
 
-Uses Node.js built-in test framework (754+119+24 tests across 95 test files):
-- **Node layer tests**: `node/src/*.test.ts node/src/**/*.test.ts` (754 tests, 65 files) - chain engine, EVM, RPC, WebSocket, P2P, mempool, storage, IPFS, PoSe, BFT consensus, DHT, wire protocol, fork choice, state snapshot, wire server, DHT network, snap sync, consensus-BFT integration, consensus metrics, wire connection manager, wire tx relay, sync progress, gas histogram, governance stats, wire dedup/relay, security hardening, P2P auth, wire auth handshake, replay guard, nonce registry, PoSe auth, Prometheus metrics, BFT slashing
+Uses Node.js built-in test framework (757+119+24 tests across 96 test files):
+- **Node layer tests**: `node/src/*.test.ts node/src/**/*.test.ts` (757 tests, 66 files) - chain engine, EVM, RPC, WebSocket, P2P, mempool, storage, IPFS, PoSe, BFT consensus, DHT, wire protocol, fork choice, state snapshot, wire server, DHT network, snap sync, consensus-BFT integration, consensus metrics, wire connection manager, wire tx relay, sync progress, gas histogram, governance stats, wire dedup/relay, security hardening, P2P auth, wire auth handshake, replay guard, nonce registry, PoSe auth, Prometheus metrics, BFT slashing, Phase 36 ops hardening
 - **Service layer tests**: `services/**/*.test.ts` + `nodeops/*.test.ts` + `tests/**/*.test.ts` (119 tests, 27 files)
 - **Extension tests**: `extensions/coc-nodeops/src/**/*.test.ts` (24 tests, 3 files) - node types, network presets, node manager
 - **Storage layer tests**: `node/src/storage/*.test.ts` (included in node layer)
@@ -104,7 +104,7 @@ cd contracts && npm test
 - `p2p.ts`: HTTP gossip network (per-peer dedup, request body limits, broadcast concurrency control)
 - `rpc.ts`: JSON-RPC interface (57+ methods, parameter validation, structured error codes)
 - `websocket-rpc.ts`: WebSocket RPC (eth_subscribe, subscription validation and limits, idle timeout)
-- `config.ts`: Node configuration with validation (chainId, ports, validators, storage, enableBft, enableWireProtocol, enableDht, enableSnapSync)
+- `config.ts`: Node configuration with validation (chainId, ports, validators, storage, enableBft, enableWireProtocol, enableDht, enableSnapSync, rpcAuthToken, enableAdminRpc, COC_*_BIND env vars)
 - `mempool.ts`: Transaction mempool (EIP-1559 effective gas price sorting)
 - `base-fee.ts`: EIP-1559 dynamic baseFee calculation
 - `health.ts`: Health checks (memory/WS/storage/consensus diagnostics)

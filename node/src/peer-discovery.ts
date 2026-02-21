@@ -162,6 +162,18 @@ export class PeerDiscovery {
   }
 
   /**
+   * Remove a peer by ID
+   */
+  removePeer(id: string): boolean {
+    const had = this.peers.delete(id)
+    this.pendingPeers.delete(id)
+    if (this.peerStore) {
+      this.peerStore.removePeer(id)
+    }
+    return had
+  }
+
+  /**
    * Get peer list for exchange (shared with requesting peers)
    */
   getPeerListForExchange(): NodePeer[] {
