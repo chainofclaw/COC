@@ -424,6 +424,10 @@ startRpcServer(
     getWireStats: () => wireServer?.getStats(),
     getDhtStats: () => dhtNetwork?.getStats(),
   },
+  {
+    authToken: config.rpcAuthToken,
+    enableAdminRpc: config.enableAdminRpc,
+  },
 )
 
 // Start WebSocket RPC server for real-time subscriptions
@@ -586,20 +590,28 @@ const metricsHandle = startMetricsServer({
   getP2PAuthRejected: () => p2p.getStats().authRejectedRequests,
 }, { port: metricsPort })
 
-// Graceful shutdown
-process.on("SIGINT", async () => {
-  log.info("shutting down...")
+// Graceful shutdown — shared by SIGINT and SIGTERM
+let shuttingDown = false
+async function shutdown(signal: string) {
+  if (shuttingDown) return
+  shuttingDown = true
+  log.info(`received ${signal}, shutting down...`)
+  consensus.stop()
   metricsHandle.stop()
   wsServer.stop()
   if (wireServer) wireServer.stop()
   for (const client of wireClients) client.disconnect()
   if (dhtNetwork) dhtNetwork.stop()
+  pubsub.stop()
   const closeable = chain as PersistentChainEngine
   if (typeof closeable.close === "function") {
     await closeable.close()
   }
+  log.info("shutdown complete")
   process.exit(0)
-})
+}
+process.on("SIGINT", () => shutdown("SIGINT"))
+process.on("SIGTERM", () => shutdown("SIGTERM"))
 
 function resolvePoseChallengerDynamicResolver(
   config: Awaited<ReturnType<typeof loadNodeConfig>>,

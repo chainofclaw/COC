@@ -6,6 +6,7 @@
  */
 
 import { Level } from "level"
+import { ClassicLevel } from "classic-level"
 import { resolve } from "node:path"
 
 export interface BatchOp {
@@ -32,10 +33,11 @@ export interface IDatabase {
 export class LevelDatabase implements IDatabase {
   private db: Level<string, Uint8Array>
   private isOpen: boolean = false
+  private readonly dbPath: string
 
   constructor(dataDir: string, namespace: string = "default") {
-    const dbPath = resolve(dataDir, `leveldb-${namespace}`)
-    this.db = new Level(dbPath, {
+    this.dbPath = resolve(dataDir, `leveldb-${namespace}`)
+    this.db = new Level(this.dbPath, {
       keyEncoding: "utf8",
       valueEncoding: "view", // Uint8Array
     })
@@ -43,8 +45,39 @@ export class LevelDatabase implements IDatabase {
 
   async open(): Promise<void> {
     if (this.isOpen) return
-    await this.db.open()
+    try {
+      await this.db.open()
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      // Detect corruption-related errors and attempt repair
+      if (msg.includes("CORRUPTION") || msg.includes("corrupt") || msg.includes("Corruption")) {
+        console.error(`[db] corruption detected in ${this.dbPath}, attempting repair...`)
+        await LevelDatabase.repair(this.dbPath)
+        // Re-create and re-open after repair
+        this.db = new Level(this.dbPath, {
+          keyEncoding: "utf8",
+          valueEncoding: "view",
+        })
+        await this.db.open()
+        console.error(`[db] repair succeeded for ${this.dbPath}`)
+      } else {
+        throw err
+      }
+    }
     this.isOpen = true
+  }
+
+  /**
+   * Attempt to repair a corrupted LevelDB database.
+   * Uses classic-level's native repair binding.
+   */
+  static async repair(dbPath: string): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      ClassicLevel.repair(dbPath, (err: Error | null) => {
+        if (err) reject(err)
+        else resolve()
+      })
+    })
   }
 
   async get(key: string): Promise<Uint8Array | null> {
