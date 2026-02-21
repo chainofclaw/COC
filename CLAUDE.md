@@ -74,9 +74,10 @@ Policy files are located at `nodeops/policies/*.yaml` and can be loaded and eval
 
 ## Test Strategy
 
-Uses Node.js built-in test framework (753+119 tests across 88 test files):
-- **Node layer tests**: `node/src/*.test.ts node/src/**/*.test.ts` (753 tests, 65 files) - chain engine, EVM, RPC, WebSocket, P2P, mempool, storage, IPFS, PoSe, BFT consensus, DHT, wire protocol, fork choice, state snapshot, wire server, DHT network, snap sync, consensus-BFT integration, consensus metrics, wire connection manager, wire tx relay, sync progress, gas histogram, governance stats, wire dedup/relay, security hardening, P2P auth, wire auth handshake, replay guard, nonce registry, PoSe auth, Prometheus metrics, BFT slashing
-- **Service layer tests**: `services/**/*.test.ts` + `nodeops/*.test.ts` + `tests/**/*.test.ts` (119 tests, 22 files)
+Uses Node.js built-in test framework (754+119+24 tests across 95 test files):
+- **Node layer tests**: `node/src/*.test.ts node/src/**/*.test.ts` (754 tests, 65 files) - chain engine, EVM, RPC, WebSocket, P2P, mempool, storage, IPFS, PoSe, BFT consensus, DHT, wire protocol, fork choice, state snapshot, wire server, DHT network, snap sync, consensus-BFT integration, consensus metrics, wire connection manager, wire tx relay, sync progress, gas histogram, governance stats, wire dedup/relay, security hardening, P2P auth, wire auth handshake, replay guard, nonce registry, PoSe auth, Prometheus metrics, BFT slashing
+- **Service layer tests**: `services/**/*.test.ts` + `nodeops/*.test.ts` + `tests/**/*.test.ts` (119 tests, 27 files)
+- **Extension tests**: `extensions/coc-nodeops/src/**/*.test.ts` (24 tests, 3 files) - node types, network presets, node manager
 - **Storage layer tests**: `node/src/storage/*.test.ts` (included in node layer)
 
 Running tests:
@@ -86,6 +87,9 @@ cd node && node --experimental-strip-types --test --test-force-exit src/*.test.t
 
 # Service layer tests
 cd /path/to/COC && node --experimental-strip-types --test --test-force-exit services/**/*.test.ts nodeops/*.test.ts tests/**/*.test.ts
+
+# Extension tests
+cd extensions/coc-nodeops && node --experimental-strip-types --test src/node-types.test.ts src/network-presets.test.ts src/runtime/node-manager.test.ts
 
 # Contract tests
 cd contracts && npm test
