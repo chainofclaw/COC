@@ -76,9 +76,49 @@ jobs:
       - run: cd contracts && npm ci
       - run: cd contracts && npm test
 
+  test-explorer:
+    name: Explorer Build + Lib Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: explorer/package-lock.json
+      - run: cd explorer && npm ci
+      - name: Run explorer lib tests
+        run: |
+          node --experimental-strip-types --test --test-force-exit explorer/src/lib/*.test.ts
+        env:
+          NODE_ENV: test
+      - name: Build explorer
+        run: cd explorer && npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+
+  test-faucet:
+    name: Faucet Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: faucet/package-lock.json
+      - run: cd faucet && npm ci
+      - name: Run faucet tests
+        run: |
+          node --experimental-strip-types --test --test-force-exit faucet/src/*.test.ts
+        env:
+          NODE_ENV: test
+
   test-gate:
     name: Test Gate
-    needs: [test-node, test-services, test-contracts]
+    needs: [test-node, test-services, test-contracts, test-explorer, test-faucet]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -86,11 +126,15 @@ jobs:
         run: |
           if [ "${{ needs.test-node.result }}" != "success" ] || \
              [ "${{ needs.test-services.result }}" != "success" ] || \
-             [ "${{ needs.test-contracts.result }}" != "success" ]; then
+             [ "${{ needs.test-contracts.result }}" != "success" ] || \
+             [ "${{ needs.test-explorer.result }}" != "success" ] || \
+             [ "${{ needs.test-faucet.result }}" != "success" ]; then
             echo "::error::One or more test suites failed"
             echo "Node: ${{ needs.test-node.result }}"
             echo "Services: ${{ needs.test-services.result }}"
             echo "Contracts: ${{ needs.test-contracts.result }}"
+            echo "Explorer: ${{ needs.test-explorer.result }}"
+            echo "Faucet: ${{ needs.test-faucet.result }}"
             exit 1
           fi
           echo "All test suites passed"
