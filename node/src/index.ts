@@ -441,6 +441,7 @@ log.info("WebSocket RPC configured", { bind: config.wsBind, port: config.wsPort 
 if (config.enableWireProtocol) {
   wireServer = new WireServer({
     port: config.wirePort,
+    bind: config.wireBind,
     nodeId: config.nodeId,
     chainId: config.chainId,
     signer: nodeSigner,
