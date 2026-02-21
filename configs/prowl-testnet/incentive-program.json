@@ -1,0 +1,67 @@
+{
+  "program": "Prowl Testnet Incentive Program",
+  "chainId": 18780,
+  "tiers": [
+    {
+      "id": "early-validator",
+      "name": "Early Validators",
+      "description": "First 100 validators to join and maintain uptime > 95%",
+      "reward": "Mainnet token airdrop (1% total supply shared)",
+      "eligibility": {
+        "maxParticipants": 100,
+        "minUptimePercent": 95,
+        "minDurationDays": 30
+      }
+    },
+    {
+      "id": "bug-hunter",
+      "name": "Bug Hunters",
+      "description": "Report verified bugs in node, contracts, or explorer",
+      "reward": "Up to $10,000 per critical bug",
+      "tiers": {
+        "critical": "$5,000 - $10,000",
+        "high": "$1,000 - $5,000",
+        "medium": "$200 - $1,000",
+        "low": "$50 - $200"
+      }
+    },
+    {
+      "id": "high-performance",
+      "name": "High Performance Nodes",
+      "description": "Top 10 nodes by blocks produced and challenge completion",
+      "reward": "NFT badge + mainnet priority validator slot",
+      "eligibility": {
+        "minBlocksProduced": 1000,
+        "minChallengesCompleted": 100
+      }
+    },
+    {
+      "id": "data-contributor",
+      "name": "Data Contributors",
+      "description": "Share metrics, logs, and performance data for network analysis",
+      "reward": "Bonus token allocation at mainnet launch",
+      "eligibility": {
+        "metricsEndpointPublic": true,
+        "minDurationDays": 14
+      }
+    },
+    {
+      "id": "dao-participant",
+      "name": "DAO Participants",
+      "description": "Submit or vote on governance proposals",
+      "reward": "2x multiplier on other rewards",
+      "eligibility": {
+        "minProposalsOrVotes": 3
+      }
+    }
+  ],
+  "antiGaming": {
+    "sybilDetection": "Unique IP + unique validator key + min stake",
+    "uptimeVerification": "On-chain block production + PoSe challenge records",
+    "manualReview": "Top rewards require manual verification"
+  },
+  "tracking": {
+    "method": "On-chain metrics via coc_chainStats + coc_getValidators RPC",
+    "dashboard": "explorer.prowl.chainofclaw.com/validators"
+  }
+}
