@@ -295,6 +295,7 @@ export class PeerDiscovery {
   }
 
   private async fetchPeerList(peer: NodePeer): Promise<NodePeer[]> {
+    const MAX_RESPONSE_BODY = 512 * 1024 // 512 KB
     return new Promise<NodePeer[]>((resolve, reject) => {
       const endpoint = new URL(`${peer.url}/p2p/peers`)
       const req = httpRequest(
@@ -307,7 +308,16 @@ export class PeerDiscovery {
         },
         (res) => {
           let data = ""
-          res.on("data", (chunk) => (data += chunk))
+          let size = 0
+          res.on("data", (chunk: string | Buffer) => {
+            size += typeof chunk === "string" ? chunk.length : chunk.byteLength
+            if (size > MAX_RESPONSE_BODY) {
+              req.destroy()
+              reject(new Error("peer list response too large"))
+              return
+            }
+            data += chunk
+          })
           res.on("end", () => {
             try {
               const parsed = JSON.parse(data) as { peers?: NodePeer[] }
@@ -345,6 +355,7 @@ export class PeerDiscovery {
   }
 
   private async checkPeerHealth(peer: NodePeer): Promise<boolean> {
+    const MAX_HEALTH_BODY = 64 * 1024 // 64 KB
     return new Promise<boolean>((resolve) => {
       const endpoint = new URL(`${peer.url}/health`)
       const req = httpRequest(
@@ -356,8 +367,15 @@ export class PeerDiscovery {
           timeout: this.cfg.healthCheckTimeoutMs,
         },
         (res) => {
-          let data = ""
-          res.on("data", (chunk) => (data += chunk))
+          let size = 0
+          res.on("data", (chunk: string | Buffer) => {
+            size += typeof chunk === "string" ? chunk.length : chunk.byteLength
+            if (size > MAX_HEALTH_BODY) {
+              req.destroy()
+              resolve(false)
+              return
+            }
+          })
           res.on("end", () => {
             resolve((res.statusCode ?? 500) < 400)
           })

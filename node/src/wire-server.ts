@@ -205,7 +205,10 @@ export class WireServer {
         const frames = conn.decoder.feed(new Uint8Array(data))
         for (const frame of frames) {
           this.framesReceived++
-          void this.handleFrame(conn, frame)
+          void this.handleFrame(conn, frame).catch((err) => {
+            log.warn("handleFrame error, closing connection", { remote: connId, error: String(err) })
+            socket.destroy()
+          })
         }
       } catch (err) {
         log.warn("frame decode error, closing connection", { remote: connId, error: String(err) })
@@ -232,7 +235,7 @@ export class WireServer {
 
   private async sendHandshake(socket: net.Socket): Promise<void> {
     const height = await Promise.resolve(await this.cfg.getHeight())
-    const nonce = crypto.randomUUID()
+    const nonce = `${Date.now()}:${crypto.randomUUID()}`
     const payload: HandshakePayload = {
       nodeId: this.cfg.nodeId,
       chainId: this.cfg.chainId,
@@ -319,7 +322,7 @@ export class WireServer {
         // Reply with ack if this was a handshake (not ack)
         if (frame.type === MessageType.Handshake) {
           const height = await Promise.resolve(await this.cfg.getHeight())
-          const nonce = crypto.randomUUID()
+          const nonce = `${Date.now()}:${crypto.randomUUID()}`
           const ack: HandshakePayload = {
             nodeId: this.cfg.nodeId,
             chainId: this.cfg.chainId,
@@ -339,10 +342,14 @@ export class WireServer {
       case MessageType.Block: {
         if (!conn.handshakeComplete) return
         const block = decodeJsonPayload<ChainBlock>(frame)
-        // Restore BigInt fields
+        // Restore BigInt fields lost during JSON serialization
         const restored: ChainBlock = {
           ...block,
           number: BigInt(block.number),
+          ...(block.baseFee !== undefined ? { baseFee: BigInt(block.baseFee) } : {}),
+          ...(block.cumulativeWeight !== undefined ? { cumulativeWeight: BigInt(block.cumulativeWeight) } : {}),
+          ...(block.timestampMs !== undefined ? { timestampMs: Number(block.timestampMs) } : {}),
+          ...(block.gasUsed !== undefined ? { gasUsed: BigInt(block.gasUsed) } : {}),
         }
         // Dedup: skip already-seen blocks
         if (this.seenBlocks.has(restored.hash)) return

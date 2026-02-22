@@ -591,6 +591,15 @@ export class P2PNode {
             if (payload.block.number !== undefined) {
               payload.block.number = BigInt(payload.block.number)
             }
+            if (payload.block.baseFee !== undefined) {
+              payload.block.baseFee = BigInt(payload.block.baseFee)
+            }
+            if (payload.block.cumulativeWeight !== undefined) {
+              payload.block.cumulativeWeight = BigInt(payload.block.cumulativeWeight)
+            }
+            if (payload.block.gasUsed !== undefined) {
+              payload.block.gasUsed = BigInt(payload.block.gasUsed)
+            }
             await this.receiveBlock(payload.block)
             res.writeHead(200)
             res.end(serializeJson({ ok: true }))

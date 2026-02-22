@@ -191,11 +191,13 @@ const p2p = new P2PNode(
       if (typeof snapshotEngine.makeSnapshot === "function") {
         return snapshotEngine.makeSnapshot()
       }
-      // Persistent engine: reconstruct snapshot from block index
+      // Persistent engine: return recent blocks only (cap to prevent DoS)
+      const MAX_SNAPSHOT_BLOCKS = 1000
       const height = await chain.getHeight()
       if (height === 0n) return { blocks: [], updatedAtMs: Date.now() }
+      const startBlock = height > BigInt(MAX_SNAPSHOT_BLOCKS) ? height - BigInt(MAX_SNAPSHOT_BLOCKS) + 1n : 1n
       const blocks: ChainBlock[] = []
-      for (let i = 1n; i <= height; i++) {
+      for (let i = startBlock; i <= height; i++) {
         const block = await chain.getBlockByNumber(i)
         if (block) blocks.push(block)
       }
@@ -633,6 +635,8 @@ async function shutdown(signal: string) {
   for (const client of wireClients) client.disconnect()
   if (dhtNetwork) dhtNetwork.stop()
   pubsub.stop()
+  // Allow in-flight block production/sync to drain before closing DB
+  await new Promise((resolve) => setTimeout(resolve, 500))
   const closeable = chain as PersistentChainEngine
   if (typeof closeable.close === "function") {
     await closeable.close()

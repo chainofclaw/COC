@@ -389,7 +389,7 @@ async function handleRpc(
       const number = tag === "latest" ? currentHeight
         : tag === "earliest" ? 0n
         : tag === "pending" ? currentHeight
-        : BigInt(tag)
+        : safeBigInt(tag)
       const block = await Promise.resolve(chain.getBlockByNumber(number))
       return formatBlock(block, includeTx, chain, evm)
     }
@@ -589,7 +589,7 @@ async function handleRpc(
       if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
       const blockTag = String((payload.params ?? [])[0] ?? "latest")
       const traceHeight = await Promise.resolve(chain.getHeight())
-      const traceBlockNum = blockTag === "latest" ? traceHeight : BigInt(blockTag)
+      const traceBlockNum = blockTag === "latest" ? traceHeight : safeBigInt(blockTag)
       const traceOpts2 = ((payload.params ?? [])[1] ?? {}) as Record<string, unknown>
       return await traceBlockByNumber(traceBlockNum, chain, evm, {
         disableStorage: Boolean(traceOpts2.disableStorage),
@@ -610,7 +610,7 @@ async function handleRpc(
     case "eth_getBlockTransactionCountByNumber": {
       const tag = String((payload.params ?? [])[0] ?? "latest")
       const height = await Promise.resolve(chain.getHeight())
-      const num = tag === "latest" ? height : tag === "earliest" ? 0n : tag === "pending" ? height : BigInt(tag)
+      const num = tag === "latest" ? height : tag === "earliest" ? 0n : tag === "pending" ? height : safeBigInt(tag)
       const block = await Promise.resolve(chain.getBlockByNumber(num))
       return block ? `0x${block.txs.length.toString(16)}` : null
     }
@@ -641,7 +641,7 @@ async function handleRpc(
       const tag = String((payload.params ?? [])[0] ?? "latest")
       const txIdx = Number((payload.params ?? [])[1] ?? 0)
       const height = await Promise.resolve(chain.getHeight())
-      const num = tag === "latest" ? height : tag === "earliest" ? 0n : tag === "pending" ? height : BigInt(tag)
+      const num = tag === "latest" ? height : tag === "earliest" ? 0n : tag === "pending" ? height : safeBigInt(tag)
       const block = await Promise.resolve(chain.getBlockByNumber(num))
       if (!block || txIdx >= block.txs.length) return null
       const rawTx = block.txs[txIdx]
@@ -675,7 +675,7 @@ async function handleRpc(
       const newestBlock = String((payload.params ?? [])[1] ?? "latest")
       const rewardPercentiles = ((payload.params ?? [])[2] ?? []) as number[]
       const height = await Promise.resolve(chain.getHeight())
-      const newest = newestBlock === "latest" ? height : BigInt(newestBlock)
+      const newest = newestBlock === "latest" ? height : safeBigInt(newestBlock)
       const count = Math.min(blockCount, Number(newest), 1024)
       const baseFees: string[] = []
       const gasUsedRatios: number[] = []
@@ -747,7 +747,7 @@ async function handleRpc(
     case "eth_getBlockReceipts": {
       const tag = String((payload.params ?? [])[0] ?? "latest")
       const height = await Promise.resolve(chain.getHeight())
-      const num = tag === "latest" ? height : tag === "earliest" ? 0n : tag === "pending" ? height : BigInt(tag)
+      const num = tag === "latest" ? height : tag === "earliest" ? 0n : tag === "pending" ? height : safeBigInt(tag)
       const block = await Promise.resolve(chain.getBlockByNumber(num))
       if (!block) return null
       const receipts: unknown[] = []
@@ -1251,10 +1251,18 @@ async function handleRpc(
   }
 }
 
+function safeBigInt(input: string): bigint {
+  try {
+    return BigInt(input)
+  } catch {
+    throw { code: -32602, message: `invalid block number: ${input}` }
+  }
+}
+
 function parseBlockTag(input: unknown, fallback: bigint): bigint {
   if (typeof input === "string") {
     if (input === "latest") return fallback
-    return BigInt(input)
+    return safeBigInt(input)
   }
   return fallback
 }
