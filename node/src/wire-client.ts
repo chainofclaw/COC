@@ -6,7 +6,7 @@
  */
 
 import net from "node:net"
-import { FrameDecoder, MessageType, encodeJsonPayload, decodeJsonPayload } from "./wire-protocol.ts"
+import { FrameDecoder, MessageType, encodeJsonPayload, decodeJsonPayload, buildWireHandshakeMessage } from "./wire-protocol.ts"
 import type { WireFrame, FindNodePayload, FindNodeResponsePayload } from "./wire-protocol.ts"
 import type { NodeSigner, SignatureVerifier } from "./crypto/signer.ts"
 import crypto from "node:crypto"
@@ -180,7 +180,7 @@ export class WireClient {
           height: "0", // client doesn't track height
         }
         if (this.cfg.signer) {
-          const msg = `wire:handshake:${this.cfg.nodeId}:${nonce}`
+          const msg = buildWireHandshakeMessage(this.cfg.nodeId, this.cfg.chainId, nonce)
           hs.nonce = nonce
           hs.signature = this.cfg.signer.sign(msg)
         }
@@ -235,7 +235,7 @@ export class WireClient {
             this.socket?.destroy()
             return
           }
-          const msg = `wire:handshake:${hs.nodeId}:${hs.nonce}`
+          const msg = buildWireHandshakeMessage(hs.nodeId, hs.chainId, hs.nonce)
           const recovered = this.cfg.verifier.recoverAddress(msg, hs.signature)
           if (recovered.toLowerCase() !== hs.nodeId.toLowerCase()) {
             log.warn("handshake signature mismatch", { claimed: hs.nodeId, recovered })

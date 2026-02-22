@@ -15,7 +15,7 @@ Code:
 **Goal**: deterministic block identity.
 
 Algorithm:
-- Hash payload fields: `height | parentHash | proposer | timestamp | txHashes`.
+- Hash payload fields: `height | parentHash | proposer | timestamp | txs (ordered rawTx list)`.
 - `hash = keccak256(payload)`.
 
 Code:
@@ -46,7 +46,10 @@ Code:
 
 Algorithm:
 - Periodically fetch snapshots from peers.
-- If a peer snapshot tip height is higher than local, rebuild from it.
+- Snapshot request handlers may be sync or async; they return a standard `ChainSnapshot` (`blocks + updatedAtMs`).
+- Attempt adoption only when the remote tip wins fork-choice comparison.
+- Before adoption, verify block-chain integrity (parent-link continuity, height continuity, and recomputable block hashes).
+- Peer requests enforce resource guards: 10s request timeout and 4 MiB max response body.
 
 Code:
 - `COC/node/src/p2p.ts`, `COC/node/src/consensus.ts`
@@ -170,7 +173,7 @@ Code:
 - `COC/node/src/bft.ts` (round state machine, quorum calculation)
 - `COC/node/src/bft-coordinator.ts` (lifecycle management)
 
-## 15) GHOST-inspired Fork Choice
+## 15) Tip-level Fork Choice Comparator (Current Implementation)
 **Goal**: deterministic chain selection across competing forks.
 
 Algorithm:
@@ -178,6 +181,7 @@ Algorithm:
 - Priority 2: Longer chain preferred.
 - Priority 3: Higher cumulative stake-weight.
 - Priority 4: Lower block hash (deterministic tiebreaker).
+- Current implementation is a tip-level comparator (`compareForks`), not the full subtree-weighted classical GHOST rule.
 - `shouldSwitchFork()` determines if sync should adopt a remote chain.
 
 Code:
@@ -233,6 +237,7 @@ Algorithm:
 - On successful validation, mark connection as handshake-complete.
 - Post-handshake: dispatch Block, Transaction, BFT frames to handlers.
 - Client uses exponential backoff on disconnect (1s initial, 30s max, doubles each attempt).
+- Replay-protection boundary: nonce deduplication is node-local in-memory window semantics (cleared on restart, not globally shared across nodes).
 
 Code:
 - `COC/node/src/wire-server.ts`
@@ -245,9 +250,11 @@ Algorithm:
 - Syncing node requests state snapshot from peer via `/p2p/state-snapshot`.
 - Peer exports full EVM state: accounts, storage slots, contract code.
 - Receiver validates snapshot structure (`validateSnapshot()`).
+- Receiver checks snapshot `(blockHeight, blockHash)` matches the target chain tip before import.
 - Import accounts, storage, and code into local state trie.
-- Set local state root to match the snapshot.
+- After import, verify `expectedStateRoot` (currently using snapshot-provided `stateRoot`) and set local state root.
 - Resume consensus from the snapshot's block height.
+- Security assumption: block-hash payload currently does not include `stateRoot`, so SnapSync still depends on snapshot-provider trust; production deployments should add trusted state-root anchoring and/or multi-peer cross-checks.
 
 Code:
 - `COC/node/src/state-snapshot.ts` (`exportStateSnapshot`, `importStateSnapshot`)
@@ -333,7 +340,7 @@ Algorithm:
 - Priority 1: `wireClientByPeerId` Map — O(1) direct lookup by peer ID.
 - Priority 2: scan `wireClients` array by `getRemoteNodeId()` match (backward compatibility).
 - Priority 3: fall back to local routing table `findClosest(targetId, ALPHA)`.
-- `wireClientByPeerId` built at startup: maps `config.peers[i].id → wireClients[i]`.
+- `wireClientByPeerId` is built during connection creation as `peer.id → client` (only successful client creations are recorded; no index alignment dependency).
 - Per-peer wire port resolved from `dhtBootstrapPeers` config instead of using local `wirePort`.
 
 Code:
@@ -374,7 +381,7 @@ Code:
 
 Algorithm:
 - Each node has a persistent private key (`nodePrivateKey` from `COC_NODE_KEY` env / `dataDir/node-key`).
-- On wire handshake, sender signs `wire:handshake:<nodeId>:<nonce>` using `NodeSigner.sign()`.
+- On wire handshake, sender signs `wire:handshake:<chainId>:<nodeId>:<nonce>` using `NodeSigner.sign()`.
 - Receiver verifies signature via `SignatureVerifier.recoverAddress()`.
 - Recovered address must match the claimed `nodeId` — mismatch → disconnect + `recordInvalidData()`.
 - Nonce prevents replay attacks (unique per handshake).

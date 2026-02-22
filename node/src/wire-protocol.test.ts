@@ -7,6 +7,7 @@ import {
   encodeJsonPayload,
   decodeJsonPayload,
   MessageType,
+  buildWireHandshakeMessage,
   WIRE_MAGIC,
   HEADER_SIZE,
   MAX_PAYLOAD_SIZE,
@@ -161,6 +162,11 @@ describe("FrameDecoder", () => {
 })
 
 describe("JSON payload helpers", () => {
+  it("builds canonical handshake signing message", () => {
+    const msg = buildWireHandshakeMessage("0xabc", 18780, "n-1")
+    assert.equal(msg, "wire:handshake:18780:0xabc:n-1")
+  })
+
   it("round-trips a JSON object", () => {
     const obj = { height: 42, hash: "0xabc", peers: ["a", "b"] }
     const encoded = encodeJsonPayload(MessageType.Block, obj)

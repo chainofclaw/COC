@@ -9,7 +9,7 @@ import assert from "node:assert/strict"
 import net from "node:net"
 import http from "node:http"
 import { WireServer } from "./wire-server.ts"
-import { FrameDecoder, MessageType, encodeJsonPayload, decodeJsonPayload } from "./wire-protocol.ts"
+import { FrameDecoder, MessageType, encodeJsonPayload, decodeJsonPayload, buildWireHandshakeMessage } from "./wire-protocol.ts"
 import type { ChainBlock, Hex } from "./blockchain-types.ts"
 import { IpfsBlockstore } from "./ipfs-blockstore.ts"
 import { IpfsMfs } from "./ipfs-mfs.ts"
@@ -223,7 +223,7 @@ describe("B1: Node identity authentication", () => {
 
     // Send signed handshake
     const nonce = "test-nonce-123"
-    const msg = `wire:handshake:${clientSigner.nodeId}:${nonce}`
+    const msg = buildWireHandshakeMessage(clientSigner.nodeId, 18780, nonce)
     const sig = clientSigner.sign(msg)
 
     socket.write(encodeJsonPayload(MessageType.Handshake, {
@@ -268,7 +268,7 @@ describe("B1: Node identity authentication", () => {
 
     // Send handshake claiming to be a different node
     const nonce = "test-nonce-456"
-    const msg = `wire:handshake:${clientSigner.nodeId}:${nonce}`
+    const msg = buildWireHandshakeMessage(clientSigner.nodeId, 18780, nonce)
     const sig = clientSigner.sign(msg)
 
     let closed = false

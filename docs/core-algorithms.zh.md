@@ -15,7 +15,7 @@
 **目标**：确定性区块标识。
 
 算法：
-- 对 `height | parentHash | proposer | timestamp | txHashes` 做拼接。
+- 对 `height | parentHash | proposer | timestamp | txs(rawTx 顺序列表)` 做拼接。
 - `hash = keccak256(payload)`。
 
 代码：
@@ -46,7 +46,10 @@
 
 算法：
 - 周期性拉取 peer 的链快照。
-- 若对方高度更高，则采用其快照重建本地链。
+- 快照请求处理器可为同步或异步；返回标准 `ChainSnapshot`（`blocks + updatedAtMs`）。
+- 仅当远端 tip 在 fork-choice 比较中胜出时才尝试采用快照。
+- 采用前验证区块链路完整性（父哈希连续、高度连续、区块哈希可重算）。
+- 对等请求设置资源保护：单次请求超时 10s，单响应体上限 4 MiB。
 
 代码：
 - `COC/node/src/p2p.ts`，`COC/node/src/consensus.ts`
@@ -170,7 +173,7 @@
 - `COC/node/src/bft.ts`（轮次状态机、法定人数计算）
 - `COC/node/src/bft-coordinator.ts`（生命周期管理）
 
-## 15) GHOST 式分叉选择
+## 15) Tip 级分叉选择比较器（当前实现）
 **目标**：在竞争分叉中确定性选择链。
 
 算法：
@@ -178,6 +181,7 @@
 - 优先级 2：较长链优先。
 - 优先级 3：更高累积权益权重。
 - 优先级 4：较低区块哈希（确定性决胜）。
+- 当前实现是 tip 级比较器（`compareForks`），并非完整“子树权重驱动”的经典 GHOST 规则。
 - `shouldSwitchFork()` 判断同步是否应采用远端链。
 
 代码：
@@ -233,6 +237,7 @@
 - 验证成功后标记连接为握手完成。
 - 握手后：将 Block、Transaction、BFT 帧分发到对应处理器。
 - 客户端断线后使用指数退避重连（初始 1s，上限 30s，每次翻倍）。
+- 重放防护边界：当前 nonce 去重是“本节点内存窗口”语义（重启后清空，且不跨节点共享）。
 
 代码：
 - `COC/node/src/wire-server.ts`
@@ -245,9 +250,11 @@
 - 同步节点通过 `/p2p/state-snapshot` 向 peer 请求状态快照。
 - Peer 导出完整 EVM 状态：账户、存储槽、合约代码。
 - 接收方验证快照结构（`validateSnapshot()`）。
+- 接收方校验快照 `(blockHeight, blockHash)` 与目标链 tip 一致后再导入。
 - 将账户、存储和代码导入本地状态树。
-- 设置本地 state root 以匹配快照。
+- 导入后校验 `expectedStateRoot`（当前使用快照自带 `stateRoot`）并设置本地 state root。
 - 从快照的区块高度恢复共识。
+- 安全前提：当前区块哈希负载不包含 `stateRoot`，因此 SnapSync 仍依赖快照提供方信誉；生产环境建议增加可信状态根锚定/多对等交叉校验。
 
 代码：
 - `COC/node/src/state-snapshot.ts`（`exportStateSnapshot`、`importStateSnapshot`）
@@ -333,7 +340,7 @@
 - 优先级 1：`wireClientByPeerId` Map — O(1) 直接按 peer ID 查找。
 - 优先级 2：扫描 `wireClients` 数组按 `getRemoteNodeId()` 匹配（向后兼容）。
 - 优先级 3：回退到本地路由表 `findClosest(targetId, ALPHA)`。
-- `wireClientByPeerId` 在启动时构建：映射 `config.peers[i].id → wireClients[i]`。
+- `wireClientByPeerId` 在创建连接时按 `peer.id → client` 构建（仅记录创建成功的客户端，不依赖数组索引对齐）。
 - 每个 peer 的 wire port 从 `dhtBootstrapPeers` 配置解析，而非使用本地 `wirePort`。
 
 代码：
@@ -374,7 +381,7 @@
 
 算法：
 - 每个节点拥有持久化私钥（`nodePrivateKey`，来自 `COC_NODE_KEY` 环境变量 / `dataDir/node-key`）。
-- Wire 握手时，发送方签名 `wire:handshake:<nodeId>:<nonce>`（使用 `NodeSigner.sign()`）。
+- Wire 握手时，发送方签名 `wire:handshake:<chainId>:<nodeId>:<nonce>`（使用 `NodeSigner.sign()`）。
 - 接收方通过 `SignatureVerifier.recoverAddress()` 验证签名。
 - 恢复的地址必须与声称的 `nodeId` 匹配 — 不匹配则断开连接并记录 `recordInvalidData()`。
 - Nonce 防止重放攻击（每次握手唯一）。

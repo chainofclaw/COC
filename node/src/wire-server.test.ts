@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import net from "node:net"
 import { WireServer } from "./wire-server.ts"
 import { WireClient } from "./wire-client.ts"
-import { FrameDecoder, MessageType, encodeJsonPayload, decodeJsonPayload } from "./wire-protocol.ts"
+import { FrameDecoder, MessageType, encodeJsonPayload, decodeJsonPayload, buildWireHandshakeMessage } from "./wire-protocol.ts"
 import type { ChainBlock, Hex } from "./blockchain-types.ts"
 
 function getRandomPort(): number {
@@ -634,7 +634,7 @@ describe("WireServer handshake nonce replay and peer scoring", () => {
 
     // First connection with a nonce
     const fixedNonce = "fixed-nonce-12345"
-    const msg1 = `wire:handshake:${clientNodeId}:${fixedNonce}`
+    const msg1 = buildWireHandshakeMessage(clientNodeId, 18780, fixedNonce)
     const sig1 = clientSigner.sign(msg1)
 
     const socket1 = await connectSocket("127.0.0.1", port)

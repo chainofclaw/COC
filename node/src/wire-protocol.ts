@@ -51,6 +51,14 @@ export interface WireFrame {
 }
 
 /**
+ * Canonical message used for wire handshake signatures.
+ * Includes chainId to bind signatures to a specific network.
+ */
+export function buildWireHandshakeMessage(nodeId: string, chainId: number, nonce: string): string {
+  return `wire:handshake:${chainId}:${nodeId}:${nonce}`
+}
+
+/**
  * Encode a frame into wire format bytes.
  */
 export function encodeFrame(frame: WireFrame): Uint8Array {

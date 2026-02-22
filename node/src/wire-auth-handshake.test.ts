@@ -2,7 +2,7 @@ import { describe, it, afterEach } from "node:test"
 import assert from "node:assert/strict"
 import net from "node:net"
 import { WireServer } from "./wire-server.ts"
-import { FrameDecoder, MessageType, encodeJsonPayload } from "./wire-protocol.ts"
+import { FrameDecoder, MessageType, encodeJsonPayload, buildWireHandshakeMessage } from "./wire-protocol.ts"
 import { createNodeSigner } from "./crypto/signer.ts"
 
 function getRandomPort(): number {
@@ -99,7 +99,7 @@ describe("Wire handshake auth", () => {
     await receiveFrames(socket, decoder, 1)
 
     const nonce = "handshake-auth-test"
-    const msg = `wire:handshake:${clientSigner.nodeId}:${nonce}`
+    const msg = buildWireHandshakeMessage(clientSigner.nodeId, 18780, nonce)
     socket.write(encodeJsonPayload(MessageType.Handshake, {
       nodeId: clientSigner.nodeId,
       chainId: 18780,
