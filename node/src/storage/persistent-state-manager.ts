@@ -15,6 +15,12 @@ export class PersistentStateManager {
   private readonly trie: IStateTrie
   private readonly codeCache = new Map<string, Uint8Array>()
 
+  // Required by EthereumJS VM runTx — accessed as stateManager.originalStorageCache.clear()
+  readonly originalStorageCache = {
+    clear(): void { /* no-op; persistent storage doesn't use an in-memory cache layer */ },
+    get(_address: Address, _key: Uint8Array): Uint8Array | undefined { return undefined },
+  }
+
   constructor(trie: IStateTrie) {
     this.trie = trie
   }
@@ -77,18 +83,6 @@ export class PersistentStateManager {
     const slot = bytesToHex(key)
     const val = bytesToHex(value)
     await this.trie.putStorageAt(addr, slot, val)
-  }
-
-  async clearStorage(address: Address): Promise<void> {
-    // Clear by resetting storage root - individual slots remain in trie but inaccessible
-    const addr = address.toString().toLowerCase()
-    const state = await this.trie.get(addr)
-    if (state) {
-      await this.trie.put(addr, {
-        ...state,
-        storageRoot: "0x" + "0".repeat(64),
-      })
-    }
   }
 
   async getCode(address: Address): Promise<Uint8Array> {
@@ -175,6 +169,15 @@ export class PersistentStateManager {
   async accountExists(address: Address): Promise<boolean> {
     const account = await this.getAccount(address)
     return account !== undefined
+  }
+
+  clearCaches(): void {
+    this.codeCache.clear()
+  }
+
+  async clearStorage(address: Address): Promise<void> {
+    const addr = address.toString().toLowerCase()
+    await this.trie.clearStorage(addr)
   }
 
   async modifyAccountFields(address: Address, fields: Partial<{ nonce: bigint; balance: bigint }>): Promise<void> {

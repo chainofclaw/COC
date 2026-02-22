@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf 
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY faucet/src ./src
+COPY faucet/public ./public
 COPY faucet/package.json ./
 
 ENV COC_FAUCET_PORT=3003

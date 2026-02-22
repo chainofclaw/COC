@@ -89,7 +89,7 @@ services:
       - "3003:3003"
     environment:
       - COC_FAUCET_RPC_URL=http://node-1:18780
-      - COC_FAUCET_PRIVATE_KEY=${COC_FAUCET_KEY:-}
+      - COC_FAUCET_PRIVATE_KEY=${COC_FAUCET_KEY:-0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a}
     depends_on:
       node-1:
         condition: service_healthy

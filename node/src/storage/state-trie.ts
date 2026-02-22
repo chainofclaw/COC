@@ -37,6 +37,7 @@ export interface IStateTrie {
   stateRoot(): string | null
   setStateRoot(root: string): Promise<void>
   hasStateRoot(root: string): Promise<boolean>
+  clearStorage(address: string): Promise<void>
 }
 
 /**
@@ -324,6 +325,17 @@ export class PersistentStateTrie implements IStateTrie {
     this.lastStateRoot = null
   }
 
+  async clearStorage(address: string): Promise<void> {
+    this.storageTries.delete(address)
+    const idx = this.storageTrieAccess.indexOf(address)
+    if (idx >= 0) this.storageTrieAccess.splice(idx, 1)
+    // Reset account storage root to empty
+    const account = await this.get(address)
+    if (account) {
+      await this.put(address, { ...account, storageRoot: "0x" + "0".repeat(64) })
+    }
+  }
+
   async close(): Promise<void> {
     this.storageTries.clear()
     this.storageTrieAccess.length = 0
@@ -461,6 +473,10 @@ export class InMemoryStateTrie implements IStateTrie {
       this.accounts = checkpoint.accounts
       this.storage = checkpoint.storage
     }
+  }
+
+  async clearStorage(address: string): Promise<void> {
+    this.storage.delete(address)
   }
 
   async close(): Promise<void> {

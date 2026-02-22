@@ -207,8 +207,9 @@ export class EvmChain {
 
   async estimateGas(params: { from?: string; to: string; data?: string; value?: string }): Promise<bigint> {
     const { gasUsed } = await this.callRaw({ ...params, gas: "0x989680" }) // 10M gas limit
-    // Add 10% buffer
-    return gasUsed + gasUsed / 10n
+    // Minimum 21000 for basic transaction, plus 10% buffer
+    const base = gasUsed < 21000n ? 21000n : gasUsed
+    return base + base / 10n
   }
 
   async getCode(address: string): Promise<string> {
