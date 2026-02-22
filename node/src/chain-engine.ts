@@ -297,6 +297,19 @@ export class ChainEngine {
         if (block.parentHash !== prev.hash) return false
         if (BigInt(block.number) !== BigInt(prev.number) + 1n) return false
       }
+
+      // Verify proposer is in validator set
+      if (this.cfg.validators.length > 0 && !this.cfg.validators.includes(block.proposer)) {
+        return false
+      }
+
+      // Verify proposer signature if verifier available
+      if (this.signatureVerifier && block.signature) {
+        const canonical = `block:${block.hash}`
+        if (!this.signatureVerifier.verifyNodeSig(canonical, block.signature, block.proposer)) {
+          return false
+        }
+      }
     }
     return true
   }

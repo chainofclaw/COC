@@ -14,6 +14,8 @@ import type { NodeSigner, SignatureVerifier } from "./crypto/signer.ts"
 const log = createLogger("p2p")
 
 const MAX_REQUEST_BODY = 2 * 1024 * 1024 // 2 MB max request body
+const MAX_RESPONSE_BODY = 4 * 1024 * 1024 // 4 MB max response body
+const REQUEST_TIMEOUT_MS = 10_000
 const BROADCAST_CONCURRENCY = 5 // max concurrent peer broadcasts
 const DEFAULT_P2P_AUTH_MAX_CLOCK_SKEW_MS = 120_000
 
@@ -40,7 +42,7 @@ export interface BftMessagePayload {
 export interface P2PHandlers {
   onTx: (rawTx: Hex) => Promise<void>
   onBlock: (block: ChainBlock) => Promise<void>
-  onSnapshotRequest: () => ChainSnapshot
+  onSnapshotRequest: () => ChainSnapshot | Promise<ChainSnapshot>
   onBftMessage?: (msg: BftMessagePayload) => Promise<void>
   onStateSnapshotRequest?: () => Promise<unknown | null>
   getHeight?: () => Promise<bigint> | bigint
@@ -310,8 +312,8 @@ export class P2PNode {
   private readonly handlers: P2PHandlers
   private readonly inboundRateLimiter: RateLimiter
   private readonly authNonceTracker: PersistentAuthNonceTracker
-  private readonly seenTx = new BoundedSet<Hex>(50_000)
-  private readonly seenBlocks = new BoundedSet<Hex>(10_000)
+  public readonly seenTx = new BoundedSet<Hex>(50_000)
+  public readonly seenBlocks = new BoundedSet<Hex>(10_000)
   private rateLimitedRequests = 0
   private authAcceptedRequests = 0
   private authMissingRequests = 0
@@ -396,8 +398,14 @@ export class P2PNode {
       }
 
       if (req.method === "GET" && req.url === "/p2p/chain-snapshot") {
-        res.writeHead(200, { "content-type": "application/json" })
-        res.end(serializeJson(this.handlers.onSnapshotRequest()))
+        try {
+          const snapshot = await this.handlers.onSnapshotRequest()
+          res.writeHead(200, { "content-type": "application/json" })
+          res.end(serializeJson(snapshot))
+        } catch (err) {
+          res.writeHead(500, { "content-type": "application/json" })
+          res.end(serializeJson({ error: String(err) }))
+        }
         return
       }
 
@@ -909,6 +917,18 @@ async function requestJson<T = unknown>(url: string, method: "GET" | "POST", bod
   const endpoint = new URL(url)
 
   return await new Promise<T>((resolve, reject) => {
+    let settled = false
+    const settleResolve = (value: T) => {
+      if (settled) return
+      settled = true
+      resolve(value)
+    }
+    const settleReject = (error: unknown) => {
+      if (settled) return
+      settled = true
+      reject(error instanceof Error ? error : new Error(String(error)))
+    }
+
     const req = httpRequest(
       {
         protocol: endpoint.protocol,
@@ -921,24 +941,40 @@ async function requestJson<T = unknown>(url: string, method: "GET" | "POST", bod
         },
       },
       (res) => {
-        let data = ""
-        res.on("data", (chunk) => (data += chunk))
+        const chunks: Buffer[] = []
+        let totalBytes = 0
+
+        res.on("data", (chunk: Buffer | string) => {
+          const buf = typeof chunk === "string" ? Buffer.from(chunk, "utf8") : chunk
+          totalBytes += buf.byteLength
+          if (totalBytes > MAX_RESPONSE_BODY) {
+            req.destroy(new Error(`response body too large: ${totalBytes} > ${MAX_RESPONSE_BODY}`))
+            return
+          }
+          chunks.push(buf)
+        })
+        res.on("error", settleReject)
         res.on("end", () => {
+          if (settled) return
           try {
+            const data = chunks.length > 0 ? Buffer.concat(chunks).toString("utf8") : ""
             const parsed = data.length > 0 ? JSON.parse(data) : {}
             if ((res.statusCode ?? 500) >= 400) {
-              reject(new Error(`HTTP ${res.statusCode}: ${data}`))
+              settleReject(new Error(`HTTP ${res.statusCode}: ${data}`))
               return
             }
-            resolve(parsed as T)
+            settleResolve(parsed as T)
           } catch (error) {
-            reject(error)
+            settleReject(error)
           }
         })
       },
     )
 
-    req.on("error", reject)
+    req.setTimeout(REQUEST_TIMEOUT_MS, () => {
+      req.destroy(new Error(`request timeout after ${REQUEST_TIMEOUT_MS}ms`))
+    })
+    req.on("error", settleReject)
     if (method === "POST") {
       req.write(serializeJson(body ?? {}))
     }

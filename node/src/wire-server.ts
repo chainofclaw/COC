@@ -7,7 +7,7 @@
 
 import net from "node:net"
 import crypto from "node:crypto"
-import { FrameDecoder, MessageType, encodeJsonPayload, decodeJsonPayload } from "./wire-protocol.ts"
+import { FrameDecoder, MessageType, encodeJsonPayload, decodeJsonPayload, buildWireHandshakeMessage } from "./wire-protocol.ts"
 import type { WireFrame, FindNodePayload, FindNodeResponsePayload } from "./wire-protocol.ts"
 import type { ChainBlock, Hex } from "./blockchain-types.ts"
 import type { BftMessage } from "./bft.ts"
@@ -47,6 +47,10 @@ export interface WireServerConfig {
   verifier?: SignatureVerifier
   /** Peer scoring callback for recording invalid data from peers */
   peerScoring?: { recordInvalidData: (ip: string) => void }
+  /** Shared dedup sets from P2P layer — prevents cross-protocol amplification */
+  sharedSeenTx?: BoundedSet<Hex>
+  /** Shared dedup sets from P2P layer — prevents cross-protocol amplification */
+  sharedSeenBlocks?: BoundedSet<Hex>
 }
 
 interface PeerConnection {
@@ -69,12 +73,14 @@ export class WireServer {
   private bytesSent = 0
   private totalConnectionsAccepted = 0
   private connectionsRejected = 0
-  private readonly seenTx = new BoundedSet<Hex>(50_000)
-  private readonly seenBlocks = new BoundedSet<Hex>(10_000)
+  private readonly seenTx: BoundedSet<Hex>
+  private readonly seenBlocks: BoundedSet<Hex>
   private readonly handshakeNonces = new BoundedSet<string>(10_000)
 
   constructor(cfg: WireServerConfig) {
     this.cfg = cfg
+    this.seenTx = cfg.sharedSeenTx ?? new BoundedSet<Hex>(50_000)
+    this.seenBlocks = cfg.sharedSeenBlocks ?? new BoundedSet<Hex>(10_000)
   }
 
   start(): void {
@@ -221,7 +227,7 @@ export class WireServer {
     }
     // Attach crypto identity if signer available
     if (this.cfg.signer) {
-      const msg = `wire:handshake:${this.cfg.nodeId}:${nonce}`
+      const msg = buildWireHandshakeMessage(this.cfg.nodeId, this.cfg.chainId, nonce)
       payload.nonce = nonce
       payload.signature = this.cfg.signer.sign(msg)
     }
@@ -254,7 +260,7 @@ export class WireServer {
             conn.socket.destroy()
             return
           }
-          const msg = `wire:handshake:${hs.nodeId}:${hs.nonce}`
+          const msg = buildWireHandshakeMessage(hs.nodeId, hs.chainId, hs.nonce)
           let recovered: string
           try {
             recovered = this.cfg.verifier.recoverAddress(msg, hs.signature)
@@ -284,7 +290,7 @@ export class WireServer {
             height: height.toString(),
           }
           if (this.cfg.signer) {
-            const ackMsg = `wire:handshake:${this.cfg.nodeId}:${nonce}`
+            const ackMsg = buildWireHandshakeMessage(this.cfg.nodeId, this.cfg.chainId, nonce)
             ack.nonce = nonce
             ack.signature = this.cfg.signer.sign(ackMsg)
           }

@@ -6,6 +6,13 @@ import { shouldSwitchFork } from "./fork-choice.ts"
 import type { ChainBlock, Hex } from "./blockchain-types.ts"
 import { createLogger } from "./logger.ts"
 
+/** Recompute cumulative weight from blocks — never trust remote-provided weight */
+function recalcCumulativeWeight(blocks: ChainBlock[]): bigint {
+  let weight = 0n
+  for (const _b of blocks) weight += 1n
+  return weight
+}
+
 const log = createLogger("consensus")
 
 const MAX_CONSECUTIVE_FAILURES = 5
@@ -313,12 +320,13 @@ export class ConsensusEngine {
         if (!Array.isArray(snapshot.blocks) || snapshot.blocks.length === 0) continue
 
         // Build remote fork candidate from snapshot tip
+        // Never trust remote-provided cumulativeWeight or bftFinalized
         const remoteTip = snapshot.blocks[snapshot.blocks.length - 1]
         const remoteCandidate: ForkCandidate = {
           height: BigInt(remoteTip.number),
           tipHash: remoteTip.hash,
-          bftFinalized: remoteTip.bftFinalized ?? false,
-          cumulativeWeight: remoteTip.cumulativeWeight ?? BigInt(remoteTip.number),
+          bftFinalized: false,
+          cumulativeWeight: recalcCumulativeWeight(snapshot.blocks),
           peerId: "remote",
         }
 

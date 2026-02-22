@@ -289,9 +289,9 @@ if (bftEnabled) {
     onFinalized: async (block) => {
       const finalizedBlock = { ...block, bftFinalized: true }
       try {
-        await chain.applyBlock(finalizedBlock, true)
+        await chain.applyBlock(finalizedBlock)
       } catch {
-        // block may already be applied during propose
+        // block may already be applied during propose — acceptable
       }
       try {
         await p2p.receiveBlock(finalizedBlock)
@@ -367,6 +367,7 @@ let wireTxRelayFn: ((rawTx: Hex) => void) | undefined
 let wireBftBroadcastFn: ((msg: BftMessage) => void) | undefined
 let wireServer: WireServer | undefined
 const wireClients: WireClient[] = []
+const wireClientByPeerId = new Map<string, WireClient>()
 let dhtNetwork: DhtNetwork | undefined
 
 const consensus = new ConsensusEngine(chain, p2p, {
@@ -461,6 +462,8 @@ if (config.enableWireProtocol) {
     signer: nodeSigner,
     verifier: nodeSigner,
     peerScoring: { recordInvalidData: (ip) => p2p.scoring.recordInvalidData(ip) },
+    sharedSeenTx: p2p.seenTx,
+    sharedSeenBlocks: p2p.seenBlocks,
     onBlock: async (block) => {
       try {
         await chain.applyBlock(block)
@@ -553,6 +556,7 @@ if (config.enableWireProtocol) {
       })
       client.connect()
       wireClients.push(client)
+      wireClientByPeerId.set(peer.id, client)
     } catch {
       log.warn("failed to create wire client for peer", { peer: peer.id })
     }
@@ -560,12 +564,6 @@ if (config.enableWireProtocol) {
 }
 
 if (config.enableDht) {
-  // Build peer ID → WireClient map for O(1) lookup in DHT FIND_NODE
-  const wireClientByPeerId = new Map<string, WireClient>()
-  for (let idx = 0; idx < config.peers.length && idx < wireClients.length; idx++) {
-    wireClientByPeerId.set(config.peers[idx].id, wireClients[idx])
-  }
-
   dhtNetwork = new DhtNetwork({
     localId: config.nodeId,
     localAddress: `${config.p2pBind}:${config.wirePort}`,
