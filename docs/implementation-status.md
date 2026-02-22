@@ -262,7 +262,7 @@ Implemented:
 - 3/5/7 node devnet scripts
 - End‑to‑end verify script: block production + tx propagation
 - Quality gate script for automated testing (unit + integration + e2e)
-- Comprehensive test coverage (95 test files, 897 tests across all modules)
+- Comprehensive test coverage (91 test files, 905 tests across all modules)
 
 Code:
 - `COC/scripts/start-devnet.sh`
@@ -985,4 +985,5 @@ Files:
 - Operations: Prometheus alerts (12 rules), on-call runbook, rollback runbook, testnet security configs (Phase 34).
 - Node Ops: OpenClaw coc-nodeops extension with 5 node type presets, network presets, interactive init wizard, multi-node instance management, full CLI (Phase 35).
 - Ops Hardening: SIGTERM/SIGINT dual shutdown, configurable bind addresses, LevelDB corruption recovery, RPC Bearer auth, admin RPC namespace (Phase 36).
-- Testing: 900 tests across 96 files covering all major modules including security hardening (Phase 33), Go/No-Go readiness (Phase 34), node ops extension (Phase 35), and ops hardening (Phase 36).
+- Testing: 905 tests across 91 files covering all major modules including security hardening (Phase 33), Go/No-Go readiness (Phase 34), node ops extension (Phase 35), ops hardening (Phase 36), and algorithm safety audit.
+- Algorithm Safety Audit: BFT commit blockHash binding, snap sync target validation, full state snapshot trie traversal (iterateAccounts/iterateStorage), EIP-1559 baseFee per-block integration, persistent engine timestamp validation, DHT iterative lookup distance sorting, K-bucket ping-evict replacement, configurable signature enforcement (off/monitor/enforce), handshake canonical format alignment.

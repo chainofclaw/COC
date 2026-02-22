@@ -17,6 +17,7 @@ This matrix lists features by domain, with current status and primary code refer
 - **BFT-lite consensus rounds** — Implemented (Phase 28) — `COC/node/src/bft.ts`
 - **BFT coordinator** — Implemented (Phase 28) — `COC/node/src/bft-coordinator.ts`
 - **BFT status RPC** — Implemented (Phase 28) — `COC/node/src/rpc.ts`
+- **BFT commit blockHash binding** — Implemented (Audit) — `COC/node/src/bft.ts`
 - **BFT equivocation detection** — Implemented (Phase 30) — `COC/node/src/bft.ts`
 - **Validator governance** — Implemented (Phase 22 + 26) — `COC/node/src/validator-governance.ts`, `COC/node/src/chain-engine-persistent.ts`
 - **Stake-weighted proposer** — Implemented (Phase 26) — `COC/node/src/chain-engine-persistent.ts`
@@ -62,7 +63,7 @@ This matrix lists features by domain, with current status and primary code refer
 - **IPFS MFS** — Implemented (Phase 26) — `COC/node/src/ipfs-mfs.ts`
 - **IPFS Pubsub** — Implemented (Phase 26) — `COC/node/src/ipfs-pubsub.ts`
 - **IPFS tar archive** — Implemented (Phase 28) — `COC/node/src/ipfs-tar.ts`
-- **EVM state snapshot** — Implemented (Phase 28) — `COC/node/src/state-snapshot.ts`
+- **EVM state snapshot** — Implemented (Phase 28 + Audit: full trie traversal) — `COC/node/src/state-snapshot.ts`
 - **Snap sync provider** — Implemented (Phase 29) — `COC/node/src/consensus.ts`
 - **Log indexing** — Implemented (Phase 13.2) — `COC/node/src/storage/block-index.ts`
 - **Block/log pruning** — Implemented (Phase 21) — `COC/node/src/storage/pruner.ts`
@@ -72,6 +73,7 @@ This matrix lists features by domain, with current status and primary code refer
 - **Nonce continuity** — Implemented — `COC/node/src/mempool.ts`
 - **EIP-1559 effective gas price sorting** — Implemented — `COC/node/src/mempool.ts`
 - **Dynamic base fee calculation** — Implemented — `COC/node/src/base-fee.ts`
+- **Per-block baseFee integration** — Implemented (Audit) — `COC/node/src/chain-engine.ts`, `COC/node/src/chain-engine-persistent.ts`
 
 ## PoSe (Off‑chain)
 - **Challenge factory** — Implemented — `COC/services/challenger/*`
@@ -139,7 +141,7 @@ This matrix lists features by domain, with current status and primary code refer
 - **Consensus error recovery** — Implemented (degraded mode, auto-recovery) — `COC/node/src/consensus.ts`
 - **BFT consensus integration** — Implemented (Phase 29, opt-in; Phase 32, dual transport) — `COC/node/src/consensus.ts`
 - **Fork choice integration** — Implemented (Phase 29) — `COC/node/src/consensus.ts`
-- **Snap sync integration** — Implemented (Phase 29, opt-in) — `COC/node/src/consensus.ts`
+- **Snap sync integration** — Implemented (Phase 29 + Audit: target chain head validation) — `COC/node/src/consensus.ts`
 - **Consensus metrics** — Implemented (Phase 30) — `COC/node/src/consensus.ts`
 - **Network stats RPC** — Implemented (Phase 30) — `COC/node/src/rpc.ts`
 - **Health checker** — Implemented (memory/WS/storage diagnostics) — `COC/node/src/health.ts`
@@ -161,10 +163,13 @@ This matrix lists features by domain, with current status and primary code refer
 - **IPFS upload size limit** — Implemented (10MB default) — `COC/node/src/ipfs-http.ts`
 - **MFS path traversal protection** — Implemented — `COC/node/src/ipfs-mfs.ts`
 - **Wire per-IP connection limit** — Implemented (max 5/IP) — `COC/node/src/wire-server.ts`
-- **Block timestamp validation** — Implemented (parent ordering + 60s drift) — `COC/node/src/chain-engine.ts`
+- **Block timestamp validation** — Implemented (parent ordering + 60s drift, both engines) — `COC/node/src/chain-engine.ts`, `COC/node/src/chain-engine-persistent.ts`
+- **Configurable signature enforcement** — Implemented (off/monitor/enforce) — `COC/node/src/config.ts`
 - **Node identity authentication** — Implemented (wire handshake signing) — `COC/node/src/wire-server.ts`, `COC/node/src/wire-client.ts`
 - **BFT message signing** — Implemented (mandatory signature) — `COC/node/src/bft-coordinator.ts`
-- **DHT peer verification** — Implemented (TCP probe before routing table add) — `COC/node/src/dht-network.ts`
+- **DHT peer verification** — Implemented (TCP probe + ping-evict) — `COC/node/src/dht-network.ts`
+- **DHT distance-sorted lookup** — Implemented (Audit) — `COC/node/src/dht-network.ts`
+- **K-bucket ping-evict** — Implemented (Audit) — `COC/node/src/dht.ts`
 - **State snapshot stateRoot check** — Implemented — `COC/node/src/state-snapshot.ts`
 - **Exponential peer ban** — Implemented (base * 2^n, max 24h) — `COC/node/src/peer-scoring.ts`
 - **WebSocket idle timeout** — Implemented (1h) — `COC/node/src/websocket-rpc.ts`
