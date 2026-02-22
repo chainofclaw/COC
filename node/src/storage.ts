@@ -31,6 +31,7 @@ export class ChainStorage {
         number: b.number.toString(),
         baseFee: b.baseFee !== undefined ? b.baseFee.toString() : undefined,
         gasUsed: b.gasUsed !== undefined ? b.gasUsed.toString() : undefined,
+        cumulativeWeight: b.cumulativeWeight !== undefined ? b.cumulativeWeight.toString() : undefined,
       })),
       updatedAtMs: snapshot.updatedAtMs,
     }, null, 2)
@@ -49,5 +50,6 @@ function parseBlock(raw: Record<string, unknown>): ChainBlock {
     finalized: Boolean(raw.finalized),
     baseFee: raw.baseFee !== undefined ? BigInt(String(raw.baseFee)) : undefined,
     gasUsed: raw.gasUsed !== undefined ? BigInt(String(raw.gasUsed)) : undefined,
+    cumulativeWeight: raw.cumulativeWeight !== undefined ? BigInt(String(raw.cumulativeWeight)) : undefined,
   }
 }

@@ -133,4 +133,13 @@ describe("shouldSwitchFork", () => {
     assert.ok(result)
     assert.equal(result.reason, "bft-finality")
   })
+
+  it("high-weight short chain wins over low-weight long chain", () => {
+    const local = makeCandidate({ height: 10n, cumulativeWeight: 50n, peerId: "local" })
+    const remote = makeCandidate({ height: 10n, cumulativeWeight: 200n, peerId: "remote" })
+    const result = shouldSwitchFork(local, remote)
+    assert.ok(result)
+    assert.equal(result.reason, "higher-weight")
+    assert.equal(result.winner.peerId, "remote")
+  })
 })

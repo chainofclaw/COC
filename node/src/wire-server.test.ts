@@ -602,6 +602,122 @@ describe("WireServer dedup and relay", () => {
   })
 })
 
+describe("WireServer handshake nonce replay and peer scoring", () => {
+  let server: WireServer | null = null
+  const sockets: net.Socket[] = []
+
+  afterEach(() => {
+    for (const s of sockets) { s.destroy() }
+    sockets.length = 0
+    if (server) { server.stop(); server = null }
+  })
+
+  it("should reject replayed handshake nonce", async () => {
+    const port = getRandomPort()
+    const { createNodeSigner } = await import("./crypto/signer.ts")
+    const serverSigner = createNodeSigner("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80")
+    const clientSigner = createNodeSigner("0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d")
+    const clientNodeId = clientSigner.nodeId
+
+    server = new WireServer({
+      port,
+      nodeId: serverSigner.address,
+      chainId: 18780,
+      onBlock: async () => {},
+      onTx: async () => {},
+      getHeight: () => Promise.resolve(0n),
+      signer: serverSigner,
+      verifier: serverSigner,
+    })
+    server.start()
+    await new Promise((r) => setTimeout(r, 100))
+
+    // First connection with a nonce
+    const fixedNonce = "fixed-nonce-12345"
+    const msg1 = `wire:handshake:${clientNodeId}:${fixedNonce}`
+    const sig1 = clientSigner.sign(msg1)
+
+    const socket1 = await connectSocket("127.0.0.1", port)
+    sockets.push(socket1)
+    const decoder1 = new FrameDecoder()
+    await receiveFrames(socket1, decoder1, 1) // server handshake
+    socket1.write(encodeJsonPayload(MessageType.Handshake, {
+      nodeId: clientNodeId,
+      chainId: 18780,
+      height: "0",
+      nonce: fixedNonce,
+      signature: sig1,
+    }))
+    // Wait for handshake ack
+    await receiveFrames(socket1, decoder1, 1)
+    await new Promise((r) => setTimeout(r, 100))
+
+    // First connection should succeed
+    assert.ok(server.getConnectedPeers().includes(clientNodeId), "first connection should succeed")
+
+    // Second connection reusing same nonce — should be rejected
+    const socket2 = await connectSocket("127.0.0.1", port)
+    sockets.push(socket2)
+    let socket2Closed = false
+    socket2.on("close", () => { socket2Closed = true })
+    const decoder2 = new FrameDecoder()
+    await receiveFrames(socket2, decoder2, 1) // server handshake
+    socket2.write(encodeJsonPayload(MessageType.Handshake, {
+      nodeId: clientNodeId,
+      chainId: 18780,
+      height: "0",
+      nonce: fixedNonce, // replayed nonce
+      signature: sig1,
+    }))
+    await new Promise((r) => setTimeout(r, 200))
+
+    assert.ok(socket2Closed, "replayed nonce connection should be closed")
+  })
+
+  it("should call peerScoring on signature mismatch", async () => {
+    const port = getRandomPort()
+    const { createNodeSigner } = await import("./crypto/signer.ts")
+    const serverSigner = createNodeSigner("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80")
+
+    let scoringCalls: string[] = []
+    server = new WireServer({
+      port,
+      nodeId: serverSigner.address,
+      chainId: 18780,
+      onBlock: async () => {},
+      onTx: async () => {},
+      getHeight: () => Promise.resolve(0n),
+      signer: serverSigner,
+      verifier: serverSigner,
+      peerScoring: {
+        recordInvalidData: (ip: string) => { scoringCalls.push(ip) },
+      },
+    })
+    server.start()
+    await new Promise((r) => setTimeout(r, 100))
+
+    const socket = await connectSocket("127.0.0.1", port)
+    sockets.push(socket)
+    let closed = false
+    socket.on("close", () => { closed = true })
+    const decoder = new FrameDecoder()
+    await receiveFrames(socket, decoder, 1) // server handshake
+
+    // Send handshake with bad signature
+    socket.write(encodeJsonPayload(MessageType.Handshake, {
+      nodeId: "0xfakenode",
+      chainId: 18780,
+      height: "0",
+      nonce: "some-nonce",
+      signature: "0xbadsig",
+    }))
+    await new Promise((r) => setTimeout(r, 200))
+
+    assert.ok(closed, "connection should be closed on bad signature")
+    assert.ok(scoringCalls.length > 0, "peerScoring.recordInvalidData should be called")
+  })
+})
+
 describe("WireClient ping/pong latency", () => {
   let server: WireServer | null = null
   const clients: WireClient[] = []

@@ -45,6 +45,8 @@ export interface WireServerConfig {
   signer?: NodeSigner
   /** Signature verifier (optional; enables authenticated handshakes) */
   verifier?: SignatureVerifier
+  /** Peer scoring callback for recording invalid data from peers */
+  peerScoring?: { recordInvalidData: (ip: string) => void }
 }
 
 interface PeerConnection {
@@ -69,6 +71,7 @@ export class WireServer {
   private connectionsRejected = 0
   private readonly seenTx = new BoundedSet<Hex>(50_000)
   private readonly seenBlocks = new BoundedSet<Hex>(10_000)
+  private readonly handshakeNonces = new BoundedSet<string>(10_000)
 
   constructor(cfg: WireServerConfig) {
     this.cfg = cfg
@@ -240,16 +243,34 @@ export class WireServer {
         if (this.cfg.verifier) {
           if (!hs.signature || !hs.nonce) {
             log.warn("handshake missing signature", { peer: hs.nodeId })
+            this.cfg.peerScoring?.recordInvalidData(conn.socket.remoteAddress ?? "unknown")
+            conn.socket.destroy()
+            return
+          }
+          // Nonce replay protection
+          if (this.handshakeNonces.has(hs.nonce)) {
+            log.warn("handshake nonce replay detected", { peer: hs.nodeId, nonce: hs.nonce })
+            this.cfg.peerScoring?.recordInvalidData(conn.socket.remoteAddress ?? "unknown")
             conn.socket.destroy()
             return
           }
           const msg = `wire:handshake:${hs.nodeId}:${hs.nonce}`
-          const recovered = this.cfg.verifier.recoverAddress(msg, hs.signature)
-          if (recovered.toLowerCase() !== hs.nodeId.toLowerCase()) {
-            log.warn("handshake signature mismatch", { claimed: hs.nodeId, recovered })
+          let recovered: string
+          try {
+            recovered = this.cfg.verifier.recoverAddress(msg, hs.signature)
+          } catch {
+            log.warn("handshake signature invalid format", { peer: hs.nodeId })
+            this.cfg.peerScoring?.recordInvalidData(conn.socket.remoteAddress ?? "unknown")
             conn.socket.destroy()
             return
           }
+          if (recovered.toLowerCase() !== hs.nodeId.toLowerCase()) {
+            log.warn("handshake signature mismatch", { claimed: hs.nodeId, recovered })
+            this.cfg.peerScoring?.recordInvalidData(conn.socket.remoteAddress ?? "unknown")
+            conn.socket.destroy()
+            return
+          }
+          this.handshakeNonces.add(hs.nonce)
         }
         conn.nodeId = hs.nodeId
         conn.handshakeComplete = true

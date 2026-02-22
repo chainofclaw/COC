@@ -228,10 +228,17 @@ export class PersistentChainEngine {
       return null
     }
 
+    // Compute baseFee for next block
+    const tip = await this.getTip()
+    const parentBaseFee = tip?.baseFee ?? genesisBaseFee()
+    const parentGasUsed = tip?.gasUsed ?? 0n
+    const nextBaseFee = calculateBaseFee({ parentBaseFee, parentGasUsed })
+
     const txs = await this.mempool.pickForBlock(
       this.cfg.maxTxPerBlock,
       (address) => this.evm.getNonce(address),
-      this.cfg.minGasPriceWei
+      this.cfg.minGasPriceWei,
+      nextBaseFee,
     )
 
     const block = await this.buildBlock(nextHeight, txs)
@@ -471,6 +478,15 @@ export class PersistentChainEngine {
       txs,
     })
 
+    // Accumulate cumulative weight using proposer stake
+    const parentWeight = tip?.cumulativeWeight ?? 0n
+    let proposerStake = 1n
+    if (this.governance) {
+      const active = this.governance.getActiveValidators()
+      const self = active.find((v) => v.id === this.cfg.nodeId)
+      if (self) proposerStake = self.stake
+    }
+
     return {
       number: nextHeight,
       hash,
@@ -480,6 +496,7 @@ export class PersistentChainEngine {
       txs,
       finalized: false,
       baseFee,
+      cumulativeWeight: parentWeight + proposerStake,
     }
   }
 

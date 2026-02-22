@@ -85,10 +85,10 @@ export class EvmChain {
     }
   }
 
-  async executeRawTx(rawTx: string, blockNumber?: bigint, txIndex = 0, blockHash?: string): Promise<ExecutionResult> {
+  async executeRawTx(rawTx: string, blockNumber?: bigint, txIndex = 0, blockHash?: string, baseFeePerGas: bigint = 0n): Promise<ExecutionResult> {
     const tx = createTxFromRLP(hexToBytes(rawTx), { common: this.common })
-    // Use baseFeePerGas=0 so dev-chain txs with any gasPrice are accepted
-    const block = createBlock({ header: { baseFeePerGas: 0n } }, { common: this.common })
+    // Use provided baseFeePerGas (defaults to 0 for backward compatibility with dev chains)
+    const block = createBlock({ header: { baseFeePerGas } }, { common: this.common })
     const result = await runTx(this.vm, { tx, block, skipHardForkValidation: true })
     const txHash = bytesToHex(tx.hash())
     const appliedBlock = blockNumber ?? (this.blockNumber + 1n)

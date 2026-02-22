@@ -678,16 +678,24 @@ async function handleRpc(
       const baseFees: string[] = []
       const gasUsedRatios: number[] = []
       const rewards: string[][] = []
+      const oldestBlockNum = newest - BigInt(count) + 1n
       for (let i = 0; i < count; i++) {
-        baseFees.push("0x3b9aca00") // 1 gwei
-        gasUsedRatios.push(0.5)
+        const blockNum = oldestBlockNum + BigInt(i)
+        const blockBaseFee = await computeBaseFeeForBlock(blockNum, chain)
+        baseFees.push(`0x${blockBaseFee.toString(16)}`)
+        const blk = await Promise.resolve(chain.getBlockByNumber(blockNum))
+        const gasUsed = blk?.gasUsed ?? 0n
+        const ratio = Number(gasUsed) / 30_000_000 // GAS_LIMIT = 30M
+        gasUsedRatios.push(Math.round(ratio * 10000) / 10000)
         if (rewardPercentiles.length > 0) {
           rewards.push(rewardPercentiles.map(() => "0x3b9aca00"))
         }
       }
-      baseFees.push("0x3b9aca00") // extra entry for next block
+      // Extra entry for next block's baseFee prediction
+      const nextBaseFee = await computeBaseFeeForBlock(newest + 1n, chain)
+      baseFees.push(`0x${nextBaseFee.toString(16)}`)
       return {
-        oldestBlock: `0x${(newest - BigInt(count) + 1n).toString(16)}`,
+        oldestBlock: `0x${oldestBlockNum.toString(16)}`,
         baseFeePerGas: baseFees,
         gasUsedRatio: gasUsedRatios,
         ...(rewardPercentiles.length > 0 ? { reward: rewards } : {}),

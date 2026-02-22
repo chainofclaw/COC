@@ -345,10 +345,12 @@ Code:
 
 Algorithm:
 - When a new peer is discovered via iterative lookup, verify reachability before adding to routing table.
-- Priority 1: check if peer has an active wire client connection (`wireClientByPeerId` or `wireClients` scan) — already verified.
-- Priority 2: TCP connect probe to peer's address with 3-second timeout.
-- Successful TCP connect = peer is reachable → add to routing table and notify discovery callback.
-- Timeout or connection refused → discard peer (do not add to routing table).
+- Priority 1: check if peer has an active wire client connection (`wireClientByPeerId` or `wireClients` scan) — already verified via wire handshake.
+- Priority 2: authenticated wire handshake (`verifyPeerByHandshake`) — open a temporary WireClient, exchange signed handshake messages, verify identity, then disconnect.
+- If `requireAuthenticatedVerify=true` (default): reject unverifiable peers (no TCP probe fallback).
+- If `requireAuthenticatedVerify=false`: fallback to lightweight TCP connect probe with 3-second timeout.
+- Successful verification = peer is reachable and identity confirmed → add to routing table and notify discovery callback.
+- Timeout, connection refused, or identity mismatch → discard peer (do not add to routing table).
 - Stale peer filtering on load: peers with `lastSeenMs` older than 24 hours are excluded.
 
 Code:

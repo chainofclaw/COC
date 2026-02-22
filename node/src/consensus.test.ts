@@ -207,6 +207,70 @@ test("enforce mode rejects block without signature", async () => {
   )
 })
 
+describe("snap sync chain height advancement", () => {
+  it("advances chain height after successful snap sync", async () => {
+    const { engine } = await createTestEngine()
+
+    // Build a chain with 5 blocks on a source engine
+    const { engine: sourceEngine } = await createTestEngine()
+    for (let i = 0; i < 5; i++) {
+      await sourceEngine.proposeNextBlock()
+    }
+    const snapshot = sourceEngine.makeSnapshot()
+
+    const mockP2p = {
+      fetchSnapshots: async () => [],
+      receiveBlock: async () => {},
+      discovery: { getActivePeers: () => [{ url: "http://peer1:18780" }] },
+      broadcastBft: async () => {},
+    }
+
+    let importedRoot: string | undefined
+    const mockSnapSync: SnapSyncProvider = {
+      fetchStateSnapshot: async () => ({
+        stateRoot: "0x" + "ab".repeat(32),
+        blockHeight: snapshot.blocks[snapshot.blocks.length - 1].number.toString(),
+        blockHash: snapshot.blocks[snapshot.blocks.length - 1].hash,
+        accounts: [],
+        version: 1,
+        createdAtMs: Date.now(),
+      }),
+      importStateSnapshot: async (_snap: unknown, expectedRoot?: string) => {
+        importedRoot = expectedRoot
+        return { accountsImported: 0, codeImported: 0 }
+      },
+      setStateRoot: async () => {},
+    }
+
+    const consensus = new ConsensusEngine(
+      engine as any,
+      mockP2p as any,
+      { blockTimeMs: 1000, syncIntervalMs: 1000, enableSnapSync: true, snapSyncThreshold: 1 },
+      { snapSync: mockSnapSync },
+    )
+
+    const result = await (consensus as any).trySnapSync(snapshot)
+    assert.equal(result, true, "snap sync should succeed")
+    assert.equal(engine.getHeight(), 5n, "chain height should advance after snap sync")
+    assert.equal(importedRoot, "0x" + "ab".repeat(32), "expectedStateRoot should be passed to importStateSnapshot")
+  })
+})
+
+describe("cumulative weight in blocks", () => {
+  it("blocks include cumulativeWeight field", async () => {
+    const { engine } = await createTestEngine()
+
+    const b1 = await engine.proposeNextBlock()
+    assert.ok(b1)
+    assert.ok(b1.cumulativeWeight !== undefined, "block should have cumulativeWeight")
+    assert.equal(b1.cumulativeWeight, 1n, "first block cumulativeWeight should be 1")
+
+    const b2 = await engine.proposeNextBlock()
+    assert.ok(b2)
+    assert.equal(b2.cumulativeWeight, 2n, "second block cumulativeWeight should be 2")
+  })
+})
+
 test("proposer produces blocks in round-robin", async () => {
   const evm1 = await EvmChain.create(18780)
   const engine1 = new ChainEngine(

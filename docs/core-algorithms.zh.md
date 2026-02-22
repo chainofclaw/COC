@@ -345,10 +345,12 @@
 
 算法：
 - 通过迭代查找发现新节点时，先验证可达性再加入路由表。
-- 优先级 1：检查该节点是否有活跃的 wire 客户端连接（`wireClientByPeerId` 或 `wireClients` 扫描）— 已验证。
-- 优先级 2：向节点地址发起 TCP 连接探测，3 秒超时。
-- TCP 连接成功 = 节点可达 → 加入路由表并通知发现回调。
-- 超时或连接拒绝 → 丢弃节点（不加入路由表）。
+- 优先级 1：检查该节点是否有活跃的 wire 客户端连接（`wireClientByPeerId` 或 `wireClients` 扫描）— 已通过 wire 握手验证。
+- 优先级 2：认证式 wire 握手（`verifyPeerByHandshake`）— 临时创建 WireClient，交换签名握手消息，验证身份后断开。
+- 当 `requireAuthenticatedVerify=true`（默认）时：拒绝无法验证的节点（无 TCP 探测回退）。
+- 当 `requireAuthenticatedVerify=false` 时：回退到轻量级 TCP 连接探测，3 秒超时。
+- 验证成功 = 节点可达且身份确认 → 加入路由表并通知发现回调。
+- 超时、连接拒绝或身份不匹配 → 丢弃节点（不加入路由表）。
 - 加载时过滤过期节点：`lastSeenMs` 超过 24 小时的节点被排除。
 
 代码：

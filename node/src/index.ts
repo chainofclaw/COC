@@ -91,6 +91,7 @@ if (usePersistent) {
       finalityDepth: config.finalityDepth,
       maxTxPerBlock: config.maxTxPerBlock,
       minGasPriceWei: BigInt(config.minGasPriceWei),
+      signatureEnforcement: config.signatureEnforcement,
       prefundAccounts: prefund,
       stateTrie: trie,
     },
@@ -111,6 +112,7 @@ if (usePersistent) {
       finalityDepth: config.finalityDepth,
       maxTxPerBlock: config.maxTxPerBlock,
       minGasPriceWei: BigInt(config.minGasPriceWei),
+      signatureEnforcement: config.signatureEnforcement,
     },
     evm,
   )
@@ -208,9 +210,8 @@ const p2p = new P2PNode(
         const tip = await Promise.resolve(chain.getTip())
         const height = await Promise.resolve(chain.getHeight())
         if (!tip || !stateTrie) return null
-        // Export known accounts from state trie
-        const addresses = config.prefund.map((p) => p.address)
-        return await exportStateSnapshot(stateTrie, addresses, height, tip.hash)
+        // Export full state (all accounts + storage) for snap sync correctness
+        return await exportStateSnapshot(stateTrie, undefined, height, tip.hash)
       }
       : undefined,
   },
@@ -340,8 +341,8 @@ if (stateTrie && config.enableSnapSync) {
         return null
       }
     },
-    async importStateSnapshot(snapshot: unknown) {
-      return await importStateSnapshot(trieRef, snapshot as StateSnapshot)
+    async importStateSnapshot(snapshot: unknown, expectedStateRoot?: string) {
+      return await importStateSnapshot(trieRef, snapshot as StateSnapshot, expectedStateRoot)
     },
     async setStateRoot(root: string) {
       if (typeof trieRef.setStateRoot === "function") {

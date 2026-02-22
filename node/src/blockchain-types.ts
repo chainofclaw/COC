@@ -25,6 +25,7 @@ export interface ChainBlock {
   stateRoot?: Hex
   baseFee?: bigint
   gasUsed?: bigint
+  cumulativeWeight?: bigint
 }
 
 export interface ChainSnapshot {

@@ -37,7 +37,7 @@ export interface SnapSyncProvider {
     version: number
     createdAtMs: number
   } | null>
-  importStateSnapshot(snapshot: unknown): Promise<{ accountsImported: number; codeImported: number }>
+  importStateSnapshot(snapshot: unknown, expectedStateRoot?: string): Promise<{ accountsImported: number; codeImported: number }>
   setStateRoot(root: string): Promise<void>
 }
 
@@ -300,7 +300,7 @@ export class ConsensusEngine {
         height: localHeight,
         tipHash: localTip?.hash ?? ("0x0" as Hex),
         bftFinalized: localTip?.bftFinalized ?? false,
-        cumulativeWeight: localHeight,
+        cumulativeWeight: localTip?.cumulativeWeight ?? localHeight,
         peerId: "local",
       }
 
@@ -318,7 +318,7 @@ export class ConsensusEngine {
           height: BigInt(remoteTip.number),
           tipHash: remoteTip.hash,
           bftFinalized: remoteTip.bftFinalized ?? false,
-          cumulativeWeight: BigInt(remoteTip.number),
+          cumulativeWeight: remoteTip.cumulativeWeight ?? BigInt(remoteTip.number),
           peerId: "remote",
         }
 
@@ -406,8 +406,18 @@ export class ConsensusEngine {
             continue
           }
 
-          await this.snapSync.importStateSnapshot(stateSnap)
+          await this.snapSync.importStateSnapshot(stateSnap, stateSnap.stateRoot)
           await this.snapSync.setStateRoot(stateSnap.stateRoot)
+
+          // Write snapshot blocks into the chain engine so getHeight() advances
+          const blockEngine = this.chain as IBlockSyncEngine
+          const snapshotEngine = this.chain as ISnapshotSyncEngine
+          if (typeof blockEngine.maybeAdoptSnapshot === "function" && typeof snapshotEngine.makeSnapshot !== "function") {
+            await blockEngine.maybeAdoptSnapshot(snapshot.blocks)
+          } else if (typeof snapshotEngine.maybeAdoptSnapshot === "function") {
+            await snapshotEngine.maybeAdoptSnapshot({ blocks: snapshot.blocks, updatedAtMs: Date.now() })
+          }
+
           this.snapSyncs++
           log.info("snap sync complete", {
             accounts: stateSnap.accounts.length,

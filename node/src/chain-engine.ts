@@ -120,10 +120,17 @@ export class ChainEngine {
       return null
     }
 
+    // Compute baseFee for next block
+    const tip = this.getTip()
+    const parentBaseFee = tip?.baseFee ?? genesisBaseFee()
+    const parentGasUsed = tip?.gasUsed ?? 0n
+    const nextBaseFee = calculateBaseFee({ parentBaseFee, parentGasUsed })
+
     const txs = await this.mempool.pickForBlock(
       this.cfg.maxTxPerBlock,
       (address) => this.evm.getNonce(address),
       this.cfg.minGasPriceWei,
+      nextBaseFee,
     )
 
     const block = this.buildBlock(nextHeight, txs)
@@ -313,6 +320,9 @@ export class ChainEngine {
       txs,
     })
 
+    // Accumulate cumulative weight (parent weight + 1 for uniform stake)
+    const parentWeight = tip?.cumulativeWeight ?? 0n
+
     return {
       number: nextHeight,
       hash,
@@ -322,6 +332,7 @@ export class ChainEngine {
       txs,
       finalized: false,
       baseFee,
+      cumulativeWeight: parentWeight + 1n,
     }
   }
 
