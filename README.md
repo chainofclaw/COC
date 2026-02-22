@@ -55,7 +55,7 @@ COC is an EVM-compatible blockchain prototype with PoSe (Proof-of-Service) settl
 - **DHT Enhancement**: wireClientByPeerId O(1) lookup for FIND_NODE, per-peer wire port from config
 - **Devnet Full Features**: Multi-node devnet enables BFT, Wire, DHT, SnapSync by default with per-node wire port and DHT bootstrap peers
 - **Security Hardening**: Node identity authentication (wire handshake signing), BFT mandatory message signatures, DHT peer verification (TCP probe), per-IP wire connection limits, IPFS upload size limit (10MB), MFS path traversal prevention, block timestamp validation, exponential peer ban (max 24h), WebSocket idle timeout, dev accounts gating, default localhost binding, shared rate limiter (RPC/IPFS/PoSe), P2P HTTP signed auth envelope with `off/monitor/enforce` rollout modes and replay guard, governance self-vote removal, PoSeManager ecrecover v-value check, state snapshot stateRoot verification
-- **Testing**: 755 tests across 79 test files, covering chain engine, EVM, mempool, RPC, WebSocket, P2P, storage, IPFS, PoSe, BFT, DHT, wire protocol, fork choice, snap sync, equivocation detection, consensus metrics, wire connection management, wire dedup/relay, cross-protocol propagation, and security hardening
+- **Testing**: 905 tests across 91 test files, covering chain engine, EVM, mempool, RPC, WebSocket, P2P, storage, IPFS, PoSe, BFT, DHT, wire protocol, fork choice, snap sync, equivocation detection, consensus metrics, wire connection management, wire dedup/relay, cross-protocol propagation, security hardening, BFT slashing, ops hardening, node ops extension, and algorithm safety audit
 
 ### Blockchain Explorer Features
 
@@ -158,6 +158,12 @@ The explorer (`explorer/`) is a Next.js 15 App Router application providing:
 | 56 | `be1c2ed` | Full test verification (695 tests) + documentation update |
 | 57 | — | Wire Block/Tx dedup (BoundedSet), cross-protocol relay (Wire→HTTP), BFT dual transport, DHT wireClientByPeerId, devnet full features, 726 tests |
 | 58 | — | Security hardening: node identity auth, BFT signing, DHT peer verification, per-IP limits, IPFS upload limits, MFS path traversal, timestamp validation, exponential ban, WebSocket timeout, dev accounts gate, rate limiting, governance self-vote removal, PoSeManager v-check, 755 tests |
+| 59 | — | P2P HTTP signed auth envelope (off/monitor/enforce), replay guard, nonce registry, PoSe auth, Prometheus metrics integration |
+| 60 | — | BFT slashing handler (equivocation → slash → treasury → auto-remove), relay witness security (17 tests), ops infrastructure (alerts, runbooks, testnet configs) |
+| 61 | — | Phase 34 Go/No-Go readiness, Phase 35 OpenClaw coc-nodeops extension (node types, network presets, init wizard, multi-node manager, 24 tests) |
+| 62 | — | Phase 36 ops hardening: SIGTERM shutdown, configurable bind addresses, LevelDB corruption recovery, RPC Bearer auth, admin RPC namespace |
+| 63 | `ed36f47` | BFT prepare timeout fix, testnet monitoring fixes (EVM state manager, estimateGas, faucet) |
+| 64 | `5c8befb` | Algorithm safety audit: 9 fixes across BFT, DHT, chain engine, snapshots — baseFee integration, signature enforcement, K-bucket ping-evict, full trie traversal, 905 tests |
 
 ## Quick Start
 

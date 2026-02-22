@@ -1,4 +1,4 @@
-# Phase 25: Public Testnet Go/No-Go Checklist (with Validation Commands, Thresholds, and Owners)
+# Phase 34: Public Testnet Go/No-Go Checklist (with Validation Commands, Thresholds, and Owners)
 
 ## 1. Goal and Scope
 
@@ -101,6 +101,8 @@ Current recommendation: `Conditional Go` (pending real-environment validation).
 4. **Testnet security configs**: `ops/testnet/node-config-{1,2,3}.json` and `docker/testnet-configs/node-{1,2,3}.json` updated with all required security fields (`dhtRequireAuthenticatedVerify`, `p2pInboundAuthMode: enforce`, `poseInboundAuthMode: enforce`, `poseUseOnchainChallengerAuth: true`, `poseOnchainAuthFailOpen: false`).
 5. **Prometheus metrics**: `node/src/metrics.ts` + `node/src/metrics-server.ts` integrated in `index.ts`, 7 tests passing.
 6. **CI workflows**: `.github/workflows/test.yml`, `build-images.yml`, `testnet-deploy.yml` present.
+
+7. **Algorithm safety audit** (commit `5c8befb`): 9 fixes — BFT commit blockHash binding, snap sync target validation, full state snapshot trie traversal, EIP-1559 baseFee integration into block production, persistent engine timestamp validation, DHT iterative lookup distance sorting, K-bucket ping-evict, configurable signature enforcement, handshake doc alignment. 905 tests passing.
 
 ### Remaining pre-launch items (non-blocking for Go decision):
 1. Real L1/L2 integration and production key custody (P1 — operational concern).
