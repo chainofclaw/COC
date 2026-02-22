@@ -58,9 +58,14 @@ interface PeerConnection {
   decoder: FrameDecoder
   nodeId: string | null
   handshakeComplete: boolean
+  msgCount: number
+  msgWindowStartMs: number
 }
 
 const MAX_CONNECTIONS_PER_IP = 5
+const MAX_MESSAGES_PER_WINDOW = 500
+const MESSAGE_WINDOW_MS = 10_000 // 10 seconds
+const IDLE_TIMEOUT_MS = 300_000 // 5 minutes
 
 export class WireServer {
   private readonly cfg: WireServerConfig
@@ -178,6 +183,8 @@ export class WireServer {
       decoder: new FrameDecoder(),
       nodeId: null,
       handshakeComplete: false,
+      msgCount: 0,
+      msgWindowStartMs: Date.now(),
     }
     this.connections.set(connId, conn)
 
@@ -185,6 +192,12 @@ export class WireServer {
 
     // Send our handshake
     void this.sendHandshake(socket)
+
+    // Idle timeout: disconnect peers that send no data
+    socket.setTimeout(IDLE_TIMEOUT_MS, () => {
+      log.info("wire connection idle timeout", { remote: connId })
+      socket.destroy()
+    })
 
     socket.on("data", (data: Buffer) => {
       this.bytesReceived += data.byteLength
@@ -236,6 +249,19 @@ export class WireServer {
   }
 
   private async handleFrame(conn: PeerConnection, frame: WireFrame): Promise<void> {
+    // Per-connection message rate limiting
+    const now = Date.now()
+    if (now - conn.msgWindowStartMs > MESSAGE_WINDOW_MS) {
+      conn.msgCount = 0
+      conn.msgWindowStartMs = now
+    }
+    conn.msgCount++
+    if (conn.msgCount > MAX_MESSAGES_PER_WINDOW) {
+      log.warn("wire peer rate limited", { peer: conn.nodeId })
+      conn.socket.destroy()
+      return
+    }
+
     switch (frame.type) {
       case MessageType.Handshake:
       case MessageType.HandshakeAck: {
@@ -346,7 +372,8 @@ export class WireServer {
       case MessageType.FindNode: {
         if (!conn.handshakeComplete) return
         const req = decodeJsonPayload<FindNodePayload>(frame)
-        const peers = this.cfg.onFindNode?.(req.targetId) ?? []
+        const allPeers = this.cfg.onFindNode?.(req.targetId) ?? []
+        const peers = allPeers.slice(0, 20) // K-bucket limit: max 20 peers per response
         const resp: FindNodeResponsePayload = {
           requestId: req.requestId,
           peers,

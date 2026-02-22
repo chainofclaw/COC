@@ -443,7 +443,7 @@ startRpcServer(
 
 // Start WebSocket RPC server for real-time subscriptions
 const wsServer = startWsRpcServer(
-  { port: config.wsPort, bind: config.wsBind },
+  { port: config.wsPort, bind: config.wsBind, authToken: config.rpcAuthToken },
   config.chainId,
   evm,
   chain,

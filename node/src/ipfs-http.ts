@@ -185,7 +185,7 @@ export class IpfsHttpServer {
       RepoSize: stats.repoSize,
       StorageMax: "0",
       NumObjects: stats.numBlocks,
-      RepoPath: this.cfg.storageDir,
+      RepoPath: "<redacted>",
       Version: "0.1.0-coc",
     }))
   }

@@ -10,6 +10,8 @@ const validators = [
   { id: "v3", stake: 100n },
 ]
 
+const DUMMY_SIG = ("0x" + "de".repeat(65)) as Hex
+
 function makeBlock(height: bigint, proposer = "v1"): ChainBlock {
   return {
     number: height,
@@ -20,6 +22,10 @@ function makeBlock(height: bigint, proposer = "v1"): ChainBlock {
     txs: [],
     finalized: false,
   }
+}
+
+function bftMsg(type: "prepare" | "commit", height: bigint, blockHash: Hex, senderId: string): BftMessage {
+  return { type, height, blockHash, senderId, signature: DUMMY_SIG }
 }
 
 describe("BftCoordinator", () => {
@@ -63,40 +69,20 @@ describe("BftCoordinator", () => {
     assert.equal(broadcasted.length, 1) // prepare from v1
 
     // v2 sends prepare
-    await coord.handleMessage({
-      type: "prepare",
-      height: 1n,
-      blockHash: block.hash,
-      senderId: "v2",
-    })
+    await coord.handleMessage(bftMsg("prepare", 1n, block.hash, "v2"))
 
     // v3 sends prepare -> quorum, should transition to commit
-    await coord.handleMessage({
-      type: "prepare",
-      height: 1n,
-      blockHash: block.hash,
-      senderId: "v3",
-    })
+    await coord.handleMessage(bftMsg("prepare", 1n, block.hash, "v3"))
 
     // v1 should have broadcasted commit
     const commitMsgs = broadcasted.filter((m) => m.type === "commit")
     assert.equal(commitMsgs.length, 1)
 
     // v2 commits
-    await coord.handleMessage({
-      type: "commit",
-      height: 1n,
-      blockHash: block.hash,
-      senderId: "v2",
-    })
+    await coord.handleMessage(bftMsg("commit", 1n, block.hash, "v2"))
 
     // v3 commits -> finalized
-    await coord.handleMessage({
-      type: "commit",
-      height: 1n,
-      blockHash: block.hash,
-      senderId: "v3",
-    })
+    await coord.handleMessage(bftMsg("commit", 1n, block.hash, "v3"))
 
     assert.ok(finalizedBlock)
     assert.equal(finalizedBlock.number, 1n)
@@ -117,12 +103,7 @@ describe("BftCoordinator", () => {
     await coord.startRound(makeBlock(5n))
 
     // Message for height 3 should be ignored
-    await coord.handleMessage({
-      type: "prepare",
-      height: 3n,
-      blockHash: ("0x" + "ff".repeat(32)) as Hex,
-      senderId: "v2",
-    })
+    await coord.handleMessage(bftMsg("prepare", 3n, ("0x" + "ff".repeat(32)) as Hex, "v2"))
 
     const state = coord.getRoundState()
     assert.equal(state.prepareVotes, 1) // only v1's own vote
@@ -137,12 +118,7 @@ describe("BftCoordinator", () => {
     })
 
     // Should not throw
-    await coord.handleMessage({
-      type: "prepare",
-      height: 1n,
-      blockHash: ("0x" + "ff".repeat(32)) as Hex,
-      senderId: "v2",
-    })
+    await coord.handleMessage(bftMsg("prepare", 1n, ("0x" + "ff".repeat(32)) as Hex, "v2"))
 
     assert.equal(coord.getRoundState().active, false)
   })

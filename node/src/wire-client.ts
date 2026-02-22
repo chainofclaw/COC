@@ -255,7 +255,9 @@ export class WireClient {
         if (pending) {
           clearTimeout(pending.timer)
           this.pendingFindNode.delete(resp.requestId)
-          pending.resolve(resp.peers)
+          // Limit accepted peers to prevent routing table poisoning
+          const peers = Array.isArray(resp.peers) ? resp.peers.slice(0, 20) : []
+          pending.resolve(peers)
         }
         break
       }

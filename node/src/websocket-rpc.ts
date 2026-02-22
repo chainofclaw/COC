@@ -28,6 +28,8 @@ const log = createLogger("ws-rpc")
 export interface WsRpcConfig {
   port: number
   bind: string
+  /** Bearer token for WebSocket authentication. Undefined = no auth required. */
+  authToken?: string
 }
 
 interface WsSubscription {
@@ -135,6 +137,16 @@ export class WsRpcServer {
     })
 
     this.wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
+      // WebSocket Bearer token authentication
+      if (this.config.authToken) {
+        const authHeader = req.headers["authorization"] ?? ""
+        const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : ""
+        if (token !== this.config.authToken) {
+          ws.close(4001, "unauthorized")
+          return
+        }
+      }
+
       // Reject if at max capacity
       if (this.clients.size >= MAX_CLIENTS) {
         log.warn("max clients reached, rejecting connection", { current: this.clients.size })

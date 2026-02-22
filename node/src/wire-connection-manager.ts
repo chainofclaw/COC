@@ -11,6 +11,7 @@
 import { WireClient } from "./wire-client.ts"
 import type { WireClientConfig } from "./wire-client.ts"
 import { MessageType, encodeJsonPayload } from "./wire-protocol.ts"
+import type { NodeSigner, SignatureVerifier } from "./crypto/signer.ts"
 import { createLogger } from "./logger.ts"
 
 const log = createLogger("wire-conn-mgr")
@@ -21,6 +22,8 @@ export interface ConnectionManagerConfig {
   nodeId: string
   chainId: number
   maxConnections?: number
+  signer?: NodeSigner
+  verifier?: SignatureVerifier
 }
 
 interface ManagedConnection {
@@ -54,6 +57,8 @@ export class WireConnectionManager {
       port,
       nodeId: this.cfg.nodeId,
       chainId: this.cfg.chainId,
+      signer: this.cfg.signer,
+      verifier: this.cfg.verifier,
       onConnected: () => {
         const conn = this.connections.get(key)
         if (conn) conn.connectedAtMs = Date.now()

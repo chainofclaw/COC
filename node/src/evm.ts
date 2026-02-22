@@ -46,6 +46,9 @@ export interface TxInfo {
   blockNumber: string
 }
 
+const MAX_RECEIPT_CACHE = 50_000
+const MAX_TX_CACHE = 50_000
+
 export class EvmChain {
   private vm: VM
   private readonly common: ReturnType<typeof createCustomCommon>
@@ -111,6 +114,12 @@ export class EvmChain {
       }
     })
 
+    // Evict oldest entries if cache is full (FIFO via insertion order)
+    if (this.receipts.size >= MAX_RECEIPT_CACHE) {
+      const first = this.receipts.keys().next().value
+      if (first !== undefined) this.receipts.delete(first)
+    }
+
     this.receipts.set(txHash, {
       transactionHash: txHash,
       blockNumber: `0x${appliedBlock.toString(16)}`,
@@ -129,6 +138,11 @@ export class EvmChain {
     const nonce = tx.nonce ?? 0n
     const gasLimit = tx.gasLimit ?? 0n
     const value = tx.value ?? 0n
+
+    if (this.txs.size >= MAX_TX_CACHE) {
+      const first = this.txs.keys().next().value
+      if (first !== undefined) this.txs.delete(first)
+    }
 
     this.txs.set(txHash, {
       hash: txHash,
@@ -185,7 +199,9 @@ export class EvmChain {
     const to = Address.fromString(params.to)
     const data = params.data ? hexToBytes(params.data) : new Uint8Array()
     const value = params.value ? BigInt(params.value) : 0n
-    const gasLimit = params.gas ? BigInt(params.gas) : 10_000_000n
+    const MAX_CALL_GAS = 30_000_000n
+    const requestedGas = params.gas ? BigInt(params.gas) : 10_000_000n
+    const gasLimit = requestedGas > MAX_CALL_GAS ? MAX_CALL_GAS : requestedGas
 
     const result = await this.vm.evm.runCall({
       caller,

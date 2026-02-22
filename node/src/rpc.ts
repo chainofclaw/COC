@@ -146,10 +146,11 @@ export function startRpcServer(
   const poseRoutes = pose ? registerPoseRoutes(pose) : []
 
   const server = http.createServer(async (req, res) => {
-    // CORS headers
-    res.setHeader("Access-Control-Allow-Origin", "*")
+    // CORS headers (restrict origin via COC_CORS_ORIGIN env, default localhost)
+    const allowedOrigin = process.env.COC_CORS_ORIGIN ?? "http://localhost:3000"
+    res.setHeader("Access-Control-Allow-Origin", allowedOrigin)
     res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS")
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type")
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
     if (req.method === "OPTIONS") {
       res.writeHead(200)
@@ -230,8 +231,9 @@ export function startRpcServer(
           rpcOpts.dhtStats = dhtStats
         }
         const scopedOpts = Object.keys(rpcOpts).length > 0 ? rpcOpts : undefined
+        const MAX_BATCH_SIZE = 100
         const response = Array.isArray(payload)
-          ? await Promise.all(payload.map((item) => handleOne(item, chainId, evm, chain, p2p, filters, bftCoordinator, scopedOpts)))
+          ? await Promise.all(payload.slice(0, MAX_BATCH_SIZE).map((item) => handleOne(item, chainId, evm, chain, p2p, filters, bftCoordinator, scopedOpts)))
           : await handleOne(payload, chainId, evm, chain, p2p, filters, bftCoordinator, scopedOpts)
 
         if (!res.headersSent) {
@@ -239,7 +241,7 @@ export function startRpcServer(
         }
         res.end(jsonStringify(response))
       } catch (error) {
-        sendError(res, null, String(error))
+        sendError(res, null, error instanceof Error ? error.message : "internal error")
       }
     })
   })
@@ -272,7 +274,7 @@ async function handleOne(
       const rpcErr = error as { code: number; message: string }
       return { jsonrpc: "2.0", id: payload.id ?? null, error: { code: rpcErr.code, message: rpcErr.message } }
     }
-    return { jsonrpc: "2.0", id: payload.id ?? null, error: { code: -32603, message: String(error) } }
+    return { jsonrpc: "2.0", id: payload.id ?? null, error: { code: -32603, message: error instanceof Error ? error.message : "internal error" } }
   }
 }
 

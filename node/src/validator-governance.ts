@@ -14,7 +14,7 @@ export interface ValidatorInfo {
   stake: bigint
   joinedAtEpoch: bigint
   active: boolean
-  votingPower: number // 0-100, proportional to stake
+  votingPower: number // 0-10000 basis points, proportional to stake
 }
 
 export type ProposalType = "add_validator" | "remove_validator" | "update_stake"
@@ -325,7 +325,8 @@ export class ValidatorGovernance {
       if (v?.active) votedPower += v.votingPower
     }
 
-    const participationPercent = totalPower > 0 ? (votedPower / totalPower) * 100 : 0
+    // votingPower is in basis points (0-10000); config thresholds are in percent (0-100)
+    const participationPercent = totalPower > 0 ? (votedPower * 100) / totalPower : 0
     if (participationPercent < this.config.minVoterPercent) return
 
     // Count approval voting power
@@ -337,7 +338,7 @@ export class ValidatorGovernance {
       }
     }
 
-    const approvalPercent = totalPower > 0 ? (approvalPower / totalPower) * 100 : 0
+    const approvalPercent = totalPower > 0 ? (approvalPower * 100) / totalPower : 0
 
     if (approvalPercent >= this.config.approvalThresholdPercent) {
       this.executeProposal(proposal)
@@ -415,7 +416,7 @@ export class ValidatorGovernance {
     const totalStake = active.reduce((sum, v) => sum + v.stake, 0n)
 
     for (const v of active) {
-      const power = totalStake > 0n ? Number((v.stake * 100n) / totalStake) : 0
+      const power = totalStake > 0n ? Number((v.stake * 10000n) / totalStake) : 0
       this.validators.set(v.id, { ...v, votingPower: power })
     }
   }

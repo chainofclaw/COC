@@ -127,13 +127,25 @@ export function decodeFrame(buf: Uint8Array): { frame: WireFrame; bytesConsumed:
  */
 export class FrameDecoder {
   private buffer: Uint8Array = new Uint8Array(0)
+  private readonly maxBufferSize: number
+
+  constructor(maxBufferSize = 32 * 1024 * 1024) { // 32 MB default
+    this.maxBufferSize = maxBufferSize
+  }
 
   /**
    * Feed incoming bytes and return any complete frames.
+   * Throws if buffer exceeds maxBufferSize (incomplete frame attack protection).
    */
   feed(data: Uint8Array): WireFrame[] {
+    const newSize = this.buffer.length + data.length
+    if (newSize > this.maxBufferSize) {
+      this.buffer = new Uint8Array(0)
+      throw new Error(`FrameDecoder buffer overflow: ${newSize} > ${this.maxBufferSize}`)
+    }
+
     // Append to buffer
-    const combined = new Uint8Array(this.buffer.length + data.length)
+    const combined = new Uint8Array(newSize)
     combined.set(this.buffer, 0)
     combined.set(data, this.buffer.length)
     this.buffer = combined

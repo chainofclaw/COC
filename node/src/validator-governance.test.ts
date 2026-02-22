@@ -37,7 +37,7 @@ describe("ValidatorGovernance", () => {
 
   it("assigns equal voting power for equal stakes", () => {
     const v1 = gov.getValidator("v1")!
-    assert.equal(v1.votingPower, 33) // 33% of total
+    assert.equal(v1.votingPower, 3333) // 33.33% in basis points
   })
 
   it("returns ordered validator IDs", () => {
@@ -156,9 +156,9 @@ describe("ValidatorGovernance", () => {
     gov.vote(proposal.id, "v3", true)
 
     // v1: 30 ETH, v2: 10 ETH, v3: 10 ETH → total 50 ETH
-    // v1 power: 30/50 * 100 = 60
+    // v1 power: 30/50 * 10000 = 6000 basis points
     const v1 = gov.getValidator("v1")!
-    assert.equal(v1.votingPower, 60)
+    assert.equal(v1.votingPower, 6000)
   })
 
   it("rejects voting on non-pending proposal", () => {

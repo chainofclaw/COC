@@ -314,12 +314,15 @@ describe("BFT coordinator 3-validator round", () => {
     await coordinator.startRound(block)
     assert.ok(broadcastedMsgs.length > 0, "should broadcast prepare vote")
 
+    const dummySig = ("0x" + "de".repeat(65)) as Hex
+
     // Node-2 sends prepare
     await coordinator.handleMessage({
       type: "prepare",
       height: 1n,
       blockHash: block.hash,
       senderId: "node-2",
+      signature: dummySig,
     })
 
     // Node-3 sends prepare -> quorum reached (3/3 >= 2/3+1), transitions to commit
@@ -328,6 +331,7 @@ describe("BFT coordinator 3-validator round", () => {
       height: 1n,
       blockHash: block.hash,
       senderId: "node-3",
+      signature: dummySig,
     })
 
     // Check that a commit message was broadcast
@@ -340,6 +344,7 @@ describe("BFT coordinator 3-validator round", () => {
       height: 1n,
       blockHash: block.hash,
       senderId: "node-2",
+      signature: dummySig,
     })
 
     // Node-3 sends commit -> commit quorum reached
@@ -348,6 +353,7 @@ describe("BFT coordinator 3-validator round", () => {
       height: 1n,
       blockHash: block.hash,
       senderId: "node-3",
+      signature: dummySig,
     })
 
     assert.ok(finalizedBlock, "block should be finalized after commit quorum")

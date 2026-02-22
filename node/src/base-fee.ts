@@ -12,7 +12,8 @@
 const TARGET_GAS_UTILIZATION = 50n // 50%
 const MAX_CHANGE_DENOMINATOR = 8n  // 12.5% max change
 const MIN_BASE_FEE = 1_000_000_000n // 1 gwei floor
-const GAS_LIMIT = 30_000_000n // 30M gas limit
+export const BLOCK_GAS_LIMIT = 30_000_000n // 30M gas limit
+const GAS_LIMIT = BLOCK_GAS_LIMIT
 
 export interface BaseFeeParams {
   parentBaseFee: bigint

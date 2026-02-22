@@ -6,7 +6,7 @@ import type { ChainBlock, ChainSnapshot, Hex, MempoolTx } from "./blockchain-typ
 import { Transaction } from "ethers"
 import { ChainEventEmitter } from "./chain-events.ts"
 import type { NodeSigner, SignatureVerifier } from "./crypto/signer.ts"
-import { calculateBaseFee, genesisBaseFee } from "./base-fee.ts"
+import { calculateBaseFee, genesisBaseFee, BLOCK_GAS_LIMIT } from "./base-fee.ts"
 import { createLogger } from "./logger.ts"
 
 const log = createLogger("chain-engine")
@@ -211,6 +211,11 @@ export class ChainEngine {
         totalGasUsed += receipt.gasUsed ?? 0n
       }
       this.txHashSet.add(result.txHash as Hex)
+    }
+
+    // Enforce block gas limit
+    if (totalGasUsed > BLOCK_GAS_LIMIT) {
+      throw new Error(`block gas used ${totalGasUsed} exceeds limit ${BLOCK_GAS_LIMIT}`)
     }
 
     // Store cumulative gas used for baseFee calculation

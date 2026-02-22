@@ -106,6 +106,18 @@ export class BftRound {
       return []
     }
 
+    // Verify sender is a known validator
+    if (!this.isKnownValidator(senderId)) {
+      log.warn("propose from unknown validator", { senderId })
+      return []
+    }
+
+    // Verify block.proposer matches senderId
+    if (block.proposer !== senderId) {
+      log.warn("propose block.proposer mismatch", { senderId, blockProposer: block.proposer })
+      return []
+    }
+
     this.state.proposedBlock = block
     this.state.phase = "prepare"
 

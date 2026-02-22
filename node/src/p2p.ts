@@ -785,6 +785,11 @@ export class P2PNode {
   private getPeerSentSet(peerId: string): BoundedSet<string> {
     let set = this.sentToPeer.get(peerId)
     if (!set) {
+      // Evict oldest peer entry if map grows too large
+      if (this.sentToPeer.size >= 200) {
+        const oldest = this.sentToPeer.keys().next().value
+        if (oldest !== undefined) this.sentToPeer.delete(oldest)
+      }
       set = new BoundedSet<string>(5_000)
       this.sentToPeer.set(peerId, set)
     }

@@ -143,26 +143,30 @@ export class BftCoordinator {
       return
     }
 
-    // Verify BFT message signature if verifier is available
-    if (this.cfg.verifier && (msg.type === "prepare" || msg.type === "commit")) {
+    // Verify BFT message signature (mandatory for prepare/commit)
+    if (msg.type === "prepare" || msg.type === "commit") {
       if (!msg.signature) {
         log.warn("BFT message missing signature, dropping", { sender: msg.senderId, type: msg.type })
         return
       }
-      const canonical = bftCanonicalMessage(msg.type, msg.height, msg.blockHash)
-      if (!this.cfg.verifier.verifyNodeSig(canonical, msg.signature, msg.senderId)) {
-        log.warn("BFT message signature invalid, dropping", { sender: msg.senderId, type: msg.type })
-        return
+      if (this.cfg.verifier) {
+        const canonical = bftCanonicalMessage(msg.type, msg.height, msg.blockHash)
+        if (!this.cfg.verifier.verifyNodeSig(canonical, msg.signature, msg.senderId)) {
+          log.warn("BFT message signature invalid, dropping", { sender: msg.senderId, type: msg.type })
+          return
+        }
       }
     }
 
-    // Check for equivocation on prepare/commit votes
+    // Check for equivocation on prepare/commit votes — drop vote if detected
     if (msg.type === "prepare" || msg.type === "commit") {
       const evidence = this.equivocationDetector.recordVote(
         msg.senderId, msg.height, msg.type, msg.blockHash,
       )
       if (evidence) {
         this.cfg.onEquivocation?.(evidence)
+        log.warn("equivocation detected, dropping vote", { sender: msg.senderId, type: msg.type })
+        return
       }
     }
 
