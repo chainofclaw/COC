@@ -40,6 +40,8 @@ export class BftCoordinator {
   private readonly cfg: BftCoordinatorConfig
   private activeRound: BftRound | null = null
   private timeoutTimer: ReturnType<typeof setTimeout> | null = null
+  private commitRetryTimer: ReturnType<typeof setInterval> | null = null
+  private lingerTimer: ReturnType<typeof setInterval> | null = null
   private pendingMessages: BftMessage[] = []
   private deferredBlock: ChainBlock | null = null
   readonly equivocationDetector = new EquivocationDetector()
@@ -52,6 +54,23 @@ export class BftCoordinator {
    * Start a new BFT round for a proposed block.
    */
   async startRound(block: ChainBlock): Promise<void> {
+    // Defer new block if an active round has voting progress (avoid killing in-flight rounds)
+    if (this.activeRound) {
+      const phase = this.activeRound.state.phase
+      const hasProgress = this.activeRound.state.prepareVotes.size > 0
+        || this.activeRound.state.commitVotes.size > 0
+      if ((phase === "prepare" || phase === "commit") && hasProgress) {
+        this.deferredBlock = block
+        log.info("BFT deferring startRound (active round has progress)", {
+          deferredHeight: block.number.toString(),
+          activeHeight: this.activeRound.state.height.toString(),
+          phase,
+          prepareVotes: this.activeRound.state.prepareVotes.size,
+        })
+        return
+      }
+    }
+
     // Clean up any existing round (pendingMessages preserved across rounds)
     this.clearRound()
     this.deferredBlock = null
@@ -77,10 +96,9 @@ export class BftCoordinator {
     // Set timeout
     this.startTimeout()
 
-    // Process buffered messages for this height
-    // Order: prepare first, then commit (commits arriving before prepare quorum would be dropped)
+    // Process buffered messages for this height; prune all stale entries (height <= current)
     const buffered = this.pendingMessages.filter(m => m.height === block.number)
-    this.pendingMessages = this.pendingMessages.filter(m => m.height !== block.number)
+    this.pendingMessages = this.pendingMessages.filter(m => m.height > block.number)
     const prepares = buffered.filter(m => m.type !== "commit")
     const commits = buffered.filter(m => m.type === "commit")
     for (const msg of prepares) {
@@ -98,6 +116,10 @@ export class BftCoordinator {
         commitVotes: this.activeRound.state.commitVotes.size,
         buffered: buffered.length,
       })
+      // Start commit retry if we entered commit phase during buffered message processing
+      if (this.activeRound.state.phase === "commit") {
+        this.startCommitRetry()
+      }
     }
   }
 
@@ -147,9 +169,23 @@ export class BftCoordinator {
     switch (msg.type) {
       case "prepare": {
         const outgoing = this.activeRound.handlePrepare(msg.senderId, msg.blockHash)
+        // handlePrepare may finalize immediately if early commits already reached quorum
+        if (this.activeRound.state.phase === "finalized" && this.activeRound.state.proposedBlock) {
+          log.info("BFT round finalized (early commits)", { height: msg.height.toString() })
+          const block = this.activeRound.state.proposedBlock
+          this.startLingerBroadcast(msg.height, block.hash)
+          this.clearRound()
+          await this.cfg.onFinalized(block)
+          await this.processDeferredBlock()
+          return
+        }
         for (const out of outgoing) {
           this.signMessage(out)
           await this.cfg.broadcastMessage(out)
+        }
+        // Start commit retry when transitioning to commit phase
+        if (this.activeRound?.state.phase === "commit") {
+          this.startCommitRetry()
         }
         break
       }
@@ -158,6 +194,7 @@ export class BftCoordinator {
         if (finalized && this.activeRound.state.proposedBlock) {
           log.info("BFT round finalized", { height: msg.height.toString() })
           const block = this.activeRound.state.proposedBlock
+          this.startLingerBroadcast(msg.height, block.hash)
           this.clearRound()
           await this.cfg.onFinalized(block)
           await this.processDeferredBlock()
@@ -203,12 +240,17 @@ export class BftCoordinator {
       if (block.number <= this.activeRound.state.height) {
         return
       }
-      // Defer if current round is in commit phase (close to finalization)
-      if (this.activeRound.state.phase === "commit") {
+      // Defer if current round is close to finalization (commit phase or prepare with votes)
+      const phase = this.activeRound.state.phase
+      const hasVotes = this.activeRound.state.prepareVotes.size > 1
+        || this.activeRound.state.commitVotes.size > 0
+      if (phase === "commit" || (phase === "prepare" && hasVotes)) {
         this.deferredBlock = block
-        log.info("BFT deferring block (commit phase active)", {
+        log.info("BFT deferring block (active round has progress)", {
           deferredHeight: block.number.toString(),
           activeHeight: this.activeRound.state.height.toString(),
+          phase,
+          prepareVotes: this.activeRound.state.prepareVotes.size,
         })
         return
       }
@@ -259,9 +301,79 @@ export class BftCoordinator {
     }
   }
 
+  /**
+   * Periodically re-broadcast local commit vote so late-joining peers receive it.
+   */
+  private startCommitRetry(): void {
+    if (this.commitRetryTimer) return
+    const RETRY_INTERVAL_MS = 1_000
+
+    this.commitRetryTimer = setInterval(() => {
+      if (!this.activeRound || this.activeRound.state.phase !== "commit") {
+        this.stopCommitRetry()
+        return
+      }
+      const blockHash = this.activeRound.state.proposedBlock?.hash
+      if (!blockHash) return
+      const msg: BftMessage = {
+        type: "commit",
+        height: this.activeRound.state.height,
+        blockHash,
+        senderId: this.cfg.localId,
+        signature: "" as Hex,
+      }
+      this.signMessage(msg)
+      void this.cfg.broadcastMessage(msg)
+    }, RETRY_INTERVAL_MS)
+  }
+
+  private stopCommitRetry(): void {
+    if (this.commitRetryTimer) {
+      clearInterval(this.commitRetryTimer)
+      this.commitRetryTimer = null
+    }
+  }
+
+  /**
+   * After finalization, keep broadcasting our commit vote for a few seconds
+   * so late-joining peers can finalize their rounds too.
+   */
+  private startLingerBroadcast(height: bigint, blockHash: Hex): void {
+    this.stopLinger()
+    const LINGER_INTERVAL_MS = 500
+    const LINGER_COUNT = 6 // 3 seconds of linger broadcasts
+    let remaining = LINGER_COUNT
+
+    this.lingerTimer = setInterval(() => {
+      remaining--
+      if (remaining <= 0) {
+        this.stopLinger()
+        return
+      }
+      const msg: BftMessage = {
+        type: "commit",
+        height,
+        blockHash,
+        senderId: this.cfg.localId,
+        signature: "" as Hex,
+      }
+      this.signMessage(msg)
+      void this.cfg.broadcastMessage(msg)
+    }, LINGER_INTERVAL_MS)
+  }
+
+  private stopLinger(): void {
+    if (this.lingerTimer) {
+      clearInterval(this.lingerTimer)
+      this.lingerTimer = null
+    }
+  }
+
   private clearRound(): void {
     this.activeRound = null
+    this.stopCommitRetry()
     // Keep pendingMessages — they may contain messages for future heights
+    // Note: do NOT stop linger timer here — it intentionally outlives the round
     if (this.timeoutTimer) {
       clearTimeout(this.timeoutTimer)
       this.timeoutTimer = null

@@ -193,6 +193,14 @@ export class ConsensusEngine {
       return
     }
 
+    // Skip proposing while BFT round is active to avoid disrupting in-flight rounds
+    if (this.bft) {
+      const bftState = this.bft.getRoundState()
+      if (bftState.active) {
+        return
+      }
+    }
+
     const t0 = Date.now()
     try {
       const block = await this.chain.proposeNextBlock()
