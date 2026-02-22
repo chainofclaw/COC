@@ -163,6 +163,8 @@ export class BlockIndex implements IBlockIndex {
     const block = deserializeJSON(decoder.decode(data))
     // Convert number back to bigint
     block.number = BigInt(block.number)
+    if (block.baseFee !== undefined) block.baseFee = BigInt(block.baseFee)
+    if (block.gasUsed !== undefined) block.gasUsed = BigInt(block.gasUsed)
     return block
   }
 
@@ -184,6 +186,8 @@ export class BlockIndex implements IBlockIndex {
 
     const block = deserializeJSON(decoder.decode(data))
     block.number = BigInt(block.number)
+    if (block.baseFee !== undefined) block.baseFee = BigInt(block.baseFee)
+    if (block.gasUsed !== undefined) block.gasUsed = BigInt(block.gasUsed)
     return block
   }
 

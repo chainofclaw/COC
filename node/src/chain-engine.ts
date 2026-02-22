@@ -6,6 +6,7 @@ import type { ChainBlock, ChainSnapshot, Hex, MempoolTx } from "./blockchain-typ
 import { Transaction } from "ethers"
 import { ChainEventEmitter } from "./chain-events.ts"
 import type { NodeSigner, SignatureVerifier } from "./crypto/signer.ts"
+import { calculateBaseFee, genesisBaseFee } from "./base-fee.ts"
 import { createLogger } from "./logger.ts"
 
 const log = createLogger("chain-engine")
@@ -18,6 +19,7 @@ export interface ChainEngineConfig {
   finalityDepth: number
   maxTxPerBlock: number
   minGasPriceWei: bigint
+  signatureEnforcement?: "off" | "monitor" | "enforce"
 }
 
 export class ChainEngine {
@@ -154,15 +156,17 @@ export class ChainEngine {
       throw new Error("invalid block proposer")
     }
 
-    // Verify proposer signature if verifier available and signature present
-    if (!locallyProposed && this.signatureVerifier) {
+    // Verify proposer signature based on enforcement mode
+    const sigMode = this.cfg.signatureEnforcement ?? "enforce"
+    if (!locallyProposed && this.signatureVerifier && sigMode !== "off") {
       if (block.signature) {
         const canonical = `block:${block.hash}`
         if (!this.signatureVerifier.verifyNodeSig(canonical, block.signature, block.proposer)) {
           throw new Error("block proposer signature invalid")
         }
+      } else if (sigMode === "enforce") {
+        throw new Error("block missing proposer signature")
       } else {
-        // Phase 1: warn but accept blocks without signatures for backward compatibility
         log.warn("block missing proposer signature", { height: block.number.toString(), proposer: block.proposer })
       }
     }
@@ -190,15 +194,20 @@ export class ChainEngine {
     }
 
     const receipts: TxReceipt[] = []
+    let totalGasUsed = 0n
     for (let i = 0; i < block.txs.length; i++) {
       const raw = block.txs[i]
       const result = await this.evm.executeRawTx(raw, block.number, i, block.hash)
       const receipt = this.evm.getReceipt(result.txHash)
       if (receipt) {
         receipts.push(receipt)
+        totalGasUsed += receipt.gasUsed ?? 0n
       }
       this.txHashSet.add(result.txHash as Hex)
     }
+
+    // Store cumulative gas used for baseFee calculation
+    block.gasUsed = totalGasUsed
 
     this.blocks.push(block)
     this.receiptsByBlock.set(block.number, receipts)
@@ -286,9 +295,16 @@ export class ChainEngine {
   }
 
   private buildBlock(nextHeight: bigint, selected: MempoolTx[]): ChainBlock {
-    const parentHash = this.getTip()?.hash ?? zeroHash()
+    const tip = this.getTip()
+    const parentHash = tip?.hash ?? zeroHash()
     const txs = selected.map((item) => item.rawTx)
     const timestampMs = Date.now()
+
+    // Compute baseFee from parent block
+    const parentBaseFee = tip?.baseFee ?? genesisBaseFee()
+    const parentGasUsed = tip?.gasUsed ?? 0n
+    const baseFee = calculateBaseFee({ parentBaseFee, parentGasUsed })
+
     const hash = hashBlockPayload({
       number: nextHeight,
       parentHash,
@@ -305,6 +321,7 @@ export class ChainEngine {
       timestampMs,
       txs,
       finalized: false,
+      baseFee,
     }
   }
 

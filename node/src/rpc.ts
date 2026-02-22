@@ -1419,16 +1419,15 @@ async function computeCurrentBaseFee(chain: IChainEngine): Promise<bigint> {
 async function computeBaseFeeForBlock(blockNum: bigint, chain: IChainEngine): Promise<bigint> {
   if (blockNum <= 1n) return genesisBaseFee()
 
-  const parentNum = blockNum - 1n
-  const receipts = await Promise.resolve(chain.getReceiptsByBlock(parentNum))
-  let parentGasUsed = 0n
-  for (const r of receipts) {
-    parentGasUsed += r.gasUsed ?? 0n
-  }
+  // Read baseFee from block if available (populated by buildBlock)
+  const block = await Promise.resolve(chain.getBlockByNumber(blockNum))
+  if (block?.baseFee !== undefined) return block.baseFee
 
-  // For simplicity, use recursive formula from genesis base fee
-  // In production, baseFee would be stored per block
-  const parentBaseFee = genesisBaseFee()
+  // Fallback: compute from parent for blocks without stored baseFee
+  const parentNum = blockNum - 1n
+  const parentBlock = await Promise.resolve(chain.getBlockByNumber(parentNum))
+  const parentBaseFee = parentBlock?.baseFee ?? genesisBaseFee()
+  const parentGasUsed = parentBlock?.gasUsed ?? 0n
   return calculateBaseFee({ parentBaseFee, parentGasUsed })
 }
 

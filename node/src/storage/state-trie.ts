@@ -38,6 +38,10 @@ export interface IStateTrie {
   setStateRoot(root: string): Promise<void>
   hasStateRoot(root: string): Promise<boolean>
   clearStorage(address: string): Promise<void>
+  /** Iterate all accounts in the trie */
+  iterateAccounts(): AsyncIterable<{ address: string; state: AccountState }>
+  /** Iterate all storage slots for an address */
+  iterateStorage(address: string): AsyncIterable<{ slot: string; value: string }>
 }
 
 /**
@@ -336,6 +340,37 @@ export class PersistentStateTrie implements IStateTrie {
     }
   }
 
+  async *iterateAccounts(): AsyncIterable<{ address: string; state: AccountState }> {
+    const stream = this.trie.createReadStream()
+    for await (const item of stream) {
+      const address = bytesToHex(item.key as Uint8Array)
+      const json = JSON.parse(new TextDecoder().decode(item.value as Uint8Array))
+      yield {
+        address,
+        state: {
+          nonce: BigInt(json.nonce),
+          balance: BigInt(json.balance),
+          storageRoot: json.storageRoot,
+          codeHash: json.codeHash,
+        },
+      }
+    }
+  }
+
+  async *iterateStorage(address: string): AsyncIterable<{ slot: string; value: string }> {
+    const account = await this.get(address)
+    if (!account || account.storageRoot === "0x" + "0".repeat(64)) return
+
+    const storageTrie = await this.getStorageTrie(address, account.storageRoot)
+    const stream = storageTrie.createReadStream()
+    for await (const item of stream) {
+      yield {
+        slot: bytesToHex(item.key as Uint8Array),
+        value: bytesToHex(item.value as Uint8Array),
+      }
+    }
+  }
+
   async close(): Promise<void> {
     this.storageTries.clear()
     this.storageTrieAccess.length = 0
@@ -477,6 +512,20 @@ export class InMemoryStateTrie implements IStateTrie {
 
   async clearStorage(address: string): Promise<void> {
     this.storage.delete(address)
+  }
+
+  async *iterateAccounts(): AsyncIterable<{ address: string; state: AccountState }> {
+    for (const [address, state] of this.accounts) {
+      yield { address, state: { ...state } }
+    }
+  }
+
+  async *iterateStorage(address: string): AsyncIterable<{ slot: string; value: string }> {
+    const accountStorage = this.storage.get(address)
+    if (!accountStorage) return
+    for (const [slot, value] of accountStorage) {
+      yield { slot, value }
+    }
   }
 
   async close(): Promise<void> {

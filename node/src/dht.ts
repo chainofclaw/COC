@@ -79,17 +79,21 @@ export function sortByDistance(target: string, peers: DhtPeer[]): DhtPeer[] {
 export class RoutingTable {
   readonly localId: string
   private readonly buckets: KBucket[]
+  private readonly pingPeer: ((peer: DhtPeer) => Promise<boolean>) | null
 
-  constructor(localId: string) {
+  constructor(localId: string, opts?: { pingPeer?: (peer: DhtPeer) => Promise<boolean> }) {
     this.localId = localId
     this.buckets = Array.from({ length: ID_BITS }, () => ({ peers: [] }))
+    this.pingPeer = opts?.pingPeer ?? null
   }
 
   /**
    * Add or update a peer in the routing table.
+   * When the bucket is full and a pingPeer callback is configured,
+   * pings the oldest peer and evicts it if unreachable.
    * Returns true if the peer was added/updated.
    */
-  addPeer(peer: DhtPeer): boolean {
+  async addPeer(peer: DhtPeer): Promise<boolean> {
     if (peer.id === this.localId) return false
 
     const idx = bucketIndex(this.localId, peer.id)
@@ -110,8 +114,22 @@ export class RoutingTable {
       return true
     }
 
-    // Bucket full — in production, we'd ping the head (oldest) peer
-    // and evict if it doesn't respond. For now, just reject.
+    // Bucket full — ping the oldest peer if callback is available
+    if (this.pingPeer) {
+      const oldest = bucket.peers[0]
+      const alive = await this.pingPeer(oldest)
+      if (!alive) {
+        // Evict unreachable oldest peer, add new peer at tail
+        bucket.peers.shift()
+        bucket.peers.push({ ...peer, lastSeenMs: Date.now() })
+        log.debug("bucket full, evicted unreachable peer", { idx, evicted: oldest.id, added: peer.id })
+        return true
+      }
+      // Oldest peer responded — move it to tail, reject new peer
+      bucket.peers.shift()
+      bucket.peers.push({ ...oldest, lastSeenMs: Date.now() })
+    }
+
     log.debug("bucket full, dropping peer", { idx, peerId: peer.id })
     return false
   }
@@ -183,10 +201,10 @@ export class RoutingTable {
    * Import peers from a previously exported list.
    * Returns number of peers successfully added.
    */
-  importPeers(peers: Array<{ id: string; address: string; lastSeenMs?: number }>): number {
+  async importPeers(peers: Array<{ id: string; address: string; lastSeenMs?: number }>): Promise<number> {
     let added = 0
     for (const p of peers) {
-      const ok = this.addPeer({
+      const ok = await this.addPeer({
         id: p.id,
         address: p.address,
         lastSeenMs: p.lastSeenMs ?? Date.now(),

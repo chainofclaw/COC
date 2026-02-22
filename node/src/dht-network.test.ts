@@ -126,7 +126,7 @@ describe("DhtNetwork", () => {
     network.stop()
   })
 
-  it("should save and load peers from disk", () => {
+  it("should save and load peers from disk", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "dht-test-"))
     const storePath = path.join(tmpDir, "dht-peers.json")
 
@@ -160,7 +160,7 @@ describe("DhtNetwork", () => {
       peerStorePath: storePath,
     })
 
-    const loaded = net2.loadPeers()
+    const loaded = await net2.loadPeers()
     assert.equal(loaded, 2)
     assert.equal(net2.getStats().totalPeers, 2)
 
@@ -168,7 +168,7 @@ describe("DhtNetwork", () => {
     fs.rmSync(tmpDir, { recursive: true })
   })
 
-  it("should handle missing peer store gracefully", () => {
+  it("should handle missing peer store gracefully", async () => {
     const net = new DhtNetwork({
       localId: "0xaaa",
       localAddress: "127.0.0.1:19780",
@@ -178,11 +178,11 @@ describe("DhtNetwork", () => {
       peerStorePath: "/tmp/nonexistent-dht-path-12345/peers.json",
     })
 
-    const loaded = net.loadPeers()
+    const loaded = await net.loadPeers()
     assert.equal(loaded, 0)
   })
 
-  it("should return 0 when no peerStorePath configured", () => {
+  it("should return 0 when no peerStorePath configured", async () => {
     const net = new DhtNetwork({
       localId: "0xaaa",
       localAddress: "127.0.0.1:19780",
@@ -192,7 +192,7 @@ describe("DhtNetwork", () => {
     })
     net.start()
     assert.equal(net.savePeers(), 0)
-    assert.equal(net.loadPeers(), 0)
+    assert.equal(await net.loadPeers(), 0)
     net.stop()
   })
 

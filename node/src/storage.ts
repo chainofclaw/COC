@@ -29,6 +29,8 @@ export class ChainStorage {
       blocks: snapshot.blocks.map((b) => ({
         ...b,
         number: b.number.toString(),
+        baseFee: b.baseFee !== undefined ? b.baseFee.toString() : undefined,
+        gasUsed: b.gasUsed !== undefined ? b.gasUsed.toString() : undefined,
       })),
       updatedAtMs: snapshot.updatedAtMs,
     }, null, 2)
@@ -45,5 +47,7 @@ function parseBlock(raw: Record<string, unknown>): ChainBlock {
     timestampMs: Number(raw.timestampMs ?? 0),
     txs: Array.isArray(raw.txs) ? raw.txs.map((x) => String(x) as `0x${string}`) : [],
     finalized: Boolean(raw.finalized),
+    baseFee: raw.baseFee !== undefined ? BigInt(String(raw.baseFee)) : undefined,
+    gasUsed: raw.gasUsed !== undefined ? BigInt(String(raw.gasUsed)) : undefined,
   }
 }

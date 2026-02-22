@@ -11,7 +11,7 @@
 import fs from "node:fs"
 import path from "node:path"
 import net from "node:net"
-import { RoutingTable, ALPHA, K } from "./dht.ts"
+import { RoutingTable, ALPHA, K, sortByDistance } from "./dht.ts"
 import type { DhtPeer } from "./dht.ts"
 import { WireClient } from "./wire-client.ts"
 import type { WireClientConfig } from "./wire-client.ts"
@@ -60,7 +60,9 @@ export class DhtNetwork {
 
   constructor(cfg: DhtNetworkConfig) {
     this.cfg = cfg
-    this.routingTable = new RoutingTable(cfg.localId)
+    this.routingTable = new RoutingTable(cfg.localId, {
+      pingPeer: (peer) => this.verifyPeer(peer),
+    })
   }
 
   start(): void {
@@ -68,7 +70,7 @@ export class DhtNetwork {
 
     // Add bootstrap peers to routing table
     for (const peer of this.cfg.bootstrapPeers) {
-      this.routingTable.addPeer({
+      void this.routingTable.addPeer({
         id: peer.id,
         address: `${peer.address}:${peer.port}`,
         lastSeenMs: Date.now(),
@@ -124,10 +126,9 @@ export class DhtNetwork {
     while (improved && !this.stopped) {
       improved = false
 
-      // Select ALPHA unqueried peers closest to target
-      const candidates = [...found.values()]
-        .filter((p) => !queried.has(p.id))
-        .slice(0, ALPHA)
+      // Select ALPHA unqueried peers closest to target (sorted by XOR distance)
+      const unqueried = [...found.values()].filter((p) => !queried.has(p.id))
+      const candidates = sortByDistance(targetId, unqueried).slice(0, ALPHA)
 
       if (candidates.length === 0) break
 
@@ -153,7 +154,7 @@ export class DhtNetwork {
             )
             const reachable = hasConnectedClient || await this.verifyPeer(newPeer)
             if (reachable) {
-              this.routingTable.addPeer(newPeer)
+              await this.routingTable.addPeer(newPeer)
               this.cfg.onPeerDiscovered(newPeer)
             }
             improved = true
@@ -383,7 +384,7 @@ export class DhtNetwork {
    * Load routing table peers from disk.
    * Returns number of peers loaded.
    */
-  loadPeers(): number {
+  async loadPeers(): Promise<number> {
     if (!this.cfg.peerStorePath) return 0
 
     try {
@@ -398,7 +399,7 @@ export class DhtNetwork {
         if (!p.lastSeenMs) return true // unknown age — keep
         return (now - p.lastSeenMs) < STALE_PEER_THRESHOLD_MS
       })
-      const added = this.routingTable.importPeers(fresh)
+      const added = await this.routingTable.importPeers(fresh)
       log.info("DHT peers loaded", { loaded: added, total: peers.length, fresh: fresh.length, path: this.cfg.peerStorePath })
       return added
     } catch (err) {

@@ -32,10 +32,11 @@ export interface StateSnapshot {
 
 /**
  * Export the current EVM state as a serializable snapshot.
+ * When addresses is omitted, iterates the full trie to discover all accounts.
  */
 export async function exportStateSnapshot(
   stateTrie: IStateTrie,
-  addresses: string[],
+  addresses: string[] | undefined,
   blockHeight: bigint,
   blockHash: Hex,
 ): Promise<StateSnapshot> {
@@ -46,31 +47,18 @@ export async function exportStateSnapshot(
 
   const accounts: StateSnapshotAccount[] = []
 
-  for (const address of addresses) {
-    const account = await stateTrie.get(address)
-    if (!account) continue
-
-    // Collect storage slots (limited to known slots)
-    const storage: Array<{ slot: string; value: string }> = []
-
-    // Export contract code if present
-    let code: string | undefined
-    if (account.codeHash && account.codeHash !== "0x" + "0".repeat(64)) {
-      const codeBytes = await stateTrie.getCode(account.codeHash)
-      if (codeBytes) {
-        code = bytesToHexStr(codeBytes)
-      }
+  if (addresses) {
+    // Legacy path: export only specified addresses
+    for (const address of addresses) {
+      const acc = await exportAccount(stateTrie, address)
+      if (acc) accounts.push(acc)
     }
-
-    accounts.push({
-      address,
-      nonce: account.nonce.toString(),
-      balance: account.balance.toString(),
-      storageRoot: account.storageRoot,
-      codeHash: account.codeHash,
-      storage,
-      code,
-    })
+  } else {
+    // Full trie traversal
+    for await (const { address } of stateTrie.iterateAccounts()) {
+      const acc = await exportAccount(stateTrie, address)
+      if (acc) accounts.push(acc)
+    }
   }
 
   return {
@@ -80,6 +68,39 @@ export async function exportStateSnapshot(
     blockHash,
     accounts,
     createdAtMs: Date.now(),
+  }
+}
+
+async function exportAccount(
+  stateTrie: IStateTrie,
+  address: string,
+): Promise<StateSnapshotAccount | null> {
+  const account = await stateTrie.get(address)
+  if (!account) return null
+
+  // Collect storage slots via trie iteration
+  const storage: Array<{ slot: string; value: string }> = []
+  for await (const entry of stateTrie.iterateStorage(address)) {
+    storage.push(entry)
+  }
+
+  // Export contract code if present
+  let code: string | undefined
+  if (account.codeHash && account.codeHash !== "0x" + "0".repeat(64)) {
+    const codeBytes = await stateTrie.getCode(account.codeHash)
+    if (codeBytes) {
+      code = bytesToHexStr(codeBytes)
+    }
+  }
+
+  return {
+    address,
+    nonce: account.nonce.toString(),
+    balance: account.balance.toString(),
+    storageRoot: account.storageRoot,
+    codeHash: account.codeHash,
+    storage,
+    code,
   }
 }
 

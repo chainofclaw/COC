@@ -13,6 +13,7 @@ import { hashBlockPayload, validateBlockLink, zeroHash } from "./hash.ts"
 import type { ChainBlock, Hex, MempoolTx } from "./blockchain-types.ts"
 import { Transaction } from "ethers"
 import type { NodeSigner, SignatureVerifier } from "./crypto/signer.ts"
+import { calculateBaseFee, genesisBaseFee } from "./base-fee.ts"
 import { LevelDatabase } from "./storage/db.ts"
 import { BlockIndex } from "./storage/block-index.ts"
 import type { TxWithReceipt, IndexedLog, LogFilter } from "./storage/block-index.ts"
@@ -38,6 +39,7 @@ export interface PersistentChainEngineConfig {
   stateTrie?: IStateTrie
   enableGovernance?: boolean
   validatorStakes?: Array<{ id: string; address: string; stake: bigint }>
+  signatureEnforcement?: "off" | "monitor" | "enforce"
 }
 
 export class PersistentChainEngine {
@@ -262,13 +264,27 @@ export class PersistentChainEngine {
       throw new Error("invalid block proposer")
     }
 
-    // Verify proposer signature if verifier available
-    if (!locallyProposed && this.signatureVerifier) {
+    // Timestamp validation (skip for locally proposed blocks — we set them ourselves)
+    if (!locallyProposed) {
+      if (prev && block.timestampMs <= prev.timestampMs) {
+        throw new Error("block timestamp must be after parent timestamp")
+      }
+      const MAX_FUTURE_MS = 60_000
+      if (block.timestampMs > Date.now() + MAX_FUTURE_MS) {
+        throw new Error("block timestamp too far in the future")
+      }
+    }
+
+    // Verify proposer signature based on enforcement mode
+    const sigMode = this.cfg.signatureEnforcement ?? "enforce"
+    if (!locallyProposed && this.signatureVerifier && sigMode !== "off") {
       if (block.signature) {
         const canonical = `block:${block.hash}`
         if (!this.signatureVerifier.verifyNodeSig(canonical, block.signature, block.proposer)) {
           throw new Error("block proposer signature invalid")
         }
+      } else if (sigMode === "enforce") {
+        throw new Error("block missing proposer signature")
       } else {
         log.warn("block missing proposer signature", { height: block.number.toString(), proposer: block.proposer })
       }
@@ -287,6 +303,7 @@ export class PersistentChainEngine {
 
     // Execute transactions and collect receipts + logs
     const blockLogs: IndexedLog[] = []
+    let totalGasUsed = 0n
 
     for (let i = 0; i < block.txs.length; i++) {
       const raw = block.txs[i]
@@ -345,11 +362,16 @@ export class PersistentChainEngine {
           )
         }
 
+        totalGasUsed += BigInt(receipt.gasUsed.toString())
+
         // Mark transaction as confirmed
         const nonce = `tx:${result.txHash}`
         await this.txNonceStore.markUsed(nonce)
       }
     }
+
+    // Store cumulative gas used for baseFee calculation
+    block.gasUsed = totalGasUsed
 
     // Commit state trie and attach stateRoot to block header
     if (this.stateTrie) {
@@ -435,6 +457,12 @@ export class PersistentChainEngine {
     const parentHash = tip?.hash ?? zeroHash()
     const txs = selected.map((item) => item.rawTx)
     const timestampMs = Date.now()
+
+    // Compute baseFee from parent block
+    const parentBaseFee = tip?.baseFee ?? genesisBaseFee()
+    const parentGasUsed = tip?.gasUsed ?? 0n
+    const baseFee = calculateBaseFee({ parentBaseFee, parentGasUsed })
+
     const hash = hashBlockPayload({
       number: nextHeight,
       parentHash,
@@ -451,6 +479,7 @@ export class PersistentChainEngine {
       timestampMs,
       txs,
       finalized: false,
+      baseFee,
     }
   }
 

@@ -6,6 +6,8 @@ import { test } from "node:test"
 import assert from "node:assert"
 import { PersistentChainEngine } from "./chain-engine-persistent.ts"
 import { EvmChain } from "./evm.ts"
+import { hashBlockPayload, zeroHash } from "./hash.ts"
+import type { ChainBlock, Hex } from "./blockchain-types.ts"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -306,6 +308,99 @@ test("PersistentChainEngine: get transaction by hash", async () => {
     assert.ok(tx.receipt)
     assert.strictEqual(tx.receipt.blockNumber, 1n)
     assert.strictEqual(tx.receipt.status, 1n)
+
+    await engine.close()
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true })
+  }
+})
+
+test("PersistentChainEngine: rejects block with timestamp before parent", async () => {
+  const tmpDir = mkdtempSync(join(tmpdir(), "coc-engine-test-"))
+
+  try {
+    const evm = await EvmChain.create(2077)
+    const engine = new PersistentChainEngine(
+      {
+        dataDir: tmpDir,
+        nodeId: "node1",
+        chainId: 2077,
+        validators: [],
+        finalityDepth: 3,
+        maxTxPerBlock: 100,
+        minGasPriceWei: 1n,
+      },
+      evm,
+    )
+    await engine.init()
+
+    // Propose first block (locally proposed, bypasses timestamp check)
+    const block1 = await engine.proposeNextBlock()
+    assert.ok(block1)
+
+    // Build a block with timestamp <= parent
+    const parentTimestamp = block1.timestampMs
+    const backwardTimestamp = parentTimestamp - 1000
+    const blockPayload = {
+      number: 2n,
+      parentHash: block1.hash,
+      proposer: "node1",
+      timestampMs: backwardTimestamp,
+      txs: [] as string[],
+    }
+    const hash = hashBlockPayload(blockPayload)
+    const badBlock: ChainBlock = { ...blockPayload, hash, finalized: false }
+
+    await assert.rejects(
+      () => engine.applyBlock(badBlock, false),
+      /block timestamp must be after parent timestamp/,
+    )
+
+    await engine.close()
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true })
+  }
+})
+
+test("PersistentChainEngine: rejects block with future timestamp", async () => {
+  const tmpDir = mkdtempSync(join(tmpdir(), "coc-engine-test-"))
+
+  try {
+    const evm = await EvmChain.create(2077)
+    const engine = new PersistentChainEngine(
+      {
+        dataDir: tmpDir,
+        nodeId: "node1",
+        chainId: 2077,
+        validators: [],
+        finalityDepth: 3,
+        maxTxPerBlock: 100,
+        minGasPriceWei: 1n,
+      },
+      evm,
+    )
+    await engine.init()
+
+    // Propose first block
+    const block1 = await engine.proposeNextBlock()
+    assert.ok(block1)
+
+    // Build a block with timestamp too far in the future
+    const futureTimestamp = Date.now() + 120_000 // 2 minutes in future
+    const blockPayload = {
+      number: 2n,
+      parentHash: block1.hash,
+      proposer: "node1",
+      timestampMs: futureTimestamp,
+      txs: [] as string[],
+    }
+    const hash = hashBlockPayload(blockPayload)
+    const badBlock: ChainBlock = { ...blockPayload, hash, finalized: false }
+
+    await assert.rejects(
+      () => engine.applyBlock(badBlock, false),
+      /block timestamp too far in the future/,
+    )
 
     await engine.close()
   } finally {

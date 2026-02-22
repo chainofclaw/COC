@@ -372,7 +372,7 @@
 
 算法：
 - 每个节点拥有持久化私钥（`nodePrivateKey`，来自 `COC_NODE_KEY` 环境变量 / `dataDir/node-key`）。
-- Wire 握手时，发送方签名 `handshake:<nodeId>:<nonce>`（使用 `NodeSigner.sign()`）。
+- Wire 握手时，发送方签名 `wire:handshake:<nodeId>:<nonce>`（使用 `NodeSigner.sign()`）。
 - 接收方通过 `SignatureVerifier.recoverAddress()` 验证签名。
 - 恢复的地址必须与声称的 `nodeId` 匹配 — 不匹配则断开连接并记录 `recordInvalidData()`。
 - Nonce 防止重放攻击（每次握手唯一）。

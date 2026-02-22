@@ -154,8 +154,10 @@ export class BftRound {
       if (this.isValidator()) {
         this.state.commitVotes.set(this.config.localId, blockHash)
 
-        // Check if early-arriving commits already give us commit quorum
-        const commitVoters = [...this.state.commitVotes.keys()]
+        // Check if early-arriving commits already give us commit quorum (filter by blockHash)
+        const commitVoters = [...this.state.commitVotes.entries()]
+          .filter(([, hash]) => !this.state.proposedBlock || hash === this.state.proposedBlock.hash)
+          .map(([id]) => id)
         if (hasQuorum(commitVoters, this.config.validators)) {
           this.state.phase = "finalized"
           return []
@@ -187,12 +189,21 @@ export class BftRound {
       return false
     }
 
+    // Only accept commits for the proposed block
+    if (this.state.proposedBlock && blockHash !== this.state.proposedBlock.hash) {
+      log.warn("commit vote for wrong block", { senderId, expected: this.state.proposedBlock.hash, got: blockHash })
+      return false
+    }
+
     this.state.commitVotes.set(senderId, blockHash)
 
     // Only check quorum if already in commit phase
     if (this.state.phase === "commit") {
-      const voters = [...this.state.commitVotes.keys()]
-      if (hasQuorum(voters, this.config.validators)) {
+      // Filter commit votes to only count those matching the proposed block
+      const matchingVoters = [...this.state.commitVotes.entries()]
+        .filter(([, hash]) => !this.state.proposedBlock || hash === this.state.proposedBlock.hash)
+        .map(([id]) => id)
+      if (hasQuorum(matchingVoters, this.config.validators)) {
         this.state.phase = "finalized"
         return true
       }

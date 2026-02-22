@@ -23,6 +23,8 @@ export interface ChainBlock {
   bftFinalized?: boolean
   signature?: Hex
   stateRoot?: Hex
+  baseFee?: bigint
+  gasUsed?: bigint
 }
 
 export interface ChainSnapshot {

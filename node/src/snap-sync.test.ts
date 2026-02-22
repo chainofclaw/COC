@@ -48,6 +48,19 @@ function createMockStateTrie(): IStateTrie & { accounts: Map<string, AccountStat
     revert: async () => {},
     hasStateRoot: async () => true,
     setStateRoot: async (newRoot: string) => { root = newRoot },
+    clearStorage: async (address: string) => { storageSlots.delete(address) },
+    async *iterateAccounts() {
+      for (const [address, state] of accounts) {
+        yield { address, state: { ...state } }
+      }
+    },
+    async *iterateStorage(address: string) {
+      const slots = storageSlots.get(address)
+      if (!slots) return
+      for (const [slot, value] of slots) {
+        yield { slot, value }
+      }
+    },
   }
 }
 

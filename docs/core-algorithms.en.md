@@ -372,7 +372,7 @@ Code:
 
 Algorithm:
 - Each node has a persistent private key (`nodePrivateKey` from `COC_NODE_KEY` env / `dataDir/node-key`).
-- On wire handshake, sender signs `handshake:<nodeId>:<nonce>` using `NodeSigner.sign()`.
+- On wire handshake, sender signs `wire:handshake:<nodeId>:<nonce>` using `NodeSigner.sign()`.
 - Receiver verifies signature via `SignatureVerifier.recoverAddress()`.
 - Recovered address must match the claimed `nodeId` — mismatch → disconnect + `recordInvalidData()`.
 - Nonce prevents replay attacks (unique per handshake).

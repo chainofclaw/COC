@@ -93,32 +93,32 @@ describe("RoutingTable", () => {
     assert.deepEqual(rt.allPeers(), [])
   })
 
-  it("adds a peer", () => {
+  it("adds a peer", async () => {
     const rt = new RoutingTable("0x01")
-    const added = rt.addPeer(makePeer("0x02"))
+    const added = await rt.addPeer(makePeer("0x02"))
     assert.equal(added, true)
     assert.equal(rt.size(), 1)
   })
 
-  it("rejects self as peer", () => {
+  it("rejects self as peer", async () => {
     const rt = new RoutingTable("0x01")
-    const added = rt.addPeer(makePeer("0x01"))
+    const added = await rt.addPeer(makePeer("0x01"))
     assert.equal(added, false)
     assert.equal(rt.size(), 0)
   })
 
-  it("updates existing peer (move to tail)", () => {
+  it("updates existing peer (move to tail)", async () => {
     const rt = new RoutingTable("0x01")
-    rt.addPeer(makePeer("0x02"))
-    rt.addPeer(makePeer("0x03"))
+    await rt.addPeer(makePeer("0x02"))
+    await rt.addPeer(makePeer("0x03"))
     // Re-add 0x02
-    rt.addPeer(makePeer("0x02"))
+    await rt.addPeer(makePeer("0x02"))
     assert.equal(rt.size(), 2)
   })
 
-  it("removes a peer", () => {
+  it("removes a peer", async () => {
     const rt = new RoutingTable("0x01")
-    rt.addPeer(makePeer("0x02"))
+    await rt.addPeer(makePeer("0x02"))
     assert.equal(rt.removePeer("0x02"), true)
     assert.equal(rt.size(), 0)
   })
@@ -128,11 +128,11 @@ describe("RoutingTable", () => {
     assert.equal(rt.removePeer("0x99"), false)
   })
 
-  it("findClosest returns peers sorted by distance", () => {
+  it("findClosest returns peers sorted by distance", async () => {
     const rt = new RoutingTable("0x00")
-    rt.addPeer(makePeer("0xff"))
-    rt.addPeer(makePeer("0x01"))
-    rt.addPeer(makePeer("0x10"))
+    await rt.addPeer(makePeer("0xff"))
+    await rt.addPeer(makePeer("0x01"))
+    await rt.addPeer(makePeer("0x10"))
 
     const closest = rt.findClosest("0x00", 2)
     assert.equal(closest.length, 2)
@@ -140,9 +140,9 @@ describe("RoutingTable", () => {
     assert.equal(closest[1].id, "0x10")
   })
 
-  it("getPeer retrieves stored peer", () => {
+  it("getPeer retrieves stored peer", async () => {
     const rt = new RoutingTable("0x01")
-    rt.addPeer(makePeer("0x02", "192.168.1.1:9000"))
+    await rt.addPeer(makePeer("0x02", "192.168.1.1:9000"))
     const peer = rt.getPeer("0x02")
     assert.ok(peer)
     assert.equal(peer.address, "192.168.1.1:9000")
@@ -153,7 +153,7 @@ describe("RoutingTable", () => {
     assert.equal(rt.getPeer("0x99"), null)
   })
 
-  it("respects K bucket limit", () => {
+  it("respects K bucket limit", async () => {
     const rt = new RoutingTable("0x" + "00".repeat(32))
 
     // Add K+5 peers that all fall into the same bucket
@@ -162,17 +162,61 @@ describe("RoutingTable", () => {
     for (let i = 1; i <= K + 5; i++) {
       // All these peers have distance in the same high-bit range
       const id = "0x80" + i.toString(16).padStart(62, "0")
-      if (rt.addPeer(makePeer(id))) added++
+      if (await rt.addPeer(makePeer(id))) added++
     }
 
     assert.equal(added, K) // only K accepted
   })
 
-  it("stats reports correct values", () => {
+  it("evicts unreachable oldest peer via ping-evict", async () => {
+    const rt = new RoutingTable("0x" + "00".repeat(32), {
+      pingPeer: async () => false, // oldest peer always unreachable
+    })
+
+    // Fill a bucket to K
+    for (let i = 1; i <= K; i++) {
+      const id = "0x80" + i.toString(16).padStart(62, "0")
+      await rt.addPeer(makePeer(id))
+    }
+    assert.equal(rt.size(), K)
+
+    // Adding one more should evict the oldest (ping returns false)
+    const newId = "0x80" + (K + 1).toString(16).padStart(62, "0")
+    const added = await rt.addPeer(makePeer(newId))
+    assert.equal(added, true)
+    assert.equal(rt.size(), K) // still K, oldest was evicted
+
+    // The new peer should be in the table
+    assert.ok(rt.getPeer(newId))
+    // The oldest peer should be evicted
+    const oldestId = "0x80" + "1".padStart(62, "0")
+    assert.equal(rt.getPeer(oldestId), null)
+  })
+
+  it("keeps reachable oldest peer and rejects new peer via ping-evict", async () => {
+    const rt = new RoutingTable("0x" + "00".repeat(32), {
+      pingPeer: async () => true, // oldest peer always reachable
+    })
+
+    // Fill a bucket to K
+    for (let i = 1; i <= K; i++) {
+      const id = "0x80" + i.toString(16).padStart(62, "0")
+      await rt.addPeer(makePeer(id))
+    }
+
+    // Adding one more should fail (oldest is reachable)
+    const newId = "0x80" + (K + 1).toString(16).padStart(62, "0")
+    const added = await rt.addPeer(makePeer(newId))
+    assert.equal(added, false)
+    assert.equal(rt.size(), K)
+    assert.equal(rt.getPeer(newId), null)
+  })
+
+  it("stats reports correct values", async () => {
     const rt = new RoutingTable("0x01")
-    rt.addPeer(makePeer("0x02"))
-    rt.addPeer(makePeer("0x03"))
-    rt.addPeer(makePeer("0xff"))
+    await rt.addPeer(makePeer("0x02"))
+    await rt.addPeer(makePeer("0x03"))
+    await rt.addPeer(makePeer("0xff"))
 
     const stats = rt.stats()
     assert.equal(stats.totalPeers, 3)
@@ -180,7 +224,7 @@ describe("RoutingTable", () => {
     assert.ok(stats.maxBucketSize >= 1)
   })
 
-  it("handles many peers across different buckets", () => {
+  it("handles many peers across different buckets", async () => {
     const rt = new RoutingTable("0x" + "00".repeat(32))
 
     // Add peers with different distance ranges
@@ -193,7 +237,7 @@ describe("RoutingTable", () => {
     ]
 
     for (const id of ids) {
-      rt.addPeer(makePeer(id))
+      await rt.addPeer(makePeer(id))
     }
 
     assert.equal(rt.size(), 5)

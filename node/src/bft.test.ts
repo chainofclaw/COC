@@ -283,6 +283,74 @@ describe("BftRound", () => {
     assert.equal(finalized, true)
     assert.equal(round.state.phase, "finalized")
   })
+
+  it("rejects commit vote for wrong block hash", () => {
+    const round = new BftRound(1n, {
+      validators,
+      localId: "v1",
+      prepareTimeoutMs: 5000,
+      commitTimeoutMs: 5000,
+    })
+    const block = makeBlock(1n)
+    round.handlePropose(block, "v1")
+    round.handlePrepare("v2", block.hash)
+    round.handlePrepare("v3", block.hash) // -> commit
+
+    // v2 commits with wrong hash — should be rejected
+    const wrongHash = ("0x" + "ff".repeat(32)) as Hex
+    const f = round.handleCommit("v2", wrongHash)
+    assert.equal(f, false)
+    // Only v1 auto-commit should be recorded
+    assert.equal(round.state.commitVotes.size, 1)
+  })
+
+  it("does not finalize with mixed blockHash commits", () => {
+    const round = new BftRound(1n, {
+      validators,
+      localId: "v1",
+      prepareTimeoutMs: 5000,
+      commitTimeoutMs: 5000,
+    })
+    const block = makeBlock(1n)
+    round.handlePropose(block, "v1")
+    round.handlePrepare("v2", block.hash)
+    round.handlePrepare("v3", block.hash) // -> commit, v1 auto-commits
+
+    // v2 commits correct hash
+    round.handleCommit("v2", block.hash)
+
+    // v3 commits wrong hash — rejected, should not reach quorum
+    const wrongHash = ("0x" + "cc".repeat(32)) as Hex
+    const f = round.handleCommit("v3", wrongHash)
+    assert.equal(f, false)
+    // v1 + v2 = 200 < 201 threshold, so not finalized
+    assert.equal(round.state.phase, "commit")
+  })
+
+  it("early-arriving commits with wrong hash do not count toward quorum", () => {
+    const round = new BftRound(1n, {
+      validators,
+      localId: "v1",
+      prepareTimeoutMs: 5000,
+      commitTimeoutMs: 5000,
+    })
+    const block = makeBlock(1n)
+    const wrongHash = ("0x" + "dd".repeat(32)) as Hex
+
+    round.handlePropose(block, "v1") // -> prepare
+
+    // Early commits arrive during prepare phase — wrong hash, should be rejected
+    round.handleCommit("v2", wrongHash)
+    round.handleCommit("v3", wrongHash)
+    assert.equal(round.state.commitVotes.size, 0)
+
+    // Now prepare quorum is reached
+    round.handlePrepare("v2", block.hash)
+    round.handlePrepare("v3", block.hash) // -> commit + v1 auto-commits
+
+    // Only v1's correct commit should be counted, not the early wrong ones
+    assert.equal(round.state.phase, "commit")
+  })
 })
 
 describe("EquivocationDetector", () => {

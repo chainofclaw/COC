@@ -392,6 +392,20 @@ export class ConsensusEngine {
           const stateSnap = await this.snapSync.fetchStateSnapshot(peer.url)
           if (!stateSnap) continue
 
+          // Validate state snapshot matches the chain tip we're syncing to
+          if (
+            stateSnap.blockHeight !== tip.number.toString() ||
+            stateSnap.blockHash !== tip.hash
+          ) {
+            log.warn("snap sync state mismatch, skipping peer", {
+              expectedHeight: tip.number.toString(),
+              snapshotHeight: stateSnap.blockHeight,
+              expectedHash: tip.hash,
+              snapshotHash: stateSnap.blockHash,
+            })
+            continue
+          }
+
           await this.snapSync.importStateSnapshot(stateSnap)
           await this.snapSync.setStateRoot(stateSnap.stateRoot)
           this.snapSyncs++

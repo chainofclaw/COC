@@ -88,6 +88,8 @@ export interface NodeConfig {
   rpcAuthToken?: string
   // Admin RPC methods enabled
   enableAdminRpc: boolean
+  // Block signature enforcement: "off" = ignore, "monitor" = warn, "enforce" = reject
+  signatureEnforcement: "off" | "monitor" | "enforce"
 }
 
 export async function loadNodeConfig(): Promise<NodeConfig> {
@@ -275,6 +277,11 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     false,
   )
 
+  // Block signature enforcement mode
+  const sigEnforcementRaw = process.env.COC_SIGNATURE_ENFORCEMENT
+    ?? (user as Record<string, unknown>).signatureEnforcement
+  const signatureEnforcement = normalizeSigEnforcement(sigEnforcementRaw)
+
   // Resolve node private key: env var → file → auto-generate
   const nodePrivateKey = await resolveNodeKey(dataDir)
 
@@ -382,8 +389,16 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     wireBind,
     rpcAuthToken,
     enableAdminRpc,
+    signatureEnforcement,
     storage: { ...storageDefaults, ...userStorage },
   }
+}
+
+function normalizeSigEnforcement(input: unknown): "off" | "monitor" | "enforce" {
+  if (typeof input !== "string") return "enforce"
+  const v = input.trim().toLowerCase()
+  if (v === "off" || v === "monitor" || v === "enforce") return v
+  return "enforce"
 }
 
 function normalizeInboundAuthMode(input: unknown): "off" | "monitor" | "enforce" | undefined {
