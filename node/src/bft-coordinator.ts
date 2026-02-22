@@ -44,6 +44,7 @@ export class BftCoordinator {
   private lingerTimer: ReturnType<typeof setInterval> | null = null
   private pendingMessages: BftMessage[] = []
   private deferredBlock: ChainBlock | null = null
+  private warnedNoVerifier = false
   readonly equivocationDetector = new EquivocationDetector()
 
   constructor(cfg: BftCoordinatorConfig) {
@@ -155,6 +156,10 @@ export class BftCoordinator {
           log.warn("BFT message signature invalid, dropping", { sender: msg.senderId, type: msg.type })
           return
         }
+      } else if (!this.warnedNoVerifier) {
+        // Log once — verifier should be configured in production deployments
+        this.warnedNoVerifier = true
+        log.warn("BFT verifier not configured — message signatures not verified (unsafe for production)")
       }
     }
 

@@ -48,8 +48,8 @@ export class Mempool {
       throw new Error("invalid tx: missing sender")
     }
 
-    // Replay protection: validate chain ID
-    if (tx.chainId !== 0n && tx.chainId !== BigInt(this.cfg.chainId)) {
+    // Replay protection: validate chain ID (reject chainId=0 to prevent cross-chain replay)
+    if (tx.chainId !== BigInt(this.cfg.chainId)) {
       throw new Error(`invalid chain ID: expected ${this.cfg.chainId}, got ${tx.chainId}`)
     }
 

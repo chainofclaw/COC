@@ -216,6 +216,23 @@ export class ValidatorGovernance {
       }
     }
 
+    if (type === "update_stake") {
+      if (!this.validators.has(targetId) || !this.validators.get(targetId)!.active) {
+        throw new Error("target validator not active")
+      }
+      if (opts?.stakeAmount === undefined) {
+        throw new Error("stakeAmount required for update_stake")
+      }
+      if (opts.stakeAmount < this.config.minStake) {
+        throw new Error(`stake below minimum: ${this.config.minStake}`)
+      }
+      // Reasonable upper bound: 1000x minimum stake
+      const maxStake = this.config.minStake * 1000n
+      if (opts.stakeAmount > maxStake) {
+        throw new Error(`stake exceeds maximum: ${maxStake}`)
+      }
+    }
+
     if (type === "remove_validator") {
       if (!this.validators.has(targetId) || !this.validators.get(targetId)!.active) {
         throw new Error("target validator not active")

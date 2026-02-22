@@ -213,6 +213,16 @@ export function validateSnapshot(snapshot: StateSnapshot): void {
     if (typeof acc.nonce !== "string" || typeof acc.balance !== "string") {
       throw new Error(`account ${acc.address} has invalid nonce/balance`)
     }
+    // Validate numeric format before BigInt conversion
+    try { BigInt(acc.nonce) } catch { throw new Error(`account ${acc.address} has non-numeric nonce: ${acc.nonce}`) }
+    try { BigInt(acc.balance) } catch { throw new Error(`account ${acc.address} has non-numeric balance: ${acc.balance}`) }
+  }
+  // Validate validator stakes if present
+  if (snapshot.validators) {
+    for (const v of snapshot.validators) {
+      if (typeof v.stake !== "string") throw new Error(`validator ${v.id} has invalid stake type`)
+      try { BigInt(v.stake) } catch { throw new Error(`validator ${v.id} has non-numeric stake: ${v.stake}`) }
+    }
   }
 }
 

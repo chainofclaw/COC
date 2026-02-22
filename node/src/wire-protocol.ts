@@ -194,5 +194,9 @@ export function encodeJsonPayload(type: MessageType, obj: unknown): Uint8Array {
  */
 export function decodeJsonPayload<T>(frame: WireFrame): T {
   const json = new TextDecoder().decode(frame.payload)
-  return JSON.parse(json) as T
+  try {
+    return JSON.parse(json) as T
+  } catch (err) {
+    throw new Error(`invalid JSON in wire frame (type=0x${frame.type.toString(16)}): ${String(err)}`)
+  }
 }

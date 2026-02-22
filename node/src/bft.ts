@@ -56,8 +56,8 @@ export function accumulatedStake(
   voterIds: string[],
   validators: Array<{ id: string; stake: bigint }>,
 ): bigint {
-  const stakeMap = new Map(validators.map((v) => [v.id, v.stake]))
-  return voterIds.reduce((sum, id) => sum + (stakeMap.get(id) ?? 0n), 0n)
+  const stakeMap = new Map(validators.map((v) => [v.id.toLowerCase(), v.stake]))
+  return voterIds.reduce((sum, id) => sum + (stakeMap.get(id.toLowerCase()) ?? 0n), 0n)
 }
 
 /**
@@ -155,7 +155,7 @@ export class BftRound {
       return []
     }
 
-    this.state.prepareVotes.set(senderId, blockHash)
+    this.state.prepareVotes.set(senderId.toLowerCase(), blockHash)
 
     // Check quorum
     const voters = [...this.state.prepareVotes.keys()]
@@ -207,7 +207,7 @@ export class BftRound {
       return false
     }
 
-    this.state.commitVotes.set(senderId, blockHash)
+    this.state.commitVotes.set(senderId.toLowerCase(), blockHash)
 
     // Only check quorum if already in commit phase
     if (this.state.phase === "commit") {
@@ -274,7 +274,8 @@ export class BftRound {
   }
 
   private isKnownValidator(id: string): boolean {
-    return this.config.validators.some((v) => v.id === id)
+    const normalized = id.toLowerCase()
+    return this.config.validators.some((v) => v.id.toLowerCase() === normalized)
   }
 }
 
@@ -302,9 +303,11 @@ export class EquivocationDetector {
   private readonly votes = new Map<string, Map<string, Map<string, Hex>>>()
   private readonly evidence: EquivocationEvidence[] = []
   private readonly maxTrackedHeights: number
+  private readonly maxEvidence: number
 
-  constructor(maxTrackedHeights = 100) {
+  constructor(maxTrackedHeights = 100, maxEvidence = 1000) {
     this.maxTrackedHeights = maxTrackedHeights
+    this.maxEvidence = maxEvidence
   }
 
   /**
@@ -317,6 +320,7 @@ export class EquivocationDetector {
     phase: "prepare" | "commit",
     blockHash: Hex,
   ): EquivocationEvidence | null {
+    const normalizedId = validatorId.toLowerCase()
     const heightKey = height.toString()
     const phaseKey = phase
 
@@ -330,7 +334,7 @@ export class EquivocationDetector {
     }
 
     const phaseMap = heightMap.get(phaseKey)!
-    const existingHash = phaseMap.get(validatorId)
+    const existingHash = phaseMap.get(normalizedId)
 
     if (existingHash && existingHash !== blockHash) {
       // Equivocation detected!
@@ -341,6 +345,10 @@ export class EquivocationDetector {
         blockHash1: existingHash,
         blockHash2: blockHash,
         detectedAtMs: Date.now(),
+      }
+      // Cap evidence array to prevent memory exhaustion
+      if (this.evidence.length >= this.maxEvidence) {
+        this.evidence.shift()
       }
       this.evidence.push(ev)
       log.warn("equivocation detected!", {
@@ -353,7 +361,7 @@ export class EquivocationDetector {
       return ev
     }
 
-    phaseMap.set(validatorId, blockHash)
+    phaseMap.set(normalizedId, blockHash)
     this.pruneOldHeights()
     return null
   }
