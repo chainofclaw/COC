@@ -700,7 +700,8 @@ export class P2PNode {
    * regardless of discovery status.
    */
   async broadcastBft(msg: BftMessagePayload): Promise<void> {
-    const dedupeKey = `bft:${msg.type}:${msg.height}:${msg.senderId}`
+    // No outbound dedup for BFT — messages are rare (few per round) and commit
+    // retries need to reach peers that missed the first broadcast.
 
     // BFT must reach ALL validators — use static peers + discovered peers
     const staticPeers = this.cfg.peers
@@ -725,11 +726,6 @@ export class P2PNode {
     for (let i = 0; i < allPeers.length; i += BROADCAST_CONCURRENCY) {
       const batch = allPeers.slice(i, i + BROADCAST_CONCURRENCY)
       await Promise.all(batch.map(async (peer) => {
-        if (dedupeKey) {
-          const peerSent = this.getPeerSentSet(peer.id)
-          if (peerSent.has(dedupeKey)) return
-          peerSent.add(dedupeKey)
-        }
         try {
           await requestJson(`${peer.url}/p2p/bft-message`, "POST", signedPayload)
           this.scoring.recordSuccess(peer.id)

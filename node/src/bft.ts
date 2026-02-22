@@ -153,6 +153,14 @@ export class BftRound {
       // Send commit vote
       if (this.isValidator()) {
         this.state.commitVotes.set(this.config.localId, blockHash)
+
+        // Check if early-arriving commits already give us commit quorum
+        const commitVoters = [...this.state.commitVotes.keys()]
+        if (hasQuorum(commitVoters, this.config.validators)) {
+          this.state.phase = "finalized"
+          return []
+        }
+
         return [{
           type: "commit",
           height: this.state.height,
@@ -168,9 +176,10 @@ export class BftRound {
   /**
    * Handle a commit vote from a validator.
    * If quorum is reached, transition to finalized.
+   * Commits arriving during prepare phase are recorded for later evaluation.
    */
   handleCommit(senderId: string, blockHash: Hex): boolean {
-    if (this.state.phase !== "commit") {
+    if (this.state.phase !== "commit" && this.state.phase !== "prepare") {
       return false
     }
 
@@ -180,11 +189,13 @@ export class BftRound {
 
     this.state.commitVotes.set(senderId, blockHash)
 
-    // Check quorum
-    const voters = [...this.state.commitVotes.keys()]
-    if (hasQuorum(voters, this.config.validators)) {
-      this.state.phase = "finalized"
-      return true
+    // Only check quorum if already in commit phase
+    if (this.state.phase === "commit") {
+      const voters = [...this.state.commitVotes.keys()]
+      if (hasQuorum(voters, this.config.validators)) {
+        this.state.phase = "finalized"
+        return true
+      }
     }
 
     return false

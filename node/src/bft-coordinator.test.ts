@@ -147,7 +147,7 @@ describe("BftCoordinator", () => {
     assert.equal(coord.getRoundState().active, false)
   })
 
-  it("new round replaces existing round", async () => {
+  it("new round defers if active round has progress", async () => {
     const coord = new BftCoordinator({
       localId: "v1",
       validators,
@@ -158,8 +158,9 @@ describe("BftCoordinator", () => {
     await coord.startRound(makeBlock(1n))
     assert.equal(coord.getRoundState().height, 1n)
 
+    // Second startRound is deferred because round 1 has votes (local prepare)
     await coord.startRound(makeBlock(2n))
-    assert.equal(coord.getRoundState().height, 2n)
+    assert.equal(coord.getRoundState().height, 1n) // Still at height 1
   })
 
   it("updateValidators changes the set", async () => {
