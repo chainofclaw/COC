@@ -12,6 +12,7 @@ const log = createLogger("dht")
 export const K = 20 // max peers per bucket
 export const ID_BITS = 256 // keccak256 produces 256-bit IDs
 export const ALPHA = 3 // parallel lookups
+export const MAX_PEERS_PER_IP_PER_BUCKET = 2 // Sybil protection: max nodes per IP per K-bucket
 
 export interface DhtPeer {
   id: string // hex-encoded node ID
@@ -106,6 +107,19 @@ export class RoutingTable {
       bucket.peers.splice(existing, 1)
       bucket.peers.push({ ...peer, lastSeenMs: Date.now() })
       return true
+    }
+
+    // Sybil protection: limit peers from the same IP within this bucket (skip loopback)
+    const peerIp = peer.address.split(":")[0]
+    if (!peerIp.startsWith("127.") && peerIp !== "::1" && peerIp !== "localhost") {
+      let sameIpInBucket = 0
+      for (const p of bucket.peers) {
+        if (p.address.split(":")[0] === peerIp) sameIpInBucket++
+      }
+      if (sameIpInBucket >= MAX_PEERS_PER_IP_PER_BUCKET) {
+        log.debug("per-IP bucket limit reached, dropping peer", { ip: peerIp, bucket: idx, peerId: peer.id })
+        return false
+      }
     }
 
     // Bucket not full, add at tail

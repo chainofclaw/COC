@@ -195,6 +195,8 @@ export class ChainEngine {
       proposer: block.proposer,
       timestampMs: block.timestampMs,
       txs: block.txs,
+      baseFee: block.baseFee,
+      cumulativeWeight: block.cumulativeWeight,
     })
     if (expectedHash !== block.hash) {
       throw new Error("invalid block hash")
@@ -216,6 +218,11 @@ export class ChainEngine {
     // Enforce block gas limit
     if (totalGasUsed > BLOCK_GAS_LIMIT) {
       throw new Error(`block gas used ${totalGasUsed} exceeds limit ${BLOCK_GAS_LIMIT}`)
+    }
+
+    // Verify gasUsed matches claimed value (post-execution integrity check)
+    if (!locallyProposed && block.gasUsed !== undefined && block.gasUsed !== totalGasUsed) {
+      throw new Error(`block gasUsed mismatch: claimed ${block.gasUsed}, computed ${totalGasUsed}`)
     }
 
     // Store cumulative gas used for baseFee calculation
@@ -291,7 +298,11 @@ export class ChainEngine {
         timestampMs: Number(block.timestampMs),
         txs: [...block.txs],
       }
-      const expectedHash = hashBlockPayload(normalized)
+      const expectedHash = hashBlockPayload({
+        ...normalized,
+        baseFee: block.baseFee !== undefined ? BigInt(block.baseFee) : undefined,
+        cumulativeWeight: block.cumulativeWeight !== undefined ? BigInt(block.cumulativeWeight) : undefined,
+      })
       if (expectedHash !== block.hash) {
         return false
       }
@@ -301,6 +312,8 @@ export class ChainEngine {
         const prev = blocks[i - 1]
         if (block.parentHash !== prev.hash) return false
         if (BigInt(block.number) !== BigInt(prev.number) + 1n) return false
+        // Verify timestamps are monotonically increasing
+        if (Number(block.timestampMs) <= Number(prev.timestampMs)) return false
       }
 
       // Verify proposer is in validator set
@@ -330,16 +343,19 @@ export class ChainEngine {
     const parentGasUsed = tip?.gasUsed ?? 0n
     const baseFee = calculateBaseFee({ parentBaseFee, parentGasUsed })
 
+    // Accumulate cumulative weight (parent weight + 1 for uniform stake)
+    const parentWeight = tip?.cumulativeWeight ?? 0n
+    const cumulativeWeight = parentWeight + 1n
+
     const hash = hashBlockPayload({
       number: nextHeight,
       parentHash,
       proposer: this.cfg.nodeId,
       timestampMs,
       txs,
+      baseFee,
+      cumulativeWeight,
     })
-
-    // Accumulate cumulative weight (parent weight + 1 for uniform stake)
-    const parentWeight = tip?.cumulativeWeight ?? 0n
 
     return {
       number: nextHeight,
@@ -350,7 +366,7 @@ export class ChainEngine {
       txs,
       finalized: false,
       baseFee,
-      cumulativeWeight: parentWeight + 1n,
+      cumulativeWeight,
     }
   }
 

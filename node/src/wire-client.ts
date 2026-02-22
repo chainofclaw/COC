@@ -173,7 +173,7 @@ export class WireClient {
         log.info("wire client connected", { host: this.cfg.host, port: this.cfg.port })
 
         // Send handshake
-        const nonce = crypto.randomUUID()
+        const nonce = `${Date.now()}:${crypto.randomUUID()}`
         const hs: HandshakePayload = {
           nodeId: this.cfg.nodeId,
           chainId: this.cfg.chainId,

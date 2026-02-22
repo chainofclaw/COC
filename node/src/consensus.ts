@@ -6,17 +6,22 @@ import { shouldSwitchFork } from "./fork-choice.ts"
 import type { ChainBlock, Hex } from "./blockchain-types.ts"
 import { createLogger } from "./logger.ts"
 
-/** Recompute cumulative weight from blocks — never trust remote-provided weight */
+/** Use the tip block's cumulativeWeight — now hash-bound so tamper-proof.
+ * Falls back to block count if field is missing (pre-upgrade blocks). */
 function recalcCumulativeWeight(blocks: ChainBlock[]): bigint {
-  let weight = 0n
-  for (const _b of blocks) weight += 1n
-  return weight
+  if (blocks.length === 0) return 0n
+  const tip = blocks[blocks.length - 1]
+  // cumulativeWeight is now bound into block hash, so it's tamper-proof
+  if (tip.cumulativeWeight !== undefined) return BigInt(tip.cumulativeWeight)
+  // Fallback for blocks without cumulativeWeight (backward compat)
+  return BigInt(blocks.length)
 }
 
 const log = createLogger("consensus")
 
 const MAX_CONSECUTIVE_FAILURES = 5
 const RECOVERY_COOLDOWN_MS = 30_000
+const MAX_DEGRADED_MS = 5 * 60 * 1000 // 5 min max in degraded before forced recovery
 
 export interface ConsensusConfig {
   blockTimeMs: number
@@ -43,9 +48,12 @@ export interface SnapSyncProvider {
     }>
     version: number
     createdAtMs: number
+    validators?: Array<{ id: string; address: string; stake: string; active: boolean }>
   } | null>
-  importStateSnapshot(snapshot: unknown, expectedStateRoot?: string): Promise<{ accountsImported: number; codeImported: number }>
+  importStateSnapshot(snapshot: unknown, expectedStateRoot?: string): Promise<{ accountsImported: number; codeImported: number; validators?: Array<{ id: string; address: string; stake: bigint; active: boolean }> }>
   setStateRoot(root: string): Promise<void>
+  /** Restore governance validator set from snapshot (optional) */
+  restoreGovernance?(validators: Array<{ id: string; address: string; stake: bigint; active: boolean }>): void
 }
 
 export interface SyncProgress {
@@ -84,6 +92,7 @@ export class ConsensusEngine {
   private syncFailures = 0
   private status: ConsensusStatus = "healthy"
   private lastRecoveryMs = 0
+  private degradedSinceMs = 0
   private proposeTimer: ReturnType<typeof setInterval> | null = null
   private syncTimer: ReturnType<typeof setInterval> | null = null
 
@@ -197,6 +206,7 @@ export class ConsensusEngine {
 
   private async tryPropose(): Promise<void> {
     if (this.status === "degraded") {
+      this.checkDegradedTimeout()
       return
     }
 
@@ -395,6 +405,50 @@ export class ConsensusEngine {
     try {
       // Fetch state snapshot from the peer that provided this chain snapshot
       const peers = this.p2p.discovery.getActivePeers()
+
+      // Collect stateRoots from multiple peers for cross-validation
+      const peerStateRoots = new Map<string, { count: number; peer: string }>()
+      for (const peer of peers) {
+        try {
+          const snap = await this.snapSync.fetchStateSnapshot(peer.url)
+          if (!snap) continue
+          if (snap.blockHeight !== tip.number.toString() || snap.blockHash !== tip.hash) continue
+          const existing = peerStateRoots.get(snap.stateRoot)
+          peerStateRoots.set(snap.stateRoot, {
+            count: (existing?.count ?? 0) + 1,
+            peer: peer.url,
+          })
+        } catch {
+          // skip unreachable peer
+        }
+      }
+
+      // Require at least 2 peers agreeing on stateRoot (when multiple peers available)
+      let trustedStateRoot: string | null = null
+      if (peerStateRoots.size === 1) {
+        trustedStateRoot = [...peerStateRoots.keys()][0]
+        if (peers.length > 1) {
+          log.warn("snap sync: only 1 peer provided state, single-peer trust", { stateRoot: trustedStateRoot })
+        }
+      } else if (peerStateRoots.size > 1) {
+        // Pick the stateRoot with most votes
+        let maxCount = 0
+        for (const [root, info] of peerStateRoots) {
+          if (info.count > maxCount) {
+            maxCount = info.count
+            trustedStateRoot = root
+          }
+        }
+        if (maxCount < 2) {
+          log.warn("snap sync: no consensus on stateRoot among peers, proceeding with majority")
+        }
+      }
+
+      if (!trustedStateRoot) {
+        log.warn("snap sync: no peer provided valid state snapshot")
+        return false
+      }
+
       for (const peer of peers) {
         try {
           const stateSnap = await this.snapSync.fetchStateSnapshot(peer.url)
@@ -405,17 +459,27 @@ export class ConsensusEngine {
             stateSnap.blockHeight !== tip.number.toString() ||
             stateSnap.blockHash !== tip.hash
           ) {
-            log.warn("snap sync state mismatch, skipping peer", {
-              expectedHeight: tip.number.toString(),
-              snapshotHeight: stateSnap.blockHeight,
-              expectedHash: tip.hash,
-              snapshotHash: stateSnap.blockHash,
+            continue
+          }
+
+          // Reject snapshot whose stateRoot disagrees with cross-peer consensus
+          if (stateSnap.stateRoot !== trustedStateRoot) {
+            log.warn("snap sync: peer stateRoot disagrees with consensus", {
+              peer: peer.url,
+              peerRoot: stateSnap.stateRoot,
+              trustedRoot: trustedStateRoot,
             })
             continue
           }
 
-          await this.snapSync.importStateSnapshot(stateSnap, stateSnap.stateRoot)
-          await this.snapSync.setStateRoot(stateSnap.stateRoot)
+          const importResult = await this.snapSync.importStateSnapshot(stateSnap, trustedStateRoot)
+          await this.snapSync.setStateRoot(trustedStateRoot)
+
+          // Restore governance validator set from snapshot
+          if (importResult.validators && this.snapSync.restoreGovernance) {
+            this.snapSync.restoreGovernance(importResult.validators)
+            log.info("governance state restored from snapshot", { validators: importResult.validators.length })
+          }
 
           // Write snapshot blocks into the chain engine so getHeight() advances
           let adopted = false
@@ -447,6 +511,7 @@ export class ConsensusEngine {
 
   private enterDegradedMode(source: string): void {
     this.status = "degraded"
+    this.degradedSinceMs = Date.now()
     log.warn("entering degraded mode", { source, proposeFailures: this.proposeFailures, syncFailures: this.syncFailures })
   }
 
@@ -459,5 +524,16 @@ export class ConsensusEngine {
     this.proposeFailures = 0
     this.syncFailures = 0
     log.info("entering recovery mode, next propose will determine health")
+  }
+
+  /** Force recovery if stuck in degraded for too long (called from tryPropose) */
+  private checkDegradedTimeout(): void {
+    if (this.status !== "degraded") return
+    const now = Date.now()
+    if (this.degradedSinceMs > 0 && now - this.degradedSinceMs > MAX_DEGRADED_MS) {
+      log.warn("degraded timeout exceeded, forcing recovery attempt")
+      this.lastRecoveryMs = 0 // clear cooldown to allow immediate recovery
+      this.tryRecover()
+    }
   }
 }

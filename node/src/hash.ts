@@ -7,8 +7,12 @@ export function hashBlockPayload(input: {
   proposer: string
   timestampMs: number
   txs: Hex[]
+  baseFee?: bigint
+  cumulativeWeight?: bigint
 }): Hex {
-  const stable = `${input.number.toString()}|${input.parentHash}|${input.proposer}|${input.timestampMs}|${input.txs.join(",")}`
+  // baseFee and cumulativeWeight are pre-execution and bound into hash
+  // gasUsed and stateRoot are post-execution — verified separately after tx replay
+  const stable = `${input.number.toString()}|${input.parentHash}|${input.proposer}|${input.timestampMs}|${input.txs.join(",")}|${(input.baseFee ?? 0n).toString()}|${(input.cumulativeWeight ?? 0n).toString()}`
   return `0x${keccak256Hex(Buffer.from(stable, "utf-8"))}` as Hex
 }
 

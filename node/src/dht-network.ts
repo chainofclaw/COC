@@ -23,6 +23,8 @@ const log = createLogger("dht-network")
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000 // 5 minutes
 const ANNOUNCE_INTERVAL_MS = 3 * 60 * 1000 // 3 minutes
 const LOOKUP_TIMEOUT_MS = 5_000
+const LOOKUP_GLOBAL_TIMEOUT_MS = 30_000
+const LOOKUP_MAX_ITERATIONS = 20
 const PEER_VERIFY_TIMEOUT_MS = 3_000
 const STALE_PEER_THRESHOLD_MS = 24 * 60 * 60 * 1000 // 24 hours
 
@@ -123,8 +125,15 @@ export class DhtNetwork {
     }
 
     let improved = true
+    const startMs = Date.now()
+    let iterations = 0
     while (improved && !this.stopped) {
       improved = false
+      iterations++
+      if (iterations > LOOKUP_MAX_ITERATIONS || Date.now() - startMs > LOOKUP_GLOBAL_TIMEOUT_MS) {
+        log.debug("iterative lookup terminated", { iterations, elapsedMs: Date.now() - startMs })
+        break
+      }
 
       // Select ALPHA unqueried peers closest to target (sorted by XOR distance)
       const unqueried = [...found.values()].filter((p) => !queried.has(p.id))

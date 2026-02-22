@@ -284,8 +284,8 @@ Algorithm:
 - On transaction/block receipt via wire: relay to HTTP gossip peers via `onTxRelay`/`onBlockRelay` callbacks.
 - Each transport path operates independently — failure in one does not block the other.
 - Wire broadcast uses late binding pattern: function reference set after wire server initialization.
-- Wire-level dedup via `BoundedSet` (seenTx 50K, seenBlocks 10K) prevents duplicate processing.
-- Cross-protocol relay is safe: P2P `receiveTx`/`receiveBlock` has internal dedup, wire layer also deduplicates.
+- Shared dedup via `BoundedSet` (seenTx 50K, seenBlocks 10K) — wire and HTTP layers share the same sets to prevent cross-protocol amplification.
+- Cross-protocol relay is safe: shared dedup ensures each message is processed at most once across both transports.
 - `broadcastFrame` supports `excludeNodeId` parameter to skip the original sender.
 - BFT messages also broadcast via dual transport (HTTP gossip + wire protocol TCP).
 
@@ -327,7 +327,7 @@ Algorithm:
 - Wire→HTTP: after wire-level dedup + handler, call `onTxRelay(rawTx)` / `onBlockRelay(block)` to inject into HTTP gossip layer.
 - HTTP→Wire: existing `wireTxRelayFn` / `wireBroadcastFn` relay from HTTP to wire-connected peers.
 - Relay errors are non-fatal (try-catch, ignore failures).
-- No circular relay: both layers have independent dedup (wire BoundedSet + P2P `seenTx.has()`).
+- No circular relay: wire and HTTP share the same BoundedSet dedup instances (injected via `sharedSeenTx`/`sharedSeenBlocks`).
 
 Code:
 - `COC/node/src/wire-server.ts` (`onTxRelay`, `onBlockRelay` config callbacks)

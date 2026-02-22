@@ -47,7 +47,7 @@ export class PersistentChainEngine {
   readonly events: ChainEventEmitter
   readonly governance: ValidatorGovernance | null
   private readonly db: LevelDatabase
-  private readonly blockIndex: BlockIndex
+  readonly blockIndex: BlockIndex
   private readonly txNonceStore: PersistentNonceStore
   private readonly cfg: PersistentChainEngineConfig
   private readonly evm: EvmChain
@@ -303,6 +303,8 @@ export class PersistentChainEngine {
       proposer: block.proposer,
       timestampMs: block.timestampMs,
       txs: block.txs,
+      baseFee: block.baseFee,
+      cumulativeWeight: block.cumulativeWeight,
     })
     if (expectedHash !== block.hash) {
       throw new Error("invalid block hash")
@@ -382,6 +384,11 @@ export class PersistentChainEngine {
       throw new Error(`block gas used ${totalGasUsed} exceeds limit ${BLOCK_GAS_LIMIT}`)
     }
 
+    // Verify gasUsed matches claimed value (post-execution integrity check)
+    if (!locallyProposed && block.gasUsed !== undefined && block.gasUsed !== totalGasUsed) {
+      throw new Error(`block gasUsed mismatch: claimed ${block.gasUsed}, computed ${totalGasUsed}`)
+    }
+
     // Store cumulative gas used for baseFee calculation
     block.gasUsed = totalGasUsed
 
@@ -454,7 +461,11 @@ export class PersistentChainEngine {
         timestampMs: Number(block.timestampMs),
         txs: [...block.txs],
       }
-      const expectedHash = hashBlockPayload(normalized)
+      const expectedHash = hashBlockPayload({
+        ...normalized,
+        baseFee: block.baseFee !== undefined ? BigInt(block.baseFee) : undefined,
+        cumulativeWeight: block.cumulativeWeight !== undefined ? BigInt(block.cumulativeWeight) : undefined,
+      })
       if (expectedHash !== block.hash) {
         return false
       }
@@ -464,6 +475,8 @@ export class PersistentChainEngine {
         const prev = blocks[i - 1]
         if (block.parentHash !== prev.hash) return false
         if (BigInt(block.number) !== BigInt(prev.number) + 1n) return false
+        // Verify timestamps are monotonically increasing
+        if (Number(block.timestampMs) <= Number(prev.timestampMs)) return false
       }
 
       // Verify proposer is in validator set
@@ -493,14 +506,6 @@ export class PersistentChainEngine {
     const parentGasUsed = tip?.gasUsed ?? 0n
     const baseFee = calculateBaseFee({ parentBaseFee, parentGasUsed })
 
-    const hash = hashBlockPayload({
-      number: nextHeight,
-      parentHash,
-      proposer: this.cfg.nodeId,
-      timestampMs,
-      txs,
-    })
-
     // Accumulate cumulative weight using proposer stake
     const parentWeight = tip?.cumulativeWeight ?? 0n
     let proposerStake = 1n
@@ -509,6 +514,17 @@ export class PersistentChainEngine {
       const self = active.find((v) => v.id === this.cfg.nodeId)
       if (self) proposerStake = self.stake
     }
+    const cumulativeWeight = parentWeight + proposerStake
+
+    const hash = hashBlockPayload({
+      number: nextHeight,
+      parentHash,
+      proposer: this.cfg.nodeId,
+      timestampMs,
+      txs,
+      baseFee,
+      cumulativeWeight,
+    })
 
     return {
       number: nextHeight,
@@ -519,7 +535,7 @@ export class PersistentChainEngine {
       txs,
       finalized: false,
       baseFee,
-      cumulativeWeight: parentWeight + proposerStake,
+      cumulativeWeight,
     }
   }
 

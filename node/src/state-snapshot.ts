@@ -21,6 +21,13 @@ export interface StateSnapshotAccount {
   code?: string // hex-encoded contract bytecode
 }
 
+export interface StateSnapshotValidator {
+  id: string
+  address: string
+  stake: string
+  active: boolean
+}
+
 export interface StateSnapshot {
   version: number
   stateRoot: string
@@ -28,6 +35,8 @@ export interface StateSnapshot {
   blockHash: string
   accounts: StateSnapshotAccount[]
   createdAtMs: number
+  /** Validator set for governance state sync (optional for backward compat) */
+  validators?: StateSnapshotValidator[]
 }
 
 /**
@@ -39,6 +48,7 @@ export async function exportStateSnapshot(
   addresses: string[] | undefined,
   blockHeight: bigint,
   blockHash: Hex,
+  validators?: Array<{ id: string; address: string; stake: bigint; active: boolean }>,
 ): Promise<StateSnapshot> {
   const stateRoot = stateTrie.stateRoot()
   if (!stateRoot) {
@@ -61,6 +71,14 @@ export async function exportStateSnapshot(
     }
   }
 
+  // Serialize validators for governance state sync
+  const snapshotValidators: StateSnapshotValidator[] | undefined = validators?.map((v) => ({
+    id: v.id,
+    address: v.address,
+    stake: v.stake.toString(),
+    active: v.active,
+  }))
+
   return {
     version: 1,
     stateRoot,
@@ -68,6 +86,7 @@ export async function exportStateSnapshot(
     blockHash,
     accounts,
     createdAtMs: Date.now(),
+    ...(snapshotValidators ? { validators: snapshotValidators } : {}),
   }
 }
 
@@ -112,7 +131,7 @@ export async function importStateSnapshot(
   stateTrie: IStateTrie,
   snapshot: StateSnapshot,
   expectedStateRoot?: string,
-): Promise<{ accountsImported: number; codeImported: number }> {
+): Promise<{ accountsImported: number; codeImported: number; validators?: Array<{ id: string; address: string; stake: bigint; active: boolean }> }> {
   validateSnapshot(snapshot)
 
   let accountsImported = 0
@@ -152,14 +171,23 @@ export async function importStateSnapshot(
     )
   }
 
+  // Deserialize validators if present
+  const importedValidators = snapshot.validators?.map((v) => ({
+    id: v.id,
+    address: v.address,
+    stake: BigInt(v.stake),
+    active: v.active,
+  }))
+
   log.info("state snapshot imported", {
     accounts: accountsImported,
     code: codeImported,
+    validators: importedValidators?.length ?? 0,
     originalRoot: snapshot.stateRoot,
     newRoot,
   })
 
-  return { accountsImported, codeImported }
+  return { accountsImported, codeImported, validators: importedValidators }
 }
 
 /**

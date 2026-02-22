@@ -279,12 +279,22 @@ export class WireServer {
             conn.socket.destroy()
             return
           }
-          // Nonce replay protection
+          // Nonce replay protection: in-memory dedup + timestamp window
           if (this.handshakeNonces.has(hs.nonce)) {
             log.warn("handshake nonce replay detected", { peer: hs.nodeId, nonce: hs.nonce })
             this.cfg.peerScoring?.recordInvalidData(conn.socket.remoteAddress ?? "unknown")
             conn.socket.destroy()
             return
+          }
+          // Reject nonces with timestamps too far from current time (replay across restarts)
+          const nonceParts = hs.nonce.split(":")
+          if (nonceParts.length >= 2) {
+            const nonceTs = parseInt(nonceParts[0], 10)
+            if (!isNaN(nonceTs) && Math.abs(Date.now() - nonceTs) > 300_000) { // 5 min window
+              log.warn("handshake nonce timestamp stale", { peer: hs.nodeId, nonceTs })
+              conn.socket.destroy()
+              return
+            }
           }
           const msg = buildWireHandshakeMessage(hs.nodeId, hs.chainId, hs.nonce)
           let recovered: string

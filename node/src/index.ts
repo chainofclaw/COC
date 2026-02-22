@@ -219,8 +219,11 @@ const p2p = new P2PNode(
         const tip = await Promise.resolve(chain.getTip())
         const height = await Promise.resolve(chain.getHeight())
         if (!tip || !stateTrie) return null
-        // Export full state (all accounts + storage) for snap sync correctness
-        return await exportStateSnapshot(stateTrie, undefined, height, tip.hash)
+        // Export full state (all accounts + storage) + governance validators for snap sync
+        const validators = hasGovernance(chain)
+          ? chain.governance.getActiveValidators().map((v) => ({ id: v.id, address: v.address, stake: v.stake, active: v.active }))
+          : undefined
+        return await exportStateSnapshot(stateTrie, undefined, height, tip.hash, validators)
       }
       : undefined,
   },
@@ -291,7 +294,19 @@ if (bftEnabled) {
       try {
         await chain.applyBlock(finalizedBlock)
       } catch {
-        // block may already be applied during propose — acceptable
+        // block may already be applied during propose — persist bftFinalized flag
+        const persistentEngine = chain as { blockIndex?: { getBlockByHash(h: string): Promise<ChainBlock | null>; updateBlock(b: ChainBlock): Promise<void> } }
+        if (persistentEngine.blockIndex) {
+          try {
+            const existing = await persistentEngine.blockIndex.getBlockByHash(block.hash)
+            if (existing && !existing.bftFinalized) {
+              existing.bftFinalized = true
+              await persistentEngine.blockIndex.updateBlock(existing)
+            }
+          } catch {
+            // best-effort finality persistence
+          }
+        }
       }
       try {
         await p2p.receiveBlock(finalizedBlock)
@@ -356,6 +371,12 @@ if (stateTrie && config.enableSnapSync) {
     async setStateRoot(root: string) {
       if (typeof trieRef.setStateRoot === "function") {
         await trieRef.setStateRoot(root)
+      }
+    },
+    restoreGovernance(validators: Array<{ id: string; address: string; stake: bigint; active: boolean }>) {
+      if (hasGovernance(chain) && chain.governance && typeof (chain.governance as { initGenesis?: unknown }).initGenesis === "function") {
+        (chain.governance as { initGenesis(v: Array<{ id: string; address: string; stake: bigint }>): void }).initGenesis(validators)
+        log.info("governance validators restored from snap sync", { count: validators.length })
       }
     },
   }
