@@ -378,7 +378,7 @@ Algorithm:
 - Receiver verifies signature via `SignatureVerifier.recoverAddress()`.
 - Recovered address must match the claimed `nodeId` — mismatch → disconnect + `recordInvalidData()`.
 - Nonce prevents replay attacks (unique per handshake).
-- Backward compatible: nodes without signing capability still connect (warn only, Phase 1).
+- Signature verification is mandatory at runtime (`verifier` always enabled); unsigned handshake requests are rejected and disconnected.
 
 Code:
 - `COC/node/src/wire-server.ts` (handshake verification)

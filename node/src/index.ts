@@ -6,6 +6,7 @@ import { PoSeEngine } from "./pose-engine.ts"
 import { ChainEngine } from "./chain-engine.ts"
 import { PersistentChainEngine } from "./chain-engine-persistent.ts"
 import type { IChainEngine } from "./chain-engine-types.ts"
+import type { ChainBlock } from "./blockchain-types.ts"
 import { hasGovernance } from "./chain-engine-types.ts"
 import { P2PNode } from "./p2p.ts"
 import type { BftMessagePayload } from "./p2p.ts"
@@ -184,13 +185,21 @@ const p2p = new P2PNode(
         }
       }
     },
-    onSnapshotRequest: () => {
-      // Legacy snapshot support for in-memory engine
+    onSnapshotRequest: async () => {
+      // In-memory engine has makeSnapshot()
       const snapshotEngine = chain as ChainEngine
       if (typeof snapshotEngine.makeSnapshot === "function") {
         return snapshotEngine.makeSnapshot()
       }
-      return { blocks: [], updatedAtMs: Date.now() }
+      // Persistent engine: reconstruct snapshot from block index
+      const height = await chain.getHeight()
+      if (height === 0n) return { blocks: [], updatedAtMs: Date.now() }
+      const blocks: ChainBlock[] = []
+      for (let i = 1n; i <= height; i++) {
+        const block = await chain.getBlockByNumber(i)
+        if (block) blocks.push(block)
+      }
+      return { blocks, updatedAtMs: Date.now() }
     },
     onBftMessage: bftEnabled
       ? async (msg: BftMessagePayload) => {

@@ -359,6 +359,8 @@ export class ChainEngine {
         timestampMs: Number(block.timestampMs),
         txs: [...block.txs],
         finalized: Boolean(block.finalized),
+        baseFee: block.baseFee !== undefined ? BigInt(block.baseFee) : undefined,
+        cumulativeWeight: block.cumulativeWeight !== undefined ? BigInt(block.cumulativeWeight) : undefined,
       }
       await this.applyBlock(normalized)
     }

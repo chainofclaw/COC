@@ -378,7 +378,7 @@
 - 接收方通过 `SignatureVerifier.recoverAddress()` 验证签名。
 - 恢复的地址必须与声称的 `nodeId` 匹配 — 不匹配则断开连接并记录 `recordInvalidData()`。
 - Nonce 防止重放攻击（每次握手唯一）。
-- 向后兼容：无签名能力的节点仍可连接（仅警告，第一阶段）。
+- 运行时默认强制签名验证（`verifier` 始终启用）；无签名的握手请求将被拒绝并断开连接。
 
 代码：
 - `COC/node/src/wire-server.ts`（握手验证）

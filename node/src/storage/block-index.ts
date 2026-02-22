@@ -165,6 +165,7 @@ export class BlockIndex implements IBlockIndex {
     block.number = BigInt(block.number)
     if (block.baseFee !== undefined) block.baseFee = BigInt(block.baseFee)
     if (block.gasUsed !== undefined) block.gasUsed = BigInt(block.gasUsed)
+    if (block.cumulativeWeight !== undefined) block.cumulativeWeight = BigInt(block.cumulativeWeight)
     return block
   }
 
@@ -188,6 +189,7 @@ export class BlockIndex implements IBlockIndex {
     block.number = BigInt(block.number)
     if (block.baseFee !== undefined) block.baseFee = BigInt(block.baseFee)
     if (block.gasUsed !== undefined) block.gasUsed = BigInt(block.gasUsed)
+    if (block.cumulativeWeight !== undefined) block.cumulativeWeight = BigInt(block.cumulativeWeight)
     return block
   }
 

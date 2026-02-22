@@ -533,7 +533,7 @@ export class PersistentChainEngine {
       // Re-execute transactions to restore EVM state
       for (let txIdx = 0; txIdx < block.txs.length; txIdx++) {
         const raw = block.txs[txIdx]
-        await this.evm.executeRawTx(raw, block.number, txIdx, block.hash)
+        await this.evm.executeRawTx(raw, block.number, txIdx, block.hash, block.baseFee ?? 0n)
       }
     }
   }
@@ -550,6 +550,8 @@ export class PersistentChainEngine {
         timestampMs: Number(block.timestampMs),
         txs: [...block.txs],
         finalized: Boolean(block.finalized),
+        baseFee: block.baseFee !== undefined ? BigInt(block.baseFee) : undefined,
+        cumulativeWeight: block.cumulativeWeight !== undefined ? BigInt(block.cumulativeWeight) : undefined,
       }
       await this.applyBlock(normalized)
     }

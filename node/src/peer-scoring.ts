@@ -115,8 +115,12 @@ export class PeerScoring {
    * Record invalid data received from a peer (heavier penalty)
    */
   recordInvalidData(id: string): void {
-    const peer = this.peers.get(id)
-    if (!peer) return
+    let peer = this.peers.get(id)
+    if (!peer) {
+      // Auto-register unknown peer so the penalty is recorded
+      this.addPeer(id, id)
+      peer = this.peers.get(id)!
+    }
     const newScore = Math.max(peer.score - this.cfg.invalidDataPenalty, this.cfg.minScore)
     const shouldBan = newScore <= this.cfg.banThreshold
     const newBanCount = shouldBan ? peer.banCount + 1 : peer.banCount
