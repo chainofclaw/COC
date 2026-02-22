@@ -204,7 +204,7 @@ export class ChainEngine {
     let totalGasUsed = 0n
     for (let i = 0; i < block.txs.length; i++) {
       const raw = block.txs[i]
-      const result = await this.evm.executeRawTx(raw, block.number, i, block.hash)
+      const result = await this.evm.executeRawTx(raw, block.number, i, block.hash, block.baseFee ?? 0n)
       const receipt = this.evm.getReceipt(result.txHash)
       if (receipt) {
         receipts.push(receipt)
