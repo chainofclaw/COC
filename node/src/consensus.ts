@@ -410,12 +410,15 @@ export class ConsensusEngine {
           await this.snapSync.setStateRoot(stateSnap.stateRoot)
 
           // Write snapshot blocks into the chain engine so getHeight() advances
-          const blockEngine = this.chain as IBlockSyncEngine
+          let adopted = false
           const snapshotEngine = this.chain as ISnapshotSyncEngine
-          if (typeof blockEngine.maybeAdoptSnapshot === "function" && typeof snapshotEngine.makeSnapshot !== "function") {
-            await blockEngine.maybeAdoptSnapshot(snapshot.blocks)
-          } else if (typeof snapshotEngine.maybeAdoptSnapshot === "function") {
-            await snapshotEngine.maybeAdoptSnapshot({ blocks: snapshot.blocks, updatedAtMs: Date.now() })
+          if (typeof snapshotEngine.maybeAdoptSnapshot === "function") {
+            adopted = await snapshotEngine.maybeAdoptSnapshot({ blocks: snapshot.blocks, updatedAtMs: Date.now() })
+          }
+
+          if (!adopted) {
+            log.warn("snap sync state imported but block adoption failed, skipping peer")
+            continue
           }
 
           this.snapSyncs++

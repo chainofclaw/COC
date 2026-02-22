@@ -451,6 +451,7 @@ if (config.enableWireProtocol) {
     chainId: config.chainId,
     signer: nodeSigner,
     verifier: nodeSigner,
+    peerScoring: { recordInvalidData: (ip) => p2p.scoring.recordInvalidData(ip) },
     onBlock: async (block) => {
       try {
         await chain.applyBlock(block)
