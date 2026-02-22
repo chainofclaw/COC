@@ -202,8 +202,7 @@ test("RPC Extended Methods", async (t) => {
     assert.ok(typeof info.mempool === "object")
     assert.ok(typeof info.mempool.size === "number")
     assert.ok(typeof info.uptime === "number")
-    assert.ok(typeof info.nodeVersion === "string")
-    assert.ok(typeof info.platform === "string")
+    // nodeVersion, platform, arch removed from public endpoint (info disclosure)
   })
 
   await t.test("web3_clientVersion returns version string", async () => {

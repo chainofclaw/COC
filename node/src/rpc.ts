@@ -843,9 +843,6 @@ async function handleRpc(
         blockHeight: height,
         mempool: mempoolStats,
         uptime: Math.floor(process.uptime()),
-        nodeVersion: process.version,
-        platform: process.platform,
-        arch: process.arch,
       }
     }
     case "coc_validators": {

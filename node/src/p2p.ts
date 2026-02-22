@@ -403,8 +403,9 @@ export class P2PNode {
           res.writeHead(200, { "content-type": "application/json" })
           res.end(serializeJson(snapshot))
         } catch (err) {
+          log.error("snapshot request error", { error: String(err) })
           res.writeHead(500, { "content-type": "application/json" })
-          res.end(serializeJson({ error: String(err) }))
+          res.end(serializeJson({ error: "internal error" }))
         }
         return
       }
@@ -421,8 +422,9 @@ export class P2PNode {
               res.end(serializeJson({ error: "no state snapshot available" }))
             }
           } catch (err) {
+            log.error("state snapshot request error", { error: String(err) })
             res.writeHead(500, { "content-type": "application/json" })
-            res.end(serializeJson({ error: String(err) }))
+            res.end(serializeJson({ error: "internal error" }))
           }
         } else {
           res.writeHead(404, { "content-type": "application/json" })
@@ -639,7 +641,7 @@ export class P2PNode {
         } catch (error) {
           log.error("gossip handler error", { url: req.url, error: String(error) })
           res.writeHead(500)
-          res.end(serializeJson({ error: String(error) }))
+          res.end(serializeJson({ error: "internal error" }))
         }
       })
     })
