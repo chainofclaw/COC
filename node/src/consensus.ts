@@ -299,17 +299,21 @@ export class ConsensusEngine {
       // Build local fork candidate
       const localHeight = await Promise.resolve(this.chain.getHeight())
 
-      // Track sync progress: update highest peer height from snapshots
+      // Track sync progress: compute max peer height per sync round (allows decrease after reorgs)
+      let roundMaxPeerHeight = 0n
       for (const snap of snapshots) {
         if (Array.isArray(snap.blocks) && snap.blocks.length > 0) {
           const remoteTipHeight = BigInt(snap.blocks[snap.blocks.length - 1].number)
-          if (remoteTipHeight > this.highestPeerHeight) {
-            this.highestPeerHeight = remoteTipHeight
-            if (this.syncStartMs === 0 && remoteTipHeight > localHeight) {
-              this.syncStartHeight = localHeight
-              this.syncStartMs = Date.now()
-            }
+          if (remoteTipHeight > roundMaxPeerHeight) {
+            roundMaxPeerHeight = remoteTipHeight
           }
+        }
+      }
+      if (roundMaxPeerHeight > 0n) {
+        this.highestPeerHeight = roundMaxPeerHeight
+        if (this.syncStartMs === 0 && roundMaxPeerHeight > localHeight) {
+          this.syncStartHeight = localHeight
+          this.syncStartMs = Date.now()
         }
       }
 

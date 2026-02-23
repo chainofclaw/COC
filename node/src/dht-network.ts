@@ -25,6 +25,7 @@ const ANNOUNCE_INTERVAL_MS = 3 * 60 * 1000 // 3 minutes
 const LOOKUP_TIMEOUT_MS = 5_000
 const LOOKUP_GLOBAL_TIMEOUT_MS = 30_000
 const LOOKUP_MAX_ITERATIONS = 20
+const LOOKUP_MAX_QUERIES = 60 // cap total outbound queries per lookup to prevent amplification
 const PEER_VERIFY_TIMEOUT_MS = 3_000
 const STALE_PEER_THRESHOLD_MS = 24 * 60 * 60 * 1000 // 24 hours
 
@@ -127,10 +128,11 @@ export class DhtNetwork {
     let improved = true
     const startMs = Date.now()
     let iterations = 0
+    let totalQueries = 0
     while (improved && !this.stopped) {
       improved = false
       iterations++
-      if (iterations > LOOKUP_MAX_ITERATIONS || Date.now() - startMs > LOOKUP_GLOBAL_TIMEOUT_MS) {
+      if (iterations > LOOKUP_MAX_ITERATIONS || totalQueries >= LOOKUP_MAX_QUERIES || Date.now() - startMs > LOOKUP_GLOBAL_TIMEOUT_MS) {
         log.debug("iterative lookup terminated", { iterations, elapsedMs: Date.now() - startMs })
         break
       }
@@ -141,9 +143,14 @@ export class DhtNetwork {
 
       if (candidates.length === 0) break
 
-      // Query in parallel
+      // Query in parallel (cap by remaining query budget)
+      const budget = LOOKUP_MAX_QUERIES - totalQueries
+      const cappedCandidates = candidates.slice(0, Math.max(budget, 0))
+      if (cappedCandidates.length === 0) break
+      totalQueries += cappedCandidates.length
+
       const results = await Promise.allSettled(
-        candidates.map(async (peer) => {
+        cappedCandidates.map(async (peer) => {
           queried.add(peer.id)
           return await this.findNode(peer, targetId)
         }),

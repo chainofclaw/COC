@@ -18,6 +18,9 @@ import { createLogger } from "./logger.ts"
 
 const log = createLogger("rpc")
 
+// Per-account nonce serialization: prevents concurrent eth_sendTransaction from getting same nonce
+const sendTxLocks = new Map<string, Promise<unknown>>()
+
 // BigInt-safe JSON serializer for RPC responses
 /** Constant-time string comparison to prevent timing attacks on auth tokens */
 function constantTimeEqual(a: string, b: string): boolean {
@@ -511,33 +514,39 @@ async function handleRpc(
       const account = testAccounts.get(from)
       if (!account) throw new Error(`account not found: ${from}. Use eth_accounts to list available test accounts.`)
 
-      const onchainNonce = await evm.getNonce(from)
-      const nonce = chain.mempool.getPendingNonce(from as Hex, onchainNonce)
-      const gasPrice = txParams.gasPrice ?? "0x3b9aca00" // 1 gwei
-      const gasLimitRaw = txParams.gas ?? "0x" + (await evm.estimateGas({
-        from: txParams.from,
-        to: txParams.to ?? "",
-        data: txParams.data ?? "0x",
-        value: txParams.value ?? "0x0",
-      })).toString(16)
+      // Serialize per-account to prevent concurrent nonce collision
+      const prev = sendTxLocks.get(from) ?? Promise.resolve()
+      const work = prev.catch(() => {}).then(async () => {
+        const onchainNonce = await evm.getNonce(from)
+        const nonce = chain.mempool.getPendingNonce(from as Hex, onchainNonce)
+        const gasPrice = txParams.gasPrice ?? "0x3b9aca00" // 1 gwei
+        const gasLimitRaw = txParams.gas ?? "0x" + (await evm.estimateGas({
+          from: txParams.from,
+          to: txParams.to ?? "",
+          data: txParams.data ?? "0x",
+          value: txParams.value ?? "0x0",
+        })).toString(16)
 
-      const tx = Transaction.from({
-        to: txParams.to,
-        value: txParams.value ?? "0x0",
-        data: txParams.data ?? "0x",
-        nonce: Number(nonce),
-        gasLimit: gasLimitRaw,
-        gasPrice,
-        chainId,
+        const tx = Transaction.from({
+          to: txParams.to,
+          value: txParams.value ?? "0x0",
+          data: txParams.data ?? "0x",
+          nonce: Number(nonce),
+          gasLimit: gasLimitRaw,
+          gasPrice,
+          chainId,
+        })
+
+        const sig = account.signingKey.sign(tx.unsignedHash)
+        const signed = tx.clone()
+        signed.signature = sig
+        const serialized = signed.serialized as Hex
+        const result = await chain.addRawTx(serialized)
+        await p2p.receiveTx(serialized)
+        return result.hash
       })
-
-      const sig = account.signingKey.sign(tx.unsignedHash)
-      const signed = tx.clone()
-      signed.signature = sig
-      const serialized = signed.serialized as Hex
-      const result = await chain.addRawTx(serialized)
-      await p2p.receiveTx(serialized)
-      return result.hash
+      sendTxLocks.set(from, work)
+      return await work
     }
     case "eth_sign": {
       const address = String((payload.params ?? [])[0] ?? "").toLowerCase()

@@ -138,9 +138,9 @@
 
 算法：
 - 维持 50% 区块 Gas 上限的目标利用率。
-- 实际 Gas > 目标：base fee 最多上调 12.5%（整数除法截断为 0 时兜底 1 wei，防止低 base fee 时停滞）。
+- 实际 Gas > 目标：base fee 最多上调 12.5%。当整数除法将增量截断为 0 时，施加最小增量 1 wei，防止低 base fee 时停滞。
 - 实际 Gas < 目标：base fee 最多下调 12.5%。
-- 最低 1 gwei（永不降至零）。
+- 绝对下限：1 gwei（base fee 永不低于 `MIN_BASE_FEE = 1_000_000_000`）。
 - `changeRatio = (gasUsed - targetGas) / targetGas`。
 - `newBaseFee = parentBaseFee * (1 + changeRatio * 0.125)`。
 
