@@ -104,6 +104,7 @@ export class DnsSeedResolver {
           try {
             const parsed = new URL(url)
             if (parsed.protocol !== "http:" && parsed.protocol !== "https:") continue
+            if (isPrivateHost(parsed.hostname)) continue
           } catch { continue }
           peers.push({ id, url })
         }
@@ -124,6 +125,22 @@ export class DnsSeedResolver {
   clearCache(): void {
     this.cache.clear()
   }
+}
+
+function isPrivateHost(hostname: string): boolean {
+  // Filter private/reserved IPv4 ranges and localhost to prevent SSRF
+  if (hostname === "localhost" || hostname === "::1") return true
+  const h = hostname.startsWith("::ffff:") ? hostname.slice(7) : hostname
+  const parts = h.split(".")
+  if (parts.length !== 4) return false
+  const [a, b] = parts.map(Number)
+  if (a === 10) return true                          // 10.0.0.0/8
+  if (a === 172 && b >= 16 && b <= 31) return true   // 172.16.0.0/12
+  if (a === 192 && b === 168) return true             // 192.168.0.0/16
+  if (a === 127) return true                          // 127.0.0.0/8
+  if (a === 169 && b === 254) return true             // 169.254.0.0/16 (link-local)
+  if (a === 0) return true                            // 0.0.0.0/8
+  return false
 }
 
 function isValidUrl(url: string): boolean {

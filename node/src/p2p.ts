@@ -749,9 +749,13 @@ export class P2PNode {
     const FETCH_TOTAL_TIMEOUT_MS = 15_000
     const settled = await Promise.race([
       Promise.allSettled(
-        allPeers.map((peer) =>
-          requestJson<ChainSnapshot>(`${peer.url}/p2p/chain-snapshot`, "GET")
-        )
+        allPeers.map((peer) => {
+          const headers: Record<string, string> = {}
+          if (this.cfg.signer) {
+            headers["x-p2p-auth"] = buildSignedGetAuth("/p2p/chain-snapshot", this.cfg.signer)
+          }
+          return requestJson<ChainSnapshot>(`${peer.url}/p2p/chain-snapshot`, "GET", undefined, headers)
+        })
       ),
       new Promise<PromiseSettledResult<ChainSnapshot>[]>((resolve) =>
         setTimeout(() => resolve([]), FETCH_TOTAL_TIMEOUT_MS)
@@ -1100,7 +1104,7 @@ export class P2PNode {
   }
 }
 
-async function requestJson<T = unknown>(url: string, method: "GET" | "POST", body?: unknown): Promise<T> {
+async function requestJson<T = unknown>(url: string, method: "GET" | "POST", body?: unknown, extraHeaders?: Record<string, string>): Promise<T> {
   const endpoint = new URL(url)
 
   return await new Promise<T>((resolve, reject) => {
@@ -1125,6 +1129,7 @@ async function requestJson<T = unknown>(url: string, method: "GET" | "POST", bod
         method,
         headers: {
           "content-type": "application/json",
+          ...extraHeaders,
         },
       },
       (res) => {
