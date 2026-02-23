@@ -130,6 +130,7 @@ const verifier = new ReceiptVerifier({
       receipt.challengeId,
       receipt.nodeId,
       responseBodyHash,
+      receipt.responseAtMs,
     );
     const nodeAddr = hex32ToAddress(receipt.nodeId);
     return agentSigner.verifyNodeSig(msg, receipt.nodeSig, nodeAddr);

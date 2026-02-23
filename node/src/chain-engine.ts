@@ -223,7 +223,7 @@ export class ChainEngine {
       const receipt = this.evm.getReceipt(result.txHash)
       if (receipt) {
         receipts.push(receipt)
-        totalGasUsed += receipt.gasUsed ?? 0n
+        totalGasUsed += typeof receipt.gasUsed === "bigint" ? receipt.gasUsed : BigInt(parseInt(String(receipt.gasUsed), 16) || 0)
       }
       this.txHashSet.add(result.txHash as Hex)
     }

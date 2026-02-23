@@ -131,7 +131,8 @@ test("POST /pose/receipt accepts receipt by challengeId for issued challenge", a
 
     const responseBody = { ok: true, blockNumber: 100 }
     const bodyHash = hashStable(responseBody)
-    const msg = buildReceiptSignMessage(challengeId, nodeId, bodyHash)
+    const responseAtMs = issuedAtMs + 100n
+    const msg = buildReceiptSignMessage(challengeId, nodeId, bodyHash, responseAtMs)
     const nodeSig = signer.sign(msg)
 
     const receiptResp = await fetchJson(port, "POST", "/pose/receipt", {
@@ -139,7 +140,7 @@ test("POST /pose/receipt accepts receipt by challengeId for issued challenge", a
       receipt: {
         challengeId,
         nodeId,
-        responseAtMs: (issuedAtMs + 100n).toString(),
+        responseAtMs: responseAtMs.toString(),
         responseBody,
         nodeSig,
       },

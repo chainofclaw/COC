@@ -57,6 +57,8 @@ export function buildReceiptSignMessage(
   challengeId: string,
   nodeId: string,
   responseBodyHash: string,
+  responseAtMs?: bigint | number,
 ): string {
-  return `pose:receipt:${challengeId}:${nodeId}:${responseBodyHash}`
+  const base = `pose:receipt:${challengeId}:${nodeId}:${responseBodyHash}`
+  return responseAtMs !== undefined ? `${base}:${responseAtMs.toString()}` : base
 }

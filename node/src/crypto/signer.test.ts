@@ -85,6 +85,8 @@ test("buildChallengeSignMessage produces deterministic output", () => {
 test("buildReceiptSignMessage produces deterministic output", () => {
   const msg = buildReceiptSignMessage("0xabc", "0x123", "0xhash")
   assert.equal(msg, "pose:receipt:0xabc:0x123:0xhash")
+  const msgWithTs = buildReceiptSignMessage("0xabc", "0x123", "0xhash", 1234567890n)
+  assert.equal(msgWithTs, "pose:receipt:0xabc:0x123:0xhash:1234567890")
 })
 
 test("verify returns false for invalid signature format", () => {
