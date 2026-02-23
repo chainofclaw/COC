@@ -127,6 +127,7 @@ export function decodeFrame(buf: Uint8Array): { frame: WireFrame; bytesConsumed:
  */
 export class FrameDecoder {
   private buffer: Uint8Array = new Uint8Array(0)
+  private used = 0
   private readonly maxBufferSize: number
 
   constructor(maxBufferSize = 32 * 1024 * 1024) { // 32 MB default
@@ -136,28 +137,41 @@ export class FrameDecoder {
   /**
    * Feed incoming bytes and return any complete frames.
    * Throws if buffer exceeds maxBufferSize (incomplete frame attack protection).
+   * Uses exponential growth (2x) to amortize allocation cost to O(n) total.
    */
   feed(data: Uint8Array): WireFrame[] {
-    const newSize = this.buffer.length + data.length
-    if (newSize > this.maxBufferSize) {
+    const needed = this.used + data.length
+    if (needed > this.maxBufferSize) {
       this.buffer = new Uint8Array(0)
-      throw new Error(`FrameDecoder buffer overflow: ${newSize} > ${this.maxBufferSize}`)
+      this.used = 0
+      throw new Error(`FrameDecoder buffer overflow: ${needed} > ${this.maxBufferSize}`)
     }
 
-    // Append to buffer
-    const combined = new Uint8Array(newSize)
-    combined.set(this.buffer, 0)
-    combined.set(data, this.buffer.length)
-    this.buffer = combined
+    // Grow buffer with exponential strategy (2x) to avoid O(n²) copies
+    if (needed > this.buffer.length) {
+      const newCap = Math.min(Math.max(needed, this.buffer.length * 2, 4096), this.maxBufferSize)
+      const grown = new Uint8Array(newCap)
+      grown.set(this.buffer.subarray(0, this.used), 0)
+      this.buffer = grown
+    }
+    this.buffer.set(data, this.used)
+    this.used += data.length
 
     const frames: WireFrame[] = []
+    let offset = 0
 
-    while (this.buffer.length >= HEADER_SIZE) {
-      const result = decodeFrame(this.buffer)
+    while (offset + HEADER_SIZE <= this.used) {
+      const result = decodeFrame(this.buffer.subarray(offset, this.used))
       if (!result) break
 
       frames.push(result.frame)
-      this.buffer = this.buffer.slice(result.bytesConsumed)
+      offset += result.bytesConsumed
+    }
+
+    // Compact: shift unconsumed bytes to front
+    if (offset > 0) {
+      this.buffer.copyWithin(0, offset, this.used)
+      this.used -= offset
     }
 
     return frames
@@ -167,7 +181,7 @@ export class FrameDecoder {
    * Get remaining buffered bytes count.
    */
   bufferedBytes(): number {
-    return this.buffer.length
+    return this.used
   }
 
   /**
@@ -175,6 +189,7 @@ export class FrameDecoder {
    */
   reset(): void {
     this.buffer = new Uint8Array(0)
+    this.used = 0
   }
 }
 
