@@ -420,6 +420,7 @@ function normalizePath(path: string): string {
 
 function splitPath(path: string): { dir: string; base: string } {
   const normalized = normalizePath(path)
+  if (normalized === "/") throw new Error("cannot operate on root path directly")
   const lastSlash = normalized.lastIndexOf("/")
   if (lastSlash <= 0) return { dir: "/", base: normalized.slice(1) }
   return {
