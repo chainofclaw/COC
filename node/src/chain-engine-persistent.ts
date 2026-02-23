@@ -649,8 +649,11 @@ export class PersistentChainEngine {
    * use importSnapSyncBlocks() for that case.
    */
   private async rebuildFromBlocks(blocks: ChainBlock[]): Promise<void> {
-    await this.evm.resetExecution()
-
+    // Do NOT call resetExecution() here -- this method is used for incremental
+    // sync where existing blocks are skipped by applyBlock's dedup check.
+    // Resetting EVM would overwrite prefund account balances and lose state
+    // from blocks not in the incoming window. resetExecution is only appropriate
+    // in rebuildFromPersisted which replays ALL blocks from genesis.
     for (const block of blocks) {
       const normalized: ChainBlock = {
         ...block,
