@@ -23,6 +23,8 @@ const sendTxLocks = new Map<string, Promise<unknown>>()
 
 const MAX_FILTERS = 1000
 const FILTER_TTL_MS = 5 * 60 * 1000 // 5 minutes
+const CHAIN_STATS_CACHE_TTL_MS = 5_000
+let chainStatsCache: { result: unknown; height: bigint; cachedAtMs: number } | null = null
 
 function cleanupExpiredFilters(filters: Map<string, PendingFilter>): void {
   const now = Date.now()
@@ -1176,6 +1178,10 @@ async function handleRpc(
     }
     case "coc_chainStats": {
       const height = await Promise.resolve(chain.getHeight())
+      const now = Date.now()
+      if (chainStatsCache && chainStatsCache.height === height && now - chainStatsCache.cachedAtMs < CHAIN_STATS_CACHE_TTL_MS) {
+        return chainStatsCache.result
+      }
       const latest = await Promise.resolve(chain.getBlockByNumber(height))
       const poolStats = chain.mempool.stats()
       const validators = hasConfig(chain) ? chain.cfg.validators : []
@@ -1199,7 +1205,7 @@ async function handleRpc(
         if (b) recentTxCount += b.txs.length
       }
 
-      return {
+      const statsResult = {
         blockHeight: `0x${height.toString(16)}`,
         latestBlockTime: latest?.timestampMs ?? 0,
         blocksPerMinute: Math.round(blocksPerMin * 100) / 100,
@@ -1208,6 +1214,8 @@ async function handleRpc(
         validatorCount: validators.length,
         chainId: `0x${hasConfig(chain) ? chain.cfg.chainId.toString(16) : "1"}`,
       }
+      chainStatsCache = { result: statsResult, height, cachedAtMs: now }
+      return statsResult
     }
     case "coc_getContracts": {
       if (hasBlockIndex(chain)) {
@@ -1301,7 +1309,7 @@ async function handleRpc(
       }))
     }
     default:
-      throw new Error(`method not supported: ${payload.method}`)
+      throw new Error("method not supported")
   }
 }
 
