@@ -671,6 +671,9 @@ export class P2PNode {
             if (!payload.type || !payload.blockHash || !payload.senderId) {
               throw new Error("missing BFT message fields")
             }
+            if (payload.type !== "prepare" && payload.type !== "commit") {
+              throw new Error(`invalid BFT message type: ${payload.type}`)
+            }
             // Restore BigInt height lost during JSON serialization
             if (payload.height !== undefined) {
               payload.height = BigInt(payload.height)
