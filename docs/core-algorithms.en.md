@@ -4,19 +4,21 @@
 **Goal**: deterministic leader selection per block height.
 
 Algorithm:
-- Maintain a static validator list `V`.
-- For height `h`, proposer index = `(h - 1) mod |V|`.
+- In-memory engine: maintain a static validator list `V`; proposer index = `(h - 1) mod |V|`.
+- Persistent engine with governance enabled: use stake-weighted proposer selection (§11) via `ValidatorGovernance.getActiveValidators()`; falls back to round-robin when governance is disabled or no active validators exist.
 - Only the proposer for `h` can build and broadcast block `h`.
 
 Code:
-- `COC/node/src/chain-engine.ts` (`expectedProposer`)
+- `COC/node/src/chain-engine.ts` (`expectedProposer` — round-robin)
+- `COC/node/src/chain-engine-persistent.ts` (`expectedProposer` — stake-weighted with fallback)
 
 ## 2) Block Hashing
 **Goal**: deterministic block identity.
 
 Algorithm:
-- Hash payload fields: `height | parentHash | proposer | timestamp | txs (ordered rawTx list) | baseFee | cumulativeWeight`.
+- Concatenate payload fields with `|` separator: `height|parentHash|proposer|timestampMs|txs(comma-separated rawTx list)|baseFee|cumulativeWeight`.
 - `hash = keccak256(payload)`.
+- `baseFee` and `cumulativeWeight` default to `0` when absent.
 
 Code:
 - `COC/node/src/hash.ts`
@@ -25,9 +27,9 @@ Code:
 **Goal**: choose txs for a block deterministically.
 
 Algorithm:
-- Filter txs below `minGasPrice`.
-- Sort by effective gas price desc (EIP-1559: min(maxFeePerGas, baseFee + maxPriorityFeePerGas); legacy: gasPrice), then nonce asc, then arrival time.
-- Enforce per‑sender nonce continuity using on‑chain nonce.
+- `pickForBlock()`: filter txs below `minGasPrice`, sort by EIP-1559 effective gas price desc (`min(maxFeePerGas, baseFee + maxPriorityFeePerGas)`; legacy: `gasPrice`), then nonce asc, then arrival time. Enforce per-sender nonce continuity using on-chain nonce.
+- `getAll()`: returns all pending txs sorted by legacy `gasPrice` desc (no baseFee context available outside block production).
+- `gasPriceHistogram()`: buckets by legacy `gasPrice` for display/analytics.
 
 Code:
 - `COC/node/src/mempool.ts`
@@ -42,7 +44,7 @@ Code:
 - `COC/node/src/chain-engine.ts` (`updateFinalityFlags`)
 
 ## 5) P2P Snapshot Sync
-**Goal**: converge to the longest chain snapshot.
+**Goal**: converge to the best chain via fork-choice rule.
 
 Algorithm:
 - Periodically fetch snapshots from configured static peers (discovered DHT peers are not currently included in sync source set).
@@ -121,8 +123,9 @@ Code:
 Algorithm:
 - Get active validators from `ValidatorGovernance`, sort by ID lexicographically.
 - Compute `totalStake = sum(v.stake for v in validators)`.
-- Compute `seed = blockHeight mod totalStake`.
-- Walk sorted validators accumulating stake: first validator where `cumulative > seed` is proposer.
+- If `totalStake === 0`: equal-weight fallback via `(blockHeight - 1) mod |validators|`.
+- Otherwise compute `seed = blockHeight mod totalStake`.
+- Walk sorted validators accumulating stake: first validator where `seed < cumulative` is proposer.
 - Deterministic: same height always produces same proposer.
 - Falls back to round-robin if governance is disabled or no active validators.
 
@@ -134,7 +137,7 @@ Code:
 
 Algorithm:
 - Maintain target gas utilization at 50% of block gas limit.
-- If actual gas > target: increase base fee by up to 12.5%.
+- If actual gas > target: increase base fee by up to 12.5% (minimum 1 wei increase guaranteed when over target, preventing stalling at low base fees).
 - If actual gas < target: decrease base fee by up to 12.5%.
 - Floor at 1 gwei minimum (never drops to zero).
 - `changeRatio = (gasUsed - targetGas) / targetGas`.
@@ -154,6 +157,7 @@ Algorithm:
 - If recovering propose succeeds → back to `healthy`.
 - If recovering propose fails → back to `degraded`.
 - Recovery cooldown: 30 seconds between recovery attempts.
+- Forced recovery: if stuck in `degraded` for 5 minutes (`MAX_DEGRADED_MS`), cooldown is cleared and recovery is forced.
 
 Code:
 - `COC/node/src/consensus.ts`
@@ -166,6 +170,7 @@ Algorithm:
 - Quorum threshold: `floor(2/3 * totalStake) + 1`.
 - Proposer broadcasts block, validators send prepare votes.
 - On prepare quorum, transition to commit phase.
+- Early commit buffering: `handleCommit()` accepts and records commit votes during `prepare` phase; on transition to `commit`, buffered votes are checked for immediate quorum.
 - On commit quorum, block is BFT-finalized.
 - Timeout handling: rounds fail after configurable prepare + commit timeout.
 
@@ -254,6 +259,7 @@ Algorithm:
 - Receiver checks snapshot `(blockHeight, blockHash)` matches the target chain tip before import.
 - Import accounts, storage, and code into local state trie.
 - After import, verify expectedStateRoot via cross-peer consensus (at least 2 votes AND strict majority of responding peers; single-peer networks accept with 1 vote; fail-closed when multiple peers disagree without quorum) and set local state root.
+- Import snapshot blocks via `importSnapSyncBlocks()` (writes to block index without re-execution); proposer-set validation is skipped for historical blocks since the validator set may have changed since those blocks were produced.
 - Resume consensus from the snapshot's block height.
 - Security assumption: block-hash payload currently does not include `stateRoot`, so SnapSync still depends on snapshot-provider trust; production deployments should add trusted state-root anchoring and/or multi-peer cross-checks.
 
