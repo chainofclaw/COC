@@ -254,8 +254,10 @@ export class PeerDiscovery {
     try {
       const ok = await this.cfg.verifyPeerIdentity(peer)
       if (ok) {
-        // Re-check capacity/state after async verification.
-        if (!this.peers.has(peer.id) && this.peers.size < this.cfg.maxPeers) {
+        // Re-check capacity/state AND IP diversity after async verification
+        const host = extractHost(peer.url)
+        const ipCount = this.peersPerIp.get(host) ?? 0
+        if (!this.peers.has(peer.id) && this.peers.size < this.cfg.maxPeers && ipCount < PeerDiscovery.MAX_PEERS_PER_IP) {
           this.promotePeer(peer)
         }
       } else {
