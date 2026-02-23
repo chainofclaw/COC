@@ -102,6 +102,9 @@ export class BftSlashingHandler {
       timestamp: Date.now(),
     }
 
+    if (this.slashHistory.length >= 10_000) {
+      this.slashHistory.splice(0, this.slashHistory.length - 9_999)
+    }
     this.slashHistory.push(event)
     log.warn("validator slashed", {
       validatorId: evidence.validatorId,

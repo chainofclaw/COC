@@ -84,7 +84,7 @@ export class ChainEngine {
 
   makeSnapshot(): ChainSnapshot {
     return {
-      blocks: this.blocks,
+      blocks: [...this.blocks],
       updatedAtMs: Date.now(),
     }
   }
@@ -397,7 +397,11 @@ export class ChainEngine {
   private updateFinalityFlags(): void {
     const depth = BigInt(Math.max(1, this.cfg.finalityDepth))
     const tip = this.getHeight()
-    for (const block of this.blocks) {
+    // Only scan from the finality boundary backwards to avoid O(n) full scan
+    const boundary = tip >= depth ? tip - depth : 0n
+    for (let i = this.blocks.length - 1; i >= 0; i--) {
+      const block = this.blocks[i]
+      if (block.finalized) break
       block.finalized = tip >= block.number + depth
     }
   }

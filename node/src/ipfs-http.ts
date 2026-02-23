@@ -56,7 +56,12 @@ export class IpfsHttpServer {
 
       const url = parseUrl(req.url ?? "", true)
       if (req.method === "GET" && url.pathname?.startsWith("/ipfs/")) {
-        const cid = url.pathname.replace("/ipfs/", "")
+        const cid = url.pathname.slice(6) // strip "/ipfs/"
+        if (!cid || /[\/\\]|\.\.|\0/.test(cid)) {
+          res.writeHead(400, { "content-type": "application/json" })
+          res.end(JSON.stringify({ error: "invalid CID" }))
+          return
+        }
         const data = await this.unixfs.readFile(cid)
         res.writeHead(200)
         res.end(data)
