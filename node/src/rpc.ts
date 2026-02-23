@@ -25,6 +25,7 @@ const MAX_FILTERS = 1000
 const FILTER_TTL_MS = 5 * 60 * 1000 // 5 minutes
 const CHAIN_STATS_CACHE_TTL_MS = 5_000
 let chainStatsCache: { result: unknown; height: bigint; cachedAtMs: number } | null = null
+let chainStatsComputing: Promise<unknown> | null = null
 
 function cleanupExpiredFilters(filters: Map<string, PendingFilter>): void {
   const now = Date.now()
@@ -1186,40 +1187,45 @@ async function handleRpc(
       if (chainStatsCache && chainStatsCache.height === height && now - chainStatsCache.cachedAtMs < CHAIN_STATS_CACHE_TTL_MS) {
         return chainStatsCache.result
       }
-      const latest = await Promise.resolve(chain.getBlockByNumber(height))
-      const poolStats = chain.mempool.stats()
-      const validators = hasConfig(chain) ? chain.cfg.validators : []
+      // Thundering herd protection: coalesce concurrent requests
+      if (chainStatsComputing) return await chainStatsComputing
+      chainStatsComputing = (async () => {
+        const latest = await Promise.resolve(chain.getBlockByNumber(height))
+        const poolStats = chain.mempool.stats()
+        const validators = hasConfig(chain) ? chain.cfg.validators : []
 
-      // Calculate blocks per minute from last 10 blocks
-      let blocksPerMin = 0
-      if (height > 1n) {
-        const lookback = height > 10n ? 10n : height
-        const oldBlock = await Promise.resolve(chain.getBlockByNumber(height - lookback + 1n))
-        if (oldBlock && latest) {
-          const elapsed = (latest.timestampMs - oldBlock.timestampMs) / 1000
-          blocksPerMin = elapsed > 0 ? Number(lookback) / elapsed * 60 : 0
+        // Calculate blocks per minute from last 10 blocks
+        let blocksPerMin = 0
+        if (height > 1n) {
+          const lookback = height > 10n ? 10n : height
+          const oldBlock = await Promise.resolve(chain.getBlockByNumber(height - lookback + 1n))
+          if (oldBlock && latest) {
+            const elapsed = (latest.timestampMs - oldBlock.timestampMs) / 1000
+            blocksPerMin = elapsed > 0 ? Number(lookback) / elapsed * 60 : 0
+          }
         }
-      }
 
-      // Count total txs from last 100 blocks
-      let recentTxCount = 0
-      const scanFrom = height > 100n ? height - 99n : 1n
-      for (let i = scanFrom; i <= height; i++) {
-        const b = await Promise.resolve(chain.getBlockByNumber(i))
-        if (b) recentTxCount += b.txs.length
-      }
+        // Count total txs from last 100 blocks
+        let recentTxCount = 0
+        const scanFrom = height > 100n ? height - 99n : 1n
+        for (let i = scanFrom; i <= height; i++) {
+          const b = await Promise.resolve(chain.getBlockByNumber(i))
+          if (b) recentTxCount += b.txs.length
+        }
 
-      const statsResult = {
-        blockHeight: `0x${height.toString(16)}`,
-        latestBlockTime: latest?.timestampMs ?? 0,
-        blocksPerMinute: Math.round(blocksPerMin * 100) / 100,
-        pendingTxCount: poolStats.size,
-        recentTxCount,
-        validatorCount: validators.length,
-        chainId: `0x${hasConfig(chain) ? chain.cfg.chainId.toString(16) : "1"}`,
-      }
-      chainStatsCache = { result: statsResult, height, cachedAtMs: now }
-      return statsResult
+        const statsResult = {
+          blockHeight: `0x${height.toString(16)}`,
+          latestBlockTime: latest?.timestampMs ?? 0,
+          blocksPerMinute: Math.round(blocksPerMin * 100) / 100,
+          pendingTxCount: poolStats.size,
+          recentTxCount,
+          validatorCount: validators.length,
+          chainId: `0x${hasConfig(chain) ? chain.cfg.chainId.toString(16) : "1"}`,
+        }
+        chainStatsCache = { result: statsResult, height, cachedAtMs: now }
+        return statsResult
+      })().finally(() => { chainStatsComputing = null })
+      return await chainStatsComputing
     }
     case "coc_getContracts": {
       if (hasBlockIndex(chain)) {
