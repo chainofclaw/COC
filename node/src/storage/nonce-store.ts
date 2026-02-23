@@ -45,12 +45,16 @@ export class PersistentNonceStore implements INonceStore {
     const threshold = olderThan ?? Date.now() - CLEANUP_THRESHOLD_MS
     let count = 0
 
-    // Note: Level doesn't support range queries easily,
-    // so we use a simple implementation that would need optimization
-    // for production use (e.g., periodic batch cleanup)
-
-    // For now, we keep it simple - cleanup is called periodically
-    // and we only delete items we know are old
+    const keys = await this.db.getKeysWithPrefix(NONCE_PREFIX)
+    for (const key of keys) {
+      const value = await this.db.get(key)
+      if (!value) continue
+      const timestamp = Number(new TextDecoder().decode(value))
+      if (Number.isNaN(timestamp) || timestamp < threshold) {
+        await this.db.del(key)
+        count++
+      }
+    }
 
     return count
   }

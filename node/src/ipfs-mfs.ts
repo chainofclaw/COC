@@ -11,6 +11,7 @@ import { UnixFsBuilder } from "./ipfs-unixfs.ts"
 import { createLogger } from "./logger.ts"
 
 const log = createLogger("ipfs-mfs")
+const MAX_MFS_DEPTH = 64
 
 export interface MfsEntry {
   name: string
@@ -250,12 +251,20 @@ export class IpfsMfs {
     destParent.entries.set(destBase, { ...entry, name: destBase, modifiedMs: Date.now() })
     srcParent.entries.delete(srcBase)
 
-    // If it's a directory, update the dirs map
+    // If it's a directory, relocate it and all nested subdirectories in the dirs map
     if (entry.type === "directory") {
-      const dirNode = this.dirs.get(srcNorm)
-      if (dirNode) {
-        this.dirs.set(destNorm, dirNode)
-        this.dirs.delete(srcNorm)
+      const srcPrefix = srcNorm + "/"
+      const keysToMove: string[] = []
+      for (const key of this.dirs.keys()) {
+        if (key === srcNorm || key.startsWith(srcPrefix)) {
+          keysToMove.push(key)
+        }
+      }
+      for (const key of keysToMove) {
+        const dirNode = this.dirs.get(key)!
+        const newKey = key === srcNorm ? destNorm : destNorm + key.slice(srcNorm.length)
+        this.dirs.set(newKey, dirNode)
+        this.dirs.delete(key)
       }
     }
   }
@@ -359,20 +368,22 @@ export class IpfsMfs {
     return meta.cid
   }
 
-  private async removeRecursive(path: string): Promise<void> {
+  private async removeRecursive(path: string, depth = 0): Promise<void> {
+    if (depth >= MAX_MFS_DEPTH) throw new Error(`directory nesting too deep (max ${MAX_MFS_DEPTH}): ${path}`)
     const dir = this.dirs.get(path)
     if (!dir) return
 
     for (const [name, entry] of dir.entries) {
       if (entry.type === "directory") {
         const childPath = path === "/" ? `/${name}` : `${path}/${name}`
-        await this.removeRecursive(childPath)
+        await this.removeRecursive(childPath, depth + 1)
         this.dirs.delete(childPath)
       }
     }
   }
 
-  private async deepCopyDir(src: string, dest: string): Promise<void> {
+  private async deepCopyDir(src: string, dest: string, depth = 0): Promise<void> {
+    if (depth >= MAX_MFS_DEPTH) throw new Error(`directory nesting too deep (max ${MAX_MFS_DEPTH}): ${src}`)
     const srcDir = this.dirs.get(src)
     if (!srcDir) return
 
@@ -383,7 +394,7 @@ export class IpfsMfs {
       if (entry.type === "directory") {
         const srcChild = src === "/" ? `/${name}` : `${src}/${name}`
         const destChild = dest === "/" ? `/${name}` : `${dest}/${name}`
-        await this.deepCopyDir(srcChild, destChild)
+        await this.deepCopyDir(srcChild, destChild, depth + 1)
       }
     }
   }
