@@ -97,6 +97,9 @@ export class ValidatorGovernance {
         this.proposals.set(id, { ...proposal, status: "expired" })
       }
     }
+
+    // Auto-prune finalized proposals older than 100 epochs
+    this.pruneProposals(100n)
   }
 
   /**

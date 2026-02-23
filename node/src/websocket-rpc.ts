@@ -314,7 +314,7 @@ export class WsRpcServer {
       this.send(ws, {
         jsonrpc: "2.0",
         id: payload.id ?? null,
-        error: { code: -32603, message: String(err) },
+        error: { code: -32603, message: err instanceof Error ? err.message : "internal error" },
       })
     }
   }

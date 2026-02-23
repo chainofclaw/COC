@@ -31,6 +31,7 @@ export interface PeerScoringConfig {
   failurePenalty: number
   invalidDataPenalty: number
   timeoutPenalty: number
+  maxPeers: number
 }
 
 const DEFAULT_CONFIG: PeerScoringConfig = {
@@ -45,6 +46,7 @@ const DEFAULT_CONFIG: PeerScoringConfig = {
   failurePenalty: 5,
   invalidDataPenalty: 20,
   timeoutPenalty: 10,
+  maxPeers: 10_000,
 }
 
 export class PeerScoring {
@@ -64,6 +66,15 @@ export class PeerScoring {
       const peer = this.peers.get(id)!
       this.peers.set(id, { ...peer, url })
       return
+    }
+    // Evict lowest-score peer if at capacity
+    if (this.peers.size >= this.cfg.maxPeers) {
+      let worstId: string | null = null
+      let worstScore = Infinity
+      for (const [pid, p] of this.peers) {
+        if (p.score < worstScore) { worstScore = p.score; worstId = pid }
+      }
+      if (worstId) this.peers.delete(worstId)
     }
     this.peers.set(id, {
       id,

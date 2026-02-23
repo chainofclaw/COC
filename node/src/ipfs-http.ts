@@ -140,7 +140,8 @@ export class IpfsHttpServer {
         if (!res.headersSent) {
           res.writeHead(500, { "content-type": "application/json" })
         }
-        try { res.end(JSON.stringify({ error: String(err) })) } catch { /* connection already closed */ }
+        log.error("IPFS HTTP request failed", { error: String(err) })
+        try { res.end(JSON.stringify({ error: "internal error" })) } catch { /* connection already closed */ }
       }
     })
 
@@ -431,8 +432,9 @@ export class IpfsHttpServer {
           res.end(JSON.stringify({ error: `unknown MFS command: ${route}` }))
       }
     } catch (err) {
+      log.error("MFS route failed", { error: String(err) })
       res.writeHead(500, { "content-type": "application/json" })
-      res.end(JSON.stringify({ error: String(err) }))
+      res.end(JSON.stringify({ error: "internal error" }))
     }
   }
 
@@ -501,8 +503,9 @@ export class IpfsHttpServer {
           res.end(JSON.stringify({ error: `unknown pubsub command: ${route}` }))
       }
     } catch (err) {
+      log.error("pubsub route failed", { error: String(err) })
       res.writeHead(500, { "content-type": "application/json" })
-      res.end(JSON.stringify({ error: String(err) }))
+      res.end(JSON.stringify({ error: "internal error" }))
     }
   }
 }
