@@ -254,7 +254,14 @@ export class ChainEngine {
     }
 
     this.updateFinalityFlags()
-    await this.storage.save(this.makeSnapshot())
+    try {
+      await this.storage.save(this.makeSnapshot())
+    } catch (saveErr) {
+      log.error("failed to persist chain snapshot (block accepted in memory)", {
+        height: block.number.toString(),
+        error: String(saveErr),
+      })
+    }
 
     // Emit new block event
     this.events.emitNewBlock({
