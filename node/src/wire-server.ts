@@ -339,6 +339,14 @@ export class WireServer {
           }
           this.handshakeNonces.add(hs.nonce)
         }
+        // Evict existing connection with same nodeId to prevent duplicate broadcasts
+        for (const [existingId, existingConn] of this.connections) {
+          if (existingConn.nodeId === hs.nodeId && existingConn !== conn) {
+            log.warn("duplicate nodeId, closing old connection", { nodeId: hs.nodeId, old: existingId })
+            existingConn.socket.destroy()
+            break
+          }
+        }
         conn.nodeId = hs.nodeId
         conn.handshakeComplete = true
         // Reply with ack if this was a handshake (not ack)
