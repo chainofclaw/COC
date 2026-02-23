@@ -643,6 +643,12 @@ export function validateConfig(cfg: Partial<NodeConfig>): string[] {
     }
   }
 
+  if (cfg.wirePort !== undefined) {
+    if (!Number.isInteger(cfg.wirePort) || cfg.wirePort < 1 || cfg.wirePort > 65535) {
+      errors.push("wirePort must be between 1 and 65535")
+    }
+  }
+
   if (cfg.blockTimeMs !== undefined) {
     if (!Number.isInteger(cfg.blockTimeMs) || cfg.blockTimeMs < 100) {
       errors.push("blockTimeMs must be >= 100")
