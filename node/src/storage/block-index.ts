@@ -14,6 +14,7 @@ const TX_BY_HASH_PREFIX = "t:"
 const LOG_BY_BLOCK_PREFIX = "l:"
 const ADDR_TX_PREFIX = "a:"
 const CONTRACT_PREFIX = "ct:"
+const CONTRACT_ADDR_PREFIX = "ca:"
 const LATEST_BLOCK_KEY = "m:latest-block"
 
 const encoder = new TextEncoder()
@@ -298,7 +299,11 @@ export class BlockIndex implements IBlockIndex {
       deployedAt: Date.now(),
     }
     const key = CONTRACT_PREFIX + padBlockNumber(blockNumber) + ":" + address.toLowerCase()
-    await this.db.put(key, encoder.encode(serializeJSON(record)))
+    const addrKey = CONTRACT_ADDR_PREFIX + address.toLowerCase()
+    await this.db.batch([
+      { type: "put", key, value: encoder.encode(serializeJSON(record)) },
+      { type: "put", key: addrKey, value: encoder.encode(key) },
+    ])
   }
 
   async getContracts(opts?: AddressTxQuery): Promise<ContractRecord[]> {
@@ -321,6 +326,19 @@ export class BlockIndex implements IBlockIndex {
   }
 
   async getContractInfo(address: Hex): Promise<ContractRecord | null> {
+    // O(1) lookup via address index, with fallback to legacy scan
+    const addrKey = CONTRACT_ADDR_PREFIX + address.toLowerCase()
+    const addrData = await this.db.get(addrKey)
+    if (addrData) {
+      const contractKey = decoder.decode(addrData)
+      const data = await this.db.get(contractKey)
+      if (data) {
+        const record = deserializeJSON(decoder.decode(data)) as ContractRecord
+        record.blockNumber = BigInt(record.blockNumber)
+        return record
+      }
+    }
+    // Fallback: legacy scan for contracts registered before address index existed
     const keys = await this.db.getKeysWithPrefix(CONTRACT_PREFIX, { limit: 10000, reverse: false })
     for (const key of keys) {
       if (key.endsWith(":" + address.toLowerCase())) {

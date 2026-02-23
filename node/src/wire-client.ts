@@ -75,6 +75,11 @@ export class WireClient {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null
     }
+    // Clean up pending FindNode requests to prevent memory leak
+    for (const entry of this.pendingFindNode.values()) {
+      clearTimeout(entry.timer)
+    }
+    this.pendingFindNode.clear()
     if (this.socket) {
       this.socket.destroy()
       this.socket = null

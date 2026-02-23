@@ -344,16 +344,20 @@ export class PersistentStateTrie implements IStateTrie {
   async *iterateAccounts(): AsyncIterable<{ address: string; state: AccountState }> {
     const stream = this.trie.createReadStream()
     for await (const item of stream) {
-      const address = bytesToHex(item.key as Uint8Array)
-      const json = JSON.parse(new TextDecoder().decode(item.value as Uint8Array))
-      yield {
-        address,
-        state: {
-          nonce: BigInt(json.nonce),
-          balance: BigInt(json.balance),
-          storageRoot: json.storageRoot,
-          codeHash: json.codeHash,
-        },
+      try {
+        const address = bytesToHex(item.key as Uint8Array)
+        const json = JSON.parse(new TextDecoder().decode(item.value as Uint8Array))
+        yield {
+          address,
+          state: {
+            nonce: BigInt(json.nonce),
+            balance: BigInt(json.balance),
+            storageRoot: json.storageRoot,
+            codeHash: json.codeHash,
+          },
+        }
+      } catch {
+        // Skip malformed trie entries
       }
     }
   }

@@ -71,8 +71,8 @@ export class IpfsBlockstore {
   }
 
   private blockPath(cid: CidString): string {
-    // Reject path traversal: CID must not contain directory separators or ".."
-    if (/[\/\\]|\.\./.test(cid)) {
+    // Reject path traversal: CID must not contain directory separators, "..", or null bytes
+    if (/[\/\\]|\.\./.test(cid) || cid.includes("\0")) {
       throw new Error(`invalid CID: ${cid}`)
     }
     return join(this.blocksDir(), cid)

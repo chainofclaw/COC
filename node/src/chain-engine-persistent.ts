@@ -264,16 +264,16 @@ export class PersistentChainEngine {
   }
 
   async applyBlock(block: ChainBlock, locallyProposed = false): Promise<void> {
-    // Duplicate block detection
-    const existing = await this.blockIndex.getBlockByHash(block.hash)
-    if (existing) return
-
     // Re-entrant guard (async EVM execution can yield back to event loop)
     if (this.applyingBlock) {
       throw new Error("applyBlock re-entrant call detected")
     }
     this.applyingBlock = true
     try {
+
+    // Duplicate block detection (inside guard to prevent TOCTOU race)
+    const existing = await this.blockIndex.getBlockByHash(block.hash)
+    if (existing) return
 
     const prev = await this.getTip()
     if (!validateBlockLink(prev ?? null, block)) {
