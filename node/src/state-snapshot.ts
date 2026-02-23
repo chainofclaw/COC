@@ -223,8 +223,8 @@ export function validateSnapshot(snapshot: StateSnapshot): void {
     throw new Error(`snapshot too large: ${snapshot.accounts.length} accounts (max ${MAX_SNAPSHOT_ACCOUNTS})`)
   }
   for (const acc of snapshot.accounts) {
-    if (!acc.address || typeof acc.address !== "string") {
-      throw new Error("account missing address")
+    if (!acc.address || typeof acc.address !== "string" || !acc.address.startsWith("0x")) {
+      throw new Error("account has invalid address format")
     }
     if (typeof acc.nonce !== "string" || typeof acc.balance !== "string") {
       throw new Error(`account ${acc.address} has invalid nonce/balance`)

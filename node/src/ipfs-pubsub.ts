@@ -30,6 +30,7 @@ interface TopicState {
 export interface PubsubConfig {
   nodeId: string
   maxTopics: number
+  maxSubscribersPerTopic: number
   maxMessageSize: number
   messageRetentionMs: number
   maxRecentMessages: number
@@ -38,6 +39,7 @@ export interface PubsubConfig {
 const DEFAULT_CONFIG: PubsubConfig = {
   nodeId: "coc-node",
   maxTopics: 100,
+  maxSubscribersPerTopic: 50,
   maxMessageSize: 1024 * 1024, // 1 MB
   messageRetentionMs: 5 * 60 * 1000, // 5 minutes
   maxRecentMessages: 1000,
@@ -97,6 +99,9 @@ export class IpfsPubsub {
       }
       state = { handlers: new Set(), recentMessages: [] }
       this.topics.set(topic, state)
+    }
+    if (state.handlers.size >= this.cfg.maxSubscribersPerTopic) {
+      throw new Error(`max subscribers per topic reached: ${this.cfg.maxSubscribersPerTopic}`)
     }
     state.handlers.add(handler)
     log.info("subscribed to topic", { topic, subscribers: state.handlers.size })
