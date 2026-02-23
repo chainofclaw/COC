@@ -264,7 +264,7 @@
 - 接收方校验快照 `(blockHeight, blockHash)` 与目标链 tip 一致后再导入。
 - 将账户、存储和代码导入本地状态树。
 - 导入后通过多 peer 共识验证 expectedStateRoot（至少 2 票且占响应 peer 严格多数；单 peer 网络接受 1 票；多 peer 冲突无法定人数时 fail-closed 拒绝导入）并设置本地 state root。
-- 通过 `importSnapSyncBlocks()` 导入快照区块（写入区块索引，不重放交易）；历史区块跳过出块者集合校验，因为验证者集合可能已变更。
+- 通过 `importSnapSyncBlocks()` 导入快照区块（写入区块索引，无需重新执行）；历史区块跳过出块者集合校验，因为验证者集合可能已变更。
 - 从快照的区块高度恢复共识。
 - 安全前提：当前区块哈希负载不包含 `stateRoot`，因此 SnapSync 仍依赖快照提供方信誉；生产环境建议增加可信状态根锚定/多对等交叉校验。
 
