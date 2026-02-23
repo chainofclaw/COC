@@ -681,8 +681,22 @@ export class P2PNode {
   }
 
   async fetchSnapshots(): Promise<ChainSnapshot[]> {
+    // Query both static and discovered peers to sync from any reachable node
+    const staticPeers = this.cfg.peers
+    const discoveredPeers = this.cfg.enableDiscovery !== false
+      ? this.discovery.getActivePeers()
+      : []
+    const seenUrls = new Set<string>()
+    const allPeers: NodePeer[] = []
+    for (const p of [...staticPeers, ...discoveredPeers]) {
+      if (!seenUrls.has(p.url)) {
+        seenUrls.add(p.url)
+        allPeers.push(p)
+      }
+    }
+
     const results: ChainSnapshot[] = []
-    for (const peer of this.cfg.peers) {
+    for (const peer of allPeers) {
       try {
         const snapshot = await requestJson<ChainSnapshot>(`${peer.url}/p2p/chain-snapshot`, "GET")
         results.push(snapshot)

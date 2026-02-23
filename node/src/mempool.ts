@@ -264,18 +264,24 @@ export class Mempool {
     const range = max - min || 1
     const step = range / bucketCount
 
+    // Single-pass bucket assignment: O(n) instead of O(n*buckets)
+    const counts = new Array<number>(bucketCount).fill(0)
+    for (const p of prices) {
+      let idx = Math.floor((p - min) / step)
+      if (idx >= bucketCount) idx = bucketCount - 1
+      counts[idx]++
+    }
+
     const buckets: Array<{ minGwei: number; maxGwei: number; count: number; cumulativePct: number }> = []
     let cumulative = 0
-
     for (let i = 0; i < bucketCount; i++) {
       const lo = min + step * i
-      const hi = i === bucketCount - 1 ? max + 1 : min + step * (i + 1)
-      const count = prices.filter((p) => p >= lo && p < hi).length
-      cumulative += count
+      const hi = i === bucketCount - 1 ? max : min + step * (i + 1)
+      cumulative += counts[i]
       buckets.push({
         minGwei: Math.round(lo * 100) / 100,
-        maxGwei: Math.round((i === bucketCount - 1 ? max : hi) * 100) / 100,
-        count,
+        maxGwei: Math.round(hi * 100) / 100,
+        count: counts[i],
         cumulativePct: Math.round((cumulative / prices.length) * 10000) / 100,
       })
     }

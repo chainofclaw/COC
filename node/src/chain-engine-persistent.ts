@@ -591,19 +591,15 @@ export class PersistentChainEngine {
     const depth = BigInt(Math.max(1, this.cfg.finalityDepth))
     const tip = await this.getHeight()
 
-    // Update finality for recent blocks (last 100 blocks)
-    const startBlock = tip > 100n ? tip - 100n : 1n
-    for (let i = startBlock; i <= tip; i++) {
-      const block = await this.getBlockByNumber(i)
-      if (block) {
-        const wasFinalized = block.finalized
-        const nowFinalized = tip >= block.number + depth
+    // Only check the block that just crossed the finality threshold
+    // At tip T with depth D, block T-D just became final
+    const newlyFinalBlock = tip - depth
+    if (newlyFinalBlock < 1n) return
 
-        if (wasFinalized !== nowFinalized) {
-          block.finalized = nowFinalized
-          await this.blockIndex.updateBlock(block)
-        }
-      }
+    const block = await this.getBlockByNumber(newlyFinalBlock)
+    if (block && !block.finalized) {
+      block.finalized = true
+      await this.blockIndex.updateBlock(block)
     }
   }
 
