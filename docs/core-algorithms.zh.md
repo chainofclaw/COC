@@ -15,7 +15,7 @@
 **目标**：确定性区块标识。
 
 算法：
-- 对 `height | parentHash | proposer | timestamp | txs(rawTx 顺序列表)` 做拼接。
+- 对 `height | parentHash | proposer | timestamp | txs(rawTx 顺序列表) | baseFee | cumulativeWeight` 做拼接。
 - `hash = keccak256(payload)`。
 
 代码：
@@ -26,7 +26,7 @@
 
 算法：
 - 过滤低于 `minGasPrice` 的交易。
-- 按 `gasPrice desc`，再 `nonce asc` 排序。
+- 按有效 gas 价格降序（EIP-1559: min(maxFeePerGas, baseFee + maxPriorityFeePerGas)；传统: gasPrice），再按 nonce 升序、到达时间。
 - 按地址 nonce 连续性约束。
 
 代码：
@@ -252,7 +252,7 @@
 - 接收方验证快照结构（`validateSnapshot()`）。
 - 接收方校验快照 `(blockHeight, blockHash)` 与目标链 tip 一致后再导入。
 - 将账户、存储和代码导入本地状态树。
-- 导入后校验 `expectedStateRoot`（当前使用快照自带 `stateRoot`）并设置本地 state root。
+- 导入后通过多 peer 共识验证 expectedStateRoot（多数投票；多 peer 无共识时 fail-closed 拒绝导入）并设置本地 state root。
 - 从快照的区块高度恢复共识。
 - 安全前提：当前区块哈希负载不包含 `stateRoot`，因此 SnapSync 仍依赖快照提供方信誉；生产环境建议增加可信状态根锚定/多对等交叉校验。
 
@@ -384,7 +384,7 @@
 - Wire 握手时，发送方签名 `wire:handshake:<chainId>:<nodeId>:<nonce>`（使用 `NodeSigner.sign()`）。
 - 接收方通过 `SignatureVerifier.recoverAddress()` 验证签名。
 - 恢复的地址必须与声称的 `nodeId` 匹配 — 不匹配则断开连接并记录 `recordInvalidData()`。
-- Nonce 防止重放攻击（每次握手唯一）。
+- Nonce 提供会话级重放防护（节点本地内存窗口；重启后清空，不跨节点共享）。
 - 运行时默认强制签名验证（`verifier` 始终启用）；无签名的握手请求将被拒绝并断开连接。
 
 代码：
