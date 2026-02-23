@@ -27,6 +27,7 @@ function signReceipt(challengeId: string, nodeId: string, responseBody: Record<s
 }
 
 function stableStringify(value: unknown): string {
+  if (typeof value === "bigint") return value.toString();
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map((x) => stableStringify(x)).join(",")}]`;
   const obj = value as Record<string, unknown>;

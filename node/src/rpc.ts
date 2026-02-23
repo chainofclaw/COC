@@ -869,9 +869,11 @@ async function handleRpc(
     }
     case "coc_getTransactionsByAddress": {
       const addr = String((payload.params ?? [])[0] ?? "").toLowerCase() as Hex
-      const limit = Number((payload.params ?? [])[1] ?? 50)
+      const rawLimit = Number((payload.params ?? [])[1] ?? 50)
+      const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 10_000) : 50
       const reverse = (payload.params ?? [])[2] !== false
-      const offset = Number((payload.params ?? [])[3] ?? 0)
+      const rawOffset = Number((payload.params ?? [])[3] ?? 0)
+      const offset = Number.isFinite(rawOffset) ? Math.max(rawOffset, 0) : 0
 
       if (typeof chain.getTransactionsByAddress === "function") {
         const txs = await chain.getTransactionsByAddress(addr, { limit, reverse, offset })

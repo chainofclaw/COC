@@ -47,6 +47,20 @@ export class ChallengeQuota {
     current.lastIssuedAtMs = nowMs
   }
 
+  /** Remove counters for epochs older than the given epochId */
+  pruneEpochsBefore(epochId: bigint): number {
+    const epochStr = epochId.toString()
+    let pruned = 0
+    for (const key of this.counters.keys()) {
+      const parts = key.split(":")
+      if (parts.length >= 2 && BigInt(parts[1]) < epochId) {
+        this.counters.delete(key)
+        pruned++
+      }
+    }
+    return pruned
+  }
+
   private key(nodeId: Hex32, epochId: bigint, challengeType: ChallengeType): string {
     return `${nodeId}:${epochId.toString()}:${challengeType}`
   }

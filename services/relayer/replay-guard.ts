@@ -5,15 +5,18 @@ import { keccak256Hex } from "./keccak256.ts"
 
 export interface ReplayGuardOptions {
   persistencePath?: string
+  maxReplayKeys?: number
 }
 
 export class ReplayGuard {
   private readonly lastNonceByChannel = new Map<string, bigint>()
   private readonly replayKeys = new Set<string>()
   private readonly persistencePath?: string
+  private readonly maxReplayKeys: number
 
   constructor(options: ReplayGuardOptions = {}) {
     this.persistencePath = options.persistencePath
+    this.maxReplayKeys = options.maxReplayKeys ?? 100_000
     this.loadPersisted()
   }
 
@@ -50,6 +53,12 @@ export class ReplayGuard {
   commit(envelope: CrossLayerEnvelope, replayKey: string): void {
     const channelKey = `${envelope.srcChainId}:${envelope.channelId}`
     this.lastNonceByChannel.set(channelKey, envelope.nonce)
+    // Evict oldest entries if at capacity (Set iterates in insertion order)
+    while (this.replayKeys.size >= this.maxReplayKeys) {
+      const oldest = this.replayKeys.values().next().value
+      if (oldest === undefined) break
+      this.replayKeys.delete(oldest)
+    }
     this.replayKeys.add(replayKey)
     this.persistState()
   }
