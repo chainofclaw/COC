@@ -262,7 +262,7 @@ Implemented:
 - 3/5/7 node devnet scripts
 - End‑to‑end verify script: block production + tx propagation
 - Quality gate script for automated testing (unit + integration + e2e)
-- Comprehensive test coverage (91 test files, 905 tests across all modules)
+- Comprehensive test coverage (91 test files, 924 tests across all modules)
 
 Code:
 - `COC/scripts/start-devnet.sh`
@@ -985,5 +985,6 @@ Files:
 - Operations: Prometheus alerts (12 rules), on-call runbook, rollback runbook, testnet security configs (Phase 34).
 - Node Ops: OpenClaw coc-nodeops extension with 5 node type presets, network presets, interactive init wizard, multi-node instance management, full CLI (Phase 35).
 - Ops Hardening: SIGTERM/SIGINT dual shutdown, configurable bind addresses, LevelDB corruption recovery, RPC Bearer auth, admin RPC namespace (Phase 36).
-- Testing: 905 tests across 91 files covering all major modules including security hardening (Phase 33), Go/No-Go readiness (Phase 34), node ops extension (Phase 35), ops hardening (Phase 36), and algorithm safety audit.
-- Algorithm Safety Audit: BFT commit blockHash binding, snap sync target validation, full state snapshot trie traversal (iterateAccounts/iterateStorage), EIP-1559 baseFee per-block integration, persistent engine timestamp validation, DHT iterative lookup distance sorting, K-bucket ping-evict replacement, configurable signature enforcement (off/monitor/enforce), handshake canonical format alignment.
+- Testing: 924 tests across 91 files covering all major modules including security hardening (Phase 33), Go/No-Go readiness (Phase 34), node ops extension (Phase 35), ops hardening (Phase 36), and algorithm safety audit rounds 1-27.
+- Algorithm Safety Audit (Rounds 1-17): BFT commit blockHash binding, snap sync target validation, full state snapshot trie traversal (iterateAccounts/iterateStorage), EIP-1559 baseFee per-block integration, persistent engine timestamp validation, DHT iterative lookup distance sorting, K-bucket ping-evict replacement, configurable signature enforcement (off/monitor/enforce), handshake canonical format alignment, fetchSnapshots discovery dedup, gas histogram O(n), finality O(1) lookup.
+- Algorithm Safety Audit (Rounds 18-27): block normalization field preservation (gasUsed/stateRoot/signature/bftFinalized), state trie evictLru infinite loop guard (dirty entry skip + maxAttempts), P2P aborted chunk guard, MFS mv/cp circular recursion prevention, FrameDecoder exponential buffer growth O(n) amortized, peer-store defensive JSON validation, wire handshake nonce NaN fail-closed, BFT pending buffer height gap cap (≤10), snapshot validateSnapshot account/storage/code size limits (DoS prevention), FindNode response peer object validation, SnapSync fail-closed single-peer trust, validators hash cross-peer consensus, fetchStateSnapshot 30s timeout + 16MiB limit + cache, state-snapshot independent rate limiter, state snapshot export TTL cache.
