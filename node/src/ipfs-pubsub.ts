@@ -160,17 +160,17 @@ export class IpfsPubsub {
   receiveFromPeer(topic: string, msg: PubsubMessage): boolean {
     const msgId = `${msg.from}:${msg.seqno}`
 
+    // Enforce message size limit BEFORE dedup to avoid polluting seenMessages
+    if (msg.data && msg.data.byteLength > this.cfg.maxMessageSize) {
+      log.warn("oversized peer message rejected", { topic, size: msg.data.byteLength })
+      return false
+    }
+
     // Deduplicate
     if (this.seenMessages.has(msgId)) {
       return false
     }
     this.seenMessages.add(msgId)
-
-    // Enforce message size limit on peer messages
-    if (msg.data && msg.data.byteLength > this.cfg.maxMessageSize) {
-      log.warn("oversized peer message rejected", { topic, size: msg.data.byteLength })
-      return false
-    }
 
     msg.receivedAt = Date.now()
     this.deliverToSubscribers(topic, msg)

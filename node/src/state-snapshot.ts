@@ -294,6 +294,9 @@ function hexStrToBytes(hex: string): Uint8Array {
   if (clean.length % 2 !== 0) {
     throw new Error(`hexStrToBytes: odd-length hex string (${clean.length} chars)`)
   }
+  if (!/^[0-9a-fA-F]*$/.test(clean)) {
+    throw new Error("hexStrToBytes: invalid hex characters")
+  }
   const bytes = new Uint8Array(clean.length / 2)
   for (let i = 0; i < bytes.length; i++) {
     bytes[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16)
