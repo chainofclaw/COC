@@ -165,8 +165,9 @@ export class WireServer {
       return
     }
 
-    // Per-IP connection limit
-    const remoteIp = socket.remoteAddress ?? "unknown"
+    // Per-IP connection limit (normalize IPv4-mapped IPv6 to plain IPv4)
+    const rawIp = socket.remoteAddress ?? "unknown"
+    const remoteIp = rawIp.startsWith("::ffff:") ? rawIp.slice(7) : rawIp
     const ipCount = this.connsByIp.get(remoteIp) ?? 0
     if (ipCount >= MAX_CONNECTIONS_PER_IP) {
       this.connectionsRejected++

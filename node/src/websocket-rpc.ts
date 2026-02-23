@@ -155,8 +155,9 @@ export class WsRpcServer {
         return
       }
 
-      // Per-IP connection limit
-      const remoteIp = req.socket.remoteAddress ?? "unknown"
+      // Per-IP connection limit (normalize IPv4-mapped IPv6)
+      const rawIp = req.socket.remoteAddress ?? "unknown"
+      const remoteIp = rawIp.startsWith("::ffff:") ? rawIp.slice(7) : rawIp
       const ipCount = this.connsByIp.get(remoteIp) ?? 0
       if (ipCount >= MAX_CONNECTIONS_PER_IP) {
         log.warn("per-IP connection limit reached", { ip: remoteIp, count: ipCount })

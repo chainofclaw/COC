@@ -186,8 +186,9 @@ export function startRpcServer(
       return
     }
 
-    // Rate limiting per IP
-    const clientIp = req.socket.remoteAddress ?? "unknown"
+    // Rate limiting per IP (normalize IPv4-mapped IPv6)
+    const rawClientIp = req.socket.remoteAddress ?? "unknown"
+    const clientIp = rawClientIp.startsWith("::ffff:") ? rawClientIp.slice(7) : rawClientIp
     if (!rateLimiter.allow(clientIp)) {
       res.writeHead(429, { "content-type": "application/json" })
       res.end(JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32005, message: "rate limit exceeded" } }))
@@ -711,7 +712,8 @@ async function handleRpc(
     case "eth_protocolVersion":
       return "0x41" // 65
     case "eth_feeHistory": {
-      const blockCount = Number((payload.params ?? [])[0] ?? 1)
+      const rawBlockCount = Number((payload.params ?? [])[0] ?? 1)
+      const blockCount = Number.isFinite(rawBlockCount) && rawBlockCount > 0 ? Math.floor(rawBlockCount) : 1
       const newestBlock = String((payload.params ?? [])[1] ?? "latest")
       const rewardPercentiles = ((payload.params ?? [])[2] ?? []) as number[]
       const height = await Promise.resolve(chain.getHeight())
