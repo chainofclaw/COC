@@ -6,6 +6,7 @@ import { NonceRegistry } from "../../services/verifier/nonce-registry.ts"
 import type { NonceRegistryLike } from "../../services/verifier/nonce-registry.ts"
 import { BatchAggregator } from "../../services/aggregator/batch-aggregator.ts"
 import { computeEpochRewards } from "../../services/verifier/scoring.ts"
+import type { EpochNodeStats } from "../../services/verifier/scoring.ts"
 import type { ChallengeMessage, Hex32, ReceiptMessage, VerifiedReceipt } from "../../services/common/pose-types.ts"
 import type { NodeSigner, SignatureVerifier } from "./crypto/signer.ts"
 import { buildReceiptSignMessage } from "./crypto/signer.ts"
@@ -174,9 +175,8 @@ export class PoSeEngine {
   finalizeEpoch(): { summaryHash: string; merkleRoot: string; rewards: Record<string, bigint> } | null {
     if (this.receipts.length === 0) return null
     const batch = this.aggregator.buildBatch(this.epochId, this.receipts)
-    const rewards = computeEpochRewards(1_000_000n, [
-      { nodeId: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" as Hex32, uptimeBps: 9000, storageBps: 0, relayBps: 0, storageGb: 0n }
-    ])
+    const nodeStats = aggregateReceiptStats(this.receipts, this.issuedChallenges)
+    const rewards = computeEpochRewards(1_000_000n, nodeStats)
     this.receipts.length = 0
     this.issuedChallenges.clear()
     this.issuedChallengeCount = 0
@@ -240,6 +240,51 @@ function isSameChallenge(a: ChallengeMessage, b: ChallengeMessage): boolean {
   if (a.challengerId !== b.challengerId) return false
   if (a.challengerSig !== b.challengerSig) return false
   return stableStringify(a.querySpec) === stableStringify(b.querySpec)
+}
+
+/**
+ * Aggregate verified receipts + unresponded challenges into per-node stats for reward computation.
+ * Pass rate = verified / (verified + unresponded) per challenge type per node.
+ */
+function aggregateReceiptStats(
+  receipts: VerifiedReceipt[],
+  unresponded: Map<Hex32, ChallengeMessage>,
+): EpochNodeStats[] {
+  const nodes = new Map<string, { vU: number; vS: number; vR: number; tU: number; tS: number; tR: number }>()
+
+  const getOrInit = (nodeId: string) => {
+    let s = nodes.get(nodeId)
+    if (!s) { s = { vU: 0, vS: 0, vR: 0, tU: 0, tS: 0, tR: 0 }; nodes.set(nodeId, s) }
+    return s
+  }
+
+  // Count verified receipts per node per type
+  for (const r of receipts) {
+    const s = getOrInit(r.receipt.nodeId)
+    switch (r.challenge.challengeType) {
+      case "U": s.vU++; s.tU++; break
+      case "S": s.vS++; s.tS++; break
+      case "R": s.vR++; s.tR++; break
+    }
+  }
+
+  // Count unresponded challenges (failures) per node per type
+  for (const c of unresponded.values()) {
+    const s = getOrInit(c.nodeId)
+    switch (c.challengeType) {
+      case "U": s.tU++; break
+      case "S": s.tS++; break
+      case "R": s.tR++; break
+    }
+  }
+
+  return [...nodes.entries()].map(([nodeId, s]) => ({
+    nodeId: nodeId as Hex32,
+    uptimeBps: s.tU > 0 ? Math.round((s.vU / s.tU) * 10000) : 0,
+    storageBps: s.tS > 0 ? Math.round((s.vS / s.tS) * 10000) : 0,
+    relayBps: s.tR > 0 ? Math.round((s.vR / s.tR) * 10000) : 0,
+    storageGb: 0n,
+  }))
 }
 
 function stableStringify(value: unknown): string {

@@ -716,6 +716,9 @@ async function handleRpc(
       const blockCount = Number.isFinite(rawBlockCount) && rawBlockCount > 0 ? Math.floor(rawBlockCount) : 1
       const newestBlock = String((payload.params ?? [])[1] ?? "latest")
       const rewardPercentiles = ((payload.params ?? [])[2] ?? []) as number[]
+      if (rewardPercentiles.length > 100) {
+        throw { code: -32602, message: `rewardPercentiles array too large: ${rewardPercentiles.length} (max 100)` }
+      }
       const height = await Promise.resolve(chain.getHeight())
       const newest = newestBlock === "latest" ? height : safeBigInt(newestBlock)
       const count = Math.min(blockCount, Number(newest), 1024)
