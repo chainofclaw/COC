@@ -47,7 +47,8 @@
 **目标**：通过 fork-choice 规则收敛至最优链。
 
 算法：
-- 周期性拉取已配置静态 peer 的链快照（DHT 发现的节点当前不纳入同步源集）。
+- 区块级同步：周期性从已配置静态 peer（`cfg.peers`）拉取链快照。
+- 快照同步：使用已发现 peer（`discovery.getActivePeers()`，包含 DHT 发现的节点）获取状态快照并做跨 peer stateRoot 验证。
 - 快照请求处理器可为同步或异步；返回标准 `ChainSnapshot`（`blocks + updatedAtMs`）。
 - 仅当远端 tip 在 fork-choice 比较中胜出时才尝试采用快照。
 - 采用前验证区块链路完整性（父哈希连续、高度连续、区块哈希可重算）。
@@ -153,6 +154,7 @@
 - 状态：`healthy` → `degraded` → `recovering` → `healthy`。
 - 跟踪 `proposeFailures` 和 `syncFailures`（连续计数）。
 - 连续 5 次出块失败 → 进入 `degraded` 模式（停止出块）。
+- 连续 5 次同步失败（healthy 状态下）→ 同样进入 `degraded` 模式。
 - 降级模式下同步成功 → 进入 `recovering`（允许一次出块尝试）。
 - 恢复出块成功 → 回到 `healthy`。
 - 恢复出块失败 → 回到 `degraded`。
@@ -202,6 +204,7 @@
 - Bucket 索引 = XOR 距离最高位位置。
 - `findClosest(target, K)`：返回按 XOR 距离最近的 K 个节点。
 - LRU 淘汰：最近活跃节点保留在 bucket 尾部。
+- Sybil 保护：每 bucket 每 IP 最多 2 个节点（`MAX_PEERS_PER_IP_PER_BUCKET`）。
 
 代码：
 - `COC/node/src/dht.ts`
@@ -213,7 +216,7 @@
 - 帧：`[Magic 2B: 0xC0C1] [Type 1B] [Length 4B 大端] [Payload NB]`。
 - 最大载荷：16 MiB。
 - `FrameDecoder`：TCP 流式累积解码器。
-- 消息类型：Handshake, Block, Transaction, BFT, Ping/Pong。
+- 消息类型：Handshake, Block, Transaction, BFT, Ping/Pong, FindNode/FindNodeResponse（DHT）。
 
 代码：
 - `COC/node/src/wire-protocol.ts`
@@ -243,7 +246,9 @@
 - 验证成功后标记连接为握手完成。
 - 握手后：将 Block、Transaction、BFT 帧分发到对应处理器。
 - 客户端断线后使用指数退避重连（初始 1s，上限 30s，每次翻倍）。
-- 重放防护边界：当前 nonce 去重是“本节点内存窗口”语义（重启后清空，且不跨节点共享）。
+- 资源保护：每 IP 连接限制（5）、每连接消息速率限制（500 msg/10s）、空闲超时（5 分钟）。
+- 握手 nonce 时间戳须在 5 分钟窗口内；过期 nonce 被拒绝。
+- 重放防护边界：当前 nonce 去重是"本节点内存窗口"语义（重启后清空，且不跨节点共享）。
 
 代码：
 - `COC/node/src/wire-server.ts`

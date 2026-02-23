@@ -47,7 +47,8 @@ Code:
 **Goal**: converge to the best chain via fork-choice rule.
 
 Algorithm:
-- Periodically fetch snapshots from configured static peers (discovered DHT peers are not currently included in sync source set).
+- Block-level sync: periodically fetch chain snapshots from configured static peers only (`cfg.peers`).
+- Snap sync: uses discovered peers (`discovery.getActivePeers()`, which includes DHT-discovered nodes) for state snapshot fetching and cross-peer stateRoot validation.
 - Snapshot request handlers may be sync or async; they return a standard `ChainSnapshot` (`blocks + updatedAtMs`).
 - Attempt adoption only when the remote tip wins fork-choice comparison.
 - Before adoption, verify block-chain integrity (parent-link continuity, height continuity, and recomputable block hashes).
@@ -153,6 +154,7 @@ Algorithm:
 - States: `healthy` → `degraded` → `recovering` → `healthy`.
 - Track `proposeFailures` and `syncFailures` (consecutive counts).
 - After 5 consecutive propose failures → enter `degraded` mode (stop proposing).
+- After 5 consecutive sync failures (while healthy) → also enter `degraded` mode.
 - After successful sync in degraded mode → enter `recovering` (allow one propose attempt).
 - If recovering propose succeeds → back to `healthy`.
 - If recovering propose fails → back to `degraded`.
@@ -202,6 +204,7 @@ Algorithm:
 - Bucket index = highest bit position of XOR distance.
 - `findClosest(target, K)`: returns K nearest peers by XOR distance.
 - LRU eviction: most recently seen peers kept at bucket tail.
+- Sybil protection: max 2 peers per IP per bucket (`MAX_PEERS_PER_IP_PER_BUCKET`).
 
 Code:
 - `COC/node/src/dht.ts`
@@ -213,7 +216,7 @@ Algorithm:
 - Frame: `[Magic 2B: 0xC0C1] [Type 1B] [Length 4B BE] [Payload NB]`.
 - Max payload: 16 MiB.
 - `FrameDecoder`: streaming accumulator for TCP partial reads.
-- Message types: Handshake, Block, Transaction, BFT, Ping/Pong.
+- Message types: Handshake, Block, Transaction, BFT, Ping/Pong, FindNode/FindNodeResponse (DHT).
 
 Code:
 - `COC/node/src/wire-protocol.ts`
@@ -243,6 +246,8 @@ Algorithm:
 - On successful validation, mark connection as handshake-complete.
 - Post-handshake: dispatch Block, Transaction, BFT frames to handlers.
 - Client uses exponential backoff on disconnect (1s initial, 30s max, doubles each attempt).
+- Resource guards: per-IP connection limit (5), per-connection message rate limit (500 msg / 10s), idle timeout (5 min).
+- Handshake nonce timestamp must be within 5-minute window; stale nonces are rejected.
 - Replay-protection boundary: nonce deduplication is node-local in-memory window semantics (cleared on restart, not globally shared across nodes).
 
 Code:
