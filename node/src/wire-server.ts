@@ -388,6 +388,11 @@ export class WireServer {
       case MessageType.BftCommit: {
         if (!conn.handshakeComplete || !this.cfg.onBftMessage) return
         const msg = decodeJsonPayload<{ type: string; height: string; blockHash: Hex; senderId: string; signature?: string }>(frame)
+        // Validate senderId matches authenticated connection identity
+        if (msg.senderId !== conn.nodeId) {
+          log.warn("BFT message senderId mismatch", { claimed: msg.senderId, authenticated: conn.nodeId })
+          return
+        }
         await this.cfg.onBftMessage({
           type: msg.type as "prepare" | "commit",
           height: BigInt(msg.height),

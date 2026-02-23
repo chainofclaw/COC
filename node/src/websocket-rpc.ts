@@ -319,7 +319,17 @@ export class WsRpcServer {
     }
   }
 
+  private static readonly WS_BLOCKED_METHODS = new Set([
+    "coc_submitProposal",
+    "coc_voteProposal",
+    "admin_addPeer",
+    "admin_removePeer",
+  ])
+
   private async dispatch(ws: WebSocket, method: string, params: unknown[]): Promise<unknown> {
+    if (WsRpcServer.WS_BLOCKED_METHODS.has(method)) {
+      throw { code: -32003, message: "method not available over WebSocket" }
+    }
     switch (method) {
       case "eth_subscribe":
         return this.handleSubscribe(ws, params)
