@@ -362,6 +362,20 @@ export class ConsensusEngine {
           continue
         }
 
+        // Check if chain snapshot window is insufficient for block-level sync
+        const snapshotStartHeight = snapshot.blocks[0] ? BigInt(snapshot.blocks[0].number) : 0n
+        const localHasContinuity = localHeight === 0n || localHeight >= snapshotStartHeight - 1n
+
+        if (!localHasContinuity && this.cfg.enableSnapSync && this.snapSync) {
+          log.warn("chain snapshot window insufficient, falling back to snap sync", {
+            localHeight: localHeight.toString(),
+            snapshotStart: snapshotStartHeight.toString(),
+          })
+          const snapOk = await this.trySnapSync(snapshot)
+          adopted = adopted || snapOk
+          continue
+        }
+
         let ok = false
         if (typeof snapshotEngine.makeSnapshot === "function") {
           ok = await snapshotEngine.maybeAdoptSnapshot(snapshot)
@@ -440,7 +454,8 @@ export class ConsensusEngine {
           }
         }
         if (maxCount < 2) {
-          log.warn("snap sync: no consensus on stateRoot among peers, proceeding with majority")
+          log.warn("snap sync: no stateRoot consensus among peers, aborting (fail-closed)")
+          return false
         }
       }
 
@@ -483,9 +498,12 @@ export class ConsensusEngine {
 
           // Write snapshot blocks into the chain engine so getHeight() advances
           let adopted = false
-          const snapshotEngine = this.chain as ISnapshotSyncEngine
-          if (typeof snapshotEngine.maybeAdoptSnapshot === "function") {
-            adopted = await snapshotEngine.maybeAdoptSnapshot({ blocks: snapshot.blocks, updatedAtMs: Date.now() })
+          const ssEngine = this.chain as ISnapshotSyncEngine
+          const bsEngine = this.chain as IBlockSyncEngine
+          if (typeof ssEngine.makeSnapshot === "function") {
+            adopted = await ssEngine.maybeAdoptSnapshot({ blocks: snapshot.blocks, updatedAtMs: Date.now() })
+          } else if (typeof bsEngine.maybeAdoptSnapshot === "function") {
+            adopted = await bsEngine.maybeAdoptSnapshot(snapshot.blocks)
           }
 
           if (!adopted) {

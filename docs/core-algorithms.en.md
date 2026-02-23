@@ -15,7 +15,7 @@ Code:
 **Goal**: deterministic block identity.
 
 Algorithm:
-- Hash payload fields: `height | parentHash | proposer | timestamp | txs (ordered rawTx list)`.
+- Hash payload fields: `height | parentHash | proposer | timestamp | txs (ordered rawTx list) | baseFee | cumulativeWeight`.
 - `hash = keccak256(payload)`.
 
 Code:
@@ -26,7 +26,7 @@ Code:
 
 Algorithm:
 - Filter txs below `minGasPrice`.
-- Sort by `gasPrice desc`, then `nonce asc`.
+- Sort by effective gas price desc (EIP-1559: min(maxFeePerGas, baseFee + maxPriorityFeePerGas); legacy: gasPrice), then nonce asc, then arrival time.
 - Enforce per‑sender nonce continuity using on‑chain nonce.
 
 Code:
@@ -252,7 +252,7 @@ Algorithm:
 - Receiver validates snapshot structure (`validateSnapshot()`).
 - Receiver checks snapshot `(blockHeight, blockHash)` matches the target chain tip before import.
 - Import accounts, storage, and code into local state trie.
-- After import, verify `expectedStateRoot` (currently using snapshot-provided `stateRoot`) and set local state root.
+- After import, verify expectedStateRoot via cross-peer consensus (majority vote; fail-closed when no quorum among multiple peers) and set local state root.
 - Resume consensus from the snapshot's block height.
 - Security assumption: block-hash payload currently does not include `stateRoot`, so SnapSync still depends on snapshot-provider trust; production deployments should add trusted state-root anchoring and/or multi-peer cross-checks.
 
@@ -384,7 +384,7 @@ Algorithm:
 - On wire handshake, sender signs `wire:handshake:<chainId>:<nodeId>:<nonce>` using `NodeSigner.sign()`.
 - Receiver verifies signature via `SignatureVerifier.recoverAddress()`.
 - Recovered address must match the claimed `nodeId` — mismatch → disconnect + `recordInvalidData()`.
-- Nonce prevents replay attacks (unique per handshake).
+- Nonce provides per-session replay protection (node-local in-memory window; cleared on restart, not shared across nodes).
 - Signature verification is mandatory at runtime (`verifier` always enabled); unsigned handshake requests are rejected and disconnected.
 
 Code:
