@@ -139,16 +139,16 @@ describe("State snapshot export/import", () => {
     // Valid snapshot
     const valid: StateSnapshot = {
       version: 1,
-      stateRoot: "0xabc",
+      stateRoot: "0xabcd",
       blockHeight: "100",
-      blockHash: "0xdef" as Hex,
+      blockHash: "0xdeff" as Hex,
       accounts: [
         {
-          address: "0xabc",
+          address: "0xabcd",
           nonce: "0",
           balance: "100",
-          storageRoot: "0x0",
-          codeHash: "0x0",
+          storageRoot: "0x" + "00".repeat(32),
+          codeHash: "0x" + "00".repeat(32),
           storage: [],
         },
       ],

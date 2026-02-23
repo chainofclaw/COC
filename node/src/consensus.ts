@@ -209,6 +209,7 @@ export class ConsensusEngine {
 
   private async tryPropose(): Promise<void> {
     if (this.proposeInFlight) return
+    if (this.syncInFlight) return // Don't propose while snap sync is modifying chain state
     if (this.status === "degraded") {
       this.checkDegradedTimeout()
       return
@@ -618,6 +619,7 @@ export class ConsensusEngine {
 function hashValidators(validators: Array<{ id: string; address: string; stake: string; active: boolean }> | undefined): string {
   if (!validators || validators.length === 0) return "0x"
   const sorted = [...validators].sort((a, b) => a.id.localeCompare(b.id))
-  const json = JSON.stringify(sorted)
+  // Explicit property order for deterministic cross-node JSON serialization
+  const json = JSON.stringify(sorted.map(v => ({ active: v.active, address: v.address, id: v.id, stake: v.stake })))
   return keccak256Hex(Buffer.from(json, "utf8"))
 }
