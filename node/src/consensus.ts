@@ -514,7 +514,22 @@ export class ConsensusEngine {
         return false
       }
 
-      // Import loop: use cached snapshots instead of re-fetching
+      // Import blocks once (separate from per-peer state import to avoid non-atomic failure)
+      let blocksImported = false
+      const bsEngine = this.chain as IBlockSyncEngine
+      const ssEngine = this.chain as ISnapshotSyncEngine
+      if (typeof bsEngine.importSnapSyncBlocks === "function") {
+        blocksImported = await bsEngine.importSnapSyncBlocks(snapshot.blocks)
+      } else if (typeof ssEngine.makeSnapshot === "function") {
+        blocksImported = await ssEngine.maybeAdoptSnapshot({ blocks: snapshot.blocks, updatedAtMs: Date.now() })
+      }
+
+      if (!blocksImported) {
+        log.warn("snap sync: block adoption failed")
+        return false
+      }
+
+      // State import loop: try each peer's cached snapshot until one succeeds
       for (const peer of peers) {
         try {
           const stateSnap = snapshotCache.get(peer.url) ?? null
@@ -533,21 +548,6 @@ export class ConsensusEngine {
               peerRoot: stateSnap.stateRoot,
               trustedRoot: trustedStateRoot,
             })
-            continue
-          }
-
-          // Import blocks FIRST to avoid state/chain inconsistency if block adoption fails
-          let adopted = false
-          const bsEngine = this.chain as IBlockSyncEngine
-          const ssEngine = this.chain as ISnapshotSyncEngine
-          if (typeof bsEngine.importSnapSyncBlocks === "function") {
-            adopted = await bsEngine.importSnapSyncBlocks(snapshot.blocks)
-          } else if (typeof ssEngine.makeSnapshot === "function") {
-            adopted = await ssEngine.maybeAdoptSnapshot({ blocks: snapshot.blocks, updatedAtMs: Date.now() })
-          }
-
-          if (!adopted) {
-            log.warn("snap sync block adoption failed, skipping state import for this peer", { peer: peer.url })
             continue
           }
 
@@ -576,9 +576,11 @@ export class ConsensusEngine {
           })
           return true
         } catch (peerErr) {
-          log.warn("snap sync failed for peer, trying next", { peer: peer.url, error: String(peerErr) })
+          log.warn("snap sync state import failed for peer, trying next", { peer: peer.url, error: String(peerErr) })
         }
       }
+      // Blocks imported but all peers' state import failed
+      log.error("snap sync: blocks imported but state import failed for all peers")
     } catch (error) {
       log.warn("snap sync failed, falling back to block replay", { error: String(error) })
     }

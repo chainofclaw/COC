@@ -222,7 +222,7 @@ describe("B1: Node identity authentication", () => {
     await receiveFrames(socket, decoder, 1) // server handshake
 
     // Send signed handshake
-    const nonce = "test-nonce-123"
+    const nonce = `${Date.now()}:test-nonce-123`
     const msg = buildWireHandshakeMessage(clientSigner.nodeId, 18780, nonce)
     const sig = clientSigner.sign(msg)
 
@@ -267,7 +267,7 @@ describe("B1: Node identity authentication", () => {
     await receiveFrames(socket, decoder, 1) // server handshake
 
     // Send handshake claiming to be a different node
-    const nonce = "test-nonce-456"
+    const nonce = `${Date.now()}:test-nonce-456`
     const msg = buildWireHandshakeMessage(clientSigner.nodeId, 18780, nonce)
     const sig = clientSigner.sign(msg)
 

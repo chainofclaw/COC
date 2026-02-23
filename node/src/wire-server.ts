@@ -293,6 +293,11 @@ export class WireServer {
           // Reject nonces with timestamps too far from current time (replay across restarts)
           // Fail-closed: invalid/missing timestamp → reject (legitimate clients always include timestamp)
           const nonceParts = hs.nonce.split(":")
+          if (nonceParts.length < 2) {
+            log.warn("handshake nonce format invalid (missing timestamp)", { peer: hs.nodeId })
+            conn.socket.destroy()
+            return
+          }
           if (nonceParts.length >= 2) {
             const nonceTs = parseInt(nonceParts[0], 10)
             if (isNaN(nonceTs)) {

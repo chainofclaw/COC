@@ -633,7 +633,7 @@ describe("WireServer handshake nonce replay and peer scoring", () => {
     await new Promise((r) => setTimeout(r, 100))
 
     // First connection with a nonce
-    const fixedNonce = "fixed-nonce-12345"
+    const fixedNonce = `${Date.now()}:fixed-nonce-12345`
     const msg1 = buildWireHandshakeMessage(clientNodeId, 18780, fixedNonce)
     const sig1 = clientSigner.sign(msg1)
 
@@ -708,7 +708,7 @@ describe("WireServer handshake nonce replay and peer scoring", () => {
       nodeId: "0xfakenode",
       chainId: 18780,
       height: "0",
-      nonce: "some-nonce",
+      nonce: `${Date.now()}:some-nonce`,
       signature: "0xbadsig",
     }))
     await new Promise((r) => setTimeout(r, 200))

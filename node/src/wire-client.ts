@@ -240,6 +240,19 @@ export class WireClient {
             this.socket?.destroy()
             return
           }
+          // Validate nonce timestamp (fail-closed: reject invalid format or stale nonces)
+          const nonceParts = hs.nonce.split(":")
+          if (nonceParts.length < 2) {
+            log.warn("peer handshake nonce format invalid", { peer: hs.nodeId })
+            this.socket?.destroy()
+            return
+          }
+          const nonceTs = parseInt(nonceParts[0], 10)
+          if (isNaN(nonceTs) || Math.abs(Date.now() - nonceTs) > 300_000) {
+            log.warn("peer handshake nonce timestamp invalid or stale", { peer: hs.nodeId, nonceTs })
+            this.socket?.destroy()
+            return
+          }
           const msg = buildWireHandshakeMessage(hs.nodeId, hs.chainId, hs.nonce)
           const recovered = this.cfg.verifier.recoverAddress(msg, hs.signature)
           if (recovered.toLowerCase() !== hs.nodeId.toLowerCase()) {

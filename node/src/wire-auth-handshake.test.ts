@@ -98,7 +98,7 @@ describe("Wire handshake auth", () => {
     const decoder = new FrameDecoder()
     await receiveFrames(socket, decoder, 1)
 
-    const nonce = "handshake-auth-test"
+    const nonce = `${Date.now()}:handshake-auth-test`
     const msg = buildWireHandshakeMessage(clientSigner.nodeId, 18780, nonce)
     socket.write(encodeJsonPayload(MessageType.Handshake, {
       nodeId: clientSigner.nodeId,
