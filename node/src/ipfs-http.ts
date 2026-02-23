@@ -518,18 +518,25 @@ export class IpfsHttpServer {
 
 const DEFAULT_MAX_UPLOAD_SIZE = 10 * 1024 * 1024 // 10 MB
 
+const READ_BODY_TIMEOUT_MS = 30_000
+
 async function readBody(req: http.IncomingMessage, maxSize = DEFAULT_MAX_UPLOAD_SIZE): Promise<Uint8Array> {
   const chunks: Buffer[] = []
   let totalSize = 0
-  for await (const chunk of req) {
-    const buf = Buffer.from(chunk)
-    totalSize += buf.byteLength
-    if (totalSize > maxSize) {
-      throw new Error(`upload exceeds max size: ${totalSize} > ${maxSize}`)
+  const timer = setTimeout(() => { req.destroy(new Error("upload timeout")) }, READ_BODY_TIMEOUT_MS)
+  try {
+    for await (const chunk of req) {
+      const buf = Buffer.from(chunk)
+      totalSize += buf.byteLength
+      if (totalSize > maxSize) {
+        throw new Error(`upload exceeds max size: ${totalSize} > ${maxSize}`)
+      }
+      chunks.push(buf)
     }
-    chunks.push(buf)
+    return Buffer.concat(chunks)
+  } finally {
+    clearTimeout(timer)
   }
-  return Buffer.concat(chunks)
 }
 
 async function readMultipartFile(req: http.IncomingMessage): Promise<{ filename?: string; bytes: Uint8Array }> {
