@@ -214,6 +214,7 @@ export class WireServer {
       try {
         const frames = conn.decoder.feed(new Uint8Array(data))
         for (const frame of frames) {
+          if (socket.destroyed) break
           this.framesReceived++
           void this.handleFrame(conn, frame).catch((err) => {
             log.warn("handleFrame error, closing connection", { remote: connId, error: String(err) })

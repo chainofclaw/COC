@@ -355,11 +355,11 @@ export class BftCoordinator {
     let remaining = LINGER_COUNT
 
     this.lingerTimer = setInterval(() => {
-      remaining--
       if (remaining <= 0) {
         this.stopLinger()
         return
       }
+      remaining--
       const msg: BftMessage = {
         type: "commit",
         height,

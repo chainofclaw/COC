@@ -306,7 +306,7 @@ export class ConsensusEngine {
       const snapshots = await this.p2p.fetchSnapshots()
 
       // Build local fork candidate
-      const localHeight = await Promise.resolve(this.chain.getHeight())
+      let localHeight = await Promise.resolve(this.chain.getHeight())
 
       // Track sync progress: compute max peer height per sync round (allows decrease after reorgs)
       let roundMaxPeerHeight = 0n
@@ -335,7 +335,7 @@ export class ConsensusEngine {
       }
 
       const localTip = await Promise.resolve(this.chain.getTip())
-      const localCandidate: ForkCandidate = {
+      let localCandidate: ForkCandidate = {
         height: localHeight,
         tipHash: localTip?.hash ?? ("0x0" as Hex),
         bftFinalized: localTip?.bftFinalized ?? false,
@@ -380,6 +380,19 @@ export class ConsensusEngine {
           gap > BigInt(this.cfg.snapSyncThreshold ?? 100)
         ) {
           const ok = await this.trySnapSync(snapshot)
+          if (ok) {
+            this.blocksAdopted++
+            const newHeight = await Promise.resolve(this.chain.getHeight())
+            const newTip = await Promise.resolve(this.chain.getTip())
+            localCandidate = {
+              height: newHeight,
+              tipHash: newTip?.hash ?? ("0x0" as Hex),
+              bftFinalized: newTip?.bftFinalized ?? false,
+              cumulativeWeight: newTip?.cumulativeWeight ?? newHeight,
+              peerId: "local",
+            }
+            localHeight = newHeight
+          }
           adopted = adopted || ok
           continue
         }
@@ -394,6 +407,19 @@ export class ConsensusEngine {
             snapshotStart: snapshotStartHeight.toString(),
           })
           const snapOk = await this.trySnapSync(snapshot)
+          if (snapOk) {
+            this.blocksAdopted++
+            const newHeight = await Promise.resolve(this.chain.getHeight())
+            const newTip = await Promise.resolve(this.chain.getTip())
+            localCandidate = {
+              height: newHeight,
+              tipHash: newTip?.hash ?? ("0x0" as Hex),
+              bftFinalized: newTip?.bftFinalized ?? false,
+              cumulativeWeight: newTip?.cumulativeWeight ?? newHeight,
+              peerId: "local",
+            }
+            localHeight = newHeight
+          }
           adopted = adopted || snapOk
           continue
         }
@@ -404,7 +430,20 @@ export class ConsensusEngine {
         } else if (typeof blockEngine.maybeAdoptSnapshot === "function") {
           ok = await blockEngine.maybeAdoptSnapshot(snapshot.blocks)
         }
-        if (ok) this.blocksAdopted++
+        if (ok) {
+          this.blocksAdopted++
+          // Refresh local state after successful adoption to prevent stale comparisons
+          const newHeight = await Promise.resolve(this.chain.getHeight())
+          const newTip = await Promise.resolve(this.chain.getTip())
+          localCandidate = {
+            height: newHeight,
+            tipHash: newTip?.hash ?? ("0x0" as Hex),
+            bftFinalized: newTip?.bftFinalized ?? false,
+            cumulativeWeight: newTip?.cumulativeWeight ?? newHeight,
+            peerId: "local",
+          }
+          localHeight = newHeight
+        }
         adopted = adopted || ok
       }
 

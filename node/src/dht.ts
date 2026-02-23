@@ -292,6 +292,9 @@ export function parseHostPort(address: string): { host: string; port: number } |
 
 function hexToBytes(hex: string): Uint8Array {
   const clean = hex.startsWith("0x") ? hex.slice(2) : hex
+  if (clean.length > 0 && !/^[0-9a-fA-F]+$/.test(clean)) {
+    throw new Error("hexToBytes: invalid hex characters")
+  }
   const padded = clean.length % 2 ? "0" + clean : clean
   const bytes = new Uint8Array(padded.length / 2)
   for (let i = 0; i < bytes.length; i++) {

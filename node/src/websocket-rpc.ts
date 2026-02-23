@@ -196,10 +196,14 @@ export class WsRpcServer {
         }
         clientState.messageCount++
         if (clientState.messageCount > MAX_MESSAGES_PER_MINUTE) {
-          this.send(ws, {
-            jsonrpc: "2.0", id: null,
-            error: { code: -32005, message: "rate limit exceeded" },
-          })
+          // Close connection on first exceed to prevent response amplification
+          if (clientState.messageCount === MAX_MESSAGES_PER_MINUTE + 1) {
+            this.send(ws, {
+              jsonrpc: "2.0", id: null,
+              error: { code: -32005, message: "rate limit exceeded" },
+            })
+            ws.close(1008, "rate limit exceeded")
+          }
           return
         }
 
