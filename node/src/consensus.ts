@@ -310,10 +310,18 @@ export class ConsensusEngine {
         }
       }
       if (roundMaxPeerHeight > 0n) {
+        const wasCaughtUp = this.syncStartMs > 0 && localHeight >= this.highestPeerHeight
         this.highestPeerHeight = roundMaxPeerHeight
-        if (this.syncStartMs === 0 && roundMaxPeerHeight > localHeight) {
-          this.syncStartHeight = localHeight
-          this.syncStartMs = Date.now()
+        if (roundMaxPeerHeight > localHeight) {
+          // Start or restart sync tracking when node falls behind peers
+          if (this.syncStartMs === 0 || wasCaughtUp) {
+            this.syncStartHeight = localHeight
+            this.syncStartMs = Date.now()
+          }
+        } else if (this.syncStartMs > 0) {
+          // Reset sync tracking when caught up (so next sync episode starts fresh)
+          this.syncStartMs = 0
+          this.syncStartHeight = 0n
         }
       }
 
