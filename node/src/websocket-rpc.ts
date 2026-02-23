@@ -328,6 +328,12 @@ export class WsRpcServer {
     "coc_voteProposal",
     "admin_addPeer",
     "admin_removePeer",
+    "eth_newFilter",
+    "eth_newBlockFilter",
+    "eth_newPendingTransactionFilter",
+    "eth_getFilterChanges",
+    "eth_getFilterLogs",
+    "eth_uninstallFilter",
   ])
 
   private async dispatch(ws: WebSocket, method: string, params: unknown[]): Promise<unknown> {

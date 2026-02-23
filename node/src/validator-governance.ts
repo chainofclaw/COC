@@ -337,29 +337,30 @@ export class ValidatorGovernance {
     if (!proposal || proposal.status !== "pending") return
 
     const activeValidators = this.getActiveValidators()
-    const totalPower = activeValidators.reduce((sum, v) => sum + v.votingPower, 0)
+    // Use stake (bigint) directly to avoid votingPower truncation errors
+    // (e.g., 3 equal validators get power 3333 each = 9999, not 10000)
+    const totalStake = activeValidators.reduce((sum, v) => sum + v.stake, 0n)
 
     // Check minimum participation
-    let votedPower = 0
+    let votedStake = 0n
     for (const [voterId] of proposal.votes) {
       const v = this.validators.get(voterId)
-      if (v?.active) votedPower += v.votingPower
+      if (v?.active) votedStake += v.stake
     }
 
-    // votingPower is in basis points (0-10000); config thresholds are in percent (0-100)
-    const participationPercent = totalPower > 0 ? (votedPower * 100) / totalPower : 0
+    const participationPercent = totalStake > 0n ? Number(votedStake * 100n / totalStake) : 0
     if (participationPercent < this.config.minVoterPercent) return
 
-    // Count approval voting power
-    let approvalPower = 0
+    // Count approval stake
+    let approvalStake = 0n
     for (const [voterId, approve] of proposal.votes) {
       if (approve) {
         const v = this.validators.get(voterId)
-        if (v?.active) approvalPower += v.votingPower
+        if (v?.active) approvalStake += v.stake
       }
     }
 
-    const approvalPercent = totalPower > 0 ? (approvalPower * 100) / totalPower : 0
+    const approvalPercent = totalStake > 0n ? Number(approvalStake * 100n / totalStake) : 0
 
     if (approvalPercent >= this.config.approvalThresholdPercent) {
       this.executeProposal(proposal)

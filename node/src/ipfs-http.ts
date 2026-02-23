@@ -47,7 +47,8 @@ export class IpfsHttpServer {
     const server = http.createServer(async (req, res) => {
       try {
       // Rate limiting
-      const clientIp = req.socket.remoteAddress ?? "unknown"
+      const rawClientIp = req.socket.remoteAddress ?? "unknown"
+      const clientIp = rawClientIp.startsWith("::ffff:") ? rawClientIp.slice(7) : rawClientIp
       if (!ipfsRateLimiter.allow(clientIp)) {
         res.writeHead(429, { "content-type": "application/json" })
         res.end(JSON.stringify({ error: "rate limit exceeded" }))

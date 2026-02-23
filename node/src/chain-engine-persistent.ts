@@ -10,6 +10,7 @@
 import type { TxReceipt, EvmChain, EvmLog } from "./evm.ts"
 import { Mempool } from "./mempool.ts"
 import { hashBlockPayload, validateBlockLink, zeroHash } from "./hash.ts"
+import { keccak256Hex } from "../../services/relayer/keccak256.ts"
 import type { ChainBlock, Hex, MempoolTx } from "./blockchain-types.ts"
 import { Transaction } from "ethers"
 import type { NodeSigner, SignatureVerifier } from "./crypto/signer.ts"
@@ -689,8 +690,9 @@ function stakeWeightedProposer(validators: ValidatorInfo[], blockHeight: bigint)
     return sorted[idx].id
   }
 
-  // Deterministic seed from block height
-  const seed = blockHeight % totalStake
+  // Hash block height to produce well-distributed seed (raw modulo fails when totalStake >> blockHeight)
+  const hashHex = keccak256Hex(Buffer.from(blockHeight.toString(), "utf8"))
+  const seed = BigInt("0x" + hashHex) % totalStake
 
   // Walk cumulative stakes to find proposer
   let cumulative = 0n
