@@ -137,8 +137,9 @@ export class BftCoordinator {
     }
 
     if (msg.height !== this.activeRound.state.height) {
-      // Buffer future-height messages for later processing
-      if (msg.height > this.activeRound.state.height && this.pendingMessages.length < 50) {
+      // Buffer future-height messages for later processing (cap gap to prevent buffer pollution)
+      const heightGap = msg.height - this.activeRound.state.height
+      if (heightGap > 0n && heightGap <= 10n && this.pendingMessages.length < 50) {
         this.pendingMessages.push(msg)
       }
       return
