@@ -1335,7 +1335,9 @@ function parseBlockTag(input: unknown, fallback: bigint): bigint {
   if (typeof input === "string") {
     if (input === "latest" || input === "pending" || input === "safe" || input === "finalized") return fallback
     if (input === "earliest") return 0n
-    return safeBigInt(input)
+    const n = safeBigInt(input)
+    if (n < 0n) throw { code: -32602, message: `invalid block number: ${input}` }
+    return n
   }
   return fallback
 }

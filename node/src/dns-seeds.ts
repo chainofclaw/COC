@@ -128,10 +128,18 @@ export class DnsSeedResolver {
 }
 
 function isPrivateHost(hostname: string): boolean {
-  // Filter private/reserved IPv4 ranges and localhost to prevent SSRF
-  if (hostname === "localhost" || hostname === "::1") return true
-  const h = hostname.startsWith("::ffff:") ? hostname.slice(7) : hostname
-  const parts = h.split(".")
+  // Strip brackets from IPv6 literals (URL.hostname returns "[::1]" → "::1")
+  const h = hostname.startsWith("[") && hostname.endsWith("]")
+    ? hostname.slice(1, -1)
+    : hostname
+  // Filter localhost and IPv6 loopback/private ranges
+  if (h === "localhost" || h === "::1" || h === "0:0:0:0:0:0:0:1") return true
+  // IPv6 ULA (fd00::/8) and link-local (fe80::/10)
+  const lower = h.toLowerCase()
+  if (lower.startsWith("fd") || lower.startsWith("fe80")) return true
+  // IPv4-mapped IPv6
+  const v4 = lower.startsWith("::ffff:") ? lower.slice(7) : lower
+  const parts = v4.split(".")
   if (parts.length !== 4) return false
   const [a, b] = parts.map(Number)
   if (a === 10) return true                          // 10.0.0.0/8
