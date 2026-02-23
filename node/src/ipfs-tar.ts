@@ -105,8 +105,12 @@ function writeString(buf: Uint8Array, offset: number, str: string, maxLen: numbe
 }
 
 function writeOctal(buf: Uint8Array, offset: number, value: number, fieldLen: number): void {
-  const str = value.toString(8).padStart(fieldLen - 1, "0")
-  const len = Math.min(str.length, fieldLen - 1)
+  const maxDigits = fieldLen - 1
+  const str = value.toString(8).padStart(maxDigits, "0")
+  if (str.length > maxDigits) {
+    throw new Error(`tar octal field overflow: value ${value} needs ${str.length} digits, max ${maxDigits}`)
+  }
+  const len = Math.min(str.length, maxDigits)
   for (let i = 0; i < len; i++) {
     buf[offset + i] = str.charCodeAt(i)
   }

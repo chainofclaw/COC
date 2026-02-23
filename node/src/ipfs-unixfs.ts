@@ -107,6 +107,7 @@ function buildUnixFsRoot(leaves: CidString[], totalSize: number): dagPB.PBNode {
 }
 
 function chunkBytes(bytes: Uint8Array, size: number): Uint8Array[] {
+  if (size <= 0) throw new Error(`invalid block size: ${size}`)
   if (bytes.length === 0) return [new Uint8Array()]
   const chunks: Uint8Array[] = []
   for (let i = 0; i < bytes.length; i += size) {
