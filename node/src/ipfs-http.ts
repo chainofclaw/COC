@@ -45,6 +45,7 @@ export class IpfsHttpServer {
 
   start(): void {
     const server = http.createServer(async (req, res) => {
+      try {
       // Rate limiting
       const clientIp = req.socket.remoteAddress ?? "unknown"
       if (!ipfsRateLimiter.allow(clientIp)) {
@@ -135,6 +136,12 @@ export class IpfsHttpServer {
 
       res.writeHead(404)
       res.end(JSON.stringify({ error: "not found" }))
+      } catch (err) {
+        if (!res.headersSent) {
+          res.writeHead(500, { "content-type": "application/json" })
+        }
+        try { res.end(JSON.stringify({ error: String(err) })) } catch { /* connection already closed */ }
+      }
     })
 
     server.listen(this.cfg.port, this.cfg.bind, () => {

@@ -171,7 +171,7 @@ export class Mempool {
     // EIP-1559 effective gas price: min(maxFeePerGas, baseFee + maxPriorityFeePerGas)
     // For legacy txs (no maxFeePerGas), gasPrice is used directly
     const effectivePrice = (tx: MempoolTx): bigint => {
-      if (tx.maxFeePerGas > 0n && tx.maxPriorityFeePerGas > 0n) {
+      if (tx.maxFeePerGas > 0n) {
         const dynamic = baseFeePerGas + tx.maxPriorityFeePerGas
         return tx.maxFeePerGas < dynamic ? tx.maxFeePerGas : dynamic
       }
@@ -195,8 +195,14 @@ export class Mempool {
       if (picked.length >= maxTx) break
       let next = expected.get(tx.from)
       if (next === undefined) {
-        next = await getOnchainNonce(tx.from)
+        try {
+          next = await getOnchainNonce(tx.from)
+        } catch {
+          expected.set(tx.from, -1n)
+          continue
+        }
       }
+      if (next === -1n) continue // sender nonce lookup failed
       if (tx.nonce !== next) {
         expected.set(tx.from, next)
         continue
