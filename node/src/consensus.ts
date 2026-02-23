@@ -537,7 +537,7 @@ export class ConsensusEngine {
             trustedValidatorsHash = info.validatorsHash
           }
         }
-        const majorityThreshold = Math.ceil(totalResponding / 2)
+        const majorityThreshold = Math.ceil(totalResponding * 2 / 3)
         if (maxCount < 2 || maxCount < majorityThreshold) {
           log.warn("snap sync: no stateRoot consensus among peers, aborting (fail-closed)", {
             maxVotes: maxCount,

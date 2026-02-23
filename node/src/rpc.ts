@@ -417,10 +417,7 @@ async function handleRpc(
       const tag = String((payload.params ?? [])[0] ?? "latest")
       const includeTx = Boolean((payload.params ?? [])[1])
       const currentHeight = await Promise.resolve(chain.getHeight())
-      const number = tag === "latest" ? currentHeight
-        : tag === "earliest" ? 0n
-        : tag === "pending" ? currentHeight
-        : safeBigInt(tag)
+      const number = parseBlockTag(tag, currentHeight)
       const block = await Promise.resolve(chain.getBlockByNumber(number))
       return formatBlock(block, includeTx, chain, evm)
     }
@@ -656,7 +653,7 @@ async function handleRpc(
     case "eth_getBlockTransactionCountByNumber": {
       const tag = String((payload.params ?? [])[0] ?? "latest")
       const height = await Promise.resolve(chain.getHeight())
-      const num = tag === "latest" ? height : tag === "earliest" ? 0n : tag === "pending" ? height : safeBigInt(tag)
+      const num = parseBlockTag(tag, height)
       const block = await Promise.resolve(chain.getBlockByNumber(num))
       return block ? `0x${block.txs.length.toString(16)}` : null
     }
@@ -687,7 +684,7 @@ async function handleRpc(
       const tag = String((payload.params ?? [])[0] ?? "latest")
       const txIdx = Number((payload.params ?? [])[1] ?? 0)
       const height = await Promise.resolve(chain.getHeight())
-      const num = tag === "latest" ? height : tag === "earliest" ? 0n : tag === "pending" ? height : safeBigInt(tag)
+      const num = parseBlockTag(tag, height)
       const block = await Promise.resolve(chain.getBlockByNumber(num))
       if (!block || txIdx >= block.txs.length) return null
       const rawTx = block.txs[txIdx]
@@ -811,7 +808,7 @@ async function handleRpc(
     case "eth_getBlockReceipts": {
       const tag = String((payload.params ?? [])[0] ?? "latest")
       const height = await Promise.resolve(chain.getHeight())
-      const num = tag === "latest" ? height : tag === "earliest" ? 0n : tag === "pending" ? height : safeBigInt(tag)
+      const num = parseBlockTag(tag, height)
       const block = await Promise.resolve(chain.getBlockByNumber(num))
       if (!block) return null
       const receipts: unknown[] = []
