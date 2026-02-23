@@ -324,6 +324,7 @@ export class PersistentChainEngine {
 
     // Execute transactions and collect receipts + logs
     const blockLogs: IndexedLog[] = []
+    const txReceipts: Array<{ transactionHash: string; status: string; gasUsed: string }> = []
     let totalGasUsed = 0n
 
     for (let i = 0; i < block.txs.length; i++) {
@@ -384,6 +385,11 @@ export class PersistentChainEngine {
         }
 
         totalGasUsed += BigInt(receipt.gasUsed.toString())
+        txReceipts.push({
+          transactionHash: receipt.transactionHash,
+          status: String(receipt.status ?? "0x1"),
+          gasUsed: String(receipt.gasUsed ?? "0x5208"),
+        })
 
         // Mark transaction as confirmed
         const nonce = `tx:${result.txHash}`
@@ -430,10 +436,10 @@ export class PersistentChainEngine {
     // Emit events for subscribers
     this.events.emitNewBlock({
       block,
-      receipts: blockLogs.map((l) => ({
-        transactionHash: l.transactionHash,
-        status: "0x1",
-        gasUsed: "0x5208",
+      receipts: txReceipts.map((r) => ({
+        transactionHash: r.transactionHash as Hex,
+        status: r.status,
+        gasUsed: r.gasUsed,
       })),
     })
 

@@ -103,7 +103,9 @@ export function formatNewHeadsNotification(block: ChainBlock): Record<string, un
     difficulty: "0x0",
     extraData: `0x${Buffer.from(block.proposer, "utf-8").toString("hex")}`,
     gasLimit: "0x1c9c380",
-    gasUsed: `0x${(block.txs.length * 21_000).toString(16)}`,
+    gasUsed: block.gasUsed !== undefined
+      ? `0x${BigInt(block.gasUsed).toString(16)}`
+      : `0x${(block.txs.length * 21_000).toString(16)}`,
     timestamp: `0x${Math.floor(block.timestampMs / 1000).toString(16)}`,
     baseFeePerGas: "0x3b9aca00",
   }

@@ -742,14 +742,21 @@ export class P2PNode {
       }
     }
 
+    // Parallel fetch with total timeout to prevent slow peers from blocking sync
+    const FETCH_TOTAL_TIMEOUT_MS = 15_000
+    const settled = await Promise.race([
+      Promise.allSettled(
+        allPeers.map((peer) =>
+          requestJson<ChainSnapshot>(`${peer.url}/p2p/chain-snapshot`, "GET")
+        )
+      ),
+      new Promise<PromiseSettledResult<ChainSnapshot>[]>((resolve) =>
+        setTimeout(() => resolve([]), FETCH_TOTAL_TIMEOUT_MS)
+      ),
+    ])
     const results: ChainSnapshot[] = []
-    for (const peer of allPeers) {
-      try {
-        const snapshot = await requestJson<ChainSnapshot>(`${peer.url}/p2p/chain-snapshot`, "GET")
-        results.push(snapshot)
-      } catch {
-        // ignore peer failures
-      }
+    for (const r of settled) {
+      if (r.status === "fulfilled") results.push(r.value)
     }
     return results
   }

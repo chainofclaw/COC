@@ -326,10 +326,14 @@ if (bftEnabled) {
           }
         }
       }
-      try {
-        await p2p.receiveBlock(finalizedBlock)
-      } catch {
-        // broadcast best-effort
+      // Only broadcast if block exists locally (avoid ghost block relay)
+      const localBlock = await chain.getBlockByHash(block.hash).catch(() => null)
+      if (localBlock) {
+        try {
+          await p2p.receiveBlock({ ...localBlock, bftFinalized: true })
+        } catch {
+          // broadcast best-effort
+        }
       }
       log.info("BFT finalized block", { height: block.number.toString(), hash: block.hash })
       // Sync BFT validator set with governance after each finalized block
