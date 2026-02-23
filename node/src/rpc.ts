@@ -723,7 +723,7 @@ async function handleRpc(
         throw { code: -32602, message: `rewardPercentiles array too large: ${rewardPercentiles.length} (max 100)` }
       }
       const height = await Promise.resolve(chain.getHeight())
-      const newest = newestBlock === "latest" ? height : safeBigInt(newestBlock)
+      const newest = parseBlockTag(newestBlock, height)
       const count = Math.min(blockCount, Number(newest), 1024)
       const baseFees: string[] = []
       const gasUsedRatios: number[] = []
