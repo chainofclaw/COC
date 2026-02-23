@@ -229,6 +229,11 @@ export class IpfsMfs {
     const srcNorm = normalizePath(source)
     const destNorm = normalizePath(dest)
 
+    // Prevent moving a directory into its own subtree
+    if (destNorm.startsWith(srcNorm + "/")) {
+      throw new Error(`cannot move directory into its own subdirectory: ${srcNorm} -> ${destNorm}`)
+    }
+
     const { dir: srcDir, base: srcBase } = splitPath(srcNorm)
     const { dir: destDir, base: destBase } = splitPath(destNorm)
 
@@ -261,6 +266,11 @@ export class IpfsMfs {
   async cp(source: string, dest: string): Promise<void> {
     const srcNorm = normalizePath(source)
     const destNorm = normalizePath(dest)
+
+    // Prevent copying a directory into its own subtree (infinite recursion)
+    if (destNorm.startsWith(srcNorm + "/")) {
+      throw new Error(`cannot copy directory into its own subdirectory: ${srcNorm} -> ${destNorm}`)
+    }
 
     const { dir: srcDir, base: srcBase } = splitPath(srcNorm)
     const { dir: destDir, base: destBase } = splitPath(destNorm)
