@@ -99,8 +99,18 @@ export class EvmChain {
     const resolvedBlockHash = blockHash ?? `0x${appliedBlock.toString(16).padStart(64, "0")}`
     const gasUsed = `0x${result.totalGasSpent.toString(16)}`
     const status = result.execResult.exceptionError === undefined ? "0x1" : "0x0"
-    const gasPrice = (tx.gasPrice ?? tx.maxFeePerGas ?? 0n) as bigint
-    const logs = (result.execResult.logs ?? []).map((entry) => {
+    const rawGasPrice = tx.gasPrice as bigint | undefined
+    const gasPrice = rawGasPrice != null
+      ? rawGasPrice
+      : (() => {
+          const maxFee = (tx.maxFeePerGas ?? 0n) as bigint
+          const maxPriority = (tx.maxPriorityFeePerGas ?? 0n) as bigint
+          const priorityFee = maxFee > baseFeePerGas
+            ? (maxPriority < maxFee - baseFeePerGas ? maxPriority : maxFee - baseFeePerGas)
+            : 0n
+          return baseFeePerGas + priorityFee
+        })()
+    const logs = (result.execResult.logs ?? []).map((entry, logIdx) => {
       const [addressBytes, topicBytes, dataBytes] = entry as [Uint8Array, Uint8Array[], Uint8Array]
       return {
         address: bytesToHex(addressBytes),
@@ -109,7 +119,7 @@ export class EvmChain {
         blockNumber: `0x${appliedBlock.toString(16)}`,
         transactionHash: txHash,
         transactionIndex: `0x${txIndex.toString(16)}`,
-        logIndex: "0x0",
+        logIndex: `0x${logIdx.toString(16)}`,
         removed: false,
       }
     })
@@ -119,6 +129,10 @@ export class EvmChain {
       const first = this.receipts.keys().next().value
       if (first !== undefined) this.receipts.delete(first)
     }
+
+    const contractAddress = result.createdAddress
+      ? result.createdAddress.toString()
+      : undefined
 
     this.receipts.set(txHash, {
       transactionHash: txHash,
@@ -130,7 +144,8 @@ export class EvmChain {
       status,
       logsBloom: result.bloom ? bytesToHex(result.bloom.bitvector) : "0x" + "0".repeat(512),
       logs,
-      effectiveGasPrice: `0x${gasPrice.toString(16)}`
+      effectiveGasPrice: `0x${gasPrice.toString(16)}`,
+      contractAddress,
     })
 
     const from = tx.getSenderAddress().toString()
@@ -244,7 +259,8 @@ export class EvmChain {
     const key = hexToBytes(slot.length === 66 ? slot : `0x${slot.replace("0x", "").padStart(64, "0")}`)
     const result = await this.vm.stateManager.getStorage(Address.fromString(address), key)
     if (!result || result.length === 0) return "0x" + "0".repeat(64)
-    return bytesToHex(result).padEnd(66, "0")
+    const hex = bytesToHex(result)
+    return "0x" + hex.slice(2).padStart(64, "0")
   }
 
   getAllReceipts(): Map<string, TxReceipt> {
