@@ -44,13 +44,9 @@ export class PersistentStateManager {
   async putAccount(address: Address, account: Account | undefined): Promise<void> {
     const addr = address.toString().toLowerCase()
     if (!account) {
-      // Delete account: store empty state
-      await this.trie.put(addr, {
-        nonce: 0n,
-        balance: 0n,
-        storageRoot: "0x" + "0".repeat(64),
-        codeHash: "0x" + "0".repeat(64),
-      })
+      // Truly delete account from trie (not zero-fill) for correct state root
+      await this.trie.delete(addr)
+      this.codeCache.delete(addr)
       return
     }
     const state: AccountState = {

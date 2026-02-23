@@ -42,11 +42,9 @@ test("PersistentStateManager: delete account", async () => {
   await sm.putAccount(addr, account)
   await sm.deleteAccount(addr)
 
-  // After delete, account should still exist but with zeroed fields
+  // After true delete, account should no longer exist in trie
   const retrieved = await sm.getAccount(addr)
-  assert.ok(retrieved)
-  assert.strictEqual(retrieved.balance, 0n)
-  assert.strictEqual(retrieved.nonce, 0n)
+  assert.strictEqual(retrieved, undefined)
 })
 
 test("PersistentStateManager: storage put and get", async () => {

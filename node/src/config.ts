@@ -390,6 +390,7 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     rpcAuthToken,
     enableAdminRpc,
     signatureEnforcement,
+    nodePrivateKey,
     storage: { ...storageDefaults, ...userStorage },
   }
 }

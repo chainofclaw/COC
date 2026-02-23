@@ -101,6 +101,10 @@ export class DnsSeedResolver {
         const url = parts.slice(1).join(":")
 
         if (id && url && isValidUrl(url)) {
+          try {
+            const parsed = new URL(url)
+            if (parsed.protocol !== "http:" && parsed.protocol !== "https:") continue
+          } catch { continue }
           peers.push({ id, url })
         }
       }
