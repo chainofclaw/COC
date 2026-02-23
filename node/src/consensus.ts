@@ -536,6 +536,21 @@ export class ConsensusEngine {
             continue
           }
 
+          // Import blocks FIRST to avoid state/chain inconsistency if block adoption fails
+          let adopted = false
+          const bsEngine = this.chain as IBlockSyncEngine
+          const ssEngine = this.chain as ISnapshotSyncEngine
+          if (typeof bsEngine.importSnapSyncBlocks === "function") {
+            adopted = await bsEngine.importSnapSyncBlocks(snapshot.blocks)
+          } else if (typeof ssEngine.makeSnapshot === "function") {
+            adopted = await ssEngine.maybeAdoptSnapshot({ blocks: snapshot.blocks, updatedAtMs: Date.now() })
+          }
+
+          if (!adopted) {
+            log.warn("snap sync block adoption failed, skipping state import for this peer", { peer: peer.url })
+            continue
+          }
+
           const importResult = await this.snapSync.importStateSnapshot(stateSnap, trustedStateRoot)
           await this.snapSync.setStateRoot(trustedStateRoot)
 
@@ -554,29 +569,14 @@ export class ConsensusEngine {
             }
           }
 
-          // Write snapshot blocks into the chain engine so getHeight() advances.
-          let adopted = false
-          const bsEngine = this.chain as IBlockSyncEngine
-          const ssEngine = this.chain as ISnapshotSyncEngine
-          if (typeof bsEngine.importSnapSyncBlocks === "function") {
-            adopted = await bsEngine.importSnapSyncBlocks(snapshot.blocks)
-          } else if (typeof ssEngine.makeSnapshot === "function") {
-            adopted = await ssEngine.maybeAdoptSnapshot({ blocks: snapshot.blocks, updatedAtMs: Date.now() })
-          }
-
-          if (!adopted) {
-            log.warn("snap sync state imported but block adoption failed, skipping peer")
-            continue
-          }
-
           this.snapSyncs++
           log.info("snap sync complete", {
             accounts: stateSnap.accounts.length,
             blockHeight: stateSnap.blockHeight,
           })
           return true
-        } catch {
-          // try next peer
+        } catch (peerErr) {
+          log.warn("snap sync failed for peer, trying next", { peer: peer.url, error: String(peerErr) })
         }
       }
     } catch (error) {
