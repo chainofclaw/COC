@@ -16,7 +16,7 @@ export function hashBlockPayload(input: {
   return `0x${keccak256Hex(Buffer.from(stable, "utf-8"))}` as Hex
 }
 
-export function validateBlockLink(prev: ChainBlock | undefined, next: ChainBlock): boolean {
+export function validateBlockLink(prev: ChainBlock | null | undefined, next: ChainBlock): boolean {
   if (!prev) {
     return next.number === 1n && next.parentHash === zeroHash()
   }

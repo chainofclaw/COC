@@ -224,7 +224,9 @@ export class Mempool {
   }
 
   /**
-   * Get all pending transactions in the pool, sorted by gas price desc
+   * Get all pending transactions in the pool, sorted by gasPrice desc.
+   * Note: uses legacy gasPrice (not EIP-1559 effective price) since baseFee
+   * context is unavailable here. pickForBlock() uses full effective pricing.
    */
   getAll(): MempoolTx[] {
     return [...this.txs.values()].sort((a, b) => {
@@ -234,7 +236,8 @@ export class Mempool {
   }
 
   /**
-   * Gas price histogram: bucket pending txs by gas price ranges.
+   * Gas price histogram: bucket pending txs by gasPrice ranges.
+   * Uses legacy gasPrice (not EIP-1559 effective price) for display purposes.
    * Returns sorted buckets with count and cumulative percentage.
    */
   gasPriceHistogram(bucketCount = 10): {

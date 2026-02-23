@@ -465,8 +465,9 @@ export class PersistentChainEngine {
     const currentHeight = await this.getHeight()
     if (BigInt(incomingTip.number) <= currentHeight) return false
 
-    // Verify internal chain integrity (hashes, parent links, proposer)
-    if (!this.verifyBlockChain(blocks)) {
+    // Verify internal chain integrity (hashes, parent links); skip proposer
+    // check because historical blocks may reference validators no longer active
+    if (!this.verifyBlockChain(blocks, true)) {
       return false
     }
 
@@ -488,7 +489,12 @@ export class PersistentChainEngine {
     return true
   }
 
-  private verifyBlockChain(blocks: ChainBlock[]): boolean {
+  /**
+   * Verify internal chain integrity: hashes, parent links, timestamps.
+   * @param skipProposerCheck - skip validator-set proposer check (for SnapSync
+   *   where historical blocks may reference validators no longer active)
+   */
+  private verifyBlockChain(blocks: ChainBlock[], skipProposerCheck = false): boolean {
     // Get active validators from governance or config
     const validators = this.governance
       ? this.governance.getActiveValidators().map((v) => v.id)
@@ -521,8 +527,8 @@ export class PersistentChainEngine {
         if (Number(block.timestampMs) <= Number(prev.timestampMs)) return false
       }
 
-      // Verify proposer is in validator set
-      if (validators.length > 0 && !validators.includes(block.proposer)) {
+      // Verify proposer is in validator set (skip for SnapSync — historical validators may differ)
+      if (!skipProposerCheck && validators.length > 0 && !validators.includes(block.proposer)) {
         return false
       }
 

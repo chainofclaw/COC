@@ -4,19 +4,21 @@
 **目标**：按区块高度确定出块者。
 
 算法：
-- 维护静态验证者列表 `V`。
-- 对高度 `h`，出块者索引 = `(h - 1) mod |V|`。
+- 内存引擎：维护静态验证者列表 `V`；出块者索引 = `(h - 1) mod |V|`。
+- 持久化引擎（治理启用时）：使用权益加权出块者选择（§11），通过 `ValidatorGovernance.getActiveValidators()` 获取；治理未启用或无活跃验证者时降级为轮转制。
 - 仅该出块者可构造并广播区块 `h`。
 
 代码：
-- `COC/node/src/chain-engine.ts`（`expectedProposer`）
+- `COC/node/src/chain-engine.ts`（`expectedProposer` — 轮转制）
+- `COC/node/src/chain-engine-persistent.ts`（`expectedProposer` — 权益加权 + 降级回退）
 
 ## 2) 区块哈希
 **目标**：确定性区块标识。
 
 算法：
-- 对 `height | parentHash | proposer | timestamp | txs(rawTx 顺序列表) | baseFee | cumulativeWeight` 做拼接。
+- 以 `|` 分隔符拼接字段：`height|parentHash|proposer|timestampMs|txs(逗号分隔 rawTx 列表)|baseFee|cumulativeWeight`。
 - `hash = keccak256(payload)`。
+- `baseFee` 和 `cumulativeWeight` 缺失时默认为 `0`。
 
 代码：
 - `COC/node/src/hash.ts`
@@ -25,9 +27,9 @@
 **目标**：确定性选取区块交易。
 
 算法：
-- 过滤低于 `minGasPrice` 的交易。
-- 按有效 gas 价格降序（EIP-1559: min(maxFeePerGas, baseFee + maxPriorityFeePerGas)；传统: gasPrice），再按 nonce 升序、到达时间。
-- 按地址 nonce 连续性约束。
+- `pickForBlock()`：过滤低于 `minGasPrice` 的交易，按 EIP-1559 有效 gas 价格降序（`min(maxFeePerGas, baseFee + maxPriorityFeePerGas)`；传统: `gasPrice`），再按 nonce 升序、到达时间。按地址 nonce 连续性约束。
+- `getAll()`：返回所有待处理交易，按传统 `gasPrice` 降序排列（出块上下文外无 baseFee）。
+- `gasPriceHistogram()`：按传统 `gasPrice` 分桶用于展示/分析。
 
 代码：
 - `COC/node/src/mempool.ts`
@@ -42,7 +44,7 @@
 - `COC/node/src/chain-engine.ts`（`updateFinalityFlags`）
 
 ## 5) P2P 快照同步
-**目标**：多节点链状态收敛。
+**目标**：通过 fork-choice 规则收敛至最优链。
 
 算法：
 - 周期性拉取已配置静态 peer 的链快照（DHT 发现的节点当前不纳入同步源集）。
@@ -121,8 +123,9 @@
 算法：
 - 从 `ValidatorGovernance` 获取活跃验证者，按 ID 字典序排序。
 - 计算 `totalStake = sum(v.stake for v in validators)`。
-- 计算 `seed = blockHeight mod totalStake`。
-- 遍历排序后的验证者累加权益：第一个使 `cumulative > seed` 的验证者为出块者。
+- 若 `totalStake === 0`：等权回退，通过 `(blockHeight - 1) mod |validators|` 选择。
+- 否则计算 `seed = blockHeight mod totalStake`。
+- 遍历排序后的验证者累加权益：第一个使 `seed < cumulative` 的验证者为出块者。
 - 确定性：相同高度总是产生相同出块者。
 - 治理未启用或无活跃验证者时降级为轮转制。
 
@@ -134,7 +137,7 @@
 
 算法：
 - 维持 50% 区块 Gas 上限的目标利用率。
-- 实际 Gas > 目标：base fee 最多上调 12.5%。
+- 实际 Gas > 目标：base fee 最多上调 12.5%（保证最少 1 wei 增幅，防止低 base fee 时停滞）。
 - 实际 Gas < 目标：base fee 最多下调 12.5%。
 - 最低 1 gwei（永不降至零）。
 - `changeRatio = (gasUsed - targetGas) / targetGas`。
@@ -154,6 +157,7 @@
 - 恢复出块成功 → 回到 `healthy`。
 - 恢复出块失败 → 回到 `degraded`。
 - 恢复冷却：两次恢复尝试间隔 30 秒。
+- 强制恢复：在 `degraded` 状态停留超过 5 分钟（`MAX_DEGRADED_MS`）时，清除冷却并强制恢复。
 
 代码：
 - `COC/node/src/consensus.ts`
@@ -166,6 +170,7 @@
 - 法定人数阈值：`floor(2/3 * totalStake) + 1`。
 - 出块者广播区块，验证者发送 prepare 投票。
 - prepare 达到法定人数后进入 commit 阶段。
+- 早期 commit 缓冲：`handleCommit()` 在 `prepare` 阶段即接受并记录 commit 投票；进入 `commit` 阶段时检查缓冲投票是否已达法定人数。
 - commit 达到法定人数后区块 BFT 最终化。
 - 超时处理：轮次在 prepare + commit 超时后失败。
 
@@ -254,6 +259,7 @@
 - 接收方校验快照 `(blockHeight, blockHash)` 与目标链 tip 一致后再导入。
 - 将账户、存储和代码导入本地状态树。
 - 导入后通过多 peer 共识验证 expectedStateRoot（至少 2 票且占响应 peer 严格多数；单 peer 网络接受 1 票；多 peer 冲突无法定人数时 fail-closed 拒绝导入）并设置本地 state root。
+- 通过 `importSnapSyncBlocks()` 导入快照区块（写入区块索引，不重放交易）；历史区块跳过出块者集合校验，因为验证者集合可能已变更。
 - 从快照的区块高度恢复共识。
 - 安全前提：当前区块哈希负载不包含 `stateRoot`，因此 SnapSync 仍依赖快照提供方信誉；生产环境建议增加可信状态根锚定/多对等交叉校验。
 
