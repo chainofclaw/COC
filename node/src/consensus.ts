@@ -5,6 +5,7 @@ import type { ForkCandidate } from "./fork-choice.ts"
 import { shouldSwitchFork } from "./fork-choice.ts"
 import type { ChainBlock, Hex } from "./blockchain-types.ts"
 import { createLogger } from "./logger.ts"
+import { keccak256Hex } from "../../services/relayer/keccak256.ts"
 
 /** Use the tip block's cumulativeWeight — now hash-bound so tamper-proof.
  * Falls back to block count if field is missing (pre-upgrade blocks). */
@@ -417,49 +418,57 @@ export class ConsensusEngine {
     if (!tip) return false
 
     try {
-      // Fetch state snapshot from the peer that provided this chain snapshot
       const peers = this.p2p.discovery.getActivePeers()
 
-      // Collect stateRoots from multiple peers for cross-validation
-      const peerStateRoots = new Map<string, { count: number; peer: string }>()
+      // Vote loop: collect stateRoots + validatorsHash, cache snapshots to avoid 2N fetches
+      type SnapResult = Awaited<ReturnType<SnapSyncProvider["fetchStateSnapshot"]>>
+      const snapshotCache = new Map<string, SnapResult>() // peerUrl → snapshot
+      const peerStateRoots = new Map<string, { count: number; peer: string; validatorsHash: string }>()
       for (const peer of peers) {
         try {
           const snap = await this.snapSync.fetchStateSnapshot(peer.url)
+          snapshotCache.set(peer.url, snap)
           if (!snap) continue
           if (snap.blockHeight !== tip.number.toString() || snap.blockHash !== tip.hash) continue
-          const existing = peerStateRoots.get(snap.stateRoot)
-          peerStateRoots.set(snap.stateRoot, {
+          const vHash = hashValidators(snap.validators)
+          const voteKey = `${snap.stateRoot}:${vHash}`
+          const existing = peerStateRoots.get(voteKey)
+          peerStateRoots.set(voteKey, {
             count: (existing?.count ?? 0) + 1,
             peer: peer.url,
+            validatorsHash: vHash,
           })
         } catch {
           // skip unreachable peer
         }
       }
 
-      // Require stateRoot consensus: at least 2 votes AND strict majority of responding peers.
+      // Require stateRoot+validatorsHash consensus: at least 2 votes AND strict majority.
       // Single-peer networks accept with 1 vote (no alternative).
       const totalResponding = [...peerStateRoots.values()].reduce((sum, v) => sum + v.count, 0)
       let trustedStateRoot: string | null = null
+      let trustedValidatorsHash: string | null = null
 
       if (peerStateRoots.size === 1) {
-        // All responding peers agree on the same root
-        trustedStateRoot = [...peerStateRoots.keys()][0]
-        const rootCount = peerStateRoots.get(trustedStateRoot!)!.count
-        if (peers.length > 1 && rootCount < 2) {
-          log.warn("snap sync: only 1 peer provided state, single-peer trust", {
+        const voteKey = [...peerStateRoots.keys()][0]
+        trustedStateRoot = voteKey.split(":")[0]
+        const entry = peerStateRoots.get(voteKey)!
+        trustedValidatorsHash = entry.validatorsHash
+        if (peers.length > 1 && entry.count < 2) {
+          log.warn("snap sync: insufficient peer responses for stateRoot consensus, aborting", {
             stateRoot: trustedStateRoot,
             respondingPeers: totalResponding,
             totalPeers: peers.length,
           })
+          return false
         }
       } else if (peerStateRoots.size > 1) {
-        // Multiple conflicting roots — pick majority, enforce hard threshold
         let maxCount = 0
-        for (const [root, info] of peerStateRoots) {
+        for (const [voteKey, info] of peerStateRoots) {
           if (info.count > maxCount) {
             maxCount = info.count
-            trustedStateRoot = root
+            trustedStateRoot = voteKey.split(":")[0]
+            trustedValidatorsHash = info.validatorsHash
           }
         }
         const majorityThreshold = Math.ceil(totalResponding / 2)
@@ -478,12 +487,12 @@ export class ConsensusEngine {
         return false
       }
 
+      // Import loop: use cached snapshots instead of re-fetching
       for (const peer of peers) {
         try {
-          const stateSnap = await this.snapSync.fetchStateSnapshot(peer.url)
+          const stateSnap = snapshotCache.get(peer.url) ?? null
           if (!stateSnap) continue
 
-          // Validate state snapshot matches the chain tip we're syncing to
           if (
             stateSnap.blockHeight !== tip.number.toString() ||
             stateSnap.blockHash !== tip.hash
@@ -491,7 +500,6 @@ export class ConsensusEngine {
             continue
           }
 
-          // Reject snapshot whose stateRoot disagrees with cross-peer consensus
           if (stateSnap.stateRoot !== trustedStateRoot) {
             log.warn("snap sync: peer stateRoot disagrees with consensus", {
               peer: peer.url,
@@ -504,15 +512,22 @@ export class ConsensusEngine {
           const importResult = await this.snapSync.importStateSnapshot(stateSnap, trustedStateRoot)
           await this.snapSync.setStateRoot(trustedStateRoot)
 
-          // Restore governance validator set from snapshot
+          // Restore governance only if validators hash matches cross-peer consensus
           if (importResult.validators && this.snapSync.restoreGovernance) {
-            this.snapSync.restoreGovernance(importResult.validators)
-            log.info("governance state restored from snapshot", { validators: importResult.validators.length })
+            const importedVHash = hashValidators(stateSnap.validators)
+            if (trustedValidatorsHash && importedVHash === trustedValidatorsHash) {
+              this.snapSync.restoreGovernance(importResult.validators)
+              log.info("governance state restored from snapshot", { validators: importResult.validators.length })
+            } else {
+              log.warn("snap sync: validators hash mismatch, skipping governance restore", {
+                peer: peer.url,
+                peerHash: importedVHash,
+                trustedHash: trustedValidatorsHash,
+              })
+            }
           }
 
           // Write snapshot blocks into the chain engine so getHeight() advances.
-          // Use importSnapSyncBlocks (no re-execution, no tip-link check) when available;
-          // fall back to legacy snapshot adoption for in-memory engine.
           let adopted = false
           const bsEngine = this.chain as IBlockSyncEngine
           const ssEngine = this.chain as ISnapshotSyncEngine
@@ -570,4 +585,13 @@ export class ConsensusEngine {
       this.tryRecover()
     }
   }
+}
+
+/** Hash validator set for cross-peer consensus comparison.
+ *  Sort by id, serialize as JSON, then keccak256. Returns empty-hash for undefined/empty. */
+function hashValidators(validators: Array<{ id: string; address: string; stake: string; active: boolean }> | undefined): string {
+  if (!validators || validators.length === 0) return "0x"
+  const sorted = [...validators].sort((a, b) => a.id.localeCompare(b.id))
+  const json = JSON.stringify(sorted)
+  return keccak256Hex(Buffer.from(json, "utf8"))
 }

@@ -137,6 +137,10 @@ if (typeof (chain as PersistentChainEngine).setNodeSigner === "function") {
 let bftCoordinator: BftCoordinator | undefined
 const bftEnabled = config.enableBft && config.validators.length >= 3
 
+// State snapshot export cache (30s TTL, keyed by tip hash)
+let cachedStateSnapshot: { snapshot: StateSnapshot; tipHash: Hex; cachedAtMs: number } | null = null
+const STATE_SNAPSHOT_CACHE_TTL_MS = 30_000
+
 const p2p = new P2PNode(
   {
     bind: config.p2pBind,
@@ -223,11 +227,21 @@ const p2p = new P2PNode(
         const tip = await Promise.resolve(chain.getTip())
         const height = await Promise.resolve(chain.getHeight())
         if (!tip || !stateTrie) return null
+        // Return cached snapshot if tip unchanged and TTL fresh
+        if (
+          cachedStateSnapshot &&
+          cachedStateSnapshot.tipHash === tip.hash &&
+          Date.now() - cachedStateSnapshot.cachedAtMs < STATE_SNAPSHOT_CACHE_TTL_MS
+        ) {
+          return cachedStateSnapshot.snapshot
+        }
         // Export full state (all accounts + storage) + governance validators for snap sync
         const validators = hasGovernance(chain)
           ? chain.governance.getActiveValidators().map((v) => ({ id: v.id, address: v.address, stake: v.stake, active: v.active }))
           : undefined
-        return await exportStateSnapshot(stateTrie, undefined, height, tip.hash, validators)
+        const exported = await exportStateSnapshot(stateTrie, undefined, height, tip.hash, validators)
+        cachedStateSnapshot = { snapshot: exported, tipHash: tip.hash, cachedAtMs: Date.now() }
+        return exported
       }
       : undefined,
   },
@@ -361,10 +375,35 @@ if (stateTrie && config.enableSnapSync) {
   const trieRef = stateTrie
   snapSyncProvider = {
     async fetchStateSnapshot(peerUrl: string) {
+      const SNAP_FETCH_TIMEOUT_MS = 30_000
+      const SNAP_MAX_RESPONSE_BYTES = 16 * 1024 * 1024 // 16 MiB
       try {
-        const res = await fetch(`${peerUrl}/p2p/state-snapshot`)
-        if (!res.ok) return null
-        return await res.json() as StateSnapshot
+        const controller = new AbortController()
+        const timer = setTimeout(() => controller.abort(), SNAP_FETCH_TIMEOUT_MS)
+        try {
+          const res = await fetch(`${peerUrl}/p2p/state-snapshot`, { signal: controller.signal })
+          if (!res.ok) return null
+          // Read body with size limit
+          const reader = res.body?.getReader()
+          if (!reader) return null
+          const chunks: Uint8Array[] = []
+          let totalBytes = 0
+          for (;;) {
+            const { done, value } = await reader.read()
+            if (done) break
+            totalBytes += value.byteLength
+            if (totalBytes > SNAP_MAX_RESPONSE_BYTES) {
+              reader.cancel()
+              log.warn("snap sync: response too large, aborting", { peer: peerUrl, bytes: totalBytes })
+              return null
+            }
+            chunks.push(value)
+          }
+          const text = Buffer.concat(chunks).toString("utf8")
+          return JSON.parse(text) as StateSnapshot
+        } finally {
+          clearTimeout(timer)
+        }
       } catch {
         return null
       }

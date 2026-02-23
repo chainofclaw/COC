@@ -47,12 +47,12 @@ Code:
 **Goal**: converge to the best chain via fork-choice rule.
 
 Algorithm:
-- Block-level sync: periodically fetch chain snapshots from configured static peers only (`cfg.peers`).
+- Block-level sync: periodically fetch chain snapshots from static and discovered peers (deduplicated by URL).
 - Snap sync: uses discovered peers (`discovery.getActivePeers()`, which includes DHT-discovered nodes) for state snapshot fetching and cross-peer stateRoot validation.
 - Snapshot request handlers may be sync or async; they return a standard `ChainSnapshot` (`blocks + updatedAtMs`).
 - Attempt adoption only when the remote tip wins fork-choice comparison.
 - Before adoption, verify block-chain integrity (parent-link continuity, height continuity, and recomputable block hashes).
-- Peer requests enforce resource guards: 10s request timeout, 2 MiB max request body, and 4 MiB max response body.
+- Peer requests enforce resource guards: 10s request timeout, 2 MiB max request body, and 4 MiB max response body. State snapshot requests enforce 30s timeout and 16 MiB response limit.
 
 Code:
 - `COC/node/src/p2p.ts`, `COC/node/src/consensus.ts`
@@ -263,7 +263,8 @@ Algorithm:
 - Receiver validates snapshot structure (`validateSnapshot()`).
 - Receiver checks snapshot `(blockHeight, blockHash)` matches the target chain tip before import.
 - Import accounts, storage, and code into local state trie.
-- After import, verify expectedStateRoot via cross-peer consensus (at least 2 votes AND strict majority of responding peers; single-peer networks accept with 1 vote; fail-closed when multiple peers disagree without quorum) and set local state root.
+- After import, verify expectedStateRoot via cross-peer consensus (at least 2 votes AND strict majority of responding peers; single-peer networks accept with 1 vote; fail-closed when multiple peers disagree without quorum or when known peers > 1 but only 1 responds) and set local state root.
+- Validator set is subject to cross-peer hash consensus before governance restore; snapshots without validator consensus are imported without governance state.
 - Import snapshot blocks via `importSnapSyncBlocks()` (writes to block index without re-execution); proposer-set validation is skipped for historical blocks since the validator set may have changed since those blocks were produced.
 - Resume consensus from the snapshot's block height.
 - Security assumption: block-hash payload currently does not include `stateRoot`, so SnapSync still depends on snapshot-provider trust; production deployments should add trusted state-root anchoring and/or multi-peer cross-checks.

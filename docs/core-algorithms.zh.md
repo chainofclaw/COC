@@ -47,12 +47,12 @@
 **目标**：通过 fork-choice 规则收敛至最优链。
 
 算法：
-- 区块级同步：周期性从已配置静态 peer（`cfg.peers`）拉取链快照。
+- 区块级同步：周期性从静态和已发现 peer 拉取链快照（按 URL 去重）。
 - 快照同步：使用已发现 peer（`discovery.getActivePeers()`，包含 DHT 发现的节点）获取状态快照并做跨 peer stateRoot 验证。
 - 快照请求处理器可为同步或异步；返回标准 `ChainSnapshot`（`blocks + updatedAtMs`）。
 - 仅当远端 tip 在 fork-choice 比较中胜出时才尝试采用快照。
 - 采用前验证区块链路完整性（父哈希连续、高度连续、区块哈希可重算）。
-- 对等请求设置资源保护：单次请求超时 10s，请求体上限 2 MiB，响应体上限 4 MiB。
+- 对等请求设置资源保护：单次请求超时 10s，请求体上限 2 MiB，响应体上限 4 MiB。状态快照请求设置 30s 超时和 16 MiB 响应限制。
 
 代码：
 - `COC/node/src/p2p.ts`，`COC/node/src/consensus.ts`
@@ -263,7 +263,8 @@
 - 接收方验证快照结构（`validateSnapshot()`）。
 - 接收方校验快照 `(blockHeight, blockHash)` 与目标链 tip 一致后再导入。
 - 将账户、存储和代码导入本地状态树。
-- 导入后通过多 peer 共识验证 expectedStateRoot（至少 2 票且占响应 peer 严格多数；单 peer 网络接受 1 票；多 peer 冲突无法定人数时 fail-closed 拒绝导入）并设置本地 state root。
+- 导入后通过多 peer 共识验证 expectedStateRoot（至少 2 票且占响应 peer 严格多数；单 peer 网络接受 1 票；已知 peer > 1 但仅 1 个响应时 fail-closed 拒绝导入）并设置本地 state root。
+- 验证者集合在恢复治理前需通过跨 peer 哈希共识；无验证者共识的快照仅导入状态不恢复治理。
 - 通过 `importSnapSyncBlocks()` 导入快照区块（写入区块索引，无需重新执行）；历史区块跳过出块者集合校验，因为验证者集合可能已变更。
 - 从快照的区块高度恢复共识。
 - 安全前提：当前区块哈希负载不包含 `stateRoot`，因此 SnapSync 仍依赖快照提供方信誉；生产环境建议增加可信状态根锚定/多对等交叉校验。

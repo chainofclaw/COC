@@ -311,6 +311,7 @@ export class P2PNode {
   private readonly cfg: P2PConfig
   private readonly handlers: P2PHandlers
   private readonly inboundRateLimiter: RateLimiter
+  private readonly stateSnapshotRateLimiter: RateLimiter
   private readonly authNonceTracker: PersistentAuthNonceTracker
   public readonly seenTx = new BoundedSet<Hex>(50_000)
   public readonly seenBlocks = new BoundedSet<Hex>(10_000)
@@ -345,6 +346,8 @@ export class P2PNode {
       cfg.inboundRateLimitWindowMs ?? 60_000,
       cfg.inboundRateLimitMaxRequests ?? 240,
     )
+    // Independent rate limiter for expensive state-snapshot endpoint (2 req per 60s per IP)
+    this.stateSnapshotRateLimiter = new RateLimiter(60_000, 2)
     setInterval(() => this.inboundRateLimiter.cleanup(), 300_000).unref()
     setInterval(() => this.authNonceTracker.cleanup(), 300_000).unref()
     if (cfg.authNonceRegistryPath) {
@@ -411,6 +414,25 @@ export class P2PNode {
       }
 
       if (req.method === "GET" && req.url === "/p2p/state-snapshot") {
+        // Independent rate limit for expensive state-snapshot export
+        if (!this.stateSnapshotRateLimiter.allow(clientIp)) {
+          this.rateLimitedRequests += 1
+          res.writeHead(429, { "content-type": "application/json" })
+          res.end(serializeJson({ error: "state snapshot rate limit exceeded" }))
+          return
+        }
+        // Require P2P auth in enforce mode (state snapshot is a high-cost GET)
+        const authMode = resolveInboundAuthMode(this.cfg)
+        if (authMode === "enforce" && this.cfg.verifier) {
+          const challenge = req.headers["x-p2p-auth"]
+          if (!challenge || typeof challenge !== "string") {
+            this.authMissingRequests += 1
+            this.authRejectedRequests += 1
+            res.writeHead(401, { "content-type": "application/json" })
+            res.end(serializeJson({ error: "missing auth for state snapshot" }))
+            return
+          }
+        }
         if (this.handlers.onStateSnapshotRequest) {
           try {
             const snapshot = await this.handlers.onStateSnapshotRequest()
