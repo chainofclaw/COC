@@ -789,7 +789,11 @@ async function handleRpc(
       const filter = filters.get(id)
       if (!filter) return []
       const height = await Promise.resolve(chain.getHeight())
-      return collectLogs(chain, filter.fromBlock, filter.toBlock ?? height, filter)
+      const end = filter.toBlock ?? height
+      if (end - filter.fromBlock > MAX_LOG_BLOCK_RANGE) {
+        throw new Error(`block range too large: max ${MAX_LOG_BLOCK_RANGE} blocks`)
+      }
+      return collectLogs(chain, filter.fromBlock, end, filter)
     }
     case "eth_maxPriorityFeePerGas":
       return "0x3b9aca00" // 1 gwei
@@ -1326,7 +1330,8 @@ function safeBigInt(input: string): bigint {
 
 function parseBlockTag(input: unknown, fallback: bigint): bigint {
   if (typeof input === "string") {
-    if (input === "latest") return fallback
+    if (input === "latest" || input === "pending" || input === "safe" || input === "finalized") return fallback
+    if (input === "earliest") return 0n
     return safeBigInt(input)
   }
   return fallback

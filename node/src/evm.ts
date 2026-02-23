@@ -33,6 +33,7 @@ export interface TxReceipt {
   logsBloom: string
   logs: EvmLog[]
   effectiveGasPrice: string
+  contractAddress?: string
 }
 
 export interface TxInfo {
