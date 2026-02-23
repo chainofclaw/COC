@@ -134,60 +134,69 @@ export async function importStateSnapshot(
 ): Promise<{ accountsImported: number; codeImported: number; validators?: Array<{ id: string; address: string; stake: bigint; active: boolean }> }> {
   validateSnapshot(snapshot)
 
+  // Checkpoint for atomic rollback on failure
+  await stateTrie.checkpoint()
+
   let accountsImported = 0
   let codeImported = 0
 
-  for (const acc of snapshot.accounts) {
-    // Import contract code first (needed before account reference)
-    if (acc.code) {
-      const codeBytes = hexStrToBytes(acc.code)
-      await stateTrie.putCode(codeBytes)
-      codeImported++
+  try {
+    for (const acc of snapshot.accounts) {
+      // Import contract code first (needed before account reference)
+      if (acc.code) {
+        const codeBytes = hexStrToBytes(acc.code)
+        await stateTrie.putCode(codeBytes)
+        codeImported++
+      }
+
+      // Import account state
+      const accountState: AccountState = {
+        nonce: BigInt(acc.nonce),
+        balance: BigInt(acc.balance),
+        storageRoot: acc.storageRoot,
+        codeHash: acc.codeHash,
+      }
+      await stateTrie.put(acc.address, accountState)
+      accountsImported++
+
+      // Import storage slots
+      for (const { slot, value } of acc.storage) {
+        await stateTrie.putStorageAt(acc.address, slot, value)
+      }
     }
 
-    // Import account state
-    const accountState: AccountState = {
-      nonce: BigInt(acc.nonce),
-      balance: BigInt(acc.balance),
-      storageRoot: acc.storageRoot,
-      codeHash: acc.codeHash,
-    }
-    await stateTrie.put(acc.address, accountState)
-    accountsImported++
+    // Commit to persist and generate new state root
+    const newRoot = await stateTrie.commit()
 
-    // Import storage slots
-    for (const { slot, value } of acc.storage) {
-      await stateTrie.putStorageAt(acc.address, slot, value)
+    // Verify stateRoot if expected value provided
+    if (expectedStateRoot && newRoot !== expectedStateRoot) {
+      throw new Error(
+        `state root mismatch after import: expected ${expectedStateRoot}, got ${newRoot}`,
+      )
     }
+
+    // Deserialize validators if present
+    const importedValidators = snapshot.validators?.map((v) => ({
+      id: v.id,
+      address: v.address,
+      stake: BigInt(v.stake),
+      active: v.active,
+    }))
+
+    log.info("state snapshot imported", {
+      accounts: accountsImported,
+      code: codeImported,
+      validators: importedValidators?.length ?? 0,
+      originalRoot: snapshot.stateRoot,
+      newRoot,
+    })
+
+    return { accountsImported, codeImported, validators: importedValidators }
+  } catch (err) {
+    // Rollback partial import on any failure
+    await stateTrie.revert()
+    throw err
   }
-
-  // Commit to persist and generate new state root
-  const newRoot = await stateTrie.commit()
-
-  // Verify stateRoot if expected value provided
-  if (expectedStateRoot && newRoot !== expectedStateRoot) {
-    throw new Error(
-      `state root mismatch after import: expected ${expectedStateRoot}, got ${newRoot}`,
-    )
-  }
-
-  // Deserialize validators if present
-  const importedValidators = snapshot.validators?.map((v) => ({
-    id: v.id,
-    address: v.address,
-    stake: BigInt(v.stake),
-    active: v.active,
-  }))
-
-  log.info("state snapshot imported", {
-    accounts: accountsImported,
-    code: codeImported,
-    validators: importedValidators?.length ?? 0,
-    originalRoot: snapshot.stateRoot,
-    newRoot,
-  })
-
-  return { accountsImported, codeImported, validators: importedValidators }
 }
 
 /**

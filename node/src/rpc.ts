@@ -1,4 +1,5 @@
 import http from "node:http"
+import { timingSafeEqual } from "node:crypto"
 import { SigningKey, keccak256, hashMessage, Transaction, TypedDataEncoder } from "ethers"
 import type { IChainEngine } from "./chain-engine-types.ts"
 import { hasGovernance, hasConfig, hasBlockIndex } from "./chain-engine-types.ts"
@@ -18,6 +19,18 @@ import { createLogger } from "./logger.ts"
 const log = createLogger("rpc")
 
 // BigInt-safe JSON serializer for RPC responses
+/** Constant-time string comparison to prevent timing attacks on auth tokens */
+function constantTimeEqual(a: string, b: string): boolean {
+  const bufA = Buffer.from(a, "utf8")
+  const bufB = Buffer.from(b, "utf8")
+  if (bufA.length !== bufB.length) {
+    // Compare against self to maintain constant time even on length mismatch
+    timingSafeEqual(bufA, bufA)
+    return false
+  }
+  return timingSafeEqual(bufA, bufB)
+}
+
 function jsonStringify(obj: unknown): string {
   return JSON.stringify(obj, (_key, value) =>
     typeof value === "bigint" ? `0x${value.toString(16)}` : value
@@ -170,7 +183,7 @@ export function startRpcServer(
     if (rpcAuthOptions?.authToken) {
       const authHeader = req.headers["authorization"] ?? ""
       const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : ""
-      if (token !== rpcAuthOptions.authToken) {
+      if (!constantTimeEqual(token, rpcAuthOptions.authToken)) {
         res.writeHead(401, { "content-type": "application/json" })
         res.end(JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32003, message: "unauthorized" } }))
         return

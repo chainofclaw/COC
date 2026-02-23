@@ -349,6 +349,7 @@ export class P2PNode {
     // Independent rate limiter for expensive state-snapshot endpoint (2 req per 60s per IP)
     this.stateSnapshotRateLimiter = new RateLimiter(60_000, 2)
     setInterval(() => this.inboundRateLimiter.cleanup(), 300_000).unref()
+    setInterval(() => this.stateSnapshotRateLimiter.cleanup(), 300_000).unref()
     setInterval(() => this.authNonceTracker.cleanup(), 300_000).unref()
     if (cfg.authNonceRegistryPath) {
       setInterval(() => this.authNonceTracker.compact(), 60 * 60 * 1000).unref()
