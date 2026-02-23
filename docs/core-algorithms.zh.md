@@ -52,7 +52,7 @@
 - 快照请求处理器可为同步或异步；返回标准 `ChainSnapshot`（`blocks + updatedAtMs`）。
 - 仅当远端 tip 在 fork-choice 比较中胜出时才尝试采用快照。
 - 采用前验证区块链路完整性（父哈希连续、高度连续、区块哈希可重算）。
-- 对等请求设置资源保护：单次请求超时 10s，单响应体上限 4 MiB。
+- 对等请求设置资源保护：单次请求超时 10s，请求体上限 2 MiB，响应体上限 4 MiB。
 
 代码：
 - `COC/node/src/p2p.ts`，`COC/node/src/consensus.ts`
@@ -248,7 +248,7 @@
 - 客户端断线后使用指数退避重连（初始 1s，上限 30s，每次翻倍）。
 - 资源保护：每 IP 连接限制（5）、每连接消息速率限制（500 msg/10s）、空闲超时（5 分钟）。
 - 握手 nonce 时间戳须在 5 分钟窗口内；过期 nonce 被拒绝。
-- 重放防护边界：当前 nonce 去重是"本节点内存窗口"语义（重启后清空，且不跨节点共享）。
+- 重放防护边界：nonce 去重使用 BoundedSet(10,000)，本节点内存窗口语义（重启后清空，不跨节点共享）。
 
 代码：
 - `COC/node/src/wire-server.ts`
@@ -280,7 +280,7 @@
 - 维护三层映射：`高度 → 阶段 → 验证者ID → 区块哈希`。
 - 每次投票（prepare/commit）时，检查该验证者在相同高度+阶段是否已为不同区块哈希投票。
 - 发现冲突则生成 `EquivocationEvidence`，包含两个冲突的区块哈希。
-- 裁剪旧高度以限制内存（可配置 `maxTrackedHeights`，默认 100）。
+- 裁剪旧高度以限制内存（可配置 `maxTrackedHeights`，默认 100；`maxEvidence` 限制证据记录总数上限 1000）。
 - 裁剪在记录投票之后执行（而非之前），避免竞态条件。
 
 代码：
@@ -397,7 +397,7 @@
 - 接收方通过 `SignatureVerifier.recoverAddress()` 验证签名。
 - 恢复的地址必须与声称的 `nodeId` 匹配 — 不匹配则断开连接并记录 `recordInvalidData()`。
 - Nonce 提供会话级重放防护（节点本地内存窗口；重启后清空，不跨节点共享）。
-- 运行时默认强制签名验证（`verifier` 始终启用）；无签名的握手请求将被拒绝并断开连接。
+- 配置 `verifier` 时强制签名验证（生产环境应始终配置）；无签名的握手请求将被拒绝并断开连接。
 
 代码：
 - `COC/node/src/wire-server.ts`（握手验证）
@@ -413,7 +413,7 @@
 - 规范消息格式：`bft:<type>:<height>:<blockHash>`（确定性字符串）。
 - 发送方通过 `NodeSigner.sign()` 签名规范消息。
 - 接收方通过 `SignatureVerifier.verifyNodeSig(canonical, signature, validatorAddress)` 验证。
-- 签名缺失或无效的消息被静默丢弃。
+- 配置 `verifier` 时，签名缺失或无效的消息被丢弃；生产环境须配置 verifier 以启用签名强制。
 - 仅接受来自已知活跃验证者的消息。
 
 代码：
@@ -428,7 +428,7 @@
 - `payloadHash` 使用确定性 JSON 序列化后做 keccak256。
 - 接收方依次校验：
   - 信封字段完整性（`senderId/timestampMs/nonce/signature`）。
-  - 时间戳是否在 `p2pAuthMaxClockSkewMs` 允许窗口内。
+  - 时间戳是否在 `p2pAuthMaxClockSkewMs`（默认 120s）允许窗口内。
   - 重放键（`senderId:nonce`）是否已出现。
   - 签名是否能恢复并匹配声明的发送地址。
 - 灰度模式：

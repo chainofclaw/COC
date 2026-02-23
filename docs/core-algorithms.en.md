@@ -52,7 +52,7 @@ Algorithm:
 - Snapshot request handlers may be sync or async; they return a standard `ChainSnapshot` (`blocks + updatedAtMs`).
 - Attempt adoption only when the remote tip wins fork-choice comparison.
 - Before adoption, verify block-chain integrity (parent-link continuity, height continuity, and recomputable block hashes).
-- Peer requests enforce resource guards: 10s request timeout and 4 MiB max response body.
+- Peer requests enforce resource guards: 10s request timeout, 2 MiB max request body, and 4 MiB max response body.
 
 Code:
 - `COC/node/src/p2p.ts`, `COC/node/src/consensus.ts`
@@ -248,7 +248,7 @@ Algorithm:
 - Client uses exponential backoff on disconnect (1s initial, 30s max, doubles each attempt).
 - Resource guards: per-IP connection limit (5), per-connection message rate limit (500 msg / 10s), idle timeout (5 min).
 - Handshake nonce timestamp must be within 5-minute window; stale nonces are rejected.
-- Replay-protection boundary: nonce deduplication is node-local in-memory window semantics (cleared on restart, not globally shared across nodes).
+- Replay-protection boundary: nonce deduplication uses BoundedSet(10,000), node-local in-memory window semantics (cleared on restart, not globally shared across nodes).
 
 Code:
 - `COC/node/src/wire-server.ts`
@@ -280,7 +280,7 @@ Algorithm:
 - Maintain a 3-level map: `height → phase → validatorId → blockHash`.
 - On each vote (prepare/commit), check if the validator already voted for a different block hash at the same height+phase.
 - If conflict found, emit `EquivocationEvidence` with both conflicting block hashes.
-- Prune old heights to limit memory (configurable `maxTrackedHeights`, default 100).
+- Prune old heights to limit memory (configurable `maxTrackedHeights`, default 100; `maxEvidence` caps total evidence records at 1000).
 - Pruning occurs after recording the vote (not before) to avoid race conditions.
 
 Code:
@@ -397,7 +397,7 @@ Algorithm:
 - Receiver verifies signature via `SignatureVerifier.recoverAddress()`.
 - Recovered address must match the claimed `nodeId` — mismatch → disconnect + `recordInvalidData()`.
 - Nonce provides per-session replay protection (node-local in-memory window; cleared on restart, not shared across nodes).
-- Signature verification is mandatory at runtime (`verifier` always enabled); unsigned handshake requests are rejected and disconnected.
+- Signature verification is enforced when `verifier` is configured (production deployments should always configure it); unsigned handshake requests are rejected and disconnected.
 
 Code:
 - `COC/node/src/wire-server.ts` (handshake verification)
@@ -413,7 +413,7 @@ Algorithm:
 - Canonical message format: `bft:<type>:<height>:<blockHash>` (deterministic string).
 - Sender signs canonical message via `NodeSigner.sign()`.
 - Receiver verifies via `SignatureVerifier.verifyNodeSig(canonical, signature, validatorAddress)`.
-- Messages with missing or invalid signatures are silently dropped.
+- Messages with missing or invalid signatures are dropped when `verifier` is configured; production deployments must configure verifier for signature enforcement.
 - Only messages from known active validators are accepted.
 
 Code:
@@ -428,7 +428,7 @@ Algorithm:
 - `payloadHash` uses deterministic JSON serialization + keccak256.
 - Receiver verifies:
   - envelope fields (`senderId/timestampMs/nonce/signature`) presence and format.
-  - timestamp within `p2pAuthMaxClockSkewMs`.
+  - timestamp within `p2pAuthMaxClockSkewMs` (default 120s).
   - nonce replay key (`senderId:nonce`) not seen before.
   - signature recovers the claimed sender address.
 - Rollout modes:
