@@ -13,6 +13,9 @@ const poseManagerAddress = process.env.COC_POSE_MANAGER || config.poseManagerAdd
 const slasherPk = process.env.COC_SLASHER_PK || config.slasherPrivateKey || config.operatorPrivateKey;
 
 const provider = new JsonRpcProvider(l1Rpc);
+if (slasherPk && !/^(0x)?[0-9a-fA-F]{64}$/.test(slasherPk)) {
+  log.warn("COC_SLASHER_PK does not look like a valid 32-byte hex private key");
+}
 const signer = slasherPk ? new Wallet(slasherPk, provider) : null;
 
 const poseAbi = [

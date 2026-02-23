@@ -133,10 +133,12 @@ export class PeerStore {
   recordFailure(id: string): void {
     const peer = this.peers.get(id)
     if (peer) {
-      this.peers.set(id, { ...peer, failCount: peer.failCount + 1 })
+      const newFailCount = peer.failCount + 1
       // Remove peers with too many failures
-      if (peer.failCount >= 10) {
+      if (newFailCount >= 10) {
         this.peers.delete(id)
+      } else {
+        this.peers.set(id, { ...peer, failCount: newFailCount })
       }
       this.dirty = true
     }

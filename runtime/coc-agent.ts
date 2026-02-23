@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
-import { appendFileSync, existsSync, readFileSync, mkdirSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { appendFileSync, existsSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { hostname, networkInterfaces } from "node:os";
 import { join, dirname } from "node:path";
 import { Contract, JsonRpcProvider, Wallet, keccak256, toUtf8Bytes } from "ethers";
@@ -229,7 +229,7 @@ class PendingReceiptStore {
 
   drain(): Array<any> {
     const result = this.items.splice(0);
-    try { writeFile(this.path, "").catch(() => {}); } catch { /* best-effort */ }
+    try { writeFileSync(this.path, ""); } catch { /* best-effort */ }
     return result;
   }
 
