@@ -29,6 +29,8 @@ export interface DiscoveryConfig {
   dnsSeeds?: string[]
   peerMaxAgeMs?: number
   verifyPeerIdentity?: (peer: NodePeer) => Promise<boolean>
+  /** Build a signed auth header value for outbound GET requests (avoids circular dep on p2p.ts) */
+  buildGetAuthHeader?: (path: string) => string
 }
 
 const DEFAULT_CONFIG: DiscoveryConfig = {
@@ -51,6 +53,9 @@ export class PeerDiscovery {
   private readonly dnsResolver: DnsSeedResolver | null
   private discoveryTimer: ReturnType<typeof setInterval> | null = null
   private healthTimer: ReturnType<typeof setInterval> | null = null
+  /** Track peer count per IP to resist Sybil attacks via IP concentration */
+  private readonly peersPerIp = new Map<string, number>()
+  private static readonly MAX_PEERS_PER_IP = 3
 
   constructor(
     bootstrapPeers: NodePeer[],
@@ -79,6 +84,8 @@ export class PeerDiscovery {
       if (!normalized || normalized.id === this.cfg.selfId) continue
       this.peers.set(normalized.id, normalized)
       this.scoring.addPeer(normalized.id, normalized.url)
+      const host = extractHost(normalized.url)
+      this.peersPerIp.set(host, (this.peersPerIp.get(host) ?? 0) + 1)
     }
   }
 
@@ -165,8 +172,16 @@ export class PeerDiscovery {
    * Remove a peer by ID
    */
   removePeer(id: string): boolean {
+    const peer = this.peers.get(id)
     const had = this.peers.delete(id)
     this.pendingPeers.delete(id)
+    // Decrement IP diversity counter
+    if (peer) {
+      const host = extractHost(peer.url)
+      const count = this.peersPerIp.get(host) ?? 0
+      if (count <= 1) this.peersPerIp.delete(host)
+      else this.peersPerIp.set(host, count - 1)
+    }
     if (this.peerStore) {
       this.peerStore.removePeer(id)
     }
@@ -199,6 +214,11 @@ export class PeerDiscovery {
       if (this.pendingPeers.has(normalized.id)) continue
       if (this.peers.size + this.pendingPeers.size >= this.cfg.maxPeers) break
 
+      // IP diversity: reject if too many peers share the same IP
+      const host = extractHost(normalized.url)
+      const ipCount = this.peersPerIp.get(host) ?? 0
+      if (ipCount >= PeerDiscovery.MAX_PEERS_PER_IP) continue
+
       if (this.cfg.verifyPeerIdentity) {
         this.pendingPeers.set(normalized.id, normalized)
         void this.verifyAndPromotePeer(normalized.id)
@@ -216,6 +236,9 @@ export class PeerDiscovery {
   private promotePeer(peer: NodePeer): void {
     this.peers.set(peer.id, peer)
     this.scoring.addPeer(peer.id, peer.url)
+    // Track IP diversity
+    const host = extractHost(peer.url)
+    this.peersPerIp.set(host, (this.peersPerIp.get(host) ?? 0) + 1)
     if (this.peerStore) {
       this.peerStore.addPeer(peer)
     }
@@ -298,6 +321,10 @@ export class PeerDiscovery {
     const MAX_RESPONSE_BODY = 512 * 1024 // 512 KB
     return new Promise<NodePeer[]>((resolve, reject) => {
       const endpoint = new URL(`${peer.url}/p2p/peers`)
+      const authHeaders: Record<string, string> = {}
+      if (this.cfg.buildGetAuthHeader) {
+        authHeaders["x-p2p-auth"] = this.cfg.buildGetAuthHeader("/p2p/peers")
+      }
       const req = httpRequest(
         {
           hostname: endpoint.hostname,
@@ -305,6 +332,7 @@ export class PeerDiscovery {
           path: endpoint.pathname,
           method: "GET",
           timeout: this.cfg.healthCheckTimeoutMs,
+          headers: authHeaders,
         },
         (res) => {
           let data = ""
@@ -419,6 +447,15 @@ function isValidPeerId(id: string): boolean {
   const trimmed = id.trim()
   if (trimmed.length < 1 || trimmed.length > 128) return false
   return /^[a-zA-Z0-9._:-]+$/.test(trimmed)
+}
+
+/** Extract hostname (IP or domain) from a peer URL for IP diversity tracking */
+function extractHost(url: string): string {
+  try {
+    return new URL(url).hostname
+  } catch {
+    return url
+  }
 }
 
 function shuffleArray<T>(arr: T[]): T[] {

@@ -96,6 +96,8 @@ export class ConsensusEngine {
   private degradedSinceMs = 0
   private proposeTimer: ReturnType<typeof setInterval> | null = null
   private syncTimer: ReturnType<typeof setInterval> | null = null
+  private syncInFlight = false
+  private proposeInFlight = false
 
   // Sync progress tracking
   private highestPeerHeight = 0n
@@ -206,6 +208,7 @@ export class ConsensusEngine {
   }
 
   private async tryPropose(): Promise<void> {
+    if (this.proposeInFlight) return
     if (this.status === "degraded") {
       this.checkDegradedTimeout()
       return
@@ -219,6 +222,7 @@ export class ConsensusEngine {
       }
     }
 
+    this.proposeInFlight = true
     const t0 = Date.now()
     try {
       const block = await this.chain.proposeNextBlock()
@@ -263,6 +267,8 @@ export class ConsensusEngine {
       } else if (this.proposeFailures >= MAX_CONSECUTIVE_FAILURES) {
         this.enterDegradedMode("propose")
       }
+    } finally {
+      this.proposeInFlight = false
     }
   }
 
@@ -291,6 +297,8 @@ export class ConsensusEngine {
   }
 
   private async trySync(): Promise<void> {
+    if (this.syncInFlight) return
+    this.syncInFlight = true
     const t0 = Date.now()
     this.syncAttempts++
     try {
@@ -420,6 +428,8 @@ export class ConsensusEngine {
       if (this.syncFailures >= MAX_CONSECUTIVE_FAILURES && this.status === "healthy") {
         this.enterDegradedMode("sync")
       }
+    } finally {
+      this.syncInFlight = false
     }
   }
 
