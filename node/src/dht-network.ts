@@ -11,7 +11,7 @@
 import fs from "node:fs"
 import path from "node:path"
 import net from "node:net"
-import { RoutingTable, ALPHA, K, sortByDistance } from "./dht.ts"
+import { RoutingTable, ALPHA, K, sortByDistance, parseHostPort } from "./dht.ts"
 import type { DhtPeer } from "./dht.ts"
 import { WireClient } from "./wire-client.ts"
 import type { WireClientConfig } from "./wire-client.ts"
@@ -223,9 +223,8 @@ export class DhtNetwork {
 
     // Fallback: lightweight TCP connect probe when handshake config is unavailable.
     this.verifyFallbackTcpAttempts += 1
-    const [host, portStr] = peer.address.split(":")
-    const port = parseInt(portStr, 10)
-    if (!host || !port || isNaN(port)) {
+    const parsed = parseHostPort(peer.address)
+    if (!parsed) {
       this.verifyFailures += 1
       this.verifyFallbackTcpFailures += 1
       return false
@@ -239,7 +238,7 @@ export class DhtNetwork {
         resolve(false)
       }, PEER_VERIFY_TIMEOUT_MS)
 
-      const socket = net.createConnection({ host, port }, () => {
+      const socket = net.createConnection({ host: parsed.host, port: parsed.port }, () => {
         clearTimeout(timer)
         socket.destroy()
         this.verifySuccess += 1
@@ -260,9 +259,8 @@ export class DhtNetwork {
       return null
     }
 
-    const [host, portStr] = peer.address.split(":")
-    const port = parseInt(portStr, 10)
-    if (!host || !port || isNaN(port)) return false
+    const hp = parseHostPort(peer.address)
+    if (!hp) return false
 
     return await new Promise<boolean>((resolve) => {
       let settled = false
@@ -280,8 +278,8 @@ export class DhtNetwork {
       }, PEER_VERIFY_TIMEOUT_MS)
 
       const probeCfg: WireClientConfig = {
-        host,
-        port,
+        host: hp.host,
+        port: hp.port,
         nodeId: this.cfg.localId,
         chainId: this.cfg.chainId!,
         signer: this.cfg.signer,

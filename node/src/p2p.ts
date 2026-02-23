@@ -402,7 +402,9 @@ export class P2PNode {
         return
       }
 
-      const clientIp = req.socket.remoteAddress ?? "unknown"
+      const rawClientIp = req.socket.remoteAddress ?? "unknown"
+      // Normalize IPv4-mapped IPv6 so rate limiter treats ::ffff:x.x.x.x same as x.x.x.x
+      const clientIp = rawClientIp.startsWith("::ffff:") ? rawClientIp.slice(7) : rawClientIp
       const inboundIpPeerId = this.inboundIpPeerId(clientIp)
       this.scoring.addPeer(inboundIpPeerId, `inbound://${clientIp}`)
       if ((req.url ?? "").startsWith("/p2p/") && this.scoring.isBanned(inboundIpPeerId)) {

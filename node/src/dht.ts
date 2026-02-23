@@ -262,6 +262,34 @@ export function extractHost(address: string): string {
   return address.slice(0, lastColon)
 }
 
+/**
+ * Parse host:port string into { host, port }, handling IPv6 bracket notation.
+ * Returns null if the address cannot be parsed.
+ */
+export function parseHostPort(address: string): { host: string; port: number } | null {
+  let host: string
+  let portStr: string
+  if (address.startsWith("[")) {
+    // IPv6 bracket notation: [host]:port
+    const closeBracket = address.indexOf("]")
+    if (closeBracket < 0) return null
+    host = address.slice(1, closeBracket)
+    if (address[closeBracket + 1] !== ":") return null
+    portStr = address.slice(closeBracket + 2)
+  } else {
+    const lastColon = address.lastIndexOf(":")
+    const firstColon = address.indexOf(":")
+    if (lastColon <= 0) return null
+    // Multiple colons without brackets = bare IPv6 without port
+    if (firstColon !== lastColon) return null
+    host = address.slice(0, lastColon)
+    portStr = address.slice(lastColon + 1)
+  }
+  const port = parseInt(portStr, 10)
+  if (!host || isNaN(port) || port <= 0 || port > 65535) return null
+  return { host, port }
+}
+
 function hexToBytes(hex: string): Uint8Array {
   const clean = hex.startsWith("0x") ? hex.slice(2) : hex
   const padded = clean.length % 2 ? "0" + clean : clean
