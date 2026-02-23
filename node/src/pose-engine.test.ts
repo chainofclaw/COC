@@ -139,7 +139,7 @@ describe("PoSeEngine", () => {
     }
     const bodyHashHex = `0x${keccak256Hex(Buffer.from(stableStringify(responseBody), "utf8"))}` as Hex32
 
-    const msg = buildReceiptSignMessage(challenge!.challengeId, nodeId, bodyHashHex)
+    const msg = buildReceiptSignMessage(challenge!.challengeId, nodeId, bodyHashHex, responseAtMs)
     const sig = signer.sign(msg)
 
     engine.submitReceipt(challenge!, {
@@ -167,7 +167,8 @@ describe("PoSeEngine", () => {
 
     const responseBody = { ok: true, blockNumber: 1 }
     const bodyHashHex = `0x${keccak256Hex(Buffer.from(JSON.stringify(responseBody), "utf8"))}` as Hex32
-    const msg = buildReceiptSignMessage(challenge!.challengeId, nodeId, bodyHashHex)
+    const responseAtMs = challenge!.issuedAtMs + 100n
+    const msg = buildReceiptSignMessage(challenge!.challengeId, nodeId, bodyHashHex, responseAtMs)
     const sig = signer.sign(msg)
 
     assert.throws(() => {
@@ -202,14 +203,15 @@ describe("PoSeEngine", () => {
 
     const responseBody = { ok: true, blockNumber: 1 }
     const bodyHashHex = `0x${keccak256Hex(Buffer.from(JSON.stringify(responseBody), "utf8"))}` as Hex32
-    const msg = buildReceiptSignMessage(challenge!.challengeId, nodeId, bodyHashHex)
+    const nonceResponseAtMs = challenge!.issuedAtMs + 100n
+    const msg = buildReceiptSignMessage(challenge!.challengeId, nodeId, bodyHashHex, nonceResponseAtMs)
     const sig = signer.sign(msg)
 
     assert.throws(() => {
       engine.submitReceipt(challenge!, {
         challengeId: challenge!.challengeId,
         nodeId,
-        responseAtMs: challenge!.issuedAtMs + 100n,
+        responseAtMs: nonceResponseAtMs,
         responseBody,
         nodeSig: sig as `0x${string}`,
       })

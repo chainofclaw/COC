@@ -20,9 +20,9 @@ const storageDir = resolveStorageDir(config.dataDir, config.storageDir);
 const nodePrivateKey = process.env.COC_NODE_PK || Wallet.createRandom().privateKey;
 const nodeSigner = createNodeSigner(nodePrivateKey);
 
-function signReceipt(challengeId: string, nodeId: string, responseBody: Record<string, unknown>): string {
+function signReceipt(challengeId: string, nodeId: string, responseBody: Record<string, unknown>, responseAtMs: number): string {
   const bodyHash = `0x${keccak256Hex(Buffer.from(stableStringify(responseBody), "utf8"))}`;
-  const msg = buildReceiptSignMessage(challengeId, nodeId, bodyHash);
+  const msg = buildReceiptSignMessage(challengeId, nodeId, bodyHash, BigInt(responseAtMs));
   return nodeSigner.sign(msg);
 }
 
@@ -98,12 +98,13 @@ const server = http.createServer((req, res) => {
                 merkleRoot: proof.merkleRoot,
                 merklePath: proof.merklePath,
               };
+            const storageResponseAtMs = Date.now();
             return json(res, 200, {
               challengeId: payload.challengeId,
               nodeId: nodeSigner.nodeId,
-              responseAtMs: Date.now(),
+              responseAtMs: storageResponseAtMs,
               responseBody: storageResponseBody,
-              nodeSig: signReceipt(payload.challengeId, nodeSigner.nodeId, storageResponseBody),
+              nodeSig: signReceipt(payload.challengeId, nodeSigner.nodeId, storageResponseBody, storageResponseAtMs),
             });
           })
           .catch((error) => {
@@ -125,7 +126,7 @@ const server = http.createServer((req, res) => {
         nodeId: nodeSigner.nodeId,
         responseAtMs,
         responseBody,
-        nodeSig: signReceipt(payload.challengeId, nodeSigner.nodeId, responseBody),
+        nodeSig: signReceipt(payload.challengeId, nodeSigner.nodeId, responseBody, responseAtMs),
       });
     });
     return;

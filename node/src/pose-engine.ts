@@ -101,6 +101,7 @@ export class PoSeEngine {
           challenge.challengeId,
           receipt.nodeId,
           responseBodyHash,
+          receipt.responseAtMs,
         )
         const nodeAddr = hex32ToAddress(receipt.nodeId)
         return this.signer.verifyNodeSig(msg, receipt.nodeSig, nodeAddr)

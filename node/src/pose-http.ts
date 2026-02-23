@@ -210,6 +210,9 @@ export function registerPoseRoutes(
         if (!rc.challengeId || !rc.nodeId || !rc.nodeSig) {
           return jsonResponse(res, 400, { error: "invalid receipt: missing challengeId, nodeId, or nodeSig" })
         }
+        if (!HEX32_RE.test(String(rc.nodeId))) {
+          return jsonResponse(res, 400, { error: "invalid receipt nodeId format" })
+        }
         const challengeId = payload.challengeId
           ?? String((payload.challenge as Record<string, unknown> | undefined)?.challengeId ?? rc.challengeId)
         if (!HEX32_RE.test(challengeId)) {
@@ -481,9 +484,7 @@ async function isChallengerAllowed(
 }
 
 function stableStringify(value: unknown): string {
-  if (typeof value === "bigint") {
-    return JSON.stringify(value.toString())
-  }
+  if (typeof value === "bigint") return value.toString()
   if (value === null || typeof value !== "object") {
     return JSON.stringify(value)
   }

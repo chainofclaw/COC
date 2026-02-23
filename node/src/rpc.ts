@@ -1340,7 +1340,7 @@ async function formatBlock(block: Awaited<ReturnType<IChainEngine["getBlockByNum
     if (receipts.length > 0) {
       totalGasUsed = 0n
       for (const receipt of receipts) {
-        totalGasUsed += receipt.gasUsed ?? 0n
+        totalGasUsed += typeof receipt.gasUsed === "bigint" ? receipt.gasUsed : BigInt(parseInt(String(receipt.gasUsed), 16) || 0)
         if (receipt.logsBloom && receipt.logsBloom !== "0x" + "0".repeat(512)) {
           aggregatedBloom = receipt.logsBloom
         }
