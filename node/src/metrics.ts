@@ -58,8 +58,9 @@ export class MetricsCollector {
 
   observeHistogram(name: string, help: string, value: number, bucketBounds: number[]): void {
     const existing = this.histograms.get(name)
-    // Find the smallest bucket bound that fits this value
-    const targetBound = bucketBounds.filter((b) => value <= b).sort((a, b) => a - b)[0]
+    // Find the smallest bucket bound that fits this value; overflow goes to largest bucket
+    const sorted = bucketBounds.slice().sort((a, b) => a - b)
+    const targetBound = sorted.find((b) => value <= b) ?? sorted[sorted.length - 1]
     if (existing) {
       const updated = {
         ...existing,

@@ -73,6 +73,7 @@ export class ValidatorGovernance {
    * Initialize with genesis validators.
    */
   initGenesis(validators: Array<{ id: string; address: string; stake: bigint }>): void {
+    this.validators.clear()
     for (const v of validators) {
       this.validators.set(v.id, {
         id: v.id,
