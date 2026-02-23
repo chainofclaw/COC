@@ -138,7 +138,7 @@ Code:
 
 Algorithm:
 - Maintain target gas utilization at 50% of block gas limit.
-- If actual gas > target: increase base fee by up to 12.5% (minimum 1 wei increase guaranteed when over target, preventing stalling at low base fees).
+- If actual gas > target: increase base fee by up to 12.5% (floor of 1 wei when integer division rounds increase to zero, preventing stalling at low base fees).
 - If actual gas < target: decrease base fee by up to 12.5%.
 - Floor at 1 gwei minimum (never drops to zero).
 - `changeRatio = (gasUsed - targetGas) / targetGas`.

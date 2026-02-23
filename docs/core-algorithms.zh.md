@@ -138,7 +138,7 @@
 
 算法：
 - 维持 50% 区块 Gas 上限的目标利用率。
-- 实际 Gas > 目标：base fee 最多上调 12.5%（保证最少 1 wei 增幅，防止低 base fee 时停滞）。
+- 实际 Gas > 目标：base fee 最多上调 12.5%（整数除法截断为 0 时兜底 1 wei，防止低 base fee 时停滞）。
 - 实际 Gas < 目标：base fee 最多下调 12.5%。
 - 最低 1 gwei（永不降至零）。
 - `changeRatio = (gasUsed - targetGas) / targetGas`。
@@ -296,8 +296,8 @@
 - 通过 Wire 接收交易/区块时：通过 `onTxRelay`/`onBlockRelay` 回调中继至 HTTP gossip 层。
 - 两条传输路径独立运行 — 一条失败不影响另一条。
 - Wire 广播使用延迟绑定模式：函数引用在 wire 服务器初始化后设置。
-- Wire 层通过 `BoundedSet`（seenTx 50K, seenBlocks 10K）去重，防止重复处理。
-- 跨协议中继安全：P2P `receiveTx`/`receiveBlock` 内部有去重，Wire 层也独立去重。
+- Wire 和 HTTP 共享同一 `BoundedSet`（seenTx 50K, seenBlocks 10K）去重，防止跨协议放大攻击。
+- 跨协议中继安全：共享去重确保每条消息在两种传输中最多处理一次。
 - `broadcastFrame` 支持 `excludeNodeId` 参数，跳过原始发送方。
 - BFT 消息也通过双传输层（HTTP gossip + Wire 协议 TCP）广播。
 
@@ -339,7 +339,7 @@
 - Wire→HTTP：Wire 层去重 + 处理后，调用 `onTxRelay(rawTx)` / `onBlockRelay(block)` 注入 HTTP gossip 层。
 - HTTP→Wire：现有 `wireTxRelayFn` / `wireBroadcastFn` 从 HTTP 中继至 wire 连接的节点。
 - 中继错误为非致命（try-catch，忽略失败）。
-- 无循环中继：两层各自独立去重（Wire BoundedSet + P2P `seenTx.has()`）。
+- 无循环中继：Wire 和 HTTP 共享同一 BoundedSet 去重实例（通过 `sharedSeenTx`/`sharedSeenBlocks` 注入）。
 
 代码：
 - `COC/node/src/wire-server.ts`（`onTxRelay`、`onBlockRelay` 配置回调）
