@@ -215,7 +215,7 @@ Code:
 Algorithm:
 - Frame: `[Magic 2B: 0xC0C1] [Type 1B] [Length 4B BE] [Payload NB]`.
 - Max payload: 16 MiB.
-- `FrameDecoder`: streaming accumulator for TCP partial reads.
+- `FrameDecoder`: streaming accumulator for TCP partial reads with exponential buffer growth (2x, amortized O(n)); IPv4-mapped IPv6 addresses normalized before per-IP rate limiting.
 - Message types: Handshake, Block, Transaction, BFT, Ping/Pong, FindNode/FindNodeResponse (DHT).
 
 Code:

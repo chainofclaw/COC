@@ -45,11 +45,15 @@ export class PeerStore {
   async load(): Promise<StoredPeer[]> {
     try {
       const raw = await readFile(this.cfg.filePath, "utf-8")
-      const data = JSON.parse(raw) as StoredPeer[]
+      const data = JSON.parse(raw)
+      if (!Array.isArray(data)) return []
       const now = Date.now()
 
-      // Filter out expired peers
-      const valid = data.filter((p) => now - p.lastSeenMs < this.cfg.maxAgeMs)
+      // Filter out expired peers (validate fields defensively)
+      const valid = (data as StoredPeer[]).filter((p) =>
+        p && typeof p.id === "string" && typeof p.lastSeenMs === "number" &&
+        now - p.lastSeenMs < this.cfg.maxAgeMs,
+      )
 
       this.peers.clear()
       for (const peer of valid) {
