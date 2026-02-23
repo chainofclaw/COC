@@ -544,11 +544,14 @@ async function readMultipartFile(req: http.IncomingMessage): Promise<{ filename?
   const parts = raw.toString("binary").split(boundary)
   for (const part of parts) {
     if (!part || part === "--\r\n") continue
-    const [headerRaw, bodyRaw] = part.split("\r\n\r\n")
-    if (!bodyRaw) continue
+    // Use indexOf to split only at the FIRST \r\n\r\n (body may contain \r\n\r\n)
+    const separatorIdx = part.indexOf("\r\n\r\n")
+    if (separatorIdx === -1) continue
+    const headerRaw = part.slice(0, separatorIdx)
+    let body = part.slice(separatorIdx + 4)
     const filenameMatch = /filename="([^"]+)"/.exec(headerRaw)
     const filename = filenameMatch ? filenameMatch[1] : undefined
-    const body = bodyRaw.replace(/\r\n--$/, "")
+    if (body.endsWith("\r\n")) body = body.slice(0, -2)
     return { filename, bytes: Buffer.from(body, "binary") }
   }
 

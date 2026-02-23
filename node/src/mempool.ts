@@ -221,12 +221,17 @@ export class Mempool {
     const senderTxs = this.bySender.get(from)
     if (!senderTxs || senderTxs.size === 0) return onchainNonce
 
-    let maxNonce = onchainNonce - 1n
+    // Collect all nonces and find highest contiguous from onchainNonce
+    const nonces = new Set<bigint>()
     for (const hash of senderTxs) {
       const tx = this.txs.get(hash)
-      if (tx && tx.nonce > maxNonce) maxNonce = tx.nonce
+      if (tx) nonces.add(tx.nonce)
     }
-    return maxNonce + 1n
+    let next = onchainNonce
+    while (nonces.has(next)) {
+      next++
+    }
+    return next
   }
 
   /**

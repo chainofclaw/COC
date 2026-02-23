@@ -518,8 +518,11 @@ async function handleRpc(
       if (!filter) return []
       const start = filter.lastCursor + 1n
       const filterHeight = await Promise.resolve(chain.getHeight())
-      const logs = await collectLogs(chain, start, filter.toBlock ?? filterHeight, filter)
-      filter.lastCursor = filterHeight
+      const end = filter.toBlock ?? filterHeight
+      // Cap scan range to prevent DoS from long-idle filters
+      const cappedEnd = (end - start > MAX_LOG_BLOCK_RANGE) ? start + MAX_LOG_BLOCK_RANGE : end
+      const logs = await collectLogs(chain, start, cappedEnd, filter)
+      filter.lastCursor = cappedEnd
       return logs
     }
     case "eth_uninstallFilter": {

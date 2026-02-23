@@ -136,10 +136,13 @@ function isValidUrl(url: string): boolean {
 }
 
 async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new Error("DNS query timeout")), ms)
-    ),
-  ])
+  let timer: ReturnType<typeof setTimeout>
+  const timeoutPromise = new Promise<T>((_, reject) => {
+    timer = setTimeout(() => reject(new Error("DNS query timeout")), ms)
+  })
+  try {
+    return await Promise.race([promise, timeoutPromise])
+  } finally {
+    clearTimeout(timer!)
+  }
 }
