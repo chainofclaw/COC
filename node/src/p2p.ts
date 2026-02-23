@@ -547,6 +547,7 @@ export class P2PNode {
       let aborted = false
 
       req.on("data", (chunk: Buffer | string) => {
+        if (aborted) return
         bodySize += typeof chunk === "string" ? chunk.length : chunk.byteLength
         if (bodySize > MAX_REQUEST_BODY) {
           aborted = true

@@ -414,7 +414,11 @@ export class PersistentStateTrie implements IStateTrie {
   }
 
   private evictLru(): void {
-    while (this.storageTries.size >= this.maxCachedTries && this.storageTrieAccess.length > 0) {
+    // Guard: cap iterations to prevent infinite loop when all tries are dirty
+    let attempts = 0
+    const maxAttempts = this.storageTrieAccess.length
+    while (this.storageTries.size >= this.maxCachedTries && this.storageTrieAccess.length > 0 && attempts < maxAttempts) {
+      attempts++
       const oldest = this.storageTrieAccess.shift()!
       // Don't evict dirty tries — skip and try next
       if (this.dirtyAddresses.has(oldest)) {
