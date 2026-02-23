@@ -416,10 +416,10 @@ export class PersistentStateTrie implements IStateTrie {
   private evictLru(): void {
     while (this.storageTries.size >= this.maxCachedTries && this.storageTrieAccess.length > 0) {
       const oldest = this.storageTrieAccess.shift()!
-      // Don't evict dirty tries
+      // Don't evict dirty tries — skip and try next
       if (this.dirtyAddresses.has(oldest)) {
         this.storageTrieAccess.push(oldest)
-        break
+        continue
       }
       this.storageTries.delete(oldest)
     }
