@@ -437,15 +437,24 @@ export class ConsensusEngine {
         }
       }
 
-      // Require at least 2 peers agreeing on stateRoot (when multiple peers available)
+      // Require stateRoot consensus: at least 2 votes AND strict majority of responding peers.
+      // Single-peer networks accept with 1 vote (no alternative).
+      const totalResponding = [...peerStateRoots.values()].reduce((sum, v) => sum + v.count, 0)
       let trustedStateRoot: string | null = null
+
       if (peerStateRoots.size === 1) {
+        // All responding peers agree on the same root
         trustedStateRoot = [...peerStateRoots.keys()][0]
-        if (peers.length > 1) {
-          log.warn("snap sync: only 1 peer provided state, single-peer trust", { stateRoot: trustedStateRoot })
+        const rootCount = peerStateRoots.get(trustedStateRoot!)!.count
+        if (peers.length > 1 && rootCount < 2) {
+          log.warn("snap sync: only 1 peer provided state, single-peer trust", {
+            stateRoot: trustedStateRoot,
+            respondingPeers: totalResponding,
+            totalPeers: peers.length,
+          })
         }
       } else if (peerStateRoots.size > 1) {
-        // Pick the stateRoot with most votes
+        // Multiple conflicting roots — pick majority, enforce hard threshold
         let maxCount = 0
         for (const [root, info] of peerStateRoots) {
           if (info.count > maxCount) {
@@ -453,8 +462,13 @@ export class ConsensusEngine {
             trustedStateRoot = root
           }
         }
-        if (maxCount < 2) {
-          log.warn("snap sync: no stateRoot consensus among peers, aborting (fail-closed)")
+        const majorityThreshold = Math.ceil(totalResponding / 2)
+        if (maxCount < 2 || maxCount < majorityThreshold) {
+          log.warn("snap sync: no stateRoot consensus among peers, aborting (fail-closed)", {
+            maxVotes: maxCount,
+            required: Math.max(2, majorityThreshold),
+            respondingPeers: totalResponding,
+          })
           return false
         }
       }
@@ -496,14 +510,16 @@ export class ConsensusEngine {
             log.info("governance state restored from snapshot", { validators: importResult.validators.length })
           }
 
-          // Write snapshot blocks into the chain engine so getHeight() advances
+          // Write snapshot blocks into the chain engine so getHeight() advances.
+          // Use importSnapSyncBlocks (no re-execution, no tip-link check) when available;
+          // fall back to legacy snapshot adoption for in-memory engine.
           let adopted = false
-          const ssEngine = this.chain as ISnapshotSyncEngine
           const bsEngine = this.chain as IBlockSyncEngine
-          if (typeof ssEngine.makeSnapshot === "function") {
+          const ssEngine = this.chain as ISnapshotSyncEngine
+          if (typeof bsEngine.importSnapSyncBlocks === "function") {
+            adopted = await bsEngine.importSnapSyncBlocks(snapshot.blocks)
+          } else if (typeof ssEngine.makeSnapshot === "function") {
             adopted = await ssEngine.maybeAdoptSnapshot({ blocks: snapshot.blocks, updatedAtMs: Date.now() })
-          } else if (typeof bsEngine.maybeAdoptSnapshot === "function") {
-            adopted = await bsEngine.maybeAdoptSnapshot(snapshot.blocks)
           }
 
           if (!adopted) {

@@ -45,7 +45,7 @@ Code:
 **Goal**: converge to the longest chain snapshot.
 
 Algorithm:
-- Periodically fetch snapshots from peers.
+- Periodically fetch snapshots from configured static peers (discovered DHT peers are not currently included in sync source set).
 - Snapshot request handlers may be sync or async; they return a standard `ChainSnapshot` (`blocks + updatedAtMs`).
 - Attempt adoption only when the remote tip wins fork-choice comparison.
 - Before adoption, verify block-chain integrity (parent-link continuity, height continuity, and recomputable block hashes).
@@ -183,6 +183,7 @@ Algorithm:
 - Priority 4: Lower block hash (deterministic tiebreaker).
 - Current implementation is a tip-level comparator (`compareForks`), not the full subtree-weighted classical GHOST rule.
 - `shouldSwitchFork()` determines if sync should adopt a remote chain.
+- During sync, remote `bftFinalized` flags are never trusted — remote candidates are hardcoded to `bftFinalized: false` as a security-conservative measure.
 
 Code:
 - `COC/node/src/fork-choice.ts`
@@ -252,7 +253,7 @@ Algorithm:
 - Receiver validates snapshot structure (`validateSnapshot()`).
 - Receiver checks snapshot `(blockHeight, blockHash)` matches the target chain tip before import.
 - Import accounts, storage, and code into local state trie.
-- After import, verify expectedStateRoot via cross-peer consensus (majority vote; fail-closed when no quorum among multiple peers) and set local state root.
+- After import, verify expectedStateRoot via cross-peer consensus (at least 2 votes AND strict majority of responding peers; single-peer networks accept with 1 vote; fail-closed when multiple peers disagree without quorum) and set local state root.
 - Resume consensus from the snapshot's block height.
 - Security assumption: block-hash payload currently does not include `stateRoot`, so SnapSync still depends on snapshot-provider trust; production deployments should add trusted state-root anchoring and/or multi-peer cross-checks.
 

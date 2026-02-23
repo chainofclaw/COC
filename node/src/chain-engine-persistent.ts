@@ -430,6 +430,12 @@ export class PersistentChainEngine {
     }
   }
 
+  /**
+   * Adopt a snapshot by re-executing all blocks (incremental append mode).
+   * Requires parent-link continuity with current tip — will fail if
+   * snapshot blocks do not link to the local chain.
+   * Used by normal block-level sync when the snapshot is an extension of the current chain.
+   */
   async maybeAdoptSnapshot(blocks: ChainBlock[]): Promise<boolean> {
     const incomingTip = blocks[blocks.length - 1]
     if (!incomingTip) return false
@@ -443,6 +449,42 @@ export class PersistentChainEngine {
     }
 
     await this.rebuildFromBlocks(blocks)
+    return true
+  }
+
+  /**
+   * Import blocks from SnapSync without re-executing transactions.
+   * Skips parent-link-to-local-tip validation because SnapSync jumps ahead
+   * past the snapshot window. State was already imported via SnapSyncProvider.
+   * Only validates internal chain integrity (hashes, parent links within array).
+   */
+  async importSnapSyncBlocks(blocks: ChainBlock[]): Promise<boolean> {
+    const incomingTip = blocks[blocks.length - 1]
+    if (!incomingTip) return false
+
+    const currentHeight = await this.getHeight()
+    if (BigInt(incomingTip.number) <= currentHeight) return false
+
+    // Verify internal chain integrity (hashes, parent links, proposer)
+    if (!this.verifyBlockChain(blocks)) {
+      return false
+    }
+
+    // Write blocks directly to block index — no tx re-execution needed
+    for (const block of blocks) {
+      const normalized: ChainBlock = {
+        number: BigInt(block.number),
+        hash: block.hash,
+        parentHash: block.parentHash,
+        proposer: block.proposer,
+        timestampMs: Number(block.timestampMs),
+        txs: [...block.txs],
+        finalized: Boolean(block.finalized),
+        baseFee: block.baseFee !== undefined ? BigInt(block.baseFee) : undefined,
+        cumulativeWeight: block.cumulativeWeight !== undefined ? BigInt(block.cumulativeWeight) : undefined,
+      }
+      await this.blockIndex.putBlock(normalized)
+    }
     return true
   }
 
@@ -577,6 +619,12 @@ export class PersistentChainEngine {
     }
   }
 
+  /**
+   * Rebuild by re-executing blocks (incremental append mode).
+   * Each block is applied via applyBlock() which validates parent-link
+   * continuity with the current tip. NOT suitable for SnapSync jumps —
+   * use importSnapSyncBlocks() for that case.
+   */
   private async rebuildFromBlocks(blocks: ChainBlock[]): Promise<void> {
     await this.evm.resetExecution()
 

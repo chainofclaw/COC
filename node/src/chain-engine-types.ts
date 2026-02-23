@@ -59,6 +59,8 @@ export interface ISnapshotSyncEngine extends IChainEngine {
  */
 export interface IBlockSyncEngine extends IChainEngine {
   maybeAdoptSnapshot(blocks: ChainBlock[]): Promise<boolean>
+  /** Import blocks without re-execution (for SnapSync — state already imported) */
+  importSnapSyncBlocks(blocks: ChainBlock[]): Promise<boolean>
   close(): Promise<void>
 }
 

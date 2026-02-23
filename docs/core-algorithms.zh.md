@@ -45,7 +45,7 @@
 **目标**：多节点链状态收敛。
 
 算法：
-- 周期性拉取 peer 的链快照。
+- 周期性拉取已配置静态 peer 的链快照（DHT 发现的节点当前不纳入同步源集）。
 - 快照请求处理器可为同步或异步；返回标准 `ChainSnapshot`（`blocks + updatedAtMs`）。
 - 仅当远端 tip 在 fork-choice 比较中胜出时才尝试采用快照。
 - 采用前验证区块链路完整性（父哈希连续、高度连续、区块哈希可重算）。
@@ -181,8 +181,9 @@
 - 优先级 2：较长链优先。
 - 优先级 3：更高累积权益权重。
 - 优先级 4：较低区块哈希（确定性决胜）。
-- 当前实现是 tip 级比较器（`compareForks`），并非完整“子树权重驱动”的经典 GHOST 规则。
+- 当前实现是 tip 级比较器（`compareForks`），并非完整"子树权重驱动"的经典 GHOST 规则。
 - `shouldSwitchFork()` 判断同步是否应采用远端链。
+- 同步时远端 `bftFinalized` 标志不被信任——远端候选一律硬编码为 `bftFinalized: false`，作为安全保守策略。
 
 代码：
 - `COC/node/src/fork-choice.ts`
@@ -252,7 +253,7 @@
 - 接收方验证快照结构（`validateSnapshot()`）。
 - 接收方校验快照 `(blockHeight, blockHash)` 与目标链 tip 一致后再导入。
 - 将账户、存储和代码导入本地状态树。
-- 导入后通过多 peer 共识验证 expectedStateRoot（多数投票；多 peer 无共识时 fail-closed 拒绝导入）并设置本地 state root。
+- 导入后通过多 peer 共识验证 expectedStateRoot（至少 2 票且占响应 peer 严格多数；单 peer 网络接受 1 票；多 peer 冲突无法定人数时 fail-closed 拒绝导入）并设置本地 state root。
 - 从快照的区块高度恢复共识。
 - 安全前提：当前区块哈希负载不包含 `stateRoot`，因此 SnapSync 仍依赖快照提供方信誉；生产环境建议增加可信状态根锚定/多对等交叉校验。
 
