@@ -260,8 +260,11 @@ export class WireClient {
         if (pending) {
           clearTimeout(pending.timer)
           this.pendingFindNode.delete(resp.requestId)
-          // Limit accepted peers to prevent routing table poisoning
-          const peers = Array.isArray(resp.peers) ? resp.peers.slice(0, 20) : []
+          // Limit accepted peers to prevent routing table poisoning; validate structure
+          const rawPeers = Array.isArray(resp.peers) ? resp.peers.slice(0, 20) : []
+          const peers = rawPeers.filter((p: unknown): p is { id: string; address: string } =>
+            !!p && typeof p === "object" && typeof (p as Record<string, unknown>).id === "string" && typeof (p as Record<string, unknown>).address === "string"
+          )
           pending.resolve(peers)
         }
         break

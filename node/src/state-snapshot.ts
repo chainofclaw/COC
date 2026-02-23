@@ -202,6 +202,10 @@ export async function importStateSnapshot(
 /**
  * Validate snapshot structure.
  */
+const MAX_SNAPSHOT_ACCOUNTS = 100_000
+const MAX_STORAGE_PER_ACCOUNT = 50_000
+const MAX_CODE_HEX_LENGTH = 49_154 // 24577 bytes * 2 + "0x" prefix
+
 export function validateSnapshot(snapshot: StateSnapshot): void {
   if (snapshot.version !== 1) {
     throw new Error(`unsupported snapshot version: ${snapshot.version}`)
@@ -214,6 +218,9 @@ export function validateSnapshot(snapshot: StateSnapshot): void {
   }
   if (!Array.isArray(snapshot.accounts)) {
     throw new Error("snapshot missing accounts array")
+  }
+  if (snapshot.accounts.length > MAX_SNAPSHOT_ACCOUNTS) {
+    throw new Error(`snapshot too large: ${snapshot.accounts.length} accounts (max ${MAX_SNAPSHOT_ACCOUNTS})`)
   }
   for (const acc of snapshot.accounts) {
     if (!acc.address || typeof acc.address !== "string") {
@@ -235,7 +242,13 @@ export function validateSnapshot(snapshot: StateSnapshot): void {
     if (acc.code !== undefined && typeof acc.code === "string" && !isValidHex(acc.code)) {
       throw new Error(`account ${acc.address} has invalid code hex`)
     }
+    if (acc.code !== undefined && typeof acc.code === "string" && acc.code.length > MAX_CODE_HEX_LENGTH) {
+      throw new Error(`account ${acc.address} code too large: ${acc.code.length} chars (max ${MAX_CODE_HEX_LENGTH})`)
+    }
     if (Array.isArray(acc.storage)) {
+      if (acc.storage.length > MAX_STORAGE_PER_ACCOUNT) {
+        throw new Error(`account ${acc.address} has too many storage slots: ${acc.storage.length} (max ${MAX_STORAGE_PER_ACCOUNT})`)
+      }
       for (const entry of acc.storage) {
         if (!isValidHex(entry.slot)) throw new Error(`account ${acc.address} has invalid storage slot hex: ${entry.slot}`)
         if (!isValidHex(entry.value)) throw new Error(`account ${acc.address} has invalid storage value hex: ${entry.value}`)
