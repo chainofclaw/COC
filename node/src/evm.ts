@@ -203,21 +203,27 @@ export class EvmChain {
     const requestedGas = params.gas ? BigInt(params.gas) : 10_000_000n
     const gasLimit = requestedGas > MAX_CALL_GAS ? MAX_CALL_GAS : requestedGas
 
-    const result = await this.vm.evm.runCall({
-      caller,
-      to,
-      data,
-      value,
-      gasLimit,
-    })
+    // Checkpoint/revert to prevent eth_call from mutating persistent state
+    await this.vm.stateManager.checkpoint()
+    try {
+      const result = await this.vm.evm.runCall({
+        caller,
+        to,
+        data,
+        value,
+        gasLimit,
+      })
 
-    const returnValue = result.execResult.returnValue.length > 0
-      ? bytesToHex(result.execResult.returnValue)
-      : "0x"
+      const returnValue = result.execResult.returnValue.length > 0
+        ? bytesToHex(result.execResult.returnValue)
+        : "0x"
 
-    return {
-      returnValue,
-      gasUsed: result.execResult.executionGasUsed,
+      return {
+        returnValue,
+        gasUsed: result.execResult.executionGasUsed,
+      }
+    } finally {
+      await this.vm.stateManager.revert()
     }
   }
 

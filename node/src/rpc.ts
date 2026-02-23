@@ -1,5 +1,5 @@
 import http from "node:http"
-import { timingSafeEqual } from "node:crypto"
+import { timingSafeEqual, randomBytes } from "node:crypto"
 import { SigningKey, keccak256, hashMessage, Transaction, TypedDataEncoder } from "ethers"
 import type { IChainEngine } from "./chain-engine-types.ts"
 import { hasGovernance, hasConfig, hasBlockIndex } from "./chain-engine-types.ts"
@@ -20,6 +20,18 @@ const log = createLogger("rpc")
 
 // Per-account nonce serialization: prevents concurrent eth_sendTransaction from getting same nonce
 const sendTxLocks = new Map<string, Promise<unknown>>()
+
+const MAX_FILTERS = 1000
+const FILTER_TTL_MS = 5 * 60 * 1000 // 5 minutes
+
+function cleanupExpiredFilters(filters: Map<string, PendingFilter>): void {
+  const now = Date.now()
+  for (const [id, filter] of filters) {
+    if (filter.createdAtMs && now - filter.createdAtMs > FILTER_TTL_MS) {
+      filters.delete(id)
+    }
+  }
+}
 
 // BigInt-safe JSON serializer for RPC responses
 /** Constant-time string comparison to prevent timing attacks on auth tokens */
@@ -476,8 +488,12 @@ async function handleRpc(
       return await queryLogs(chain, query)
     }
     case "eth_newFilter": {
+      if (filters.size >= MAX_FILTERS) {
+        cleanupExpiredFilters(filters)
+        if (filters.size >= MAX_FILTERS) throw new Error("filter limit exceeded")
+      }
       const query = ((payload.params ?? [])[0] ?? {}) as Record<string, unknown>
-      const id = `0x${Math.floor(Math.random() * Number.MAX_SAFE_INTEGER).toString(16)}`
+      const id = `0x${randomBytes(16).toString("hex")}`
       const fromBlock = parseBlockTag(query.fromBlock, 0n)
       const newFilterHeight = await Promise.resolve(chain.getHeight())
       const toBlock = query.toBlock !== undefined ? parseBlockTag(query.toBlock, newFilterHeight) : undefined
@@ -488,6 +504,7 @@ async function handleRpc(
         address: query.address ? String(query.address).toLowerCase() as Hex : undefined,
         topics: Array.isArray(query.topics) ? query.topics.map((t) => (t ? String(t) as Hex : null)) : undefined,
         lastCursor: fromBlock > 0n ? fromBlock - 1n : 0n,
+        createdAtMs: Date.now(),
       }
       filters.set(id, filter)
       return id
@@ -546,6 +563,7 @@ async function handleRpc(
         return result.hash
       })
       sendTxLocks.set(from, work)
+      work.finally(() => { if (sendTxLocks.get(from) === work) sendTxLocks.delete(from) })
       return await work
     }
     case "eth_sign": {
@@ -726,22 +744,32 @@ async function handleRpc(
       }
     }
     case "eth_newBlockFilter": {
-      const id = `0x${Math.floor(Math.random() * Number.MAX_SAFE_INTEGER).toString(16)}`
+      if (filters.size >= MAX_FILTERS) {
+        cleanupExpiredFilters(filters)
+        if (filters.size >= MAX_FILTERS) throw new Error("filter limit exceeded")
+      }
+      const id = `0x${randomBytes(16).toString("hex")}`
       const height = await Promise.resolve(chain.getHeight())
       const filter: PendingFilter = {
         id,
         fromBlock: height,
         lastCursor: height,
+        createdAtMs: Date.now(),
       }
       filters.set(id, filter)
       return id
     }
     case "eth_newPendingTransactionFilter": {
-      const id = `0x${Math.floor(Math.random() * Number.MAX_SAFE_INTEGER).toString(16)}`
+      if (filters.size >= MAX_FILTERS) {
+        cleanupExpiredFilters(filters)
+        if (filters.size >= MAX_FILTERS) throw new Error("filter limit exceeded")
+      }
+      const id = `0x${randomBytes(16).toString("hex")}`
       const filter: PendingFilter = {
         id,
         fromBlock: 0n,
         lastCursor: 0n,
+        createdAtMs: Date.now(),
       }
       filters.set(id, filter)
       return id

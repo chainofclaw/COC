@@ -123,7 +123,7 @@ export class BftRound {
 
     // If we are a validator, send prepare vote
     if (this.isValidator()) {
-      this.state.prepareVotes.set(this.config.localId, block.hash)
+      this.state.prepareVotes.set(this.config.localId.toLowerCase(), block.hash)
       return [{
         type: "prepare",
         height: this.state.height,
@@ -164,7 +164,7 @@ export class BftRound {
 
       // Send commit vote
       if (this.isValidator()) {
-        this.state.commitVotes.set(this.config.localId, blockHash)
+        this.state.commitVotes.set(this.config.localId.toLowerCase(), blockHash)
 
         // Check if early-arriving commits already give us commit quorum (filter by blockHash)
         const commitVoters = [...this.state.commitVotes.entries()]
@@ -270,7 +270,8 @@ export class BftRound {
   }
 
   private isValidator(): boolean {
-    return this.config.validators.some((v) => v.id === this.config.localId)
+    const localLower = this.config.localId.toLowerCase()
+    return this.config.validators.some((v) => v.id.toLowerCase() === localLower)
   }
 
   private isKnownValidator(id: string): boolean {

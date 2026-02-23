@@ -54,6 +54,7 @@ export class PersistentChainEngine {
   private readonly stateTrie: IStateTrie | null
   private nodeSigner: NodeSigner | null = null
   private signatureVerifier: SignatureVerifier | null = null
+  private applyingBlock = false
 
   constructor(cfg: PersistentChainEngineConfig, evm: EvmChain) {
     this.cfg = cfg
@@ -263,6 +264,17 @@ export class PersistentChainEngine {
   }
 
   async applyBlock(block: ChainBlock, locallyProposed = false): Promise<void> {
+    // Duplicate block detection
+    const existing = await this.blockIndex.getBlockByHash(block.hash)
+    if (existing) return
+
+    // Re-entrant guard (async EVM execution can yield back to event loop)
+    if (this.applyingBlock) {
+      throw new Error("applyBlock re-entrant call detected")
+    }
+    this.applyingBlock = true
+    try {
+
     const prev = await this.getTip()
     if (!validateBlockLink(prev ?? null, block)) {
       throw new Error("invalid block link")
@@ -427,6 +439,10 @@ export class PersistentChainEngine {
 
     for (const log of blockLogs) {
       this.events.emitLog({ log })
+    }
+
+    } finally {
+      this.applyingBlock = false
     }
   }
 

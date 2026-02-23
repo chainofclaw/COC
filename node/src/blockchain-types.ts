@@ -45,4 +45,5 @@ export interface PendingFilter {
   address?: Hex
   topics?: Array<Hex | null>
   lastCursor: bigint
+  createdAtMs?: number
 }

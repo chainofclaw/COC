@@ -11,6 +11,7 @@
  */
 
 import { WebSocketServer, WebSocket } from "ws"
+import { timingSafeEqual } from "node:crypto"
 import type { IncomingMessage } from "node:http"
 import type http from "node:http"
 import crypto from "node:crypto"
@@ -141,7 +142,7 @@ export class WsRpcServer {
       if (this.config.authToken) {
         const authHeader = req.headers["authorization"] ?? ""
         const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : ""
-        if (token !== this.config.authToken) {
+        if (!constantTimeEqualWs(token, this.config.authToken)) {
           ws.close(4001, "unauthorized")
           return
         }
@@ -468,6 +469,17 @@ export class WsRpcServer {
 
 function generateSubscriptionId(): string {
   return "0x" + crypto.randomBytes(16).toString("hex")
+}
+
+/** Constant-time string comparison to prevent timing attacks on auth tokens */
+function constantTimeEqualWs(a: string, b: string): boolean {
+  const bufA = Buffer.from(a, "utf8")
+  const bufB = Buffer.from(b, "utf8")
+  if (bufA.length !== bufB.length) {
+    timingSafeEqual(bufA, bufA)
+    return false
+  }
+  return timingSafeEqual(bufA, bufB)
 }
 
 /**

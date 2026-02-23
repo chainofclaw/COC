@@ -99,6 +99,23 @@ export function buildSignedP2PPayload(
   }
 }
 
+/** Build a signed auth header value for GET endpoints (no body). */
+export function buildSignedGetAuth(
+  path: string,
+  signer: NodeSigner,
+  nowMs = Date.now(),
+): string {
+  const emptyPayloadHash = hashP2PPayload({})
+  const nonce = crypto.randomUUID()
+  const signature = signer.sign(buildP2PAuthMessage(path, signer.nodeId, nowMs, nonce, emptyPayloadHash))
+  return JSON.stringify({
+    senderId: signer.nodeId,
+    timestampMs: nowMs,
+    nonce,
+    signature,
+  } satisfies P2PAuthEnvelope)
+}
+
 export function verifySignedP2PPayload(
   path: string,
   payload: unknown,
@@ -423,17 +440,7 @@ export class P2PNode {
           return
         }
         // Require P2P auth in enforce mode (state snapshot is a high-cost GET)
-        const authMode = resolveInboundAuthMode(this.cfg)
-        if (authMode === "enforce" && this.cfg.verifier) {
-          const challenge = req.headers["x-p2p-auth"]
-          if (!challenge || typeof challenge !== "string") {
-            this.authMissingRequests += 1
-            this.authRejectedRequests += 1
-            res.writeHead(401, { "content-type": "application/json" })
-            res.end(serializeJson({ error: "missing auth for state snapshot" }))
-            return
-          }
-        }
+        if (!this.verifyGetAuth(req, res, "state snapshot")) return
         if (this.handlers.onStateSnapshotRequest) {
           try {
             const snapshot = await this.handlers.onStateSnapshotRequest()
@@ -458,17 +465,7 @@ export class P2PNode {
 
       if (req.method === "GET" && req.url === "/p2p/peers") {
         // Require auth in enforce mode (exposes network topology)
-        const peersAuthMode = resolveInboundAuthMode(this.cfg)
-        if (peersAuthMode === "enforce" && this.cfg.verifier) {
-          const challenge = req.headers["x-p2p-auth"]
-          if (!challenge || typeof challenge !== "string") {
-            this.authMissingRequests += 1
-            this.authRejectedRequests += 1
-            res.writeHead(401, { "content-type": "application/json" })
-            res.end(serializeJson({ error: "missing auth for peers endpoint" }))
-            return
-          }
-        }
+        if (!this.verifyGetAuth(req, res, "peers")) return
         res.writeHead(200, { "content-type": "application/json" })
         res.end(serializeJson({ peers: this.discovery.getPeerListForExchange() }))
         return
@@ -503,17 +500,7 @@ export class P2PNode {
 
       if (req.method === "GET" && req.url === "/p2p/node-info") {
         // Require auth in enforce mode (exposes network topology and stats)
-        const nodeInfoAuthMode = resolveInboundAuthMode(this.cfg)
-        if (nodeInfoAuthMode === "enforce" && this.cfg.verifier) {
-          const challenge = req.headers["x-p2p-auth"]
-          if (!challenge || typeof challenge !== "string") {
-            this.authMissingRequests += 1
-            this.authRejectedRequests += 1
-            res.writeHead(401, { "content-type": "application/json" })
-            res.end(serializeJson({ error: "missing auth for node-info endpoint" }))
-            return
-          }
-        }
+        if (!this.verifyGetAuth(req, res, "node-info")) return
         const height = this.handlers.getHeight ? await Promise.resolve(this.handlers.getHeight()) : 0n
         const stats = this.getStats()
         const activePeers = this.cfg.enableDiscovery !== false
@@ -955,6 +942,106 @@ export class P2PNode {
 
   private inboundSenderPeerId(senderId: string): string {
     return `inbound:sender:${senderId.toLowerCase()}`
+  }
+
+  /**
+   * Verify GET endpoint auth header. Returns true if request should proceed, false if denied (response already sent).
+   */
+  private verifyGetAuth(req: http.IncomingMessage, res: http.ServerResponse, endpointLabel: string): boolean {
+    const authMode = resolveInboundAuthMode(this.cfg)
+    if (authMode === "off") return true
+    if (!this.cfg.verifier) {
+      res.writeHead(500, { "content-type": "application/json" })
+      res.end(serializeJson({ error: "p2p inbound auth enabled without verifier" }))
+      return false
+    }
+
+    const headerValue = req.headers["x-p2p-auth"]
+    if (!headerValue || typeof headerValue !== "string") {
+      this.authMissingRequests += 1
+      if (authMode === "enforce") {
+        this.authRejectedRequests += 1
+        res.writeHead(401, { "content-type": "application/json" })
+        res.end(serializeJson({ error: `missing auth for ${endpointLabel} endpoint` }))
+        return false
+      }
+      return true // monitor mode: allow through
+    }
+
+    // Parse the header as a JSON auth envelope
+    let authObj: Record<string, unknown>
+    try {
+      authObj = JSON.parse(headerValue)
+    } catch {
+      this.authInvalidRequests += 1
+      if (authMode === "enforce") {
+        this.authRejectedRequests += 1
+        res.writeHead(401, { "content-type": "application/json" })
+        res.end(serializeJson({ error: "invalid auth header JSON" }))
+        return false
+      }
+      return true
+    }
+
+    const senderId = String(authObj.senderId ?? "")
+    const timestampMs = Number(authObj.timestampMs ?? 0)
+    const nonce = String(authObj.nonce ?? "")
+    const signature = String(authObj.signature ?? "")
+
+    if (!senderId || !signature || !nonce || !Number.isFinite(timestampMs) || timestampMs <= 0) {
+      this.authInvalidRequests += 1
+      if (authMode === "enforce") {
+        this.authRejectedRequests += 1
+        res.writeHead(401, { "content-type": "application/json" })
+        res.end(serializeJson({ error: "invalid auth envelope fields" }))
+        return false
+      }
+      return true
+    }
+
+    const maxClockSkewMs = this.cfg.authMaxClockSkewMs ?? DEFAULT_P2P_AUTH_MAX_CLOCK_SKEW_MS
+    if (Math.abs(Date.now() - timestampMs) > maxClockSkewMs) {
+      this.authInvalidRequests += 1
+      if (authMode === "enforce") {
+        this.authRejectedRequests += 1
+        res.writeHead(401, { "content-type": "application/json" })
+        res.end(serializeJson({ error: "auth timestamp out of range" }))
+        return false
+      }
+      return true
+    }
+
+    // For GET requests, payload is empty — use empty object hash
+    const emptyPayloadHash = hashP2PPayload({})
+    const path = req.url ?? ""
+    const message = buildP2PAuthMessage(path, senderId, timestampMs, nonce, emptyPayloadHash)
+    if (!this.cfg.verifier.verifyNodeSig(message, signature, senderId)) {
+      this.authInvalidRequests += 1
+      if (authMode === "enforce") {
+        this.authRejectedRequests += 1
+        res.writeHead(401, { "content-type": "application/json" })
+        res.end(serializeJson({ error: "invalid auth signature" }))
+        return false
+      }
+      return true
+    }
+
+    // Replay check
+    const replayKey = `${senderId.toLowerCase()}:${nonce}`
+    if (this.authNonceTracker.has(replayKey)) {
+      this.authInvalidRequests += 1
+      if (authMode === "enforce") {
+        this.authRejectedRequests += 1
+        res.writeHead(401, { "content-type": "application/json" })
+        res.end(serializeJson({ error: "auth nonce replay detected" }))
+        return false
+      }
+      return true
+    }
+    this.authNonceTracker.add(replayKey)
+
+    this.authAcceptedRequests += 1
+    return true
   }
 
   private recordInboundAuthFailure(
