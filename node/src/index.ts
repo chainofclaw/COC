@@ -8,7 +8,7 @@ import { PersistentChainEngine } from "./chain-engine-persistent.ts"
 import type { IChainEngine } from "./chain-engine-types.ts"
 import type { ChainBlock } from "./blockchain-types.ts"
 import { hasGovernance } from "./chain-engine-types.ts"
-import { P2PNode } from "./p2p.ts"
+import { P2PNode, buildSignedGetAuth } from "./p2p.ts"
 import type { BftMessagePayload } from "./p2p.ts"
 import { ConsensusEngine } from "./consensus.ts"
 import type { SnapSyncProvider } from "./consensus.ts"
@@ -332,6 +332,11 @@ if (bftEnabled) {
         // broadcast best-effort
       }
       log.info("BFT finalized block", { height: block.number.toString(), hash: block.hash })
+      // Sync BFT validator set with governance after each finalized block
+      if (hasGovernance(chain)) {
+        const active = chain.governance.getActiveValidators()
+        bftCoordinator?.updateValidators(active.map((v) => ({ id: v.id, stake: v.stake })))
+      }
     },
   })
   log.info("BFT consensus enabled", { validators: config.validators.length })
@@ -381,7 +386,11 @@ if (stateTrie && config.enableSnapSync) {
         const controller = new AbortController()
         const timer = setTimeout(() => controller.abort(), SNAP_FETCH_TIMEOUT_MS)
         try {
-          const res = await fetch(`${peerUrl}/p2p/state-snapshot`, { signal: controller.signal })
+          const headers: Record<string, string> = {}
+          if (nodeSigner) {
+            headers["x-p2p-auth"] = buildSignedGetAuth("/p2p/state-snapshot", nodeSigner)
+          }
+          const res = await fetch(`${peerUrl}/p2p/state-snapshot`, { signal: controller.signal, headers })
           if (!res.ok) return null
           // Read body with size limit
           const reader = res.body?.getReader()
@@ -420,6 +429,12 @@ if (stateTrie && config.enableSnapSync) {
       if (hasGovernance(chain) && chain.governance && typeof (chain.governance as { initGenesis?: unknown }).initGenesis === "function") {
         (chain.governance as { initGenesis(v: Array<{ id: string; address: string; stake: bigint }>): void }).initGenesis(validators)
         log.info("governance validators restored from snap sync", { count: validators.length })
+      }
+      // Sync BFT coordinator validator set with restored governance
+      if (bftCoordinator) {
+        const activeValidators = validators.filter((v) => v.active)
+        bftCoordinator.updateValidators(activeValidators.map((v) => ({ id: v.id, stake: v.stake })))
+        log.info("BFT coordinator validators synced after governance restore", { count: activeValidators.length })
       }
     },
   }

@@ -384,6 +384,7 @@ export class P2PNode {
         dnsSeeds: cfg.dnsSeeds,
         peerMaxAgeMs: cfg.peerMaxAgeMs,
         verifyPeerIdentity: async (peer) => await this.verifyDiscoveredPeerIdentity(peer),
+        buildGetAuthHeader: cfg.signer ? (path: string) => buildSignedGetAuth(path, cfg.signer!) : undefined,
       },
     )
 
@@ -421,6 +422,15 @@ export class P2PNode {
       }
 
       if (req.method === "GET" && req.url === "/p2p/chain-snapshot") {
+        // Independent rate limit for chain snapshot (shared with state-snapshot limiter)
+        if (!this.stateSnapshotRateLimiter.allow(clientIp)) {
+          this.rateLimitedRequests += 1
+          res.writeHead(429, { "content-type": "application/json" })
+          res.end(serializeJson({ error: "chain snapshot rate limit exceeded" }))
+          return
+        }
+        // Require P2P auth in enforce mode (exposes full chain state)
+        if (!this.verifyGetAuth(req, res, "chain snapshot")) return
         try {
           const snapshot = await this.handlers.onSnapshotRequest()
           res.writeHead(200, { "content-type": "application/json" })
