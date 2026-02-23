@@ -10,6 +10,9 @@ import { Trie } from "@ethereumjs/trie"
 import type { IDatabase } from "./db.ts"
 import { bytesToHex, hexToBytes } from "@ethereumjs/util"
 import { keccak256, toUtf8Bytes } from "ethers"
+import { createLogger } from "../logger.ts"
+
+const log = createLogger("state-trie")
 
 const STATE_TRIE_PREFIX = "s:"
 const CODE_PREFIX = "c:"
@@ -343,6 +346,7 @@ export class PersistentStateTrie implements IStateTrie {
 
   async *iterateAccounts(): AsyncIterable<{ address: string; state: AccountState }> {
     const stream = this.trie.createReadStream()
+    let skipped = 0
     for await (const item of stream) {
       try {
         const address = bytesToHex(item.key as Uint8Array)
@@ -356,9 +360,13 @@ export class PersistentStateTrie implements IStateTrie {
             codeHash: json.codeHash,
           },
         }
-      } catch {
-        // Skip malformed trie entries
+      } catch (err) {
+        skipped++
+        log.warn("skipped malformed account entry during iteration", { error: String(err), skipped })
       }
+    }
+    if (skipped > 0) {
+      log.warn("account iteration completed with skipped entries", { skipped })
     }
   }
 
@@ -368,11 +376,20 @@ export class PersistentStateTrie implements IStateTrie {
 
     const storageTrie = await this.getStorageTrie(address, account.storageRoot)
     const stream = storageTrie.createReadStream()
+    let skipped = 0
     for await (const item of stream) {
-      yield {
-        slot: bytesToHex(item.key as Uint8Array),
-        value: bytesToHex(item.value as Uint8Array),
+      try {
+        yield {
+          slot: bytesToHex(item.key as Uint8Array),
+          value: bytesToHex(item.value as Uint8Array),
+        }
+      } catch (err) {
+        skipped++
+        log.warn("skipped malformed storage entry during iteration", { address, error: String(err), skipped })
       }
+    }
+    if (skipped > 0) {
+      log.warn("storage iteration completed with skipped entries", { address, skipped })
     }
   }
 
