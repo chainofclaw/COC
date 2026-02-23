@@ -91,6 +91,15 @@ export class WireClient {
   /** Send a raw wire frame to the peer */
   send(data: Uint8Array): boolean {
     if (!this.socket || !this.handshakeComplete) return false
+    // Disconnect if write buffer exceeds 10MB (peer not reading)
+    if (this.socket.writableLength > 10 * 1024 * 1024) {
+      log.warn("wire client write buffer overflow, disconnecting", {
+        peer: this.remoteNodeId,
+        bufferedBytes: this.socket.writableLength,
+      })
+      this.socket.destroy()
+      return false
+    }
     this.socket.write(data)
     return true
   }

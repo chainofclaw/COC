@@ -118,6 +118,15 @@ export class WireServer {
     for (const [, conn] of this.connections) {
       if (conn.handshakeComplete) {
         if (excludeNodeId && conn.nodeId === excludeNodeId) continue
+        // Disconnect slow peers whose write buffer exceeds 10MB
+        if (conn.socket.writableLength > 10 * 1024 * 1024) {
+          log.warn("wire peer write buffer overflow, disconnecting", {
+            peer: conn.nodeId,
+            bufferedBytes: conn.socket.writableLength,
+          })
+          conn.socket.destroy()
+          continue
+        }
         conn.socket.write(data)
         this.framesSent++
         this.bytesSent += data.byteLength
