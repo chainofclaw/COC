@@ -324,8 +324,9 @@ export class PersistentStateTrie implements IStateTrie {
     for (const storageTrie of this.storageTries.values()) {
       await storageTrie.revert()
     }
-    // Invalidate caches on revert
+    // Invalidate caches and dirty tracking on revert
     this.accountCache.clear()
+    this.dirtyAddresses.clear()
     this.lastStateRoot = null
   }
 

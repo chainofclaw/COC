@@ -33,6 +33,7 @@ export class ChainEngine {
   private readonly evm: EvmChain
   private nodeSigner: NodeSigner | null = null
   private signatureVerifier: SignatureVerifier | null = null
+  private applyingBlock = false
 
   constructor(cfg: ChainEngineConfig, evm: EvmChain) {
     this.cfg = cfg
@@ -155,6 +156,18 @@ export class ChainEngine {
   }
 
   async applyBlock(block: ChainBlock, locallyProposed = false): Promise<void> {
+    // Duplicate block detection
+    if (this.blocks.some((b) => b.hash === block.hash)) {
+      return // already applied, skip silently
+    }
+
+    // Re-entrant guard (async EVM execution can yield back to event loop)
+    if (this.applyingBlock) {
+      throw new Error("applyBlock re-entrant call detected")
+    }
+    this.applyingBlock = true
+    try {
+
     const prev = this.getTip()
     if (!validateBlockLink(prev, block)) {
       throw new Error("invalid block link")
@@ -270,6 +283,10 @@ export class ChainEngine {
           },
         })
       }
+    }
+
+    } finally {
+      this.applyingBlock = false
     }
   }
 

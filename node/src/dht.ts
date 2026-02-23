@@ -110,11 +110,11 @@ export class RoutingTable {
     }
 
     // Sybil protection: limit peers from the same IP within this bucket (skip loopback)
-    const peerIp = peer.address.split(":")[0]
+    const peerIp = extractHost(peer.address)
     if (!peerIp.startsWith("127.") && peerIp !== "::1" && peerIp !== "localhost") {
       let sameIpInBucket = 0
       for (const p of bucket.peers) {
-        if (p.address.split(":")[0] === peerIp) sameIpInBucket++
+        if (extractHost(p.address) === peerIp) sameIpInBucket++
       }
       if (sameIpInBucket >= MAX_PEERS_PER_IP_PER_BUCKET) {
         log.debug("per-IP bucket limit reached, dropping peer", { ip: peerIp, bucket: idx, peerId: peer.id })
@@ -244,6 +244,22 @@ export class RoutingTable {
 
     return { totalPeers, nonEmptyBuckets, maxBucketSize }
   }
+}
+
+/**
+ * Extract host from address string, handling both IPv4 (host:port) and IPv6 ([host]:port).
+ */
+export function extractHost(address: string): string {
+  if (address.startsWith("[")) {
+    const closeBracket = address.indexOf("]")
+    if (closeBracket > 0) return address.slice(1, closeBracket)
+  }
+  const lastColon = address.lastIndexOf(":")
+  if (lastColon <= 0) return address
+  // If there are multiple colons and no brackets, it's a bare IPv6 address
+  const firstColon = address.indexOf(":")
+  if (firstColon !== lastColon) return address
+  return address.slice(0, lastColon)
 }
 
 function hexToBytes(hex: string): Uint8Array {

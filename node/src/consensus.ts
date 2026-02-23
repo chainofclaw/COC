@@ -420,27 +420,31 @@ export class ConsensusEngine {
     try {
       const peers = this.p2p.discovery.getActivePeers()
 
-      // Vote loop: collect stateRoots + validatorsHash, cache snapshots to avoid 2N fetches
+      // Vote loop: fetch snapshots in parallel, collect stateRoots + validatorsHash
       type SnapResult = Awaited<ReturnType<SnapSyncProvider["fetchStateSnapshot"]>>
       const snapshotCache = new Map<string, SnapResult>() // peerUrl → snapshot
       const peerStateRoots = new Map<string, { count: number; peer: string; validatorsHash: string }>()
-      for (const peer of peers) {
-        try {
-          const snap = await this.snapSync.fetchStateSnapshot(peer.url)
-          snapshotCache.set(peer.url, snap)
-          if (!snap) continue
-          if (snap.blockHeight !== tip.number.toString() || snap.blockHash !== tip.hash) continue
-          const vHash = hashValidators(snap.validators)
-          const voteKey = `${snap.stateRoot}:${vHash}`
-          const existing = peerStateRoots.get(voteKey)
-          peerStateRoots.set(voteKey, {
-            count: (existing?.count ?? 0) + 1,
-            peer: peer.url,
-            validatorsHash: vHash,
-          })
-        } catch {
-          // skip unreachable peer
-        }
+
+      const fetchResults = await Promise.allSettled(
+        peers.map(async (peer) => {
+          const snap = await this.snapSync!.fetchStateSnapshot(peer.url)
+          return { url: peer.url, snap }
+        }),
+      )
+      for (const result of fetchResults) {
+        if (result.status !== "fulfilled") continue
+        const { url, snap } = result.value
+        snapshotCache.set(url, snap)
+        if (!snap) continue
+        if (snap.blockHeight !== tip.number.toString() || snap.blockHash !== tip.hash) continue
+        const vHash = hashValidators(snap.validators)
+        const voteKey = `${snap.stateRoot}:${vHash}`
+        const existing = peerStateRoots.get(voteKey)
+        peerStateRoots.set(voteKey, {
+          count: (existing?.count ?? 0) + 1,
+          peer: url,
+          validatorsHash: vHash,
+        })
       }
 
       // Require stateRoot+validatorsHash consensus: at least 2 votes AND strict majority.

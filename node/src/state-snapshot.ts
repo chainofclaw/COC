@@ -225,6 +225,22 @@ export function validateSnapshot(snapshot: StateSnapshot): void {
     // Validate numeric format before BigInt conversion
     try { BigInt(acc.nonce) } catch { throw new Error(`account ${acc.address} has non-numeric nonce: ${acc.nonce}`) }
     try { BigInt(acc.balance) } catch { throw new Error(`account ${acc.address} has non-numeric balance: ${acc.balance}`) }
+    // Validate hex format for storageRoot, codeHash, and storage entries
+    if (typeof acc.storageRoot === "string" && !isValidHex(acc.storageRoot)) {
+      throw new Error(`account ${acc.address} has invalid storageRoot hex`)
+    }
+    if (typeof acc.codeHash === "string" && !isValidHex(acc.codeHash)) {
+      throw new Error(`account ${acc.address} has invalid codeHash hex`)
+    }
+    if (acc.code !== undefined && typeof acc.code === "string" && !isValidHex(acc.code)) {
+      throw new Error(`account ${acc.address} has invalid code hex`)
+    }
+    if (Array.isArray(acc.storage)) {
+      for (const entry of acc.storage) {
+        if (!isValidHex(entry.slot)) throw new Error(`account ${acc.address} has invalid storage slot hex: ${entry.slot}`)
+        if (!isValidHex(entry.value)) throw new Error(`account ${acc.address} has invalid storage value hex: ${entry.value}`)
+      }
+    }
   }
   // Validate validator stakes if present
   if (snapshot.validators) {
@@ -249,6 +265,10 @@ export function deserializeSnapshot(json: string): StateSnapshot {
   const parsed = JSON.parse(json) as StateSnapshot
   validateSnapshot(parsed)
   return parsed
+}
+
+function isValidHex(str: string): boolean {
+  return /^0x[0-9a-fA-F]*$/.test(str)
 }
 
 function bytesToHexStr(bytes: Uint8Array): string {
