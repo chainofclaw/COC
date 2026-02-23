@@ -403,15 +403,14 @@ export class ChainEngine {
 
     for (const block of blocks) {
       const normalized: ChainBlock = {
+        ...block,
         number: BigInt(block.number),
-        hash: block.hash,
-        parentHash: block.parentHash,
-        proposer: block.proposer,
         timestampMs: Number(block.timestampMs),
         txs: [...block.txs],
         finalized: Boolean(block.finalized),
-        baseFee: block.baseFee !== undefined ? BigInt(block.baseFee) : undefined,
-        cumulativeWeight: block.cumulativeWeight !== undefined ? BigInt(block.cumulativeWeight) : undefined,
+        ...(block.baseFee !== undefined ? { baseFee: BigInt(block.baseFee) } : {}),
+        ...(block.gasUsed !== undefined ? { gasUsed: BigInt(block.gasUsed) } : {}),
+        ...(block.cumulativeWeight !== undefined ? { cumulativeWeight: BigInt(block.cumulativeWeight) } : {}),
       }
       await this.applyBlock(normalized)
     }
