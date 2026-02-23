@@ -270,6 +270,7 @@ export class BlockIndex implements IBlockIndex {
   async getLogs(filter: LogFilter): Promise<IndexedLog[]> {
     const from = filter.fromBlock ?? 0n
     const to = filter.toBlock ?? (await this.getLatestBlock())?.number ?? 0n
+    const maxResults = 10_000
     const results: IndexedLog[] = []
 
     for (let n = from; n <= to; n++) {
@@ -284,6 +285,7 @@ export class BlockIndex implements IBlockIndex {
 
         if (!matchLogFilter(log, filter)) continue
         results.push(log)
+        if (results.length >= maxResults) return results
       }
     }
 
