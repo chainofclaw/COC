@@ -675,6 +675,10 @@ function stakeWeightedProposer(validators: ValidatorInfo[], blockHeight: bigint)
   // Sort deterministically by ID
   const sorted = [...validators].sort((a, b) => a.id.localeCompare(b.id))
 
+  if (sorted.length === 0) {
+    throw new Error("cannot select proposer: validator set is empty")
+  }
+
   const totalStake = sorted.reduce((sum, v) => sum + v.stake, 0n)
   if (totalStake === 0n) {
     // Equal weight fallback
