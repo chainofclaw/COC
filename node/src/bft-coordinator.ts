@@ -52,6 +52,16 @@ export class BftCoordinator {
   }
 
   /**
+   * Stop the coordinator: cancel all active timers so the process can exit cleanly.
+   */
+  stop(): void {
+    this.clearRound()
+    this.stopLinger()
+    this.pendingMessages.length = 0
+    this.deferredBlock = null
+  }
+
+  /**
    * Start a new BFT round for a proposed block.
    */
   async startRound(block: ChainBlock): Promise<void> {

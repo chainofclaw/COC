@@ -145,6 +145,7 @@ export class ConsensusEngine {
   stop(): void {
     if (this.proposeTimer) { clearInterval(this.proposeTimer); this.proposeTimer = null }
     if (this.syncTimer) { clearInterval(this.syncTimer); this.syncTimer = null }
+    this.bft?.stop()
   }
 
   getStatus(): { status: ConsensusStatus; proposeFailures: number; syncFailures: number } {
