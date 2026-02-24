@@ -59,11 +59,13 @@ export function compareForks(a: ForkCandidate, b: ForkCandidate): ForkChoice {
     return { winner: b, loser: a, reason: "higher-weight" }
   }
 
-  // Rule 4: Lower hash as deterministic tiebreaker
-  if (a.tipHash < b.tipHash) {
+  // Rule 4: Lower hash as deterministic tiebreaker (case-normalized for consistency)
+  const aHash = a.tipHash.toLowerCase()
+  const bHash = b.tipHash.toLowerCase()
+  if (aHash < bHash) {
     return { winner: a, loser: b, reason: "lower-hash" }
   }
-  if (b.tipHash < a.tipHash) {
+  if (bHash < aHash) {
     return { winner: b, loser: a, reason: "lower-hash" }
   }
 
