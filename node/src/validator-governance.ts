@@ -374,6 +374,8 @@ export class ValidatorGovernance {
   private executeProposal(proposal: GovernanceProposal): void {
     switch (proposal.type) {
       case "add_validator": {
+        // Re-check precondition: max validators may have been reached since proposal creation
+        if (this.activeCount() >= this.config.maxValidators) break
         this.validators.set(proposal.targetId, {
           id: proposal.targetId,
           address: proposal.targetAddress!,
@@ -386,6 +388,8 @@ export class ValidatorGovernance {
         break
       }
       case "remove_validator": {
+        // Re-check precondition: concurrent remove proposals could leave 0 validators
+        if (this.activeCount() <= 1) break
         const v = this.validators.get(proposal.targetId)
         if (v) {
           this.validators.set(proposal.targetId, { ...v, active: false })

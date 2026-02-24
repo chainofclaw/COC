@@ -486,7 +486,9 @@ export class ConsensusEngine {
       // Vote loop: fetch snapshots in parallel, collect stateRoots + validatorsHash
       type SnapResult = Awaited<ReturnType<SnapSyncProvider["fetchStateSnapshot"]>>
       const snapshotCache = new Map<string, SnapResult>() // peerUrl → snapshot
-      const peerStateRoots = new Map<string, { count: number; peer: string; validatorsHash: string }>()
+      // Map voteKey → { count, peer, stateRoot, validatorsHash }
+      // Use a safe separator ("|") to avoid ambiguity if stateRoot contains ":"
+      const peerStateRoots = new Map<string, { count: number; peer: string; stateRoot: string; validatorsHash: string }>()
 
       const fetchResults = await Promise.allSettled(
         peers.map(async (peer) => {
@@ -501,11 +503,12 @@ export class ConsensusEngine {
         if (!snap) continue
         if (snap.blockHeight !== tip.number.toString() || snap.blockHash !== tip.hash) continue
         const vHash = hashValidators(snap.validators)
-        const voteKey = `${snap.stateRoot}:${vHash}`
+        const voteKey = `${snap.stateRoot}|${vHash}`
         const existing = peerStateRoots.get(voteKey)
         peerStateRoots.set(voteKey, {
           count: (existing?.count ?? 0) + 1,
           peer: url,
+          stateRoot: snap.stateRoot,
           validatorsHash: vHash,
         })
       }
@@ -517,9 +520,8 @@ export class ConsensusEngine {
       let trustedValidatorsHash: string | null = null
 
       if (peerStateRoots.size === 1) {
-        const voteKey = [...peerStateRoots.keys()][0]
-        trustedStateRoot = voteKey.split(":")[0]
-        const entry = peerStateRoots.get(voteKey)!
+        const entry = [...peerStateRoots.values()][0]
+        trustedStateRoot = entry.stateRoot
         trustedValidatorsHash = entry.validatorsHash
         if (peers.length > 1 && entry.count < 2) {
           log.warn("snap sync: insufficient peer responses for stateRoot consensus, aborting", {
@@ -531,10 +533,10 @@ export class ConsensusEngine {
         }
       } else if (peerStateRoots.size > 1) {
         let maxCount = 0
-        for (const [voteKey, info] of peerStateRoots) {
+        for (const [, info] of peerStateRoots) {
           if (info.count > maxCount) {
             maxCount = info.count
-            trustedStateRoot = voteKey.split(":")[0]
+            trustedStateRoot = info.stateRoot
             trustedValidatorsHash = info.validatorsHash
           }
         }
