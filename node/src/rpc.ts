@@ -486,7 +486,8 @@ async function handleRpc(
     }
     case "eth_getLogs": {
       const query = ((payload.params ?? [])[0] ?? {}) as Record<string, unknown>
-      return await queryLogs(chain, query)
+      const logsHeight = await Promise.resolve(chain.getHeight())
+      return await queryLogs(chain, query, logsHeight)
     }
     case "eth_newFilter": {
       if (filters.size >= MAX_FILTERS) {
@@ -495,8 +496,8 @@ async function handleRpc(
       }
       const query = ((payload.params ?? [])[0] ?? {}) as Record<string, unknown>
       const id = `0x${randomBytes(16).toString("hex")}`
-      const fromBlock = parseBlockTag(query.fromBlock, 0n)
       const newFilterHeight = await Promise.resolve(chain.getHeight())
+      const fromBlock = parseBlockTag(query.fromBlock, newFilterHeight)
       const toBlock = query.toBlock !== undefined ? parseBlockTag(query.toBlock, newFilterHeight) : undefined
       const filter: PendingFilter = {
         id,
@@ -716,7 +717,7 @@ async function handleRpc(
       return "0x41" // 65
     case "eth_feeHistory": {
       const rawBlockCount = Number((payload.params ?? [])[0] ?? 1)
-      const blockCount = Number.isFinite(rawBlockCount) && rawBlockCount > 0 ? Math.floor(rawBlockCount) : 1
+      const blockCount = Number.isFinite(rawBlockCount) && rawBlockCount >= 1 ? Math.floor(rawBlockCount) : 1
       const newestBlock = String((payload.params ?? [])[1] ?? "latest")
       const rewardPercentiles = ((payload.params ?? [])[2] ?? []) as number[]
       if (rewardPercentiles.length > 100) {
@@ -1426,9 +1427,9 @@ async function formatBlock(block: Awaited<ReturnType<IChainEngine["getBlockByNum
 const MAX_LOG_BLOCK_RANGE = 10_000n
 const MAX_LOG_RESULTS = 10_000
 
-async function queryLogs(chain: IChainEngine, query: Record<string, unknown>): Promise<unknown[]> {
-  const height = await Promise.resolve(chain.getHeight())
-  const fromBlock = parseBlockTag(query.fromBlock, 0n)
+async function queryLogs(chain: IChainEngine, query: Record<string, unknown>, resolvedHeight?: bigint): Promise<unknown[]> {
+  const height = resolvedHeight ?? await Promise.resolve(chain.getHeight())
+  const fromBlock = parseBlockTag(query.fromBlock, height)
   const toBlock = parseBlockTag(query.toBlock, height)
 
   // Enforce block range limit to prevent resource exhaustion
