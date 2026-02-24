@@ -129,6 +129,7 @@ export class BftRound {
         height: this.state.height,
         blockHash: block.hash,
         senderId: this.config.localId,
+        signature: "" as Hex, // placeholder — coordinator signs before broadcast
       }]
     }
 
@@ -180,6 +181,7 @@ export class BftRound {
           height: this.state.height,
           blockHash,
           senderId: this.config.localId,
+          signature: "" as Hex, // placeholder — coordinator signs before broadcast
         }]
       }
     }

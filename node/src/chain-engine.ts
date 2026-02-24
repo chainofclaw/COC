@@ -156,17 +156,17 @@ export class ChainEngine {
   }
 
   async applyBlock(block: ChainBlock, locallyProposed = false): Promise<void> {
-    // Duplicate block detection
-    if (this.blocks.some((b) => b.hash === block.hash)) {
-      return // already applied, skip silently
-    }
-
     // Re-entrant guard (async EVM execution can yield back to event loop)
     if (this.applyingBlock) {
       throw new Error("applyBlock re-entrant call detected")
     }
     this.applyingBlock = true
     try {
+
+    // Duplicate block detection (inside guard to prevent TOCTOU race)
+    if (this.blocks.some((b) => b.hash === block.hash)) {
+      return // already applied, skip silently
+    }
 
     const prev = this.getTip()
     if (!validateBlockLink(prev, block)) {
