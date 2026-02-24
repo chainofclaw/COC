@@ -160,6 +160,9 @@ export class DhtNetwork {
         if (result.status !== "fulfilled") continue
         for (const newPeer of result.value) {
           if (newPeer.id === this.cfg.localId) continue
+          // Validate peer ID: must be non-empty hex string (reject malicious FindNode responses)
+          if (!newPeer.id || typeof newPeer.id !== "string" || newPeer.id.length < 2
+            || !newPeer.address || typeof newPeer.address !== "string") continue
           if (!found.has(newPeer.id)) {
             found.set(newPeer.id, newPeer)
             // Verify peer before adding to routing table
@@ -407,9 +410,14 @@ export class DhtNetwork {
       const peers = JSON.parse(data) as Array<{ id: string; address: string; lastSeenMs?: number }>
 
       if (!Array.isArray(peers)) return 0
+      // Validate peer entries: must have non-empty id and address strings
+      const valid = peers.filter((p) =>
+        p && typeof p.id === "string" && p.id.length > 0
+        && typeof p.address === "string" && p.address.length > 0
+      )
       // Filter out stale peers (not seen in 24h)
       const now = Date.now()
-      const fresh = peers.filter((p) => {
+      const fresh = valid.filter((p) => {
         if (!p.lastSeenMs) return true // unknown age — keep
         return (now - p.lastSeenMs) < STALE_PEER_THRESHOLD_MS
       })
