@@ -209,6 +209,9 @@ export class WireServer {
       socket.destroy()
     })
 
+    // Frame processing queue: process frames sequentially to avoid re-entrant
+    // applyBlock errors when multiple Block frames arrive in the same TCP segment
+    let frameQueue: Promise<void> = Promise.resolve()
     socket.on("data", (data: Buffer) => {
       this.bytesReceived += data.byteLength
       try {
@@ -216,9 +219,14 @@ export class WireServer {
         for (const frame of frames) {
           if (socket.destroyed) break
           this.framesReceived++
-          void this.handleFrame(conn, frame).catch((err) => {
-            log.warn("handleFrame error, closing connection", { remote: connId, error: String(err) })
-            socket.destroy()
+          frameQueue = frameQueue.then(async () => {
+            if (socket.destroyed) return
+            try {
+              await this.handleFrame(conn, frame)
+            } catch (err) {
+              log.warn("handleFrame error, closing connection", { remote: connId, error: String(err) })
+              socket.destroy()
+            }
           })
         }
       } catch (err) {
