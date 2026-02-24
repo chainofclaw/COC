@@ -263,7 +263,14 @@ export class WireClient {
             return
           }
           const msg = buildWireHandshakeMessage(hs.nodeId, hs.chainId, hs.nonce)
-          const recovered = this.cfg.verifier.recoverAddress(msg, hs.signature)
+          let recovered: string
+          try {
+            recovered = this.cfg.verifier.recoverAddress(msg, hs.signature)
+          } catch {
+            log.warn("peer handshake signature invalid format", { peer: hs.nodeId })
+            this.socket?.destroy()
+            return
+          }
           if (recovered.toLowerCase() !== hs.nodeId.toLowerCase()) {
             log.warn("handshake signature mismatch", { claimed: hs.nodeId, recovered })
             this.socket?.destroy()

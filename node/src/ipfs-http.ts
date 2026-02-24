@@ -58,7 +58,7 @@ export class IpfsHttpServer {
       const url = parseUrl(req.url ?? "", true)
       if (req.method === "GET" && url.pathname?.startsWith("/ipfs/")) {
         const cid = url.pathname.slice(6) // strip "/ipfs/"
-        if (!cid || /[\/\\]|\.\.|\0/.test(cid)) {
+        if (!isValidCid(cid)) {
           res.writeHead(400, { "content-type": "application/json" })
           res.end(JSON.stringify({ error: "invalid CID" }))
           return
@@ -205,9 +205,9 @@ export class IpfsHttpServer {
   }
 
   private async handleLs(res: http.ServerResponse, cid?: string): Promise<void> {
-    if (!cid) {
+    if (!cid || !isValidCid(cid)) {
       res.writeHead(400)
-      res.end(JSON.stringify({ error: "missing cid" }))
+      res.end(JSON.stringify({ error: !cid ? "missing cid" : "invalid cid" }))
       return
     }
     const meta = await this.readFileMeta()
@@ -234,9 +234,9 @@ export class IpfsHttpServer {
   }
 
   private async handleObjectStat(res: http.ServerResponse, cid?: string): Promise<void> {
-    if (!cid) {
+    if (!cid || !isValidCid(cid)) {
       res.writeHead(400)
-      res.end(JSON.stringify({ error: "missing cid" }))
+      res.end(JSON.stringify({ error: !cid ? "missing cid" : "invalid cid" }))
       return
     }
     const block = await this.store.get(cid)
@@ -254,9 +254,9 @@ export class IpfsHttpServer {
   }
 
   private async handleCat(req: http.IncomingMessage, res: http.ServerResponse, cid?: string): Promise<void> {
-    if (!cid) {
+    if (!cid || !isValidCid(cid)) {
       res.writeHead(400)
-      res.end(JSON.stringify({ error: "missing cid" }))
+      res.end(JSON.stringify({ error: !cid ? "missing cid" : "invalid cid" }))
       return
     }
     const data = await this.unixfs.readFile(cid)
@@ -265,9 +265,9 @@ export class IpfsHttpServer {
   }
 
   private async handleGet(res: http.ServerResponse, cid?: string): Promise<void> {
-    if (!cid) {
+    if (!cid || !isValidCid(cid)) {
       res.writeHead(400)
-      res.end(JSON.stringify({ error: "missing cid" }))
+      res.end(JSON.stringify({ error: !cid ? "missing cid" : "invalid cid" }))
       return
     }
     const data = await this.unixfs.readFile(cid)
@@ -284,9 +284,9 @@ export class IpfsHttpServer {
   }
 
   private async handleBlockGet(_req: http.IncomingMessage, res: http.ServerResponse, cid?: string): Promise<void> {
-    if (!cid) {
+    if (!cid || !isValidCid(cid)) {
       res.writeHead(400)
-      res.end(JSON.stringify({ error: "missing cid" }))
+      res.end(JSON.stringify({ error: !cid ? "missing cid" : "invalid cid" }))
       return
     }
     const block = await loadRawBlock(this.store, cid)
@@ -295,9 +295,9 @@ export class IpfsHttpServer {
   }
 
   private async handleBlockStat(res: http.ServerResponse, cid?: string): Promise<void> {
-    if (!cid) {
+    if (!cid || !isValidCid(cid)) {
       res.writeHead(400)
-      res.end(JSON.stringify({ error: "missing cid" }))
+      res.end(JSON.stringify({ error: !cid ? "missing cid" : "invalid cid" }))
       return
     }
     const block = await loadRawBlock(this.store, cid)
@@ -306,9 +306,9 @@ export class IpfsHttpServer {
   }
 
   private async handlePinAdd(_req: http.IncomingMessage, res: http.ServerResponse, cid?: string): Promise<void> {
-    if (!cid) {
+    if (!cid || !isValidCid(cid)) {
       res.writeHead(400)
-      res.end(JSON.stringify({ error: "missing cid" }))
+      res.end(JSON.stringify({ error: !cid ? "missing cid" : "invalid cid" }))
       return
     }
     await this.store.pin(cid)
@@ -514,6 +514,11 @@ export class IpfsHttpServer {
       res.end(JSON.stringify({ error: "internal error" }))
     }
   }
+}
+
+/** Reject CIDs with path traversal or null bytes */
+function isValidCid(cid: string): boolean {
+  return !!cid && !/[\/\\]|\.\.|\0/.test(cid)
 }
 
 const DEFAULT_MAX_UPLOAD_SIZE = 10 * 1024 * 1024 // 10 MB
