@@ -881,7 +881,7 @@ async function handleRpc(
       const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 10_000) : 50
       const reverse = (payload.params ?? [])[2] !== false
       const rawOffset = Number((payload.params ?? [])[3] ?? 0)
-      const offset = Number.isFinite(rawOffset) ? Math.max(rawOffset, 0) : 0
+      const offset = Number.isFinite(rawOffset) ? Math.min(Math.max(rawOffset, 0), 100_000) : 0
 
       if (typeof chain.getTransactionsByAddress === "function") {
         const txs = await chain.getTransactionsByAddress(addr, { limit, reverse, offset })
