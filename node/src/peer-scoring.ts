@@ -247,10 +247,12 @@ export class PeerScoring {
     }
   }
 
-  /** Calculate exponential ban duration: baseBanMs * 2^min(banCount, 10), max 24h */
+  /** Calculate exponential ban duration: baseBanMs * 2^min(banCount-1, 10), max 24h */
   private exponentialBanMs(banCount: number): number {
     const MAX_BAN_MS = 24 * 60 * 60 * 1000 // 24 hours
-    const multiplier = Math.pow(2, Math.min(banCount - 1, 10))
+    // Clamp exponent to [0,10] to prevent fractional multiplier if banCount <= 0
+    const exponent = Math.min(Math.max(banCount - 1, 0), 10)
+    const multiplier = Math.pow(2, exponent)
     return Math.min(this.cfg.banDurationMs * multiplier, MAX_BAN_MS)
   }
 
