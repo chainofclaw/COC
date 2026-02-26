@@ -274,7 +274,19 @@ export class PersistentChainEngine {
 
     // Duplicate block detection (inside guard to prevent TOCTOU race)
     const existing = await this.blockIndex.getBlockByHash(block.hash)
-    if (existing) return
+    if (existing) {
+      // Allow trusted local path (BFT finalize callback) to promote finality metadata.
+      if (locallyProposed && block.bftFinalized && !existing.bftFinalized) {
+        existing.bftFinalized = true
+        const tip = await this.getTip()
+        if (tip?.hash === existing.hash) {
+          await this.blockIndex.putBlock(existing)
+        } else {
+          await this.blockIndex.updateBlock(existing)
+        }
+      }
+      return
+    }
 
     const prev = await this.getTip()
     if (!validateBlockLink(prev ?? null, block)) {
@@ -415,6 +427,9 @@ export class PersistentChainEngine {
 
     // Store cumulative gas used for baseFee calculation
     block.gasUsed = totalGasUsed
+    // Never trust remote/non-hash metadata from gossip. Finality is local-state derived.
+    block.finalized = false
+    block.bftFinalized = locallyProposed && block.bftFinalized === true
 
     // Commit state trie and attach stateRoot to block header
     if (this.stateTrie) {
@@ -499,14 +514,19 @@ export class PersistentChainEngine {
       return false
     }
 
-    // Write blocks directly to block index — no tx re-execution needed
+    // Write blocks directly to block index — no tx re-execution needed.
+    // Recompute depth-finality locally; never trust remote finalized/bftFinalized flags.
+    const depth = BigInt(Math.max(1, this.cfg.finalityDepth))
+    const tipHeight = BigInt(incomingTip.number)
     for (const block of blocks) {
+      const blockNum = BigInt(block.number)
       const normalized: ChainBlock = {
         ...block,
-        number: BigInt(block.number),
+        number: blockNum,
         timestampMs: Number(block.timestampMs),
         txs: [...block.txs],
-        finalized: Boolean(block.finalized),
+        finalized: tipHeight >= blockNum + depth,
+        bftFinalized: false,
         ...(block.baseFee !== undefined ? { baseFee: BigInt(block.baseFee) } : {}),
         ...(block.gasUsed !== undefined ? { gasUsed: BigInt(block.gasUsed) } : {}),
         ...(block.cumulativeWeight !== undefined ? { cumulativeWeight: BigInt(block.cumulativeWeight) } : {}),

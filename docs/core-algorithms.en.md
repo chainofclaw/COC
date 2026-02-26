@@ -39,6 +39,7 @@ Code:
 
 Algorithm:
 - For tip height `H`, a block `b` is finalized if `H >= b.number + D`.
+- `finalized` is derived from local depth rules; inbound remote `finalized` metadata is not trusted.
 
 Code:
 - `COC/node/src/chain-engine.ts` (`updateFinalityFlags`)
@@ -174,6 +175,7 @@ Algorithm:
 - On prepare quorum, transition to commit phase.
 - Early commit buffering: `handleCommit()` accepts and records commit votes during `prepare` phase; on transition to `commit`, buffered votes are checked for immediate quorum.
 - On commit quorum, block is BFT-finalized.
+- `bftFinalized` is treated as local consensus metadata: untrusted inbound values are ignored, and trusted local finalization can promote existing block metadata.
 - Timeout handling: rounds fail after configurable prepare + commit timeout.
 
 Code:
@@ -265,7 +267,7 @@ Algorithm:
 - Import accounts, storage, and code into local state trie.
 - After import, verify expectedStateRoot via cross-peer consensus (at least 2 votes AND strict majority of responding peers; single-peer networks accept with 1 vote; fail-closed when multiple peers disagree without quorum or when known peers > 1 but only 1 responds) and set local state root.
 - Validator set is subject to cross-peer hash consensus before governance restore; snapshots without validator consensus are imported without governance state.
-- Import snapshot blocks via `importSnapSyncBlocks()` (writes to block index without re-execution); proposer-set validation is skipped for historical blocks since the validator set may have changed since those blocks were produced.
+- Import snapshot blocks via `importSnapSyncBlocks()` (writes to block index without re-execution); proposer-set validation is skipped for historical blocks since the validator set may have changed since those blocks were produced. Finality depth is recomputed locally and imported `bftFinalized` flags are cleared.
 - Resume consensus from the snapshot's block height.
 - Security assumption: block-hash payload currently does not include `stateRoot`, so SnapSync still depends on snapshot-provider trust; production deployments should add trusted state-root anchoring and/or multi-peer cross-checks.
 
@@ -365,6 +367,7 @@ Code:
 
 Algorithm:
 - When a new peer is discovered via iterative lookup, verify reachability before adding to routing table.
+- Iterative lookup validates discovered `peer.id` format (`0x` + hex) before insertion/verification to reject malformed FIND_NODE responses.
 - Priority 1: check if peer has an active wire client connection (`wireClientByPeerId` or `wireClients` scan) — already verified via wire handshake.
 - Priority 2: authenticated wire handshake (`verifyPeerByHandshake`) — open a temporary WireClient, exchange signed handshake messages, verify identity, then disconnect.
 - If `requireAuthenticatedVerify=true` (default): reject unverifiable peers (no TCP probe fallback).
