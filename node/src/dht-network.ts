@@ -170,21 +170,20 @@ export class DhtNetwork {
             lastSeenMs: newPeer.lastSeenMs ?? Date.now(),
           }
 
-          if (!found.has(normalizedPeer.id)) {
-            found.set(normalizedPeer.id, normalizedPeer)
-            // Verify peer before adding to routing table
-            // Skip verification for peers returned from connected clients (already verified)
-            const hasConnectedClient = !!(
-              this.cfg.wireClientByPeerId?.get(normalizedPeer.id)?.isConnected() ||
-              this.cfg.wireClients.find((c) => c.getRemoteNodeId() === normalizedPeer.id && c.isConnected())
-            )
-            const reachable = hasConnectedClient || await this.verifyPeer(normalizedPeer)
-            if (reachable) {
-              await this.routingTable.addPeer(normalizedPeer)
-              this.cfg.onPeerDiscovered(normalizedPeer)
-            }
-            improved = true
-          }
+          if (found.has(normalizedPeer.id)) continue
+          // Verify peer before adding to candidate set / routing table.
+          // Skip verification for peers returned from connected clients (already verified).
+          const hasConnectedClient = !!(
+            this.cfg.wireClientByPeerId?.get(normalizedPeer.id)?.isConnected() ||
+            this.cfg.wireClients.find((c) => c.getRemoteNodeId() === normalizedPeer.id && c.isConnected())
+          )
+          const reachable = hasConnectedClient || await this.verifyPeer(normalizedPeer)
+          if (!reachable) continue
+
+          found.set(normalizedPeer.id, normalizedPeer)
+          await this.routingTable.addPeer(normalizedPeer)
+          this.cfg.onPeerDiscovered(normalizedPeer)
+          improved = true
         }
       }
     }

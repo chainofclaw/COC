@@ -507,6 +507,10 @@ export class PersistentChainEngine {
 
     const currentHeight = await this.getHeight()
     if (BigInt(incomingTip.number) <= currentHeight) return false
+    const snapshotStartHeight = BigInt(blocks[0].number)
+    // SnapSync block import is append-only to avoid stale hash-index residue
+    // from overwriting existing heights without full reindex/replay.
+    if (snapshotStartHeight <= currentHeight) return false
 
     // Verify internal chain integrity (hashes, parent links); skip proposer
     // check because historical blocks may reference validators no longer active

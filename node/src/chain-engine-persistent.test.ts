@@ -634,3 +634,62 @@ test("PersistentChainEngine: importSnapSyncBlocks recomputes finality and clears
     rmSync(tmpDir, { recursive: true, force: true })
   }
 })
+
+test("PersistentChainEngine: importSnapSyncBlocks rejects overlapping ranges", async () => {
+  const tmpDirA = mkdtempSync(join(tmpdir(), "coc-engine-test-"))
+  const tmpDirB = mkdtempSync(join(tmpdir(), "coc-engine-test-"))
+
+  try {
+    const evmA = await EvmChain.create(2077)
+    const evmB = await EvmChain.create(2077)
+    const local = new PersistentChainEngine(
+      {
+        dataDir: tmpDirA,
+        nodeId: "node1",
+        chainId: 2077,
+        validators: [],
+        finalityDepth: 3,
+        maxTxPerBlock: 100,
+        minGasPriceWei: 1n,
+      },
+      evmA,
+    )
+    const remote = new PersistentChainEngine(
+      {
+        dataDir: tmpDirB,
+        nodeId: "node1",
+        chainId: 2077,
+        validators: [],
+        finalityDepth: 3,
+        maxTxPerBlock: 100,
+        minGasPriceWei: 1n,
+      },
+      evmB,
+    )
+    await local.init()
+    await remote.init()
+
+    for (let i = 0; i < 3; i++) {
+      await local.proposeNextBlock()
+    }
+    for (let i = 0; i < 5; i++) {
+      await remote.proposeNextBlock()
+    }
+
+    const remoteBlocks: ChainBlock[] = []
+    for (let n = 2n; n <= 5n; n++) {
+      const block = await remote.getBlockByNumber(n)
+      assert.ok(block)
+      remoteBlocks.push(block)
+    }
+
+    const ok = await local.importSnapSyncBlocks(remoteBlocks)
+    assert.strictEqual(ok, false, "overlapping snap-sync range should be rejected")
+
+    await local.close()
+    await remote.close()
+  } finally {
+    rmSync(tmpDirA, { recursive: true, force: true })
+    rmSync(tmpDirB, { recursive: true, force: true })
+  }
+})

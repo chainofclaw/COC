@@ -256,6 +256,102 @@ describe("snap sync chain height advancement", () => {
   })
 })
 
+describe("snap sync fallback behavior", () => {
+  it("falls back to block-level sync when large-gap snap sync fails but continuity exists", async () => {
+    let currentHeight = 100n
+    const localTipHash = ("0x" + "aa".repeat(32)) as Hex
+    const remoteBlocks: ChainBlock[] = []
+    let parentHash = ("0x" + "bb".repeat(32)) as Hex
+    for (let n = 51n; n <= 120n; n++) {
+      const hash = ("0x" + n.toString(16).padStart(64, "0")) as Hex
+      remoteBlocks.push({
+        number: n,
+        hash,
+        parentHash,
+        proposer: "node-1",
+        timestampMs: Number(n),
+        txs: [],
+        finalized: false,
+        cumulativeWeight: n,
+      })
+      parentHash = hash
+    }
+
+    let adopted = false
+    const mockChain = {
+      getHeight: () => currentHeight,
+      getTip: () => ({
+        number: currentHeight,
+        hash: localTipHash,
+        parentHash: ("0x" + "11".repeat(32)) as Hex,
+        proposer: "node-1",
+        timestampMs: 1,
+        txs: [] as string[],
+        finalized: false,
+        cumulativeWeight: currentHeight,
+      }),
+      proposeNextBlock: async () => null,
+      applyBlock: async () => {},
+      mempool: { getPendingNonce: () => 0n },
+      events: {},
+      init: async () => {},
+      getBlockByNumber: () => null,
+      getBlockByHash: () => null,
+      getReceiptsByBlock: () => [],
+      expectedProposer: () => "node-1",
+      addRawTx: async () => ({
+        hash: "0x0" as Hex,
+        rawTx: "0x0" as Hex,
+        from: "0x0" as Hex,
+        nonce: 0n,
+        gasPrice: 0n,
+        maxFeePerGas: 0n,
+        maxPriorityFeePerGas: 0n,
+        gasLimit: 0n,
+        receivedAtMs: 0,
+      }),
+      makeSnapshot: () => ({ blocks: [], updatedAtMs: Date.now() }),
+      maybeAdoptSnapshot: async (snapshot: ChainSnapshot) => {
+        adopted = true
+        currentHeight = BigInt(snapshot.blocks[snapshot.blocks.length - 1].number)
+        return true
+      },
+    }
+
+    const mockP2p = {
+      fetchSnapshots: async (): Promise<ChainSnapshot[]> => [{ blocks: remoteBlocks, updatedAtMs: Date.now() }],
+      receiveBlock: async () => {},
+      discovery: { getActivePeers: () => [] },
+      broadcastBft: async () => {},
+    }
+
+    const dummySnapSync: SnapSyncProvider = {
+      fetchStateSnapshot: async () => null,
+      importStateSnapshot: async () => ({ accountsImported: 0, codeImported: 0 }),
+      setStateRoot: async () => {},
+    }
+
+    const consensus = new ConsensusEngine(
+      mockChain as any,
+      mockP2p as any,
+      { blockTimeMs: 1000, syncIntervalMs: 1000, enableSnapSync: true, snapSyncThreshold: 1 },
+      { snapSync: dummySnapSync },
+    )
+
+    let snapAttempted = false
+    ;(consensus as any).trySnapSync = async () => {
+      snapAttempted = true
+      return false
+    }
+
+    await (consensus as any).trySync()
+
+    assert.equal(snapAttempted, true)
+    assert.equal(adopted, true, "should fall back to block-level adoption")
+    assert.equal(currentHeight, 120n)
+  })
+})
+
 describe("cumulative weight in blocks", () => {
   it("blocks include cumulativeWeight field", async () => {
     const { engine } = await createTestEngine()

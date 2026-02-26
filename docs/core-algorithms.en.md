@@ -230,7 +230,7 @@ Algorithm:
 - Start with K closest peers from local routing table.
 - Select ALPHA (3) unqueried peers closest to target.
 - Query each in parallel for their closest peers.
-- Add newly discovered peers to routing table and candidate set.
+- Validate discovered peer IDs (`0x` + hex format), verify reachability/identity, then add only verified peers to routing table and candidate set.
 - Repeat until no new peers are found (convergence).
 - Return final K closest peers from routing table.
 
@@ -267,7 +267,8 @@ Algorithm:
 - Import accounts, storage, and code into local state trie.
 - After import, verify expectedStateRoot via cross-peer consensus (at least 2 votes AND strict majority of responding peers; single-peer networks accept with 1 vote; fail-closed when multiple peers disagree without quorum or when known peers > 1 but only 1 responds) and set local state root.
 - Validator set is subject to cross-peer hash consensus before governance restore; snapshots without validator consensus are imported without governance state.
-- Import snapshot blocks via `importSnapSyncBlocks()` (writes to block index without re-execution); proposer-set validation is skipped for historical blocks since the validator set may have changed since those blocks were produced. Finality depth is recomputed locally and imported `bftFinalized` flags are cleared.
+- Import snapshot blocks via `importSnapSyncBlocks()` (writes to block index without re-execution); proposer-set validation is skipped for historical blocks since the validator set may have changed since those blocks were produced. This path is append-only (overlapping ranges are rejected). Finality depth is recomputed locally and imported `bftFinalized` flags are cleared.
+- For large-gap sync attempts, if snap sync fails but block continuity exists, consensus falls back to block-level replay instead of aborting the sync round.
 - Resume consensus from the snapshot's block height.
 - Security assumption: block-hash payload currently does not include `stateRoot`, so SnapSync still depends on snapshot-provider trust; production deployments should add trusted state-root anchoring and/or multi-peer cross-checks.
 

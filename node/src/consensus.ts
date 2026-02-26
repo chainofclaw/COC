@@ -373,13 +373,18 @@ export class ConsensusEngine {
           remoteHeight: remoteCandidate.height.toString(),
         })
 
+        const snapshotStartHeight = snapshot.blocks[0] ? BigInt(snapshot.blocks[0].number) : 0n
+        const localHasContinuity = localHeight === 0n || localHeight >= snapshotStartHeight - 1n
+
         // Check if snap sync should be used (large gap)
         const gap = remoteCandidate.height - localHeight
+        let snapAttemptedForGap = false
         if (
           this.cfg.enableSnapSync &&
           this.snapSync &&
           gap > BigInt(this.cfg.snapSyncThreshold ?? 100)
         ) {
+          snapAttemptedForGap = true
           const ok = await this.trySnapSync(snapshot)
           if (ok) {
             this.blocksAdopted++
@@ -395,14 +400,24 @@ export class ConsensusEngine {
             localHeight = newHeight
           }
           adopted = adopted || ok
-          continue
+          if (ok) {
+            continue
+          }
+          if (!localHasContinuity) {
+            // No block-level continuity window: must wait for a successful snap sync.
+            continue
+          }
+          log.warn("snap sync failed on large gap, falling back to block-level replay", {
+            localHeight: localHeight.toString(),
+            snapshotStart: snapshotStartHeight.toString(),
+            remoteHeight: remoteCandidate.height.toString(),
+          })
         }
 
-        // Check if chain snapshot window is insufficient for block-level sync
-        const snapshotStartHeight = snapshot.blocks[0] ? BigInt(snapshot.blocks[0].number) : 0n
-        const localHasContinuity = localHeight === 0n || localHeight >= snapshotStartHeight - 1n
-
         if (!localHasContinuity && this.cfg.enableSnapSync && this.snapSync) {
+          if (snapAttemptedForGap) {
+            continue
+          }
           log.warn("chain snapshot window insufficient, falling back to snap sync", {
             localHeight: localHeight.toString(),
             snapshotStart: snapshotStartHeight.toString(),
