@@ -159,22 +159,29 @@ export class DhtNetwork {
       for (const result of results) {
         if (result.status !== "fulfilled") continue
         for (const newPeer of result.value) {
-          if (newPeer.id === this.cfg.localId) continue
-          // Validate peer ID: must be non-empty hex string (reject malicious FindNode responses)
-          if (!newPeer.id || typeof newPeer.id !== "string" || newPeer.id.length < 2
-            || !newPeer.address || typeof newPeer.address !== "string") continue
-          if (!found.has(newPeer.id)) {
-            found.set(newPeer.id, newPeer)
+          const peerId = String(newPeer.id ?? "").toLowerCase()
+          if (peerId === this.cfg.localId.toLowerCase()) continue
+          if (!isValidNodeId(peerId)) continue
+          if (!newPeer.address || typeof newPeer.address !== "string") continue
+
+          const normalizedPeer: DhtPeer = {
+            id: peerId,
+            address: newPeer.address,
+            lastSeenMs: newPeer.lastSeenMs ?? Date.now(),
+          }
+
+          if (!found.has(normalizedPeer.id)) {
+            found.set(normalizedPeer.id, normalizedPeer)
             // Verify peer before adding to routing table
             // Skip verification for peers returned from connected clients (already verified)
             const hasConnectedClient = !!(
-              this.cfg.wireClientByPeerId?.get(newPeer.id)?.isConnected() ||
-              this.cfg.wireClients.find((c) => c.getRemoteNodeId() === newPeer.id && c.isConnected())
+              this.cfg.wireClientByPeerId?.get(normalizedPeer.id)?.isConnected() ||
+              this.cfg.wireClients.find((c) => c.getRemoteNodeId() === normalizedPeer.id && c.isConnected())
             )
-            const reachable = hasConnectedClient || await this.verifyPeer(newPeer)
+            const reachable = hasConnectedClient || await this.verifyPeer(normalizedPeer)
             if (reachable) {
-              await this.routingTable.addPeer(newPeer)
-              this.cfg.onPeerDiscovered(newPeer)
+              await this.routingTable.addPeer(normalizedPeer)
+              this.cfg.onPeerDiscovered(normalizedPeer)
             }
             improved = true
           }
@@ -450,4 +457,10 @@ export class DhtNetwork {
       verifyFallbackTcpFailures: this.verifyFallbackTcpFailures,
     }
   }
+}
+
+function isValidNodeId(id: string): boolean {
+  if (!id.startsWith("0x")) return false
+  if (id.length < 3 || id.length > 66) return false
+  return /^[0-9a-f]+$/i.test(id.slice(2))
 }

@@ -236,6 +236,43 @@ describe("DhtNetwork", () => {
     assert.ok(discovered.length > 0, "should discover peers via wire client")
   })
 
+  it("should ignore malformed peer IDs returned by FIND_NODE", async () => {
+    const badAndGoodClient = {
+      isConnected: () => true,
+      findNode: async () => [
+        { id: "bad-id", address: "10.0.0.9:19781" },
+        { id: "0xddd", address: "10.0.0.4:19781" },
+      ],
+      getRemoteNodeId: () => "0xbbb",
+    } as unknown as WireClient
+    const goodPeerClient = {
+      isConnected: () => true,
+      findNode: async () => [],
+      getRemoteNodeId: () => "0xddd",
+    } as unknown as WireClient
+
+    const wireClientByPeerId = new Map<string, WireClient>()
+    wireClientByPeerId.set("0xbbb", badAndGoodClient)
+    wireClientByPeerId.set("0xddd", goodPeerClient)
+
+    const discovered: DhtPeer[] = []
+    const network = new DhtNetwork({
+      localId: "0xaaa",
+      bootstrapPeers: [{ id: "0xbbb", address: "10.0.0.1", port: 19781 }],
+      wireClients: [],
+      wireClientByPeerId,
+      onPeerDiscovered: (peer) => discovered.push(peer),
+    })
+
+    network.start()
+    const result = await network.iterativeLookup("0xccc")
+    network.stop()
+
+    assert.ok(discovered.some((p) => p.id === "0xddd"), "valid peer should be discovered")
+    assert.ok(!discovered.some((p) => p.id === "bad-id"), "invalid peer ID should be dropped")
+    assert.ok(result.every((p) => /^0x[0-9a-f]+$/i.test(p.id)))
+  })
+
   it("should fall back to wireClients scan when wireClientByPeerId has no match", async () => {
     let scanCalled = false
     const mockClient = {

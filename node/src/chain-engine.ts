@@ -183,7 +183,17 @@ export class ChainEngine {
     try {
 
     // Duplicate block detection (inside guard to prevent TOCTOU race)
-    if (this.blocks.some((b) => b.hash === block.hash)) {
+    const existing = this.blocks.find((b) => b.hash === block.hash)
+    if (existing) {
+      // Allow trusted local path (BFT finalize callback) to promote finality metadata.
+      if (locallyProposed && block.bftFinalized && !existing.bftFinalized) {
+        existing.bftFinalized = true
+        try {
+          await this.storage.save(this.makeSnapshot())
+        } catch {
+          // best-effort metadata persistence
+        }
+      }
       return // already applied, skip silently
     }
 
@@ -264,6 +274,9 @@ export class ChainEngine {
 
     // Store cumulative gas used for baseFee calculation
     block.gasUsed = totalGasUsed
+    // Never trust remote/non-hash metadata from gossip. Finality is local-state derived.
+    block.finalized = false
+    block.bftFinalized = locallyProposed && block.bftFinalized === true
 
     this.blocks.push(block)
     this.receiptsByBlock.set(block.number, receipts)
@@ -426,12 +439,12 @@ export class ChainEngine {
   private updateFinalityFlags(): void {
     const depth = BigInt(Math.max(1, this.cfg.finalityDepth))
     const tip = this.getHeight()
-    // Only scan from the finality boundary backwards to avoid O(n) full scan
-    const boundary = tip >= depth ? tip - depth : 0n
-    for (let i = this.blocks.length - 1; i >= 0; i--) {
-      const block = this.blocks[i]
-      if (block.finalized) break
-      block.finalized = tip >= block.number + depth
+    const newlyFinalBlock = tip - depth
+    if (newlyFinalBlock < 1n) return
+    const idx = Number(newlyFinalBlock - 1n)
+    const block = this.blocks[idx]
+    if (block && !block.finalized) {
+      block.finalized = true
     }
   }
 

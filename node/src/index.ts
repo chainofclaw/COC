@@ -310,7 +310,7 @@ if (bftEnabled) {
     onFinalized: async (block) => {
       const finalizedBlock = { ...block, bftFinalized: true }
       try {
-        await chain.applyBlock(finalizedBlock)
+        await chain.applyBlock(finalizedBlock, true)
       } catch {
         // block may already be applied during propose — persist bftFinalized flag
         const persistentEngine = chain as { blockIndex?: { getBlockByHash(h: string): Promise<ChainBlock | null>; updateBlock(b: ChainBlock): Promise<void> } }

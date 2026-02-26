@@ -75,6 +75,40 @@ test("applyBlock rejects invalid block hash", async () => {
   await assert.rejects(() => engine.applyBlock(block), /invalid block hash/)
 })
 
+test("applyBlock ignores untrusted bftFinalized flag from remote block", async () => {
+  const { engine } = await createTestEngine()
+  const payload = {
+    number: 1n,
+    parentHash: zeroHash(),
+    proposer: NODE_ID,
+    timestampMs: Date.now(),
+    txs: [] as Hex[],
+    cumulativeWeight: 1n,
+  }
+  const block: ChainBlock = {
+    ...payload,
+    hash: hashBlockPayload(payload),
+    finalized: false,
+    bftFinalized: true,
+  }
+  await engine.applyBlock(block, false)
+  const tip = engine.getTip()
+  assert.ok(tip)
+  assert.equal(tip.bftFinalized, false)
+})
+
+test("applyBlock promotes existing block to bftFinalized on trusted local update", async () => {
+  const { engine } = await createTestEngine()
+  const block = await engine.proposeNextBlock()
+  assert.ok(block)
+  assert.equal(engine.getTip()?.bftFinalized, false)
+
+  await engine.applyBlock({ ...block, bftFinalized: true }, true)
+  const tip = engine.getTip()
+  assert.ok(tip)
+  assert.equal(tip.bftFinalized, true)
+})
+
 test("applyBlock rejects forged cumulativeWeight", async () => {
   const { engine } = await createTestEngine()
   const parent = await engine.proposeNextBlock()
