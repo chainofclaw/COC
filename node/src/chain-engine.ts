@@ -11,6 +11,25 @@ import { createLogger } from "./logger.ts"
 
 const log = createLogger("chain-engine")
 
+function uniformWeightValidationError(
+  prev: ChainBlock | null | undefined,
+  block: ChainBlock,
+): string | null {
+  if (block.cumulativeWeight === undefined) {
+    if (prev?.cumulativeWeight !== undefined) {
+      return "block missing cumulativeWeight after weighted chain activation"
+    }
+    return null
+  }
+
+  // Non-governance engine uses uniform +1 weight, so cumulativeWeight must equal block height.
+  const expectedWeight = BigInt(block.number)
+  if (block.cumulativeWeight !== expectedWeight) {
+    return `invalid cumulativeWeight: expected ${expectedWeight}, got ${block.cumulativeWeight}`
+  }
+  return null
+}
+
 export interface ChainEngineConfig {
   dataDir: string
   nodeId: string
@@ -202,6 +221,11 @@ export class ChainEngine {
       }
     }
 
+    const weightError = uniformWeightValidationError(prev, block)
+    if (weightError) {
+      throw new Error(weightError)
+    }
+
     const expectedHash = hashBlockPayload({
       number: block.number,
       parentHash: block.parentHash,
@@ -338,6 +362,11 @@ export class ChainEngine {
         if (BigInt(block.number) !== BigInt(prev.number) + 1n) return false
         // Verify timestamps are monotonically increasing
         if (Number(block.timestampMs) <= Number(prev.timestampMs)) return false
+      }
+
+      const prev = i > 0 ? blocks[i - 1] : undefined
+      if (uniformWeightValidationError(prev, block)) {
+        return false
       }
 
       // Verify proposer is in validator set

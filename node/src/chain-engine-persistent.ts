@@ -295,6 +295,11 @@ export class PersistentChainEngine {
       }
     }
 
+    const weightError = this.cumulativeWeightValidationError(prev, block)
+    if (weightError) {
+      throw new Error(weightError)
+    }
+
     // Verify proposer signature based on enforcement mode
     const sigMode = this.cfg.signatureEnforcement ?? "enforce"
     if (!locallyProposed && this.signatureVerifier && sigMode !== "off") {
@@ -549,6 +554,11 @@ export class PersistentChainEngine {
         if (Number(block.timestampMs) <= Number(prev.timestampMs)) return false
       }
 
+      const prev = i > 0 ? blocks[i - 1] : undefined
+      if (!this.hasValidSnapshotWeight(prev, block)) {
+        return false
+      }
+
       // Verify proposer is in validator set (skip for SnapSync — historical validators may differ)
       if (!skipProposerCheck && validators.length > 0 && !validators.includes(block.proposer)) {
         return false
@@ -578,12 +588,7 @@ export class PersistentChainEngine {
 
     // Accumulate cumulative weight using proposer stake
     const parentWeight = tip?.cumulativeWeight ?? 0n
-    let proposerStake = 1n
-    if (this.governance) {
-      const active = this.governance.getActiveValidators()
-      const self = active.find((v) => v.id === this.cfg.nodeId)
-      if (self) proposerStake = self.stake
-    }
+    const proposerStake = this.getValidatorStake(this.cfg.nodeId)
     const cumulativeWeight = parentWeight + proposerStake
 
     const hash = hashBlockPayload({
@@ -668,6 +673,51 @@ export class PersistentChainEngine {
       }
       await this.applyBlock(normalized)
     }
+  }
+
+  private getValidatorStake(validatorId: string): bigint {
+    if (!this.governance) return 1n
+    const active = this.governance.getActiveValidators()
+    const validator = active.find((v) => v.id === validatorId)
+    return validator?.stake ?? 1n
+  }
+
+  private cumulativeWeightValidationError(prev: ChainBlock | null, block: ChainBlock): string | null {
+    if (block.cumulativeWeight === undefined) {
+      if (prev?.cumulativeWeight !== undefined) {
+        return "block missing cumulativeWeight after weighted chain activation"
+      }
+      return null
+    }
+
+    let expectedWeight: bigint
+    if (this.governance) {
+      const parentWeight = prev?.cumulativeWeight ?? 0n
+      expectedWeight = parentWeight + this.getValidatorStake(block.proposer)
+    } else {
+      expectedWeight = BigInt(block.number)
+    }
+
+    if (block.cumulativeWeight !== expectedWeight) {
+      return `invalid cumulativeWeight: expected ${expectedWeight}, got ${block.cumulativeWeight}`
+    }
+    return null
+  }
+
+  private hasValidSnapshotWeight(prev: ChainBlock | undefined, block: ChainBlock): boolean {
+    if (block.cumulativeWeight === undefined) {
+      return prev?.cumulativeWeight === undefined
+    }
+
+    if (!this.governance) {
+      return block.cumulativeWeight === BigInt(block.number)
+    }
+
+    if (!prev || prev.cumulativeWeight === undefined) {
+      return block.cumulativeWeight > 0n
+    }
+
+    return block.cumulativeWeight > prev.cumulativeWeight
   }
 }
 
