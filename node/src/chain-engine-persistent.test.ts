@@ -407,3 +407,92 @@ test("PersistentChainEngine: rejects block with future timestamp", async () => {
     rmSync(tmpDir, { recursive: true, force: true })
   }
 })
+
+test("PersistentChainEngine: rejects block with forged cumulativeWeight", async () => {
+  const tmpDir = mkdtempSync(join(tmpdir(), "coc-engine-test-"))
+
+  try {
+    const evm = await EvmChain.create(2077)
+    const engine = new PersistentChainEngine(
+      {
+        dataDir: tmpDir,
+        nodeId: "node1",
+        chainId: 2077,
+        validators: [],
+        finalityDepth: 3,
+        maxTxPerBlock: 100,
+        minGasPriceWei: 1n,
+      },
+      evm,
+    )
+    await engine.init()
+
+    const block1 = await engine.proposeNextBlock()
+    assert.ok(block1)
+
+    const payload = {
+      number: 2n,
+      parentHash: block1.hash,
+      proposer: "node1",
+      timestampMs: block1.timestampMs + 1,
+      txs: [] as string[],
+      cumulativeWeight: 999n,
+    }
+    const badBlock: ChainBlock = {
+      ...payload,
+      hash: hashBlockPayload(payload),
+      finalized: false,
+    }
+
+    await assert.rejects(
+      () => engine.applyBlock(badBlock, false),
+      /invalid cumulativeWeight/,
+    )
+
+    await engine.close()
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true })
+  }
+})
+
+test("PersistentChainEngine: importSnapSyncBlocks rejects forged cumulativeWeight", async () => {
+  const tmpDir = mkdtempSync(join(tmpdir(), "coc-engine-test-"))
+
+  try {
+    const evm = await EvmChain.create(2077)
+    const engine = new PersistentChainEngine(
+      {
+        dataDir: tmpDir,
+        nodeId: "node1",
+        chainId: 2077,
+        validators: [],
+        finalityDepth: 3,
+        maxTxPerBlock: 100,
+        minGasPriceWei: 1n,
+      },
+      evm,
+    )
+    await engine.init()
+
+    const payload = {
+      number: 1n,
+      parentHash: zeroHash(),
+      proposer: "node1",
+      timestampMs: 1,
+      txs: [] as string[],
+      cumulativeWeight: 999n,
+    }
+    const snapshotBlock: ChainBlock = {
+      ...payload,
+      hash: hashBlockPayload(payload),
+      finalized: false,
+    }
+
+    const imported = await engine.importSnapSyncBlocks([snapshotBlock])
+    assert.strictEqual(imported, false)
+
+    await engine.close()
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true })
+  }
+})

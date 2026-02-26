@@ -5,6 +5,7 @@
  * Each bucket holds up to K peers at a specific distance range.
  */
 
+import { isIP } from "node:net"
 import { createLogger } from "./logger.ts"
 
 const log = createLogger("dht")
@@ -110,14 +111,15 @@ export class RoutingTable {
     }
 
     // Sybil protection: limit peers from the same IP within this bucket (skip loopback)
-    const peerIp = extractHost(peer.address)
-    if (!peerIp.startsWith("127.") && peerIp !== "::1" && peerIp !== "localhost") {
-      let sameIpInBucket = 0
+    const peerHost = normalizeHostForBucket(extractHost(peer.address))
+    if (!isLoopbackHost(peerHost)) {
+      let sameHostInBucket = 0
       for (const p of bucket.peers) {
-        if (extractHost(p.address) === peerIp) sameIpInBucket++
+        const existingHost = normalizeHostForBucket(extractHost(p.address))
+        if (existingHost === peerHost) sameHostInBucket++
       }
-      if (sameIpInBucket >= MAX_PEERS_PER_IP_PER_BUCKET) {
-        log.debug("per-IP bucket limit reached, dropping peer", { ip: peerIp, bucket: idx, peerId: peer.id })
+      if (sameHostInBucket >= MAX_PEERS_PER_IP_PER_BUCKET) {
+        log.debug("per-IP bucket limit reached, dropping peer", { ip: peerHost, bucket: idx, peerId: peer.id })
         return false
       }
     }
@@ -288,6 +290,30 @@ export function parseHostPort(address: string): { host: string; port: number } |
   const port = parseInt(portStr, 10)
   if (!host || isNaN(port) || port <= 0 || port > 65535) return null
   return { host, port }
+}
+
+function normalizeHostForBucket(host: string): string {
+  let normalized = host.trim().toLowerCase()
+  if (normalized.endsWith(".")) {
+    normalized = normalized.slice(0, -1)
+  }
+
+  // Canonicalize IPv4-mapped IPv6 so 192.0.2.1 and ::ffff:192.0.2.1 count as same host.
+  if (normalized.startsWith("::ffff:")) {
+    const mapped = normalized.slice("::ffff:".length)
+    if (isIP(mapped) === 4) {
+      return mapped
+    }
+  }
+
+  return normalized
+}
+
+function isLoopbackHost(host: string): boolean {
+  if (host === "localhost" || host === "::1") return true
+  if (host.startsWith("127.")) return true
+  if (host.startsWith("::ffff:127.")) return true
+  return false
 }
 
 function hexToBytes(hex: string): Uint8Array {

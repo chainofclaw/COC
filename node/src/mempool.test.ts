@@ -154,6 +154,22 @@ describe("Mempool", () => {
     }
   })
 
+  it("does not pick transactions that cannot pay base fee", async () => {
+    const pool = new Mempool({ chainId: CHAIN_ID })
+    signAndAdd(pool, PK1, 0, "0x3b9aca00") // 1 gwei
+    signAndAdd(pool, PK2, 0, "0xb2d05e00") // 3 gwei
+
+    const picked = await pool.pickForBlock(
+      10,
+      async () => 0n,
+      0n,
+      2_000_000_000n, // baseFee = 2 gwei
+    )
+
+    assert.equal(picked.length, 1)
+    assert.equal(picked[0].gasPrice, 3_000_000_000n)
+  })
+
   it("getPendingByAddress returns sorted txs for a sender", () => {
     const pool = new Mempool({ chainId: CHAIN_ID })
     signAndAdd(pool, PK1, 2)

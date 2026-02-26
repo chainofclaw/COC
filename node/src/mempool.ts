@@ -179,8 +179,11 @@ export class Mempool {
       return tx.gasPrice
     }
 
+    // A transaction cannot be included when its max fee cap is below current base fee.
+    const canPayBaseFee = (tx: MempoolTx): boolean => tx.maxFeePerGas >= baseFeePerGas
+
     const sorted = [...this.txs.values()]
-      .filter((tx) => effectivePrice(tx) >= minGasPriceWei)
+      .filter((tx) => canPayBaseFee(tx) && effectivePrice(tx) >= minGasPriceWei)
       .sort((a, b) => {
         const aPrice = effectivePrice(a)
         const bPrice = effectivePrice(b)

@@ -75,6 +75,28 @@ test("applyBlock rejects invalid block hash", async () => {
   await assert.rejects(() => engine.applyBlock(block), /invalid block hash/)
 })
 
+test("applyBlock rejects forged cumulativeWeight", async () => {
+  const { engine } = await createTestEngine()
+  const parent = await engine.proposeNextBlock()
+  assert.ok(parent)
+
+  const payload = {
+    number: 2n,
+    parentHash: parent.hash,
+    proposer: NODE_ID,
+    timestampMs: parent.timestampMs + 1,
+    txs: [] as Hex[],
+    cumulativeWeight: 999n,
+  }
+  const forged: ChainBlock = {
+    ...payload,
+    hash: hashBlockPayload(payload),
+    finalized: false,
+  }
+
+  await assert.rejects(() => engine.applyBlock(forged), /invalid cumulativeWeight/)
+})
+
 test("finality flags are set after depth", async () => {
   const { engine } = await createTestEngine()
   // Produce 5 blocks (finalityDepth = 3)
