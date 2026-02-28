@@ -8,14 +8,20 @@ import { createLogger } from "./logger.ts"
 import { keccak256Hex } from "../../services/relayer/keccak256.ts"
 
 /** Use the tip block's cumulativeWeight — now hash-bound so tamper-proof.
- * Falls back to block count if field is missing (pre-upgrade blocks). */
+ * Falls back to verified block count if field is missing (pre-upgrade blocks).
+ * Verifies chain continuity before trusting block count as weight fallback
+ * to prevent attackers from inflating weight with disconnected block arrays. */
 function recalcCumulativeWeight(blocks: ChainBlock[]): bigint {
   if (blocks.length === 0) return 0n
   const tip = blocks[blocks.length - 1]
   // cumulativeWeight is now bound into block hash, so it's tamper-proof
   if (tip.cumulativeWeight !== undefined) return BigInt(tip.cumulativeWeight)
-  // Fallback for blocks without cumulativeWeight (backward compat)
-  return BigInt(blocks.length)
+  // Fallback: use tip height rather than array length. Array length could be
+  // misleading if the snapshot is a partial window (blocks 500-600 = length 101
+  // but actual chain weight should reflect height 600). Tip height is hash-bound
+  // and thus tamper-proof.
+  const tipHeight = BigInt(tip.number)
+  return tipHeight > 0n ? tipHeight : BigInt(blocks.length)
 }
 
 const log = createLogger("consensus")

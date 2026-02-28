@@ -315,10 +315,21 @@ export class BftCoordinator {
   private async processDeferredBlock(): Promise<void> {
     const block = this.deferredBlock
     this.deferredBlock = null
-    if (block) {
-      log.info("BFT processing deferred block", { height: block.number.toString() })
-      await this.startRound(block)
+    if (!block) return
+
+    // Guard: reject stale deferred blocks that are at or below the height
+    // of the round we just finished (could happen if a block was deferred
+    // and then the same height was finalized via a different path)
+    if (this.activeRound && block.number <= this.activeRound.state.height) {
+      log.warn("BFT discarding stale deferred block", {
+        deferredHeight: block.number.toString(),
+        activeHeight: this.activeRound.state.height.toString(),
+      })
+      return
     }
+
+    log.info("BFT processing deferred block", { height: block.number.toString() })
+    await this.startRound(block)
   }
 
   /**

@@ -78,6 +78,7 @@ export class WireServer {
   private bytesSent = 0
   private totalConnectionsAccepted = 0
   private connectionsRejected = 0
+  private unknownFrameTypes = 0
   private readonly seenTx: BoundedSet<Hex>
   private readonly seenBlocks: BoundedSet<Hex>
   private readonly handshakeNonces = new BoundedSet<string>(10_000)
@@ -150,6 +151,7 @@ export class WireServer {
     framesReceived: number; framesSent: number
     bytesReceived: number; bytesSent: number
     seenTxSize: number; seenBlocksSize: number
+    unknownFrameTypes: number
   } {
     return {
       connections: this.connections.size,
@@ -162,6 +164,7 @@ export class WireServer {
       bytesSent: this.bytesSent,
       seenTxSize: this.seenTx.size,
       seenBlocksSize: this.seenBlocks.size,
+      unknownFrameTypes: this.unknownFrameTypes,
     }
   }
 
@@ -458,6 +461,14 @@ export class WireServer {
 
       case MessageType.Pong: {
         // latency tracking could be added here
+        break
+      }
+
+      default: {
+        // Log unknown frame types for anomaly detection (protocol mismatch,
+        // fuzzing, or future protocol version probing)
+        this.unknownFrameTypes++
+        log.warn("unknown wire frame type", { type: `0x${frame.type.toString(16)}`, peer: conn.nodeId })
         break
       }
     }

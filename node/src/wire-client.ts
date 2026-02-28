@@ -289,11 +289,20 @@ export class WireClient {
         if (pending) {
           clearTimeout(pending.timer)
           this.pendingFindNode.delete(resp.requestId)
-          // Limit accepted peers to prevent routing table poisoning; validate structure
+          // Limit accepted peers to prevent routing table poisoning; validate structure + format
           const rawPeers = Array.isArray(resp.peers) ? resp.peers.slice(0, 20) : []
-          const peers = rawPeers.filter((p: unknown): p is { id: string; address: string } =>
-            !!p && typeof p === "object" && typeof (p as Record<string, unknown>).id === "string" && typeof (p as Record<string, unknown>).address === "string"
-          )
+          const peers = rawPeers.filter((p: unknown): p is { id: string; address: string } => {
+            if (!p || typeof p !== "object") return false
+            const obj = p as Record<string, unknown>
+            if (typeof obj.id !== "string" || typeof obj.address !== "string") return false
+            // Validate node ID format (0x + hex, 3-66 chars)
+            if (!obj.id.startsWith("0x") || obj.id.length < 3 || obj.id.length > 66) return false
+            if (!/^[0-9a-fA-F]+$/.test(obj.id.slice(2))) return false
+            // Validate address is not empty and does not contain control characters
+            if (obj.address.length === 0 || obj.address.length > 256) return false
+            if (/[\x00-\x1f]/.test(obj.address)) return false
+            return true
+          })
           pending.resolve(peers)
         }
         break

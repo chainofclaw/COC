@@ -216,6 +216,9 @@ export function validateSnapshot(snapshot: StateSnapshot): void {
   if (!snapshot.blockHeight || typeof snapshot.blockHeight !== "string") {
     throw new Error("snapshot missing blockHeight")
   }
+  if (!snapshot.blockHash || typeof snapshot.blockHash !== "string" || !snapshot.blockHash.startsWith("0x")) {
+    throw new Error("snapshot missing or invalid blockHash")
+  }
   if (!Array.isArray(snapshot.accounts)) {
     throw new Error("snapshot missing accounts array")
   }

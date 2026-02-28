@@ -445,5 +445,13 @@ export class ValidatorGovernance {
       const power = totalStake > 0n ? Number((v.stake * 10000n) / totalStake) : 0
       this.validators.set(v.id, { ...v, votingPower: power })
     }
+
+    // Reset votingPower for inactive validators to prevent stale values
+    // from appearing in governance stats or RPC queries
+    for (const v of this.validators.values()) {
+      if (!v.active && v.votingPower !== 0) {
+        this.validators.set(v.id, { ...v, votingPower: 0 })
+      }
+    }
   }
 }

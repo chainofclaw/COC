@@ -341,8 +341,9 @@ export class EquivocationDetector {
 
     if (existingHash && existingHash !== blockHash) {
       // Equivocation detected!
+      // Use normalizedId for consistent case-insensitive evidence matching
       const ev: EquivocationEvidence = {
-        validatorId,
+        validatorId: normalizedId,
         height,
         phase,
         blockHash1: existingHash,
@@ -374,18 +375,23 @@ export class EquivocationDetector {
     return this.evidence
   }
 
-  /** Get evidence for a specific validator */
+  /** Get evidence for a specific validator (case-insensitive match) */
   getEvidenceFor(validatorId: string): EquivocationEvidence[] {
-    return this.evidence.filter((e) => e.validatorId === validatorId)
+    const normalized = validatorId.toLowerCase()
+    return this.evidence.filter((e) => e.validatorId === normalized)
   }
 
-  /** Clear evidence older than the given height */
+  /** Clear evidence older than the given height (in-place to avoid intermediate allocation) */
   clearEvidenceBefore(height: bigint): number {
-    const before = this.evidence.length
-    const remaining = this.evidence.filter((e) => e.height >= height)
-    this.evidence.length = 0
-    this.evidence.push(...remaining)
-    return before - this.evidence.length
+    let writeIdx = 0
+    for (let i = 0; i < this.evidence.length; i++) {
+      if (this.evidence[i].height >= height) {
+        this.evidence[writeIdx++] = this.evidence[i]
+      }
+    }
+    const removed = this.evidence.length - writeIdx
+    this.evidence.length = writeIdx
+    return removed
   }
 
   private pruneOldHeights(): void {

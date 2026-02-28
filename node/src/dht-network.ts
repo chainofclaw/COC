@@ -11,6 +11,7 @@
 import fs from "node:fs"
 import path from "node:path"
 import net from "node:net"
+import nodeCrypto from "node:crypto"
 import { RoutingTable, ALPHA, K, sortByDistance, parseHostPort } from "./dht.ts"
 import type { DhtPeer } from "./dht.ts"
 import { WireClient } from "./wire-client.ts"
@@ -350,11 +351,10 @@ export class DhtNetwork {
   private async refresh(): Promise<void> {
     if (this.stopped) return
 
-    // Generate a random target for lookup
-    const randomBytes = new Uint8Array(32)
-    for (let i = 0; i < 32; i++) {
-      randomBytes[i] = Math.floor(Math.random() * 256)
-    }
+    // Generate a cryptographically secure random target for lookup.
+    // Math.random() is predictable; an attacker could anticipate which DHT
+    // bucket is refreshed and pre-position sybil nodes in that region.
+    const randomBytes = nodeCrypto.randomBytes(32)
     const randomId = "0x" + Array.from(randomBytes).map((b) => b.toString(16).padStart(2, "0")).join("")
 
     log.debug("DHT refresh lookup", { tableSize: this.routingTable.size() })
