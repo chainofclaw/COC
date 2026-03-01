@@ -50,7 +50,7 @@ export class PersistentNonceStore implements INonceStore {
       const value = await this.db.get(key)
       if (!value) continue
       const timestamp = Number(new TextDecoder().decode(value))
-      if (Number.isNaN(timestamp) || timestamp < threshold) {
+      if (!Number.isFinite(timestamp) || timestamp < 0 || timestamp < threshold) {
         await this.db.del(key)
         count++
       }
