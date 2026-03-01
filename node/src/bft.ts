@@ -168,8 +168,10 @@ export class BftRound {
         this.state.commitVotes.set(this.config.localId.toLowerCase(), blockHash)
 
         // Check if early-arriving commits already give us commit quorum (filter by blockHash)
+        // proposedBlock is guaranteed non-null here (set by handlePropose before handlePrepare)
+        const proposedHash = this.state.proposedBlock!.hash
         const commitVoters = [...this.state.commitVotes.entries()]
-          .filter(([, hash]) => !this.state.proposedBlock || hash === this.state.proposedBlock.hash)
+          .filter(([, hash]) => hash === proposedHash)
           .map(([id]) => id)
         if (hasQuorum(commitVoters, this.config.validators)) {
           this.state.phase = "finalized"

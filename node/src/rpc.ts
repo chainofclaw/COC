@@ -518,6 +518,8 @@ async function handleRpc(
       const start = filter.lastCursor + 1n
       const filterHeight = await Promise.resolve(chain.getHeight())
       const end = filter.toBlock ?? filterHeight
+      // Skip if cursor has already passed the end (e.g. toBlock reached)
+      if (start > end) { return [] }
       // Cap scan range to prevent DoS from long-idle filters
       const cappedEnd = (end - start > MAX_LOG_BLOCK_RANGE) ? start + MAX_LOG_BLOCK_RANGE : end
       const logs = await collectLogs(chain, start, cappedEnd, filter)
@@ -1325,10 +1327,14 @@ async function handleRpc(
 }
 
 function safeBigInt(input: string): bigint {
+  // Reject oversized inputs to prevent BigInt parsing DoS (O(n²) for huge decimal strings)
+  if (typeof input !== "string" || input.length > 78) {
+    throw { code: -32602, message: "invalid block number: input too large" }
+  }
   try {
     return BigInt(input)
   } catch {
-    throw { code: -32602, message: `invalid block number: ${input}` }
+    throw { code: -32602, message: `invalid block number: ${input.slice(0, 40)}` }
   }
 }
 

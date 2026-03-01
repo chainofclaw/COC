@@ -225,7 +225,8 @@ export class Mempool {
    * Get the next available nonce for a sender (on-chain nonce + pending count)
    */
   getPendingNonce(from: Hex, onchainNonce: bigint): bigint {
-    const senderTxs = this.bySender.get(from)
+    const normalized = from.toLowerCase() as Hex
+    const senderTxs = this.bySender.get(normalized)
     if (!senderTxs || senderTxs.size === 0) return onchainNonce
 
     // Collect all nonces and find highest contiguous from onchainNonce

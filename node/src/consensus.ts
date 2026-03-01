@@ -102,6 +102,7 @@ export class ConsensusEngine {
   private degradedSinceMs = 0
   private proposeTimer: ReturnType<typeof setInterval> | null = null
   private syncTimer: ReturnType<typeof setInterval> | null = null
+  private degradedCheckTimer: ReturnType<typeof setInterval> | null = null
   private syncInFlight = false
   private proposeInFlight = false
 
@@ -145,12 +146,15 @@ export class ConsensusEngine {
     this.startedAtMs = Date.now()
     this.proposeTimer = setInterval(() => void this.tryPropose(), this.cfg.blockTimeMs)
     this.syncTimer = setInterval(() => void this.trySync(), this.cfg.syncIntervalMs)
+    // Independent degraded timeout check (not gated by tryPropose)
+    this.degradedCheckTimer = setInterval(() => this.checkDegradedTimeout(), 10_000)
     void this.trySync()
   }
 
   stop(): void {
     if (this.proposeTimer) { clearInterval(this.proposeTimer); this.proposeTimer = null }
     if (this.syncTimer) { clearInterval(this.syncTimer); this.syncTimer = null }
+    if (this.degradedCheckTimer) { clearInterval(this.degradedCheckTimer); this.degradedCheckTimer = null }
     this.bft?.stop()
   }
 
@@ -218,8 +222,7 @@ export class ConsensusEngine {
     if (this.proposeInFlight) return
     if (this.syncInFlight) return // Don't propose while snap sync is modifying chain state
     if (this.status === "degraded") {
-      this.checkDegradedTimeout()
-      return
+      return // degraded timeout handled by independent degradedCheckTimer
     }
 
     // Skip proposing while BFT round is active to avoid disrupting in-flight rounds
