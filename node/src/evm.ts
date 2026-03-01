@@ -243,8 +243,10 @@ export class EvmChain {
     }
   }
 
-  async estimateGas(params: { from?: string; to: string; data?: string; value?: string }): Promise<bigint> {
-    const { gasUsed } = await this.callRaw({ ...params, gas: "0x989680" }) // 10M gas limit
+  async estimateGas(params: { from?: string; to: string; data?: string; value?: string; gas?: string }): Promise<bigint> {
+    // Use caller-supplied gas cap or default to 30M (block gas limit)
+    const gasCap = params.gas ?? "0x1c9c380"
+    const { gasUsed } = await this.callRaw({ ...params, gas: gasCap })
     // Minimum 21000 for basic transaction, plus 10% buffer
     const base = gasUsed < 21000n ? 21000n : gasUsed
     return base + base / 10n

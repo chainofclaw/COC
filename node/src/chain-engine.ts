@@ -275,13 +275,16 @@ export class ChainEngine {
       throw new Error(`block gasUsed mismatch: claimed ${block.gasUsed}, computed ${totalGasUsed}`)
     }
 
-    // Store cumulative gas used for baseFee calculation
-    block.gasUsed = totalGasUsed
-    // Never trust remote/non-hash metadata from gossip. Finality is local-state derived.
-    block.finalized = false
-    block.bftFinalized = locallyProposed && block.bftFinalized === true
+    // Create a new block object to avoid mutating the caller's input
+    const storedBlock = {
+      ...block,
+      gasUsed: totalGasUsed,
+      // Never trust remote/non-hash metadata from gossip. Finality is local-state derived.
+      finalized: false,
+      bftFinalized: locallyProposed && block.bftFinalized === true,
+    }
 
-    this.blocks.push(block)
+    this.blocks.push(storedBlock)
     this.receiptsByBlock.set(block.number, receipts)
 
     for (const raw of block.txs) {
