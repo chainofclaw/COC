@@ -70,10 +70,11 @@ if (usePersistent) {
 let chain: IChainEngine
 let evm: EvmChain
 let stateTrie: IStateTrie | null = null
+let stateDb: LevelDatabase | null = null
 
 if (usePersistent) {
   // Create persistent state trie backed by LevelDB
-  const stateDb = new LevelDatabase(config.dataDir, "state")
+  stateDb = new LevelDatabase(config.dataDir, "state")
   await stateDb.open()
   const trie = new PersistentStateTrie(stateDb)
   await trie.init()
@@ -705,6 +706,10 @@ async function shutdown(signal: string) {
   if (typeof closeable.close === "function") {
     await closeable.close()
   }
+  // Close the separate state trie LevelDB (not covered by PersistentChainEngine.close)
+  if (stateDb) {
+    try { await stateDb.close() } catch { /* best-effort */ }
+  }
   log.info("shutdown complete")
   process.exit(0)
 }
@@ -734,11 +739,12 @@ function resolvePoseChallengerDynamicResolver(
   if (config.poseUseGovernanceChallengerAuth) {
     return async (senderId) => {
       if (!hasGovernance(chain)) return false
+      const senderLower = senderId.toLowerCase()
       const activeValidators = chain.governance.getActiveValidators()
       return activeValidators.some((v) =>
         v.active && (
-          v.id.toLowerCase() === senderId ||
-          v.address.toLowerCase() === senderId
+          v.id.toLowerCase() === senderLower ||
+          v.address.toLowerCase() === senderLower
         ),
       )
     }

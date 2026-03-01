@@ -210,6 +210,7 @@ export class PeerScoring {
     this.decayTimer = setInterval(() => {
       this.applyDecay()
     }, this.cfg.decayIntervalMs)
+    this.decayTimer.unref()
   }
 
   /**

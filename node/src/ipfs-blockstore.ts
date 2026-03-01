@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile, access, readdir, stat as statFile } from "node:fs/promises"
+import { mkdir, readFile, writeFile, access, readdir, stat as statFile, rename } from "node:fs/promises"
 import { join } from "node:path"
 import type { IpfsBlock, CidString } from "./ipfs-types.ts"
 
@@ -94,6 +94,9 @@ export class IpfsBlockstore {
 
   private async writePins(pins: Set<CidString>): Promise<void> {
     await mkdir(this.root, { recursive: true })
-    await writeFile(this.pinsPath(), JSON.stringify({ pins: [...pins] }, null, 2))
+    // Atomic write: write to temp file then rename to prevent corruption on crash
+    const tmpPath = this.pinsPath() + ".tmp"
+    await writeFile(tmpPath, JSON.stringify({ pins: [...pins] }, null, 2))
+    await rename(tmpPath, this.pinsPath())
   }
 }

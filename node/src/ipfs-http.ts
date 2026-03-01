@@ -461,6 +461,11 @@ export class IpfsHttpServer {
     try {
       switch (route) {
         case "pub": {
+          if (!topic) {
+            res.writeHead(400, { "content-type": "application/json" })
+            res.end(JSON.stringify({ error: "missing topic" }))
+            break
+          }
           const body = await readBody(req)
           await this.pubsub.publish(topic, body)
           res.writeHead(200, { "content-type": "application/json" })
@@ -475,15 +480,26 @@ export class IpfsHttpServer {
           })
 
           const handler = (msg: { from: string; seqno: string; data: Uint8Array; topicIDs: string[] }) => {
-            const encoded = Buffer.from(msg.data).toString("base64")
-            res.write(JSON.stringify({
-              from: msg.from,
-              seqno: msg.seqno,
-              data: encoded,
-              topicIDs: msg.topicIDs,
-            }) + "\n")
+            if (res.destroyed || res.writableEnded) return
+            try {
+              const encoded = Buffer.from(msg.data).toString("base64")
+              res.write(JSON.stringify({
+                from: msg.from,
+                seqno: msg.seqno,
+                data: encoded,
+                topicIDs: msg.topicIDs,
+              }) + "\n")
+            } catch {
+              // Connection already closed, unsubscribe on next tick
+              this.pubsub?.unsubscribe(topic, handler)
+            }
           }
 
+          if (!topic) {
+            res.writeHead(400, { "content-type": "application/json" })
+            res.end(JSON.stringify({ error: "missing topic" }))
+            break
+          }
           this.pubsub.subscribe(topic, handler)
 
           // Clean up on client disconnect

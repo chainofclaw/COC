@@ -414,6 +414,7 @@ export class ValidatorGovernance {
    * Used by BFT slashing handler for equivocation penalties.
    */
   applySlash(validatorId: string, amount: bigint): void {
+    if (amount <= 0n) return
     const v = this.validators.get(validatorId)
     if (!v || !v.active) return
     const newStake = v.stake > amount ? v.stake - amount : 0n
