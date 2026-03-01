@@ -310,7 +310,7 @@ if (bftEnabled) {
     onFinalized: async (block) => {
       const finalizedBlock = { ...block, bftFinalized: true }
       try {
-        await chain.applyBlock(finalizedBlock)
+        await chain.applyBlock(finalizedBlock, true)
       } catch {
         // block may already be applied during propose — persist bftFinalized flag
         const persistentEngine = chain as { blockIndex?: { getBlockByHash(h: string): Promise<ChainBlock | null>; updateBlock(b: ChainBlock): Promise<void> } }
@@ -327,7 +327,7 @@ if (bftEnabled) {
         }
       }
       // Only broadcast if block exists locally (avoid ghost block relay)
-      const localBlock = await chain.getBlockByHash(block.hash).catch(() => null)
+      const localBlock = await Promise.resolve(chain.getBlockByHash(block.hash)).catch(() => null)
       if (localBlock) {
         try {
           await p2p.receiveBlock({ ...localBlock, bftFinalized: true })

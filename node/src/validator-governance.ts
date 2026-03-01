@@ -337,29 +337,30 @@ export class ValidatorGovernance {
     if (!proposal || proposal.status !== "pending") return
 
     const activeValidators = this.getActiveValidators()
-    const totalPower = activeValidators.reduce((sum, v) => sum + v.votingPower, 0)
+    // Use stake (bigint) directly to avoid votingPower truncation errors
+    // (e.g., 3 equal validators get power 3333 each = 9999, not 10000)
+    const totalStake = activeValidators.reduce((sum, v) => sum + v.stake, 0n)
 
     // Check minimum participation
-    let votedPower = 0
+    let votedStake = 0n
     for (const [voterId] of proposal.votes) {
       const v = this.validators.get(voterId)
-      if (v?.active) votedPower += v.votingPower
+      if (v?.active) votedStake += v.stake
     }
 
-    // votingPower is in basis points (0-10000); config thresholds are in percent (0-100)
-    const participationPercent = totalPower > 0 ? (votedPower * 100) / totalPower : 0
+    const participationPercent = totalStake > 0n ? Number(votedStake * 100n / totalStake) : 0
     if (participationPercent < this.config.minVoterPercent) return
 
-    // Count approval voting power
-    let approvalPower = 0
+    // Count approval stake
+    let approvalStake = 0n
     for (const [voterId, approve] of proposal.votes) {
       if (approve) {
         const v = this.validators.get(voterId)
-        if (v?.active) approvalPower += v.votingPower
+        if (v?.active) approvalStake += v.stake
       }
     }
 
-    const approvalPercent = totalPower > 0 ? (approvalPower * 100) / totalPower : 0
+    const approvalPercent = totalStake > 0n ? Number(approvalStake * 100n / totalStake) : 0
 
     if (approvalPercent >= this.config.approvalThresholdPercent) {
       this.executeProposal(proposal)
@@ -373,6 +374,8 @@ export class ValidatorGovernance {
   private executeProposal(proposal: GovernanceProposal): void {
     switch (proposal.type) {
       case "add_validator": {
+        // Re-check precondition: max validators may have been reached since proposal creation
+        if (this.activeCount() >= this.config.maxValidators) break
         this.validators.set(proposal.targetId, {
           id: proposal.targetId,
           address: proposal.targetAddress!,
@@ -385,6 +388,8 @@ export class ValidatorGovernance {
         break
       }
       case "remove_validator": {
+        // Re-check precondition: concurrent remove proposals could leave 0 validators
+        if (this.activeCount() <= 1) break
         const v = this.validators.get(proposal.targetId)
         if (v) {
           this.validators.set(proposal.targetId, { ...v, active: false })
@@ -439,6 +444,14 @@ export class ValidatorGovernance {
     for (const v of active) {
       const power = totalStake > 0n ? Number((v.stake * 10000n) / totalStake) : 0
       this.validators.set(v.id, { ...v, votingPower: power })
+    }
+
+    // Reset votingPower for inactive validators to prevent stale values
+    // from appearing in governance stats or RPC queries
+    for (const v of this.validators.values()) {
+      if (!v.active && v.votingPower !== 0) {
+        this.validators.set(v.id, { ...v, votingPower: 0 })
+      }
     }
   }
 }

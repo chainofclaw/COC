@@ -7,6 +7,8 @@ import { IpfsBlockstore } from "./ipfs-blockstore.ts"
 import { buildMerkleRoot, buildMerklePath, hashLeaf } from "./ipfs-merkle.ts"
 
 const DEFAULT_BLOCK_SIZE = 262144
+const MAX_READ_LINKS = 10_000
+const MAX_READ_SIZE = 50 * 1024 * 1024 // 50 MB
 
 export class UnixFsBuilder {
   private readonly store: IpfsBlockstore
@@ -61,14 +63,24 @@ export class UnixFsBuilder {
       return unixfs.data ?? new Uint8Array()
     }
 
+    if (rootNode.Links.length > MAX_READ_LINKS) {
+      throw new Error(`too many DAG links: ${rootNode.Links.length} (max ${MAX_READ_LINKS})`)
+    }
+
     const parts: Uint8Array[] = []
+    let totalSize = 0
     for (const link of rootNode.Links) {
       const cid = link.Hash?.toString()
       if (!cid) continue
       const leaf = await this.store.get(cid)
       const leafNode = dagPB.decode(leaf.bytes)
       const leafFs = UnixFS.unmarshal(leafNode.Data ?? new Uint8Array())
-      parts.push(leafFs.data ?? new Uint8Array())
+      const chunk = leafFs.data ?? new Uint8Array()
+      totalSize += chunk.length
+      if (totalSize > MAX_READ_SIZE) {
+        throw new Error(`readFile exceeds max size: ${totalSize} > ${MAX_READ_SIZE}`)
+      }
+      parts.push(chunk)
     }
 
     return concat(parts)

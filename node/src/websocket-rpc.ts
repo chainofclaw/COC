@@ -315,11 +315,21 @@ export class WsRpcServer {
         result,
       })
     } catch (err) {
-      this.send(ws, {
-        jsonrpc: "2.0",
-        id: payload.id ?? null,
-        error: { code: -32603, message: err instanceof Error ? err.message : "internal error" },
-      })
+      // Support structured RPC errors (e.g. { code, message } from dispatch/handleRpcMethod)
+      if (err && typeof err === "object" && "code" in err && "message" in err) {
+        const rpcErr = err as { code: number; message: string }
+        this.send(ws, {
+          jsonrpc: "2.0",
+          id: payload.id ?? null,
+          error: { code: rpcErr.code, message: rpcErr.message },
+        })
+      } else {
+        this.send(ws, {
+          jsonrpc: "2.0",
+          id: payload.id ?? null,
+          error: { code: -32603, message: err instanceof Error ? err.message : "internal error" },
+        })
+      }
     }
   }
 
@@ -328,6 +338,12 @@ export class WsRpcServer {
     "coc_voteProposal",
     "admin_addPeer",
     "admin_removePeer",
+    "eth_newFilter",
+    "eth_newBlockFilter",
+    "eth_newPendingTransactionFilter",
+    "eth_getFilterChanges",
+    "eth_getFilterLogs",
+    "eth_uninstallFilter",
   ])
 
   private async dispatch(ws: WebSocket, method: string, params: unknown[]): Promise<unknown> {

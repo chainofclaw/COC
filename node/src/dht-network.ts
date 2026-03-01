@@ -11,6 +11,7 @@
 import fs from "node:fs"
 import path from "node:path"
 import net from "node:net"
+import nodeCrypto from "node:crypto"
 import { RoutingTable, ALPHA, K, sortByDistance, parseHostPort } from "./dht.ts"
 import type { DhtPeer } from "./dht.ts"
 import { WireClient } from "./wire-client.ts"
@@ -159,22 +160,31 @@ export class DhtNetwork {
       for (const result of results) {
         if (result.status !== "fulfilled") continue
         for (const newPeer of result.value) {
-          if (newPeer.id === this.cfg.localId) continue
-          if (!found.has(newPeer.id)) {
-            found.set(newPeer.id, newPeer)
-            // Verify peer before adding to routing table
-            // Skip verification for peers returned from connected clients (already verified)
-            const hasConnectedClient = !!(
-              this.cfg.wireClientByPeerId?.get(newPeer.id)?.isConnected() ||
-              this.cfg.wireClients.find((c) => c.getRemoteNodeId() === newPeer.id && c.isConnected())
-            )
-            const reachable = hasConnectedClient || await this.verifyPeer(newPeer)
-            if (reachable) {
-              await this.routingTable.addPeer(newPeer)
-              this.cfg.onPeerDiscovered(newPeer)
-            }
-            improved = true
+          const peerId = String(newPeer.id ?? "").toLowerCase()
+          if (peerId === this.cfg.localId.toLowerCase()) continue
+          if (!isValidNodeId(peerId)) continue
+          if (!newPeer.address || typeof newPeer.address !== "string") continue
+
+          const normalizedPeer: DhtPeer = {
+            id: peerId,
+            address: newPeer.address,
+            lastSeenMs: newPeer.lastSeenMs ?? Date.now(),
           }
+
+          if (found.has(normalizedPeer.id)) continue
+          // Verify peer before adding to candidate set / routing table.
+          // Skip verification for peers returned from connected clients (already verified).
+          const hasConnectedClient = !!(
+            this.cfg.wireClientByPeerId?.get(normalizedPeer.id)?.isConnected() ||
+            this.cfg.wireClients.find((c) => c.getRemoteNodeId() === normalizedPeer.id && c.isConnected())
+          )
+          const reachable = hasConnectedClient || await this.verifyPeer(normalizedPeer)
+          if (!reachable) continue
+
+          found.set(normalizedPeer.id, normalizedPeer)
+          await this.routingTable.addPeer(normalizedPeer)
+          this.cfg.onPeerDiscovered(normalizedPeer)
+          improved = true
         }
       }
     }
@@ -341,11 +351,10 @@ export class DhtNetwork {
   private async refresh(): Promise<void> {
     if (this.stopped) return
 
-    // Generate a random target for lookup
-    const randomBytes = new Uint8Array(32)
-    for (let i = 0; i < 32; i++) {
-      randomBytes[i] = Math.floor(Math.random() * 256)
-    }
+    // Generate a cryptographically secure random target for lookup.
+    // Math.random() is predictable; an attacker could anticipate which DHT
+    // bucket is refreshed and pre-position sybil nodes in that region.
+    const randomBytes = nodeCrypto.randomBytes(32)
     const randomId = "0x" + Array.from(randomBytes).map((b) => b.toString(16).padStart(2, "0")).join("")
 
     log.debug("DHT refresh lookup", { tableSize: this.routingTable.size() })
@@ -407,9 +416,14 @@ export class DhtNetwork {
       const peers = JSON.parse(data) as Array<{ id: string; address: string; lastSeenMs?: number }>
 
       if (!Array.isArray(peers)) return 0
+      // Validate peer entries: must have non-empty id and address strings
+      const valid = peers.filter((p) =>
+        p && typeof p.id === "string" && p.id.length > 0
+        && typeof p.address === "string" && p.address.length > 0
+      )
       // Filter out stale peers (not seen in 24h)
       const now = Date.now()
-      const fresh = peers.filter((p) => {
+      const fresh = valid.filter((p) => {
         if (!p.lastSeenMs) return true // unknown age — keep
         return (now - p.lastSeenMs) < STALE_PEER_THRESHOLD_MS
       })
@@ -442,4 +456,10 @@ export class DhtNetwork {
       verifyFallbackTcpFailures: this.verifyFallbackTcpFailures,
     }
   }
+}
+
+function isValidNodeId(id: string): boolean {
+  if (!id.startsWith("0x")) return false
+  if (id.length < 3 || id.length > 66) return false
+  return /^[0-9a-f]+$/i.test(id.slice(2))
 }

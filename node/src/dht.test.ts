@@ -168,6 +168,19 @@ describe("RoutingTable", () => {
     assert.equal(added, K) // only K accepted
   })
 
+  it("applies per-IP limit across IPv4 and mapped IPv6 aliases", async () => {
+    const rt = new RoutingTable("0x" + "00".repeat(32))
+    const ids = [1, 2, 3].map((n) => "0x80" + n.toString(16).padStart(62, "0"))
+
+    const add1 = await rt.addPeer(makePeer(ids[0], "192.0.2.10:9001"))
+    const add2 = await rt.addPeer(makePeer(ids[1], "[::ffff:192.0.2.10]:9002"))
+    const add3 = await rt.addPeer(makePeer(ids[2], "192.0.2.10:9003"))
+
+    assert.equal(add1, true)
+    assert.equal(add2, true)
+    assert.equal(add3, false, "third alias of same IP should hit per-IP bucket limit")
+  })
+
   it("evicts unreachable oldest peer via ping-evict", async () => {
     const rt = new RoutingTable("0x" + "00".repeat(32), {
       pingPeer: async () => false, // oldest peer always unreachable

@@ -10,6 +10,7 @@
 import type { TxReceipt, EvmChain, EvmLog } from "./evm.ts"
 import { Mempool } from "./mempool.ts"
 import { hashBlockPayload, validateBlockLink, zeroHash } from "./hash.ts"
+import { keccak256Hex } from "../../services/relayer/keccak256.ts"
 import type { ChainBlock, Hex, MempoolTx } from "./blockchain-types.ts"
 import { Transaction } from "ethers"
 import type { NodeSigner, SignatureVerifier } from "./crypto/signer.ts"
@@ -273,7 +274,19 @@ export class PersistentChainEngine {
 
     // Duplicate block detection (inside guard to prevent TOCTOU race)
     const existing = await this.blockIndex.getBlockByHash(block.hash)
-    if (existing) return
+    if (existing) {
+      // Allow trusted local path (BFT finalize callback) to promote finality metadata.
+      if (locallyProposed && block.bftFinalized && !existing.bftFinalized) {
+        existing.bftFinalized = true
+        const tip = await this.getTip()
+        if (tip?.hash === existing.hash) {
+          await this.blockIndex.putBlock(existing)
+        } else {
+          await this.blockIndex.updateBlock(existing)
+        }
+      }
+      return
+    }
 
     const prev = await this.getTip()
     if (!validateBlockLink(prev ?? null, block)) {
@@ -292,6 +305,11 @@ export class PersistentChainEngine {
       if (block.timestampMs > Date.now() + MAX_FUTURE_MS) {
         throw new Error("block timestamp too far in the future")
       }
+    }
+
+    const weightError = this.cumulativeWeightValidationError(prev, block)
+    if (weightError) {
+      throw new Error(weightError)
     }
 
     // Verify proposer signature based on enforcement mode
@@ -409,6 +427,9 @@ export class PersistentChainEngine {
 
     // Store cumulative gas used for baseFee calculation
     block.gasUsed = totalGasUsed
+    // Never trust remote/non-hash metadata from gossip. Finality is local-state derived.
+    block.finalized = false
+    block.bftFinalized = locallyProposed && block.bftFinalized === true
 
     // Commit state trie and attach stateRoot to block header
     if (this.stateTrie) {
@@ -486,6 +507,10 @@ export class PersistentChainEngine {
 
     const currentHeight = await this.getHeight()
     if (BigInt(incomingTip.number) <= currentHeight) return false
+    const snapshotStartHeight = BigInt(blocks[0].number)
+    // SnapSync block import is append-only to avoid stale hash-index residue
+    // from overwriting existing heights without full reindex/replay.
+    if (snapshotStartHeight <= currentHeight) return false
 
     // Verify internal chain integrity (hashes, parent links); skip proposer
     // check because historical blocks may reference validators no longer active
@@ -493,14 +518,19 @@ export class PersistentChainEngine {
       return false
     }
 
-    // Write blocks directly to block index — no tx re-execution needed
+    // Write blocks directly to block index — no tx re-execution needed.
+    // Recompute depth-finality locally; never trust remote finalized/bftFinalized flags.
+    const depth = BigInt(Math.max(1, this.cfg.finalityDepth))
+    const tipHeight = BigInt(incomingTip.number)
     for (const block of blocks) {
+      const blockNum = BigInt(block.number)
       const normalized: ChainBlock = {
         ...block,
-        number: BigInt(block.number),
+        number: blockNum,
         timestampMs: Number(block.timestampMs),
         txs: [...block.txs],
-        finalized: Boolean(block.finalized),
+        finalized: tipHeight >= blockNum + depth,
+        bftFinalized: false,
         ...(block.baseFee !== undefined ? { baseFee: BigInt(block.baseFee) } : {}),
         ...(block.gasUsed !== undefined ? { gasUsed: BigInt(block.gasUsed) } : {}),
         ...(block.cumulativeWeight !== undefined ? { cumulativeWeight: BigInt(block.cumulativeWeight) } : {}),
@@ -548,6 +578,11 @@ export class PersistentChainEngine {
         if (Number(block.timestampMs) <= Number(prev.timestampMs)) return false
       }
 
+      const prev = i > 0 ? blocks[i - 1] : undefined
+      if (!this.hasValidSnapshotWeight(prev, block)) {
+        return false
+      }
+
       // Verify proposer is in validator set (skip for SnapSync — historical validators may differ)
       if (!skipProposerCheck && validators.length > 0 && !validators.includes(block.proposer)) {
         return false
@@ -577,12 +612,7 @@ export class PersistentChainEngine {
 
     // Accumulate cumulative weight using proposer stake
     const parentWeight = tip?.cumulativeWeight ?? 0n
-    let proposerStake = 1n
-    if (this.governance) {
-      const active = this.governance.getActiveValidators()
-      const self = active.find((v) => v.id === this.cfg.nodeId)
-      if (self) proposerStake = self.stake
-    }
+    const proposerStake = this.getValidatorStake(this.cfg.nodeId)
     const cumulativeWeight = parentWeight + proposerStake
 
     const hash = hashBlockPayload({
@@ -668,6 +698,51 @@ export class PersistentChainEngine {
       await this.applyBlock(normalized)
     }
   }
+
+  private getValidatorStake(validatorId: string): bigint {
+    if (!this.governance) return 1n
+    const active = this.governance.getActiveValidators()
+    const validator = active.find((v) => v.id === validatorId)
+    return validator?.stake ?? 1n
+  }
+
+  private cumulativeWeightValidationError(prev: ChainBlock | null, block: ChainBlock): string | null {
+    if (block.cumulativeWeight === undefined) {
+      if (prev?.cumulativeWeight !== undefined) {
+        return "block missing cumulativeWeight after weighted chain activation"
+      }
+      return null
+    }
+
+    let expectedWeight: bigint
+    if (this.governance) {
+      const parentWeight = prev?.cumulativeWeight ?? 0n
+      expectedWeight = parentWeight + this.getValidatorStake(block.proposer)
+    } else {
+      expectedWeight = BigInt(block.number)
+    }
+
+    if (block.cumulativeWeight !== expectedWeight) {
+      return `invalid cumulativeWeight: expected ${expectedWeight}, got ${block.cumulativeWeight}`
+    }
+    return null
+  }
+
+  private hasValidSnapshotWeight(prev: ChainBlock | undefined, block: ChainBlock): boolean {
+    if (block.cumulativeWeight === undefined) {
+      return prev?.cumulativeWeight === undefined
+    }
+
+    if (!this.governance) {
+      return block.cumulativeWeight === BigInt(block.number)
+    }
+
+    if (!prev || prev.cumulativeWeight === undefined) {
+      return block.cumulativeWeight > 0n
+    }
+
+    return block.cumulativeWeight > prev.cumulativeWeight
+  }
 }
 
 /**
@@ -689,8 +764,9 @@ function stakeWeightedProposer(validators: ValidatorInfo[], blockHeight: bigint)
     return sorted[idx].id
   }
 
-  // Deterministic seed from block height
-  const seed = blockHeight % totalStake
+  // Hash block height to produce well-distributed seed (raw modulo fails when totalStake >> blockHeight)
+  const hashHex = keccak256Hex(Buffer.from(blockHeight.toString(), "utf8"))
+  const seed = BigInt("0x" + hashHex) % totalStake
 
   // Walk cumulative stakes to find proposer
   let cumulative = 0n

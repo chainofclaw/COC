@@ -25,6 +25,7 @@ const MAX_FILTERS = 1000
 const FILTER_TTL_MS = 5 * 60 * 1000 // 5 minutes
 const CHAIN_STATS_CACHE_TTL_MS = 5_000
 let chainStatsCache: { result: unknown; height: bigint; cachedAtMs: number } | null = null
+let chainStatsComputing: Promise<unknown> | null = null
 
 function cleanupExpiredFilters(filters: Map<string, PendingFilter>): void {
   const now = Date.now()
@@ -417,10 +418,7 @@ async function handleRpc(
       const tag = String((payload.params ?? [])[0] ?? "latest")
       const includeTx = Boolean((payload.params ?? [])[1])
       const currentHeight = await Promise.resolve(chain.getHeight())
-      const number = tag === "latest" ? currentHeight
-        : tag === "earliest" ? 0n
-        : tag === "pending" ? currentHeight
-        : safeBigInt(tag)
+      const number = parseBlockTag(tag, currentHeight)
       const block = await Promise.resolve(chain.getBlockByNumber(number))
       return formatBlock(block, includeTx, chain, evm)
     }
@@ -488,7 +486,8 @@ async function handleRpc(
     }
     case "eth_getLogs": {
       const query = ((payload.params ?? [])[0] ?? {}) as Record<string, unknown>
-      return await queryLogs(chain, query)
+      const logsHeight = await Promise.resolve(chain.getHeight())
+      return await queryLogs(chain, query, logsHeight)
     }
     case "eth_newFilter": {
       if (filters.size >= MAX_FILTERS) {
@@ -497,8 +496,8 @@ async function handleRpc(
       }
       const query = ((payload.params ?? [])[0] ?? {}) as Record<string, unknown>
       const id = `0x${randomBytes(16).toString("hex")}`
-      const fromBlock = parseBlockTag(query.fromBlock, 0n)
       const newFilterHeight = await Promise.resolve(chain.getHeight())
+      const fromBlock = parseBlockTag(query.fromBlock, newFilterHeight)
       const toBlock = query.toBlock !== undefined ? parseBlockTag(query.toBlock, newFilterHeight) : undefined
       const filter: PendingFilter = {
         id,
@@ -519,6 +518,8 @@ async function handleRpc(
       const start = filter.lastCursor + 1n
       const filterHeight = await Promise.resolve(chain.getHeight())
       const end = filter.toBlock ?? filterHeight
+      // Skip if cursor has already passed the end (e.g. toBlock reached)
+      if (start > end) { return [] }
       // Cap scan range to prevent DoS from long-idle filters
       const cappedEnd = (end - start > MAX_LOG_BLOCK_RANGE) ? start + MAX_LOG_BLOCK_RANGE : end
       const logs = await collectLogs(chain, start, cappedEnd, filter)
@@ -656,7 +657,7 @@ async function handleRpc(
     case "eth_getBlockTransactionCountByNumber": {
       const tag = String((payload.params ?? [])[0] ?? "latest")
       const height = await Promise.resolve(chain.getHeight())
-      const num = tag === "latest" ? height : tag === "earliest" ? 0n : tag === "pending" ? height : safeBigInt(tag)
+      const num = parseBlockTag(tag, height)
       const block = await Promise.resolve(chain.getBlockByNumber(num))
       return block ? `0x${block.txs.length.toString(16)}` : null
     }
@@ -687,7 +688,7 @@ async function handleRpc(
       const tag = String((payload.params ?? [])[0] ?? "latest")
       const txIdx = Number((payload.params ?? [])[1] ?? 0)
       const height = await Promise.resolve(chain.getHeight())
-      const num = tag === "latest" ? height : tag === "earliest" ? 0n : tag === "pending" ? height : safeBigInt(tag)
+      const num = parseBlockTag(tag, height)
       const block = await Promise.resolve(chain.getBlockByNumber(num))
       if (!block || txIdx >= block.txs.length) return null
       const rawTx = block.txs[txIdx]
@@ -718,14 +719,14 @@ async function handleRpc(
       return "0x41" // 65
     case "eth_feeHistory": {
       const rawBlockCount = Number((payload.params ?? [])[0] ?? 1)
-      const blockCount = Number.isFinite(rawBlockCount) && rawBlockCount > 0 ? Math.floor(rawBlockCount) : 1
+      const blockCount = Number.isFinite(rawBlockCount) && rawBlockCount >= 1 ? Math.floor(rawBlockCount) : 1
       const newestBlock = String((payload.params ?? [])[1] ?? "latest")
       const rewardPercentiles = ((payload.params ?? [])[2] ?? []) as number[]
       if (rewardPercentiles.length > 100) {
         throw { code: -32602, message: `rewardPercentiles array too large: ${rewardPercentiles.length} (max 100)` }
       }
       const height = await Promise.resolve(chain.getHeight())
-      const newest = newestBlock === "latest" ? height : safeBigInt(newestBlock)
+      const newest = parseBlockTag(newestBlock, height)
       const count = Math.min(blockCount, Number(newest), 1024)
       const baseFees: string[] = []
       const gasUsedRatios: number[] = []
@@ -811,7 +812,7 @@ async function handleRpc(
     case "eth_getBlockReceipts": {
       const tag = String((payload.params ?? [])[0] ?? "latest")
       const height = await Promise.resolve(chain.getHeight())
-      const num = tag === "latest" ? height : tag === "earliest" ? 0n : tag === "pending" ? height : safeBigInt(tag)
+      const num = parseBlockTag(tag, height)
       const block = await Promise.resolve(chain.getBlockByNumber(num))
       if (!block) return null
       const receipts: unknown[] = []
@@ -882,7 +883,7 @@ async function handleRpc(
       const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 10_000) : 50
       const reverse = (payload.params ?? [])[2] !== false
       const rawOffset = Number((payload.params ?? [])[3] ?? 0)
-      const offset = Number.isFinite(rawOffset) ? Math.max(rawOffset, 0) : 0
+      const offset = Number.isFinite(rawOffset) ? Math.min(Math.max(rawOffset, 0), 100_000) : 0
 
       if (typeof chain.getTransactionsByAddress === "function") {
         const txs = await chain.getTransactionsByAddress(addr, { limit, reverse, offset })
@@ -1189,40 +1190,45 @@ async function handleRpc(
       if (chainStatsCache && chainStatsCache.height === height && now - chainStatsCache.cachedAtMs < CHAIN_STATS_CACHE_TTL_MS) {
         return chainStatsCache.result
       }
-      const latest = await Promise.resolve(chain.getBlockByNumber(height))
-      const poolStats = chain.mempool.stats()
-      const validators = hasConfig(chain) ? chain.cfg.validators : []
+      // Thundering herd protection: coalesce concurrent requests
+      if (chainStatsComputing) return await chainStatsComputing
+      chainStatsComputing = (async () => {
+        const latest = await Promise.resolve(chain.getBlockByNumber(height))
+        const poolStats = chain.mempool.stats()
+        const validators = hasConfig(chain) ? chain.cfg.validators : []
 
-      // Calculate blocks per minute from last 10 blocks
-      let blocksPerMin = 0
-      if (height > 1n) {
-        const lookback = height > 10n ? 10n : height
-        const oldBlock = await Promise.resolve(chain.getBlockByNumber(height - lookback + 1n))
-        if (oldBlock && latest) {
-          const elapsed = (latest.timestampMs - oldBlock.timestampMs) / 1000
-          blocksPerMin = elapsed > 0 ? Number(lookback) / elapsed * 60 : 0
+        // Calculate blocks per minute from last 10 blocks
+        let blocksPerMin = 0
+        if (height > 1n) {
+          const lookback = height > 10n ? 10n : height
+          const oldBlock = await Promise.resolve(chain.getBlockByNumber(height - lookback + 1n))
+          if (oldBlock && latest) {
+            const elapsed = (latest.timestampMs - oldBlock.timestampMs) / 1000
+            blocksPerMin = elapsed > 0 ? Number(lookback) / elapsed * 60 : 0
+          }
         }
-      }
 
-      // Count total txs from last 100 blocks
-      let recentTxCount = 0
-      const scanFrom = height > 100n ? height - 99n : 1n
-      for (let i = scanFrom; i <= height; i++) {
-        const b = await Promise.resolve(chain.getBlockByNumber(i))
-        if (b) recentTxCount += b.txs.length
-      }
+        // Count total txs from last 100 blocks
+        let recentTxCount = 0
+        const scanFrom = height > 100n ? height - 99n : 1n
+        for (let i = scanFrom; i <= height; i++) {
+          const b = await Promise.resolve(chain.getBlockByNumber(i))
+          if (b) recentTxCount += b.txs.length
+        }
 
-      const statsResult = {
-        blockHeight: `0x${height.toString(16)}`,
-        latestBlockTime: latest?.timestampMs ?? 0,
-        blocksPerMinute: Math.round(blocksPerMin * 100) / 100,
-        pendingTxCount: poolStats.size,
-        recentTxCount,
-        validatorCount: validators.length,
-        chainId: `0x${hasConfig(chain) ? chain.cfg.chainId.toString(16) : "1"}`,
-      }
-      chainStatsCache = { result: statsResult, height, cachedAtMs: now }
-      return statsResult
+        const statsResult = {
+          blockHeight: `0x${height.toString(16)}`,
+          latestBlockTime: latest?.timestampMs ?? 0,
+          blocksPerMinute: Math.round(blocksPerMin * 100) / 100,
+          pendingTxCount: poolStats.size,
+          recentTxCount,
+          validatorCount: validators.length,
+          chainId: `0x${hasConfig(chain) ? chain.cfg.chainId.toString(16) : "1"}`,
+        }
+        chainStatsCache = { result: statsResult, height, cachedAtMs: now }
+        return statsResult
+      })().finally(() => { chainStatsComputing = null })
+      return await chainStatsComputing
     }
     case "coc_getContracts": {
       if (hasBlockIndex(chain)) {
@@ -1321,10 +1327,14 @@ async function handleRpc(
 }
 
 function safeBigInt(input: string): bigint {
+  // Reject oversized inputs to prevent BigInt parsing DoS (O(n²) for huge decimal strings)
+  if (typeof input !== "string" || input.length > 78) {
+    throw { code: -32602, message: "invalid block number: input too large" }
+  }
   try {
     return BigInt(input)
   } catch {
-    throw { code: -32602, message: `invalid block number: ${input}` }
+    throw { code: -32602, message: `invalid block number: ${input.slice(0, 40)}` }
   }
 }
 
@@ -1332,7 +1342,9 @@ function parseBlockTag(input: unknown, fallback: bigint): bigint {
   if (typeof input === "string") {
     if (input === "latest" || input === "pending" || input === "safe" || input === "finalized") return fallback
     if (input === "earliest") return 0n
-    return safeBigInt(input)
+    const n = safeBigInt(input)
+    if (n < 0n) throw { code: -32602, message: `invalid block number: ${input}` }
+    return n
   }
   return fallback
 }
@@ -1421,9 +1433,9 @@ async function formatBlock(block: Awaited<ReturnType<IChainEngine["getBlockByNum
 const MAX_LOG_BLOCK_RANGE = 10_000n
 const MAX_LOG_RESULTS = 10_000
 
-async function queryLogs(chain: IChainEngine, query: Record<string, unknown>): Promise<unknown[]> {
-  const height = await Promise.resolve(chain.getHeight())
-  const fromBlock = parseBlockTag(query.fromBlock, 0n)
+async function queryLogs(chain: IChainEngine, query: Record<string, unknown>, resolvedHeight?: bigint): Promise<unknown[]> {
+  const height = resolvedHeight ?? await Promise.resolve(chain.getHeight())
+  const fromBlock = parseBlockTag(query.fromBlock, height)
   const toBlock = parseBlockTag(query.toBlock, height)
 
   // Enforce block range limit to prevent resource exhaustion

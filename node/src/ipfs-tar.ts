@@ -17,6 +17,9 @@ export interface TarEntry {
  * Create a single tar entry (header + data + padding).
  */
 export function createTarEntry(entry: TarEntry): Uint8Array {
+  if (/^\/|[\\]|\.\./.test(entry.name) || entry.name.includes("\0")) {
+    throw new Error(`unsafe tar entry name: ${entry.name}`)
+  }
   const header = buildHeader(entry.name, entry.data.length)
   const dataBlocks = Math.ceil(entry.data.length / BLOCK_SIZE)
   const paddedSize = dataBlocks * BLOCK_SIZE

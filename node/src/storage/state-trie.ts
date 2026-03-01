@@ -111,6 +111,7 @@ class TrieDBAdapter {
 }
 
 const DEFAULT_MAX_CACHED_TRIES = 128
+const DEFAULT_MAX_ACCOUNT_CACHE = 10_000
 
 export class PersistentStateTrie implements IStateTrie {
   private trie: Trie
@@ -120,13 +121,15 @@ export class PersistentStateTrie implements IStateTrie {
   private dirtyAddresses = new Set<string>() // Dirty tracking for commit
   private accountCache = new Map<string, AccountState | null>() // Read cache
   private readonly maxCachedTries: number
+  private readonly maxAccountCache: number
   private lastStateRoot: string | null = null
 
   private trieDb: TrieDBAdapter
 
-  constructor(db: IDatabase, opts?: { maxCachedTries?: number }) {
+  constructor(db: IDatabase, opts?: { maxCachedTries?: number; maxAccountCache?: number }) {
     this.db = db
     this.maxCachedTries = opts?.maxCachedTries ?? DEFAULT_MAX_CACHED_TRIES
+    this.maxAccountCache = opts?.maxAccountCache ?? DEFAULT_MAX_ACCOUNT_CACHE
     this.trieDb = new TrieDBAdapter(db)
     this.trie = new Trie({ db: this.trieDb as any })
   }
@@ -157,6 +160,7 @@ export class PersistentStateTrie implements IStateTrie {
     const encoded = await this.trie.get(addressBytes)
 
     if (!encoded) {
+      this.evictAccountCache()
       this.accountCache.set(address, null)
       return null
     }
@@ -170,6 +174,7 @@ export class PersistentStateTrie implements IStateTrie {
       storageRoot: json.storageRoot,
       codeHash: json.codeHash,
     }
+    this.evictAccountCache()
     this.accountCache.set(address, state)
     return state
   }
@@ -398,6 +403,14 @@ export class PersistentStateTrie implements IStateTrie {
     this.storageTrieAccess.length = 0
     this.accountCache.clear()
     this.dirtyAddresses.clear()
+  }
+
+  private evictAccountCache(): void {
+    while (this.accountCache.size >= this.maxAccountCache) {
+      const oldest = this.accountCache.keys().next().value
+      if (oldest === undefined) break
+      this.accountCache.delete(oldest)
+    }
   }
 
   private async getStorageTrie(address: string, storageRoot: string): Promise<Trie> {

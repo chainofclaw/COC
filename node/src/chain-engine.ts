@@ -11,6 +11,25 @@ import { createLogger } from "./logger.ts"
 
 const log = createLogger("chain-engine")
 
+function uniformWeightValidationError(
+  prev: ChainBlock | null | undefined,
+  block: ChainBlock,
+): string | null {
+  if (block.cumulativeWeight === undefined) {
+    if (prev?.cumulativeWeight !== undefined) {
+      return "block missing cumulativeWeight after weighted chain activation"
+    }
+    return null
+  }
+
+  // Non-governance engine uses uniform +1 weight, so cumulativeWeight must equal block height.
+  const expectedWeight = BigInt(block.number)
+  if (block.cumulativeWeight !== expectedWeight) {
+    return `invalid cumulativeWeight: expected ${expectedWeight}, got ${block.cumulativeWeight}`
+  }
+  return null
+}
+
 export interface ChainEngineConfig {
   dataDir: string
   nodeId: string
@@ -156,17 +175,27 @@ export class ChainEngine {
   }
 
   async applyBlock(block: ChainBlock, locallyProposed = false): Promise<void> {
-    // Duplicate block detection
-    if (this.blocks.some((b) => b.hash === block.hash)) {
-      return // already applied, skip silently
-    }
-
     // Re-entrant guard (async EVM execution can yield back to event loop)
     if (this.applyingBlock) {
       throw new Error("applyBlock re-entrant call detected")
     }
     this.applyingBlock = true
     try {
+
+    // Duplicate block detection (inside guard to prevent TOCTOU race)
+    const existing = this.blocks.find((b) => b.hash === block.hash)
+    if (existing) {
+      // Allow trusted local path (BFT finalize callback) to promote finality metadata.
+      if (locallyProposed && block.bftFinalized && !existing.bftFinalized) {
+        existing.bftFinalized = true
+        try {
+          await this.storage.save(this.makeSnapshot())
+        } catch {
+          // best-effort metadata persistence
+        }
+      }
+      return // already applied, skip silently
+    }
 
     const prev = this.getTip()
     if (!validateBlockLink(prev, block)) {
@@ -200,6 +229,11 @@ export class ChainEngine {
       if (block.timestampMs > Date.now() + MAX_FUTURE_MS) {
         throw new Error("block timestamp too far in the future")
       }
+    }
+
+    const weightError = uniformWeightValidationError(prev, block)
+    if (weightError) {
+      throw new Error(weightError)
     }
 
     const expectedHash = hashBlockPayload({
@@ -240,6 +274,9 @@ export class ChainEngine {
 
     // Store cumulative gas used for baseFee calculation
     block.gasUsed = totalGasUsed
+    // Never trust remote/non-hash metadata from gossip. Finality is local-state derived.
+    block.finalized = false
+    block.bftFinalized = locallyProposed && block.bftFinalized === true
 
     this.blocks.push(block)
     this.receiptsByBlock.set(block.number, receipts)
@@ -340,6 +377,11 @@ export class ChainEngine {
         if (Number(block.timestampMs) <= Number(prev.timestampMs)) return false
       }
 
+      const prev = i > 0 ? blocks[i - 1] : undefined
+      if (uniformWeightValidationError(prev, block)) {
+        return false
+      }
+
       // Verify proposer is in validator set
       if (this.cfg.validators.length > 0 && !this.cfg.validators.includes(block.proposer)) {
         return false
@@ -397,12 +439,12 @@ export class ChainEngine {
   private updateFinalityFlags(): void {
     const depth = BigInt(Math.max(1, this.cfg.finalityDepth))
     const tip = this.getHeight()
-    // Only scan from the finality boundary backwards to avoid O(n) full scan
-    const boundary = tip >= depth ? tip - depth : 0n
-    for (let i = this.blocks.length - 1; i >= 0; i--) {
-      const block = this.blocks[i]
-      if (block.finalized) break
-      block.finalized = tip >= block.number + depth
+    const newlyFinalBlock = tip - depth
+    if (newlyFinalBlock < 1n) return
+    const idx = Number(newlyFinalBlock - 1n)
+    const block = this.blocks[idx]
+    if (block && !block.finalized) {
+      block.finalized = true
     }
   }
 

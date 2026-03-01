@@ -288,6 +288,7 @@ export function handlePoseRequest(
   let bodySize = 0
   let aborted = false
   req.on("data", (chunk: Buffer | string) => {
+    if (aborted) return
     bodySize += typeof chunk === "string" ? chunk.length : chunk.byteLength
     if (bodySize > MAX_POSE_BODY) {
       aborted = true
@@ -484,7 +485,9 @@ async function isChallengerAllowed(
 }
 
 function stableStringify(value: unknown): string {
-  if (typeof value === "bigint") return value.toString()
+  if (typeof value === "bigint") {
+    return JSON.stringify(value.toString())
+  }
   if (value === null || typeof value !== "object") {
     return JSON.stringify(value)
   }

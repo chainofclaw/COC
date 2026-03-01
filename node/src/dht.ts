@@ -5,6 +5,7 @@
  * Each bucket holds up to K peers at a specific distance range.
  */
 
+import { isIP } from "node:net"
 import { createLogger } from "./logger.ts"
 
 const log = createLogger("dht")
@@ -32,11 +33,14 @@ export function xorDistance(a: string, b: string): bigint {
   const aBuf = hexToBytes(a)
   const bBuf = hexToBytes(b)
   const len = Math.max(aBuf.length, bBuf.length)
+  // Left-pad shorter buffer with zeros so both are aligned at the MSB end
+  const aOff = len - aBuf.length
+  const bOff = len - bBuf.length
   let result = 0n
 
   for (let i = 0; i < len; i++) {
-    const aByte = i < aBuf.length ? aBuf[i] : 0
-    const bByte = i < bBuf.length ? bBuf[i] : 0
+    const aByte = i >= aOff ? aBuf[i - aOff] : 0
+    const bByte = i >= bOff ? bBuf[i - bOff] : 0
     result = (result << 8n) | BigInt(aByte ^ bByte)
   }
 
@@ -110,14 +114,15 @@ export class RoutingTable {
     }
 
     // Sybil protection: limit peers from the same IP within this bucket (skip loopback)
-    const peerIp = extractHost(peer.address)
-    if (!peerIp.startsWith("127.") && peerIp !== "::1" && peerIp !== "localhost") {
-      let sameIpInBucket = 0
+    const peerHost = normalizeHostForBucket(extractHost(peer.address))
+    if (!isLoopbackHost(peerHost)) {
+      let sameHostInBucket = 0
       for (const p of bucket.peers) {
-        if (extractHost(p.address) === peerIp) sameIpInBucket++
+        const existingHost = normalizeHostForBucket(extractHost(p.address))
+        if (existingHost === peerHost) sameHostInBucket++
       }
-      if (sameIpInBucket >= MAX_PEERS_PER_IP_PER_BUCKET) {
-        log.debug("per-IP bucket limit reached, dropping peer", { ip: peerIp, bucket: idx, peerId: peer.id })
+      if (sameHostInBucket >= MAX_PEERS_PER_IP_PER_BUCKET) {
+        log.debug("per-IP bucket limit reached, dropping peer", { ip: peerHost, bucket: idx, peerId: peer.id })
         return false
       }
     }
@@ -131,17 +136,27 @@ export class RoutingTable {
     // Bucket full — ping the oldest peer if callback is available
     if (this.pingPeer) {
       const oldest = bucket.peers[0]
+      const oldestId = oldest.id
       const alive = await this.pingPeer(oldest)
-      if (!alive) {
-        // Evict unreachable oldest peer, add new peer at tail
-        bucket.peers.shift()
+      // Re-locate oldest by ID after async ping (bucket may have changed during await)
+      const pos = bucket.peers.findIndex((p) => p.id === oldestId)
+      if (pos < 0) {
+        // Oldest was removed during ping — bucket may have space now
+        if (bucket.peers.length < K) {
+          bucket.peers.push({ ...peer, lastSeenMs: Date.now() })
+          return true
+        }
+      } else if (!alive) {
+        // Evict unreachable peer, add new peer at tail
+        bucket.peers.splice(pos, 1)
         bucket.peers.push({ ...peer, lastSeenMs: Date.now() })
-        log.debug("bucket full, evicted unreachable peer", { idx, evicted: oldest.id, added: peer.id })
+        log.debug("bucket full, evicted unreachable peer", { idx, evicted: oldestId, added: peer.id })
         return true
+      } else {
+        // Oldest peer responded — move it to tail, reject new peer
+        bucket.peers.splice(pos, 1)
+        bucket.peers.push({ ...oldest, lastSeenMs: Date.now() })
       }
-      // Oldest peer responded — move it to tail, reject new peer
-      bucket.peers.shift()
-      bucket.peers.push({ ...oldest, lastSeenMs: Date.now() })
     }
 
     log.debug("bucket full, dropping peer", { idx, peerId: peer.id })
@@ -218,10 +233,18 @@ export class RoutingTable {
   async importPeers(peers: Array<{ id: string; address: string; lastSeenMs?: number }>): Promise<number> {
     let added = 0
     for (const p of peers) {
+      // Validate ID format (must be 0x-prefixed hex, reasonable length)
+      if (typeof p.id !== "string" || !p.id.startsWith("0x") || p.id.length < 3 || p.id.length > 66) continue
+      if (!/^[0-9a-fA-F]+$/.test(p.id.slice(2))) continue
+      // Validate address is parseable as host:port
+      if (typeof p.address !== "string" || !parseHostPort(p.address)) continue
+      // Validate timestamp is not far-future (1 minute tolerance)
+      const lastSeenMs = p.lastSeenMs ?? Date.now()
+      if (lastSeenMs < 0 || lastSeenMs > Date.now() + 60_000) continue
       const ok = await this.addPeer({
         id: p.id,
         address: p.address,
-        lastSeenMs: p.lastSeenMs ?? Date.now(),
+        lastSeenMs,
       })
       if (ok) added++
     }
@@ -287,7 +310,33 @@ export function parseHostPort(address: string): { host: string; port: number } |
   }
   const port = parseInt(portStr, 10)
   if (!host || isNaN(port) || port <= 0 || port > 65535) return null
+  // Reject trailing non-numeric chars (parseInt is lenient: "8080abc" → 8080)
+  if (portStr !== String(port)) return null
   return { host, port }
+}
+
+function normalizeHostForBucket(host: string): string {
+  let normalized = host.trim().toLowerCase()
+  if (normalized.endsWith(".")) {
+    normalized = normalized.slice(0, -1)
+  }
+
+  // Canonicalize IPv4-mapped IPv6 so 192.0.2.1 and ::ffff:192.0.2.1 count as same host.
+  if (normalized.startsWith("::ffff:")) {
+    const mapped = normalized.slice("::ffff:".length)
+    if (isIP(mapped) === 4) {
+      return mapped
+    }
+  }
+
+  return normalized
+}
+
+function isLoopbackHost(host: string): boolean {
+  if (host === "localhost" || host === "::1") return true
+  if (host.startsWith("127.")) return true
+  if (host.startsWith("::ffff:127.")) return true
+  return false
 }
 
 function hexToBytes(hex: string): Uint8Array {

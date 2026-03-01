@@ -129,6 +129,7 @@ export class BftRound {
         height: this.state.height,
         blockHash: block.hash,
         senderId: this.config.localId,
+        signature: "" as Hex, // placeholder — coordinator signs before broadcast
       }]
     }
 
@@ -167,8 +168,10 @@ export class BftRound {
         this.state.commitVotes.set(this.config.localId.toLowerCase(), blockHash)
 
         // Check if early-arriving commits already give us commit quorum (filter by blockHash)
+        // proposedBlock is guaranteed non-null here (set by handlePropose before handlePrepare)
+        const proposedHash = this.state.proposedBlock!.hash
         const commitVoters = [...this.state.commitVotes.entries()]
-          .filter(([, hash]) => !this.state.proposedBlock || hash === this.state.proposedBlock.hash)
+          .filter(([, hash]) => hash === proposedHash)
           .map(([id]) => id)
         if (hasQuorum(commitVoters, this.config.validators)) {
           this.state.phase = "finalized"
@@ -180,6 +183,7 @@ export class BftRound {
           height: this.state.height,
           blockHash,
           senderId: this.config.localId,
+          signature: "" as Hex, // placeholder — coordinator signs before broadcast
         }]
       }
     }
@@ -339,8 +343,9 @@ export class EquivocationDetector {
 
     if (existingHash && existingHash !== blockHash) {
       // Equivocation detected!
+      // Use normalizedId for consistent case-insensitive evidence matching
       const ev: EquivocationEvidence = {
-        validatorId,
+        validatorId: normalizedId,
         height,
         phase,
         blockHash1: existingHash,
@@ -372,18 +377,23 @@ export class EquivocationDetector {
     return this.evidence
   }
 
-  /** Get evidence for a specific validator */
+  /** Get evidence for a specific validator (case-insensitive match) */
   getEvidenceFor(validatorId: string): EquivocationEvidence[] {
-    return this.evidence.filter((e) => e.validatorId === validatorId)
+    const normalized = validatorId.toLowerCase()
+    return this.evidence.filter((e) => e.validatorId === normalized)
   }
 
-  /** Clear evidence older than the given height */
+  /** Clear evidence older than the given height (in-place to avoid intermediate allocation) */
   clearEvidenceBefore(height: bigint): number {
-    const before = this.evidence.length
-    const remaining = this.evidence.filter((e) => e.height >= height)
-    this.evidence.length = 0
-    this.evidence.push(...remaining)
-    return before - this.evidence.length
+    let writeIdx = 0
+    for (let i = 0; i < this.evidence.length; i++) {
+      if (this.evidence[i].height >= height) {
+        this.evidence[writeIdx++] = this.evidence[i]
+      }
+    }
+    const removed = this.evidence.length - writeIdx
+    this.evidence.length = writeIdx
+    return removed
   }
 
   private pruneOldHeights(): void {

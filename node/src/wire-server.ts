@@ -78,6 +78,7 @@ export class WireServer {
   private bytesSent = 0
   private totalConnectionsAccepted = 0
   private connectionsRejected = 0
+  private unknownFrameTypes = 0
   private readonly seenTx: BoundedSet<Hex>
   private readonly seenBlocks: BoundedSet<Hex>
   private readonly handshakeNonces = new BoundedSet<string>(10_000)
@@ -150,6 +151,7 @@ export class WireServer {
     framesReceived: number; framesSent: number
     bytesReceived: number; bytesSent: number
     seenTxSize: number; seenBlocksSize: number
+    unknownFrameTypes: number
   } {
     return {
       connections: this.connections.size,
@@ -162,6 +164,7 @@ export class WireServer {
       bytesSent: this.bytesSent,
       seenTxSize: this.seenTx.size,
       seenBlocksSize: this.seenBlocks.size,
+      unknownFrameTypes: this.unknownFrameTypes,
     }
   }
 
@@ -209,6 +212,9 @@ export class WireServer {
       socket.destroy()
     })
 
+    // Frame processing queue: process frames sequentially to avoid re-entrant
+    // applyBlock errors when multiple Block frames arrive in the same TCP segment
+    let frameQueue: Promise<void> = Promise.resolve()
     socket.on("data", (data: Buffer) => {
       this.bytesReceived += data.byteLength
       try {
@@ -216,9 +222,14 @@ export class WireServer {
         for (const frame of frames) {
           if (socket.destroyed) break
           this.framesReceived++
-          void this.handleFrame(conn, frame).catch((err) => {
-            log.warn("handleFrame error, closing connection", { remote: connId, error: String(err) })
-            socket.destroy()
+          frameQueue = frameQueue.then(async () => {
+            if (socket.destroyed) return
+            try {
+              await this.handleFrame(conn, frame)
+            } catch (err) {
+              log.warn("handleFrame error, closing connection", { remote: connId, error: String(err) })
+              socket.destroy()
+            }
           })
         }
       } catch (err) {
@@ -339,6 +350,18 @@ export class WireServer {
           }
           this.handshakeNonces.add(hs.nonce)
         }
+        // Evict existing connection with same nodeId only when verifier is active
+        // (nodeId was cryptographically authenticated). Without verifier, skip eviction
+        // to prevent attackers from spoofing nodeId to disconnect legitimate peers.
+        if (this.cfg.verifier) {
+          for (const [existingId, existingConn] of this.connections) {
+            if (existingConn.nodeId === hs.nodeId && existingConn !== conn) {
+              log.warn("duplicate nodeId, closing old connection", { nodeId: hs.nodeId, old: existingId })
+              existingConn.socket.destroy()
+              break
+            }
+          }
+        }
         conn.nodeId = hs.nodeId
         conn.handshakeComplete = true
         // Reply with ack if this was a handshake (not ack)
@@ -438,6 +461,14 @@ export class WireServer {
 
       case MessageType.Pong: {
         // latency tracking could be added here
+        break
+      }
+
+      default: {
+        // Log unknown frame types for anomaly detection (protocol mismatch,
+        // fuzzing, or future protocol version probing)
+        this.unknownFrameTypes++
+        log.warn("unknown wire frame type", { type: `0x${frame.type.toString(16)}`, peer: conn.nodeId })
         break
       }
     }

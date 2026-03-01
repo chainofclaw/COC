@@ -216,6 +216,9 @@ export function validateSnapshot(snapshot: StateSnapshot): void {
   if (!snapshot.blockHeight || typeof snapshot.blockHeight !== "string") {
     throw new Error("snapshot missing blockHeight")
   }
+  if (!snapshot.blockHash || typeof snapshot.blockHash !== "string" || !snapshot.blockHash.startsWith("0x")) {
+    throw new Error("snapshot missing or invalid blockHash")
+  }
   if (!Array.isArray(snapshot.accounts)) {
     throw new Error("snapshot missing accounts array")
   }
@@ -223,15 +226,21 @@ export function validateSnapshot(snapshot: StateSnapshot): void {
     throw new Error(`snapshot too large: ${snapshot.accounts.length} accounts (max ${MAX_SNAPSHOT_ACCOUNTS})`)
   }
   for (const acc of snapshot.accounts) {
-    if (!acc.address || typeof acc.address !== "string") {
-      throw new Error("account missing address")
+    if (!acc.address || typeof acc.address !== "string" || !acc.address.startsWith("0x")) {
+      throw new Error("account has invalid address format")
     }
     if (typeof acc.nonce !== "string" || typeof acc.balance !== "string") {
       throw new Error(`account ${acc.address} has invalid nonce/balance`)
     }
-    // Validate numeric format before BigInt conversion
-    try { BigInt(acc.nonce) } catch { throw new Error(`account ${acc.address} has non-numeric nonce: ${acc.nonce}`) }
-    try { BigInt(acc.balance) } catch { throw new Error(`account ${acc.address} has non-numeric balance: ${acc.balance}`) }
+    // Validate numeric format before BigInt conversion (reject negative values)
+    try {
+      const nonceVal = BigInt(acc.nonce)
+      if (nonceVal < 0n) throw new Error("negative")
+    } catch { throw new Error(`account ${acc.address} has invalid nonce: ${acc.nonce}`) }
+    try {
+      const balanceVal = BigInt(acc.balance)
+      if (balanceVal < 0n) throw new Error("negative")
+    } catch { throw new Error(`account ${acc.address} has invalid balance: ${acc.balance}`) }
     // Validate hex format for storageRoot, codeHash, and storage entries
     if (typeof acc.storageRoot === "string" && !isValidHex(acc.storageRoot)) {
       throw new Error(`account ${acc.address} has invalid storageRoot hex`)
@@ -259,7 +268,10 @@ export function validateSnapshot(snapshot: StateSnapshot): void {
   if (snapshot.validators) {
     for (const v of snapshot.validators) {
       if (typeof v.stake !== "string") throw new Error(`validator ${v.id} has invalid stake type`)
-      try { BigInt(v.stake) } catch { throw new Error(`validator ${v.id} has non-numeric stake: ${v.stake}`) }
+      try {
+        const stakeVal = BigInt(v.stake)
+        if (stakeVal < 0n) throw new Error("negative")
+      } catch { throw new Error(`validator ${v.id} has invalid stake: ${v.stake}`) }
     }
   }
 }
