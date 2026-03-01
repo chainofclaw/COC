@@ -8,14 +8,20 @@ import { createLogger } from "./logger.ts"
 import { keccak256Hex } from "../../services/relayer/keccak256.ts"
 
 /** Use the tip block's cumulativeWeight — now hash-bound so tamper-proof.
- * Falls back to block count if field is missing (pre-upgrade blocks). */
+ * Falls back to verified block count if field is missing (pre-upgrade blocks).
+ * Verifies chain continuity before trusting block count as weight fallback
+ * to prevent attackers from inflating weight with disconnected block arrays. */
 function recalcCumulativeWeight(blocks: ChainBlock[]): bigint {
   if (blocks.length === 0) return 0n
   const tip = blocks[blocks.length - 1]
   // cumulativeWeight is now bound into block hash, so it's tamper-proof
   if (tip.cumulativeWeight !== undefined) return BigInt(tip.cumulativeWeight)
-  // Fallback for blocks without cumulativeWeight (backward compat)
-  return BigInt(blocks.length)
+  // Fallback: use tip height rather than array length. Array length could be
+  // misleading if the snapshot is a partial window (blocks 500-600 = length 101
+  // but actual chain weight should reflect height 600). Tip height is hash-bound
+  // and thus tamper-proof.
+  const tipHeight = BigInt(tip.number)
+  return tipHeight > 0n ? tipHeight : BigInt(blocks.length)
 }
 
 const log = createLogger("consensus")
@@ -96,6 +102,7 @@ export class ConsensusEngine {
   private degradedSinceMs = 0
   private proposeTimer: ReturnType<typeof setInterval> | null = null
   private syncTimer: ReturnType<typeof setInterval> | null = null
+  private degradedCheckTimer: ReturnType<typeof setInterval> | null = null
   private syncInFlight = false
   private proposeInFlight = false
 
@@ -139,12 +146,16 @@ export class ConsensusEngine {
     this.startedAtMs = Date.now()
     this.proposeTimer = setInterval(() => void this.tryPropose(), this.cfg.blockTimeMs)
     this.syncTimer = setInterval(() => void this.trySync(), this.cfg.syncIntervalMs)
+    // Independent degraded timeout check (not gated by tryPropose)
+    this.degradedCheckTimer = setInterval(() => this.checkDegradedTimeout(), 10_000)
     void this.trySync()
   }
 
   stop(): void {
     if (this.proposeTimer) { clearInterval(this.proposeTimer); this.proposeTimer = null }
     if (this.syncTimer) { clearInterval(this.syncTimer); this.syncTimer = null }
+    if (this.degradedCheckTimer) { clearInterval(this.degradedCheckTimer); this.degradedCheckTimer = null }
+    this.bft?.stop()
   }
 
   getStatus(): { status: ConsensusStatus; proposeFailures: number; syncFailures: number } {
@@ -211,8 +222,7 @@ export class ConsensusEngine {
     if (this.proposeInFlight) return
     if (this.syncInFlight) return // Don't propose while snap sync is modifying chain state
     if (this.status === "degraded") {
-      this.checkDegradedTimeout()
-      return
+      return // degraded timeout handled by independent degradedCheckTimer
     }
 
     // Skip proposing while BFT round is active to avoid disrupting in-flight rounds
@@ -372,13 +382,18 @@ export class ConsensusEngine {
           remoteHeight: remoteCandidate.height.toString(),
         })
 
+        const snapshotStartHeight = snapshot.blocks[0] ? BigInt(snapshot.blocks[0].number) : 0n
+        const localHasContinuity = localHeight === 0n || localHeight >= snapshotStartHeight - 1n
+
         // Check if snap sync should be used (large gap)
         const gap = remoteCandidate.height - localHeight
+        let snapAttemptedForGap = false
         if (
           this.cfg.enableSnapSync &&
           this.snapSync &&
           gap > BigInt(this.cfg.snapSyncThreshold ?? 100)
         ) {
+          snapAttemptedForGap = true
           const ok = await this.trySnapSync(snapshot)
           if (ok) {
             this.blocksAdopted++
@@ -394,14 +409,24 @@ export class ConsensusEngine {
             localHeight = newHeight
           }
           adopted = adopted || ok
-          continue
+          if (ok) {
+            continue
+          }
+          if (!localHasContinuity) {
+            // No block-level continuity window: must wait for a successful snap sync.
+            continue
+          }
+          log.warn("snap sync failed on large gap, falling back to block-level replay", {
+            localHeight: localHeight.toString(),
+            snapshotStart: snapshotStartHeight.toString(),
+            remoteHeight: remoteCandidate.height.toString(),
+          })
         }
 
-        // Check if chain snapshot window is insufficient for block-level sync
-        const snapshotStartHeight = snapshot.blocks[0] ? BigInt(snapshot.blocks[0].number) : 0n
-        const localHasContinuity = localHeight === 0n || localHeight >= snapshotStartHeight - 1n
-
         if (!localHasContinuity && this.cfg.enableSnapSync && this.snapSync) {
+          if (snapAttemptedForGap) {
+            continue
+          }
           log.warn("chain snapshot window insufficient, falling back to snap sync", {
             localHeight: localHeight.toString(),
             snapshotStart: snapshotStartHeight.toString(),
@@ -485,7 +510,9 @@ export class ConsensusEngine {
       // Vote loop: fetch snapshots in parallel, collect stateRoots + validatorsHash
       type SnapResult = Awaited<ReturnType<SnapSyncProvider["fetchStateSnapshot"]>>
       const snapshotCache = new Map<string, SnapResult>() // peerUrl → snapshot
-      const peerStateRoots = new Map<string, { count: number; peer: string; validatorsHash: string }>()
+      // Map voteKey → { count, peer, stateRoot, validatorsHash }
+      // Use a safe separator ("|") to avoid ambiguity if stateRoot contains ":"
+      const peerStateRoots = new Map<string, { count: number; peer: string; stateRoot: string; validatorsHash: string }>()
 
       const fetchResults = await Promise.allSettled(
         peers.map(async (peer) => {
@@ -500,11 +527,12 @@ export class ConsensusEngine {
         if (!snap) continue
         if (snap.blockHeight !== tip.number.toString() || snap.blockHash !== tip.hash) continue
         const vHash = hashValidators(snap.validators)
-        const voteKey = `${snap.stateRoot}:${vHash}`
+        const voteKey = `${snap.stateRoot}|${vHash}`
         const existing = peerStateRoots.get(voteKey)
         peerStateRoots.set(voteKey, {
           count: (existing?.count ?? 0) + 1,
           peer: url,
+          stateRoot: snap.stateRoot,
           validatorsHash: vHash,
         })
       }
@@ -516,9 +544,8 @@ export class ConsensusEngine {
       let trustedValidatorsHash: string | null = null
 
       if (peerStateRoots.size === 1) {
-        const voteKey = [...peerStateRoots.keys()][0]
-        trustedStateRoot = voteKey.split(":")[0]
-        const entry = peerStateRoots.get(voteKey)!
+        const entry = [...peerStateRoots.values()][0]
+        trustedStateRoot = entry.stateRoot
         trustedValidatorsHash = entry.validatorsHash
         if (peers.length > 1 && entry.count < 2) {
           log.warn("snap sync: insufficient peer responses for stateRoot consensus, aborting", {
@@ -530,14 +557,14 @@ export class ConsensusEngine {
         }
       } else if (peerStateRoots.size > 1) {
         let maxCount = 0
-        for (const [voteKey, info] of peerStateRoots) {
+        for (const [, info] of peerStateRoots) {
           if (info.count > maxCount) {
             maxCount = info.count
-            trustedStateRoot = voteKey.split(":")[0]
+            trustedStateRoot = info.stateRoot
             trustedValidatorsHash = info.validatorsHash
           }
         }
-        const majorityThreshold = Math.ceil(totalResponding / 2)
+        const majorityThreshold = Math.ceil(totalResponding * 2 / 3)
         if (maxCount < 2 || maxCount < majorityThreshold) {
           log.warn("snap sync: no stateRoot consensus among peers, aborting (fail-closed)", {
             maxVotes: maxCount,

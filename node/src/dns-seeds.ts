@@ -104,6 +104,7 @@ export class DnsSeedResolver {
           try {
             const parsed = new URL(url)
             if (parsed.protocol !== "http:" && parsed.protocol !== "https:") continue
+            if (isPrivateHost(parsed.hostname)) continue
           } catch { continue }
           peers.push({ id, url })
         }
@@ -124,6 +125,30 @@ export class DnsSeedResolver {
   clearCache(): void {
     this.cache.clear()
   }
+}
+
+function isPrivateHost(hostname: string): boolean {
+  // Strip brackets from IPv6 literals (URL.hostname returns "[::1]" → "::1")
+  const h = hostname.startsWith("[") && hostname.endsWith("]")
+    ? hostname.slice(1, -1)
+    : hostname
+  // Filter localhost and IPv6 loopback/private ranges
+  if (h === "localhost" || h === "::1" || h === "0:0:0:0:0:0:0:1") return true
+  // IPv6 ULA (fd00::/8) and link-local (fe80::/10)
+  const lower = h.toLowerCase()
+  if (lower.startsWith("fd") || lower.startsWith("fe80")) return true
+  // IPv4-mapped IPv6
+  const v4 = lower.startsWith("::ffff:") ? lower.slice(7) : lower
+  const parts = v4.split(".")
+  if (parts.length !== 4) return false
+  const [a, b] = parts.map(Number)
+  if (a === 10) return true                          // 10.0.0.0/8
+  if (a === 172 && b >= 16 && b <= 31) return true   // 172.16.0.0/12
+  if (a === 192 && b === 168) return true             // 192.168.0.0/16
+  if (a === 127) return true                          // 127.0.0.0/8
+  if (a === 169 && b === 254) return true             // 169.254.0.0/16 (link-local)
+  if (a === 0) return true                            // 0.0.0.0/8
+  return false
 }
 
 function isValidUrl(url: string): boolean {

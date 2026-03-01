@@ -407,3 +407,289 @@ test("PersistentChainEngine: rejects block with future timestamp", async () => {
     rmSync(tmpDir, { recursive: true, force: true })
   }
 })
+
+test("PersistentChainEngine: rejects block with forged cumulativeWeight", async () => {
+  const tmpDir = mkdtempSync(join(tmpdir(), "coc-engine-test-"))
+
+  try {
+    const evm = await EvmChain.create(2077)
+    const engine = new PersistentChainEngine(
+      {
+        dataDir: tmpDir,
+        nodeId: "node1",
+        chainId: 2077,
+        validators: [],
+        finalityDepth: 3,
+        maxTxPerBlock: 100,
+        minGasPriceWei: 1n,
+      },
+      evm,
+    )
+    await engine.init()
+
+    const block1 = await engine.proposeNextBlock()
+    assert.ok(block1)
+
+    const payload = {
+      number: 2n,
+      parentHash: block1.hash,
+      proposer: "node1",
+      timestampMs: block1.timestampMs + 1,
+      txs: [] as string[],
+      cumulativeWeight: 999n,
+    }
+    const badBlock: ChainBlock = {
+      ...payload,
+      hash: hashBlockPayload(payload),
+      finalized: false,
+    }
+
+    await assert.rejects(
+      () => engine.applyBlock(badBlock, false),
+      /invalid cumulativeWeight/,
+    )
+
+    await engine.close()
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true })
+  }
+})
+
+test("PersistentChainEngine: importSnapSyncBlocks rejects forged cumulativeWeight", async () => {
+  const tmpDir = mkdtempSync(join(tmpdir(), "coc-engine-test-"))
+
+  try {
+    const evm = await EvmChain.create(2077)
+    const engine = new PersistentChainEngine(
+      {
+        dataDir: tmpDir,
+        nodeId: "node1",
+        chainId: 2077,
+        validators: [],
+        finalityDepth: 3,
+        maxTxPerBlock: 100,
+        minGasPriceWei: 1n,
+      },
+      evm,
+    )
+    await engine.init()
+
+    const payload = {
+      number: 1n,
+      parentHash: zeroHash(),
+      proposer: "node1",
+      timestampMs: 1,
+      txs: [] as string[],
+      cumulativeWeight: 999n,
+    }
+    const snapshotBlock: ChainBlock = {
+      ...payload,
+      hash: hashBlockPayload(payload),
+      finalized: false,
+    }
+
+    const imported = await engine.importSnapSyncBlocks([snapshotBlock])
+    assert.strictEqual(imported, false)
+
+    await engine.close()
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true })
+  }
+})
+
+test("PersistentChainEngine: ignores untrusted bftFinalized flag from remote block", async () => {
+  const tmpDir = mkdtempSync(join(tmpdir(), "coc-engine-test-"))
+
+  try {
+    const evm = await EvmChain.create(2077)
+    const engine = new PersistentChainEngine(
+      {
+        dataDir: tmpDir,
+        nodeId: "node1",
+        chainId: 2077,
+        validators: [],
+        finalityDepth: 3,
+        maxTxPerBlock: 100,
+        minGasPriceWei: 1n,
+      },
+      evm,
+    )
+    await engine.init()
+
+    const payload = {
+      number: 1n,
+      parentHash: zeroHash(),
+      proposer: "node1",
+      timestampMs: Date.now(),
+      txs: [] as string[],
+      cumulativeWeight: 1n,
+    }
+    const block: ChainBlock = {
+      ...payload,
+      hash: hashBlockPayload(payload),
+      finalized: false,
+      bftFinalized: true,
+    }
+
+    await engine.applyBlock(block, false)
+    const tip = await engine.getTip()
+    assert.ok(tip)
+    assert.strictEqual(tip.bftFinalized, false)
+
+    await engine.close()
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true })
+  }
+})
+
+test("PersistentChainEngine: promotes existing block to bftFinalized on trusted local update", async () => {
+  const tmpDir = mkdtempSync(join(tmpdir(), "coc-engine-test-"))
+
+  try {
+    const evm = await EvmChain.create(2077)
+    const engine = new PersistentChainEngine(
+      {
+        dataDir: tmpDir,
+        nodeId: "node1",
+        chainId: 2077,
+        validators: [],
+        finalityDepth: 3,
+        maxTxPerBlock: 100,
+        minGasPriceWei: 1n,
+      },
+      evm,
+    )
+    await engine.init()
+
+    const block = await engine.proposeNextBlock()
+    assert.ok(block)
+
+    await engine.applyBlock({ ...block, bftFinalized: true }, true)
+    const tip = await engine.getTip()
+    assert.ok(tip)
+    assert.strictEqual(tip.bftFinalized, true)
+
+    await engine.close()
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true })
+  }
+})
+
+test("PersistentChainEngine: importSnapSyncBlocks recomputes finality and clears bftFinalized", async () => {
+  const tmpDir = mkdtempSync(join(tmpdir(), "coc-engine-test-"))
+
+  try {
+    const evm = await EvmChain.create(2077)
+    const engine = new PersistentChainEngine(
+      {
+        dataDir: tmpDir,
+        nodeId: "node1",
+        chainId: 2077,
+        validators: [],
+        finalityDepth: 3,
+        maxTxPerBlock: 100,
+        minGasPriceWei: 1n,
+      },
+      evm,
+    )
+    await engine.init()
+
+    const blocks: ChainBlock[] = []
+    let parentHash = zeroHash()
+    let timestampMs = 1
+    for (let n = 1n; n <= 5n; n++) {
+      const payload = {
+        number: n,
+        parentHash,
+        proposer: "node1",
+        timestampMs,
+        txs: [] as string[],
+        cumulativeWeight: n,
+      }
+      const block: ChainBlock = {
+        ...payload,
+        hash: hashBlockPayload(payload),
+        finalized: true,
+        bftFinalized: true,
+      }
+      blocks.push(block)
+      parentHash = block.hash
+      timestampMs += 1
+    }
+
+    const imported = await engine.importSnapSyncBlocks(blocks)
+    assert.strictEqual(imported, true)
+
+    const b2 = await engine.getBlockByNumber(2n)
+    const b5 = await engine.getBlockByNumber(5n)
+    assert.ok(b2)
+    assert.ok(b5)
+    assert.strictEqual(b2.finalized, true, "height 2 should be finalized at tip 5 depth 3")
+    assert.strictEqual(b5.finalized, false, "tip block should not be depth-finalized")
+    assert.strictEqual(b2.bftFinalized, false)
+    assert.strictEqual(b5.bftFinalized, false)
+
+    await engine.close()
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true })
+  }
+})
+
+test("PersistentChainEngine: importSnapSyncBlocks rejects overlapping ranges", async () => {
+  const tmpDirA = mkdtempSync(join(tmpdir(), "coc-engine-test-"))
+  const tmpDirB = mkdtempSync(join(tmpdir(), "coc-engine-test-"))
+
+  try {
+    const evmA = await EvmChain.create(2077)
+    const evmB = await EvmChain.create(2077)
+    const local = new PersistentChainEngine(
+      {
+        dataDir: tmpDirA,
+        nodeId: "node1",
+        chainId: 2077,
+        validators: [],
+        finalityDepth: 3,
+        maxTxPerBlock: 100,
+        minGasPriceWei: 1n,
+      },
+      evmA,
+    )
+    const remote = new PersistentChainEngine(
+      {
+        dataDir: tmpDirB,
+        nodeId: "node1",
+        chainId: 2077,
+        validators: [],
+        finalityDepth: 3,
+        maxTxPerBlock: 100,
+        minGasPriceWei: 1n,
+      },
+      evmB,
+    )
+    await local.init()
+    await remote.init()
+
+    for (let i = 0; i < 3; i++) {
+      await local.proposeNextBlock()
+    }
+    for (let i = 0; i < 5; i++) {
+      await remote.proposeNextBlock()
+    }
+
+    const remoteBlocks: ChainBlock[] = []
+    for (let n = 2n; n <= 5n; n++) {
+      const block = await remote.getBlockByNumber(n)
+      assert.ok(block)
+      remoteBlocks.push(block)
+    }
+
+    const ok = await local.importSnapSyncBlocks(remoteBlocks)
+    assert.strictEqual(ok, false, "overlapping snap-sync range should be rejected")
+
+    await local.close()
+    await remote.close()
+  } finally {
+    rmSync(tmpDirA, { recursive: true, force: true })
+    rmSync(tmpDirB, { recursive: true, force: true })
+  }
+})

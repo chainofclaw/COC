@@ -400,7 +400,12 @@ export class IpfsMfs {
   }
 }
 
+const MAX_PATH_LENGTH = 4096
+
 function normalizePath(path: string): string {
+  if (path.length > MAX_PATH_LENGTH) {
+    throw new Error(`path too long (max ${MAX_PATH_LENGTH}): ${path.length} chars`)
+  }
   if (!path.startsWith("/")) path = "/" + path
   // Remove trailing slash (except root)
   if (path.length > 1 && path.endsWith("/")) {
@@ -410,6 +415,9 @@ function normalizePath(path: string): string {
   path = path.replace(/\/+/g, "/")
   // Reject path traversal components
   const parts = path.split("/")
+  if (parts.length > MAX_MFS_DEPTH) {
+    throw new Error(`path too deep (max ${MAX_MFS_DEPTH} components): ${path}`)
+  }
   for (const part of parts) {
     if (part === ".." || part === ".") {
       throw new Error(`path traversal not allowed: ${path}`)
@@ -420,6 +428,7 @@ function normalizePath(path: string): string {
 
 function splitPath(path: string): { dir: string; base: string } {
   const normalized = normalizePath(path)
+  if (normalized === "/") throw new Error("cannot operate on root path directly")
   const lastSlash = normalized.lastIndexOf("/")
   if (lastSlash <= 0) return { dir: "/", base: normalized.slice(1) }
   return {

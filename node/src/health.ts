@@ -239,11 +239,13 @@ export function validateConfig(config: Record<string, unknown>): ConfigIssue[] {
 export class RateLimiter {
   private readonly maxTokens: number
   private readonly refillRatePerSec: number
+  private readonly maxBuckets: number
   private readonly buckets: Map<string, { tokens: number; lastRefill: number }> = new Map()
 
-  constructor(maxTokens = 100, refillRatePerSec = 10) {
+  constructor(maxTokens = 100, refillRatePerSec = 10, maxBuckets = 100_000) {
     this.maxTokens = maxTokens
     this.refillRatePerSec = refillRatePerSec
+    this.maxBuckets = maxBuckets
   }
 
   /**
@@ -254,6 +256,11 @@ export class RateLimiter {
     let bucket = this.buckets.get(key)
 
     if (!bucket) {
+      // Evict stale buckets if at capacity to prevent unbounded memory growth
+      if (this.buckets.size >= this.maxBuckets) {
+        this.cleanup()
+        if (this.buckets.size >= this.maxBuckets) return false
+      }
       bucket = { tokens: this.maxTokens, lastRefill: now }
       this.buckets.set(key, bucket)
     }

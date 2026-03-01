@@ -161,6 +161,7 @@ export class Mempool {
     getOnchainNonce: (address: Hex) => Promise<bigint>,
     minGasPriceWei: bigint,
     baseFeePerGas: bigint = 1000000000n, // default 1 gwei
+    blockGasLimit: bigint = 30_000_000n,
   ): Promise<MempoolTx[]> {
     if (maxTx <= 0 || this.txs.size === 0) {
       return []
@@ -178,8 +179,11 @@ export class Mempool {
       return tx.gasPrice
     }
 
+    // A transaction cannot be included when its max fee cap is below current base fee.
+    const canPayBaseFee = (tx: MempoolTx): boolean => tx.maxFeePerGas >= baseFeePerGas
+
     const sorted = [...this.txs.values()]
-      .filter((tx) => effectivePrice(tx) >= minGasPriceWei)
+      .filter((tx) => canPayBaseFee(tx) && effectivePrice(tx) >= minGasPriceWei)
       .sort((a, b) => {
         const aPrice = effectivePrice(a)
         const bPrice = effectivePrice(b)
@@ -190,9 +194,11 @@ export class Mempool {
 
     const picked: MempoolTx[] = []
     const expected = new Map<Hex, bigint>()
+    let cumulativeGas = 0n
 
     for (const tx of sorted) {
       if (picked.length >= maxTx) break
+      if (cumulativeGas + tx.gasLimit > blockGasLimit) continue
       let next = expected.get(tx.from)
       if (next === undefined) {
         try {
@@ -208,6 +214,7 @@ export class Mempool {
         continue
       }
       picked.push(tx)
+      cumulativeGas += tx.gasLimit
       expected.set(tx.from, next + 1n)
     }
 
@@ -218,7 +225,8 @@ export class Mempool {
    * Get the next available nonce for a sender (on-chain nonce + pending count)
    */
   getPendingNonce(from: Hex, onchainNonce: bigint): bigint {
-    const senderTxs = this.bySender.get(from)
+    const normalized = from.toLowerCase() as Hex
+    const senderTxs = this.bySender.get(normalized)
     if (!senderTxs || senderTxs.size === 0) return onchainNonce
 
     // Collect all nonces and find highest contiguous from onchainNonce

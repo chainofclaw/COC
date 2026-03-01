@@ -175,4 +175,24 @@ describe("PeerDiscovery", () => {
     assert.equal(exchangeList.length, 1)
     assert.equal(exchangeList[0].id, "node-0")
   })
+
+  it("rejects SSRF target IPs (link-local / cloud metadata)", () => {
+    const scoring = makeScoring()
+    const discovery = new PeerDiscovery([], scoring, {
+      selfId: "node-0",
+      selfUrl: "http://127.0.0.1:19000",
+      maxPeers: 50,
+    })
+    const added = discovery.addDiscoveredPeers([
+      { id: "aws-meta", url: "http://169.254.169.254:80" },
+      { id: "link-local", url: "http://169.254.1.1:19780" },
+      { id: "null-addr", url: "http://0.0.0.0:19780" },
+      { id: "mapped-v6", url: "http://[::ffff:169.254.169.254]:80" },
+      { id: "legit", url: "http://192.168.1.100:19780" }, // RFC1918 allowed
+    ])
+    assert.equal(added, 1)
+    const peers = discovery.getAllPeers()
+    assert.equal(peers.length, 1)
+    assert.equal(peers[0].id, "legit")
+  })
 })

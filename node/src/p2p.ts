@@ -169,8 +169,10 @@ export function verifySignedP2PPayload(
 
 export class BoundedSet<T> {
   private readonly maxSize: number
-  private readonly items = new Set<T>()
-  private readonly insertOrder: T[] = []
+  // Map maintains insertion order per spec; keys().next() returns oldest in O(1).
+  // This replaces the previous Set+Array approach where Array.shift() was O(n),
+  // causing O(n²) throughput degradation at 50K capacity under high tx load.
+  private readonly items = new Map<T, true>()
 
   constructor(maxSize: number) {
     this.maxSize = maxSize
@@ -183,13 +185,12 @@ export class BoundedSet<T> {
   add(value: T): void {
     if (this.items.has(value)) return
     if (this.items.size >= this.maxSize) {
-      const oldest = this.insertOrder.shift()
+      const oldest = this.items.keys().next().value
       if (oldest !== undefined) {
         this.items.delete(oldest)
       }
     }
-    this.items.add(value)
-    this.insertOrder.push(value)
+    this.items.set(value, true)
   }
 
   get size(): number {
@@ -671,6 +672,9 @@ export class P2PNode {
             if (!payload.type || !payload.blockHash || !payload.senderId) {
               throw new Error("missing BFT message fields")
             }
+            if (payload.type !== "prepare" && payload.type !== "commit") {
+              throw new Error(`invalid BFT message type: ${payload.type}`)
+            }
             // Restore BigInt height lost during JSON serialization
             if (payload.height !== undefined) {
               payload.height = BigInt(payload.height)
@@ -746,9 +750,13 @@ export class P2PNode {
     const FETCH_TOTAL_TIMEOUT_MS = 15_000
     const settled = await Promise.race([
       Promise.allSettled(
-        allPeers.map((peer) =>
-          requestJson<ChainSnapshot>(`${peer.url}/p2p/chain-snapshot`, "GET")
-        )
+        allPeers.map((peer) => {
+          const headers: Record<string, string> = {}
+          if (this.cfg.signer) {
+            headers["x-p2p-auth"] = buildSignedGetAuth("/p2p/chain-snapshot", this.cfg.signer)
+          }
+          return requestJson<ChainSnapshot>(`${peer.url}/p2p/chain-snapshot`, "GET", undefined, headers)
+        })
       ),
       new Promise<PromiseSettledResult<ChainSnapshot>[]>((resolve) =>
         setTimeout(() => resolve([]), FETCH_TOTAL_TIMEOUT_MS)
@@ -864,8 +872,10 @@ export class P2PNode {
   private getPeerSentSet(peerId: string): BoundedSet<string> {
     let set = this.sentToPeer.get(peerId)
     if (!set) {
-      // Evict oldest peer entry if map grows too large
-      if (this.sentToPeer.size >= 200) {
+      // Bound sent-set map to 2x maxPeers; evict oldest entry to prevent
+      // unbounded growth when peers rotate frequently (NAT reconnects, etc.)
+      const maxSentEntries = (this.cfg.maxPeers ?? 50) * 2
+      if (this.sentToPeer.size >= maxSentEntries) {
         const oldest = this.sentToPeer.keys().next().value
         if (oldest !== undefined) this.sentToPeer.delete(oldest)
       }
@@ -1097,7 +1107,7 @@ export class P2PNode {
   }
 }
 
-async function requestJson<T = unknown>(url: string, method: "GET" | "POST", body?: unknown): Promise<T> {
+async function requestJson<T = unknown>(url: string, method: "GET" | "POST", body?: unknown, extraHeaders?: Record<string, string>): Promise<T> {
   const endpoint = new URL(url)
 
   return await new Promise<T>((resolve, reject) => {
@@ -1122,6 +1132,7 @@ async function requestJson<T = unknown>(url: string, method: "GET" | "POST", bod
         method,
         headers: {
           "content-type": "application/json",
+          ...extraHeaders,
         },
       },
       (res) => {

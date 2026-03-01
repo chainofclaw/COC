@@ -158,6 +158,15 @@ export class PoSeEngine {
     if (!isSameChallenge(issued, challenge)) {
       throw new Error("challenge payload mismatch")
     }
+    // Enforce challenge deadline — late receipts should not receive credit
+    // deadlineMs is relative (e.g. 2500ms), issuedAtMs is absolute timestamp
+    if (issued.deadlineMs && issued.issuedAtMs) {
+      const absoluteDeadline = Number(issued.issuedAtMs) + Number(issued.deadlineMs)
+      if (Date.now() > absoluteDeadline) {
+        this.issuedChallenges.delete(issued.challengeId)
+        throw new Error("challenge deadline exceeded")
+      }
+    }
     const verified = this.verifier.toVerifiedReceipt(issued, receipt, BigInt(Date.now()))
     this.issuedChallenges.delete(issued.challengeId)
     this.receipts.push(verified)
@@ -167,6 +176,14 @@ export class PoSeEngine {
     const issued = this.issuedChallenges.get(challengeId)
     if (!issued) {
       throw new Error("unknown challenge")
+    }
+    // Enforce challenge deadline — late receipts should not receive credit
+    if (issued.deadlineMs && issued.issuedAtMs) {
+      const absoluteDeadline = Number(issued.issuedAtMs) + Number(issued.deadlineMs)
+      if (Date.now() > absoluteDeadline) {
+        this.issuedChallenges.delete(issued.challengeId)
+        throw new Error("challenge deadline exceeded")
+      }
     }
     const verified = this.verifier.toVerifiedReceipt(issued, receipt, BigInt(Date.now()))
     this.issuedChallenges.delete(issued.challengeId)

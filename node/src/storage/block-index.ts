@@ -238,8 +238,8 @@ export class BlockIndex implements IBlockIndex {
     const offset = opts?.offset ?? 0
     const limit = opts?.limit ?? 50
     const reverse = opts?.reverse ?? true
-    // Fetch extra keys to handle offset
-    const fetchLimit = offset + limit
+    // Fetch extra keys to handle offset (cap to prevent memory abuse)
+    const fetchLimit = Math.min(offset + limit, 110_000)
     const keys = await this.db.getKeysWithPrefix(prefix, { limit: fetchLimit, reverse })
     const paged = keys.slice(offset, offset + limit)
 
@@ -270,6 +270,7 @@ export class BlockIndex implements IBlockIndex {
   async getLogs(filter: LogFilter): Promise<IndexedLog[]> {
     const from = filter.fromBlock ?? 0n
     const to = filter.toBlock ?? (await this.getLatestBlock())?.number ?? 0n
+    const maxResults = 10_000
     const results: IndexedLog[] = []
 
     for (let n = from; n <= to; n++) {
@@ -284,6 +285,7 @@ export class BlockIndex implements IBlockIndex {
 
         if (!matchLogFilter(log, filter)) continue
         results.push(log)
+        if (results.length >= maxResults) return results
       }
     }
 

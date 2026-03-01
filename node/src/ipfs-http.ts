@@ -47,7 +47,8 @@ export class IpfsHttpServer {
     const server = http.createServer(async (req, res) => {
       try {
       // Rate limiting
-      const clientIp = req.socket.remoteAddress ?? "unknown"
+      const rawClientIp = req.socket.remoteAddress ?? "unknown"
+      const clientIp = rawClientIp.startsWith("::ffff:") ? rawClientIp.slice(7) : rawClientIp
       if (!ipfsRateLimiter.allow(clientIp)) {
         res.writeHead(429, { "content-type": "application/json" })
         res.end(JSON.stringify({ error: "rate limit exceeded" }))
@@ -57,7 +58,7 @@ export class IpfsHttpServer {
       const url = parseUrl(req.url ?? "", true)
       if (req.method === "GET" && url.pathname?.startsWith("/ipfs/")) {
         const cid = url.pathname.slice(6) // strip "/ipfs/"
-        if (!cid || /[\/\\]|\.\.|\0/.test(cid)) {
+        if (!isValidCid(cid)) {
           res.writeHead(400, { "content-type": "application/json" })
           res.end(JSON.stringify({ error: "invalid CID" }))
           return
@@ -204,9 +205,9 @@ export class IpfsHttpServer {
   }
 
   private async handleLs(res: http.ServerResponse, cid?: string): Promise<void> {
-    if (!cid) {
+    if (!cid || !isValidCid(cid)) {
       res.writeHead(400)
-      res.end(JSON.stringify({ error: "missing cid" }))
+      res.end(JSON.stringify({ error: !cid ? "missing cid" : "invalid cid" }))
       return
     }
     const meta = await this.readFileMeta()
@@ -233,9 +234,9 @@ export class IpfsHttpServer {
   }
 
   private async handleObjectStat(res: http.ServerResponse, cid?: string): Promise<void> {
-    if (!cid) {
+    if (!cid || !isValidCid(cid)) {
       res.writeHead(400)
-      res.end(JSON.stringify({ error: "missing cid" }))
+      res.end(JSON.stringify({ error: !cid ? "missing cid" : "invalid cid" }))
       return
     }
     const block = await this.store.get(cid)
@@ -253,9 +254,9 @@ export class IpfsHttpServer {
   }
 
   private async handleCat(req: http.IncomingMessage, res: http.ServerResponse, cid?: string): Promise<void> {
-    if (!cid) {
+    if (!cid || !isValidCid(cid)) {
       res.writeHead(400)
-      res.end(JSON.stringify({ error: "missing cid" }))
+      res.end(JSON.stringify({ error: !cid ? "missing cid" : "invalid cid" }))
       return
     }
     const data = await this.unixfs.readFile(cid)
@@ -264,9 +265,9 @@ export class IpfsHttpServer {
   }
 
   private async handleGet(res: http.ServerResponse, cid?: string): Promise<void> {
-    if (!cid) {
+    if (!cid || !isValidCid(cid)) {
       res.writeHead(400)
-      res.end(JSON.stringify({ error: "missing cid" }))
+      res.end(JSON.stringify({ error: !cid ? "missing cid" : "invalid cid" }))
       return
     }
     const data = await this.unixfs.readFile(cid)
@@ -283,9 +284,9 @@ export class IpfsHttpServer {
   }
 
   private async handleBlockGet(_req: http.IncomingMessage, res: http.ServerResponse, cid?: string): Promise<void> {
-    if (!cid) {
+    if (!cid || !isValidCid(cid)) {
       res.writeHead(400)
-      res.end(JSON.stringify({ error: "missing cid" }))
+      res.end(JSON.stringify({ error: !cid ? "missing cid" : "invalid cid" }))
       return
     }
     const block = await loadRawBlock(this.store, cid)
@@ -294,9 +295,9 @@ export class IpfsHttpServer {
   }
 
   private async handleBlockStat(res: http.ServerResponse, cid?: string): Promise<void> {
-    if (!cid) {
+    if (!cid || !isValidCid(cid)) {
       res.writeHead(400)
-      res.end(JSON.stringify({ error: "missing cid" }))
+      res.end(JSON.stringify({ error: !cid ? "missing cid" : "invalid cid" }))
       return
     }
     const block = await loadRawBlock(this.store, cid)
@@ -305,9 +306,9 @@ export class IpfsHttpServer {
   }
 
   private async handlePinAdd(_req: http.IncomingMessage, res: http.ServerResponse, cid?: string): Promise<void> {
-    if (!cid) {
+    if (!cid || !isValidCid(cid)) {
       res.writeHead(400)
-      res.end(JSON.stringify({ error: "missing cid" }))
+      res.end(JSON.stringify({ error: !cid ? "missing cid" : "invalid cid" }))
       return
     }
     await this.store.pin(cid)
@@ -515,20 +516,32 @@ export class IpfsHttpServer {
   }
 }
 
+/** Reject CIDs with path traversal or null bytes */
+function isValidCid(cid: string): boolean {
+  return !!cid && !/[\/\\]|\.\.|\0/.test(cid)
+}
+
 const DEFAULT_MAX_UPLOAD_SIZE = 10 * 1024 * 1024 // 10 MB
+
+const READ_BODY_TIMEOUT_MS = 30_000
 
 async function readBody(req: http.IncomingMessage, maxSize = DEFAULT_MAX_UPLOAD_SIZE): Promise<Uint8Array> {
   const chunks: Buffer[] = []
   let totalSize = 0
-  for await (const chunk of req) {
-    const buf = Buffer.from(chunk)
-    totalSize += buf.byteLength
-    if (totalSize > maxSize) {
-      throw new Error(`upload exceeds max size: ${totalSize} > ${maxSize}`)
+  const timer = setTimeout(() => { req.destroy(new Error("upload timeout")) }, READ_BODY_TIMEOUT_MS)
+  try {
+    for await (const chunk of req) {
+      const buf = Buffer.from(chunk)
+      totalSize += buf.byteLength
+      if (totalSize > maxSize) {
+        throw new Error(`upload exceeds max size: ${totalSize} > ${maxSize}`)
+      }
+      chunks.push(buf)
     }
-    chunks.push(buf)
+    return Buffer.concat(chunks)
+  } finally {
+    clearTimeout(timer)
   }
-  return Buffer.concat(chunks)
 }
 
 async function readMultipartFile(req: http.IncomingMessage): Promise<{ filename?: string; bytes: Uint8Array }> {

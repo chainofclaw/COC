@@ -337,6 +337,12 @@ export class PeerDiscovery {
           headers: authHeaders,
         },
         (res) => {
+          // Reject non-2xx responses to avoid masking failing peers as success
+          if ((res.statusCode ?? 500) >= 400) {
+            res.resume() // drain response body
+            reject(new Error(`peer list request failed with status ${res.statusCode}`))
+            return
+          }
           let data = ""
           let size = 0
           res.on("data", (chunk: string | Buffer) => {
@@ -436,6 +442,10 @@ function normalizePeer(peer: NodePeer): NodePeer | null {
     if (url.port && !/^\d+$/.test(url.port)) {
       return null
     }
+    // Block SSRF targets: link-local (cloud metadata 169.254.x.x) and null address
+    if (isSSRFTarget(url.hostname)) {
+      return null
+    }
     return {
       id: peer.id.trim(),
       url: `${url.protocol}//${url.host}`,
@@ -443,6 +453,45 @@ function normalizePeer(peer: NodePeer): NodePeer | null {
   } catch {
     return null
   }
+}
+
+/** Block link-local and null IPs that are common SSRF targets (cloud metadata, etc.).
+ *  Does NOT block RFC1918 (10.x, 172.16-31.x, 192.168.x) to preserve devnet compatibility. */
+function isSSRFTarget(hostname: string): boolean {
+  const h = hostname.startsWith("[") && hostname.endsWith("]")
+    ? hostname.slice(1, -1) : hostname
+  const lower = h.toLowerCase()
+  // IPv6 link-local
+  if (lower.startsWith("fe80")) return true
+  // IPv4-mapped IPv6 → extract IPv4 octets
+  if (lower.startsWith("::ffff:")) {
+    const suffix = lower.slice(7)
+    // Dotted-decimal form: ::ffff:169.254.169.254
+    const dotParts = suffix.split(".")
+    if (dotParts.length === 4) {
+      return isSSRFv4(Number(dotParts[0]), Number(dotParts[1]))
+    }
+    // Hex form after URL normalization: ::ffff:a9fe:a9fe (Node.js URL parser output)
+    const hexParts = suffix.split(":")
+    if (hexParts.length === 2) {
+      const high = parseInt(hexParts[0], 16)
+      if (!isNaN(high)) {
+        return isSSRFv4((high >> 8) & 0xFF, high & 0xFF)
+      }
+    }
+    return false
+  }
+  const parts = lower.split(".")
+  if (parts.length === 4) {
+    return isSSRFv4(Number(parts[0]), Number(parts[1]))
+  }
+  return false
+}
+
+function isSSRFv4(a: number, b: number): boolean {
+  if (a === 169 && b === 254) return true  // link-local / cloud metadata (169.254.0.0/16)
+  if (a === 0) return true                 // 0.0.0.0/8
+  return false
 }
 
 function isValidPeerId(id: string): boolean {
