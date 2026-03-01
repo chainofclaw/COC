@@ -436,11 +436,14 @@ async function handleRpc(
     }
     case "eth_estimateGas": {
       const estParams = ((payload.params ?? [])[0] ?? {}) as Record<string, string>
+      // Default gas cap to block gas limit (30M) to prevent DoS via unbounded execution
+      const gasForEstimate = estParams.gas ?? "0x1c9c380"
       const estimated = await evm.estimateGas({
         from: estParams.from,
         to: estParams.to ?? "",
         data: estParams.data,
         value: estParams.value,
+        gas: gasForEstimate,
       })
       return `0x${estimated.toString(16)}`
     }
@@ -499,11 +502,21 @@ async function handleRpc(
       const newFilterHeight = await Promise.resolve(chain.getHeight())
       const fromBlock = parseBlockTag(query.fromBlock, newFilterHeight)
       const toBlock = query.toBlock !== undefined ? parseBlockTag(query.toBlock, newFilterHeight) : undefined
+      // Normalize address: support both single string and array of addresses
+      let filterAddress: Hex | undefined
+      if (query.address) {
+        if (Array.isArray(query.address)) {
+          // For array addresses, store the first one; full array matching uses queryLogs path
+          filterAddress = query.address.length > 0 ? String(query.address[0]).toLowerCase() as Hex : undefined
+        } else {
+          filterAddress = String(query.address).toLowerCase() as Hex
+        }
+      }
       const filter: PendingFilter = {
         id,
         fromBlock,
         toBlock,
-        address: query.address ? String(query.address).toLowerCase() as Hex : undefined,
+        address: filterAddress,
         topics: Array.isArray(query.topics) ? query.topics.map((t) => (t ? String(t) as Hex : null)) : undefined,
         lastCursor: fromBlock > 0n ? fromBlock - 1n : 0n,
         createdAtMs: Date.now(),
@@ -1349,6 +1362,10 @@ function safeBigInt(input: string): bigint {
 }
 
 function parseBlockTag(input: unknown, fallback: bigint): bigint {
+  if (typeof input === "number") {
+    if (!Number.isFinite(input) || input < 0) throw { code: -32602, message: `invalid block number` }
+    return BigInt(Math.floor(input))
+  }
   if (typeof input === "string") {
     if (input === "latest" || input === "pending" || input === "safe" || input === "finalized") return fallback
     if (input === "earliest") return 0n
@@ -1448,6 +1465,10 @@ async function queryLogs(chain: IChainEngine, query: Record<string, unknown>, re
   const fromBlock = parseBlockTag(query.fromBlock, height)
   const toBlock = parseBlockTag(query.toBlock, height)
 
+  // Reject invalid range where fromBlock > toBlock
+  if (fromBlock > toBlock) {
+    throw new Error(`invalid block range: fromBlock ${fromBlock} > toBlock ${toBlock}`)
+  }
   // Enforce block range limit to prevent resource exhaustion
   if (toBlock - fromBlock > MAX_LOG_BLOCK_RANGE) {
     throw new Error(`block range too large: max ${MAX_LOG_BLOCK_RANGE} blocks, got ${toBlock - fromBlock}`)

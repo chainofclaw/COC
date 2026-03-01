@@ -71,6 +71,12 @@ export class BftCoordinator {
       const hasProgress = this.activeRound.state.prepareVotes.size > 0
         || this.activeRound.state.commitVotes.size > 0
       if ((phase === "prepare" || phase === "commit") && hasProgress) {
+        if (this.deferredBlock && this.deferredBlock.number < block.number) {
+          log.warn("BFT overwriting deferred block (newer block arrived)", {
+            droppedHeight: this.deferredBlock.number.toString(),
+            newHeight: block.number.toString(),
+          })
+        }
         this.deferredBlock = block
         log.info("BFT deferring startRound (active round has progress)", {
           deferredHeight: block.number.toString(),
@@ -107,19 +113,23 @@ export class BftCoordinator {
     // Set timeout
     this.startTimeout()
 
-    // Process buffered messages for this height; prune all stale entries (height <= current)
+    // Process buffered messages for this height; prune all stale entries (height <= current).
+    // Track the round instance so we stop if handleMessage finalizes + starts a new round.
+    const thisRound = this.activeRound
     const buffered = this.pendingMessages.filter(m => m.height === block.number)
     this.pendingMessages = this.pendingMessages.filter(m => m.height > block.number)
     const prepares = buffered.filter(m => m.type !== "commit")
     const commits = buffered.filter(m => m.type === "commit")
     for (const msg of prepares) {
+      if (this.activeRound !== thisRound) break // round changed (finalized + deferred)
       await this.handleMessage(msg)
     }
     for (const msg of commits) {
+      if (this.activeRound !== thisRound) break // round changed (finalized + deferred)
       await this.handleMessage(msg)
     }
 
-    if (this.activeRound) {
+    if (this.activeRound && this.activeRound === thisRound) {
       log.info("BFT round started", {
         height: block.number.toString(),
         phase: this.activeRound.state.phase,
@@ -265,6 +275,12 @@ export class BftCoordinator {
       const hasVotes = this.activeRound.state.prepareVotes.size > 1
         || this.activeRound.state.commitVotes.size > 0
       if (phase === "commit" || (phase === "prepare" && hasVotes)) {
+        if (this.deferredBlock && this.deferredBlock.number < block.number) {
+          log.warn("BFT overwriting deferred block via gossip (newer block arrived)", {
+            droppedHeight: this.deferredBlock.number.toString(),
+            newHeight: block.number.toString(),
+          })
+        }
         this.deferredBlock = block
         log.info("BFT deferring block (active round has progress)", {
           deferredHeight: block.number.toString(),

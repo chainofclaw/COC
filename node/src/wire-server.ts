@@ -108,6 +108,7 @@ export class WireServer {
       conn.socket.destroy()
     }
     this.connections.clear()
+    this.connsByIp.clear()
     if (this.server) {
       this.server.close()
       this.server = null
@@ -213,7 +214,8 @@ export class WireServer {
     })
 
     // Frame processing queue: process frames sequentially to avoid re-entrant
-    // applyBlock errors when multiple Block frames arrive in the same TCP segment
+    // applyBlock errors when multiple Block frames arrive in the same TCP segment.
+    // Always catch to prevent a rejected promise from breaking the chain.
     let frameQueue: Promise<void> = Promise.resolve()
     socket.on("data", (data: Buffer) => {
       this.bytesReceived += data.byteLength
@@ -230,6 +232,9 @@ export class WireServer {
               log.warn("handleFrame error, closing connection", { remote: connId, error: String(err) })
               socket.destroy()
             }
+          }, () => {
+            // Previous link rejected unexpectedly — absorb to keep the chain alive.
+            // The connection may already be destroyed by the prior error handler.
           })
         }
       } catch (err) {
@@ -427,13 +432,16 @@ export class WireServer {
       case MessageType.BftCommit: {
         if (!conn.handshakeComplete || !this.cfg.onBftMessage) return
         const msg = decodeJsonPayload<{ type: string; height: string; blockHash: Hex; senderId: string; signature?: string }>(frame)
+        // Derive BFT type from the wire frame type — never trust the JSON payload type field.
+        // This prevents attackers from sending a BftPrepare frame with type:"commit" in payload.
+        const bftType: "prepare" | "commit" = frame.type === MessageType.BftPrepare ? "prepare" : "commit"
         // Validate senderId matches authenticated connection identity
         if (msg.senderId !== conn.nodeId) {
           log.warn("BFT message senderId mismatch", { claimed: msg.senderId, authenticated: conn.nodeId })
           return
         }
         await this.cfg.onBftMessage({
-          type: msg.type as "prepare" | "commit",
+          type: bftType,
           height: BigInt(msg.height),
           blockHash: msg.blockHash,
           senderId: msg.senderId,

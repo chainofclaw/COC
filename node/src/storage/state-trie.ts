@@ -117,7 +117,7 @@ export class PersistentStateTrie implements IStateTrie {
   private trie: Trie
   private db: IDatabase
   private storageTries = new Map<string, Trie>()
-  private storageTrieAccess: string[] = [] // LRU tracking
+  // LRU tracking uses Map insertion order (storageTries) — no separate array needed
   private dirtyAddresses = new Set<string>() // Dirty tracking for commit
   private accountCache = new Map<string, AccountState | null>() // Read cache
   private readonly maxCachedTries: number
@@ -213,7 +213,6 @@ export class PersistentStateTrie implements IStateTrie {
     this.lastStateRoot = root
     this.accountCache.clear()
     this.storageTries.clear()
-    this.storageTrieAccess.length = 0
     this.dirtyAddresses.clear()
 
     // Persist the new state root
@@ -340,8 +339,6 @@ export class PersistentStateTrie implements IStateTrie {
 
   async clearStorage(address: string): Promise<void> {
     this.storageTries.delete(address)
-    const idx = this.storageTrieAccess.indexOf(address)
-    if (idx >= 0) this.storageTrieAccess.splice(idx, 1)
     // Reset account storage root to empty
     const account = await this.get(address)
     if (account) {
@@ -400,7 +397,6 @@ export class PersistentStateTrie implements IStateTrie {
 
   async close(): Promise<void> {
     this.storageTries.clear()
-    this.storageTrieAccess.length = 0
     this.accountCache.clear()
     this.dirtyAddresses.clear()
   }
@@ -430,17 +426,17 @@ export class PersistentStateTrie implements IStateTrie {
 
     storageTrie = new Trie({ db: trieDb as any, root: rootBytes })
     this.storageTries.set(address, storageTrie)
-    this.storageTrieAccess.push(address)
 
     return storageTrie
   }
 
   private touchLru(address: string): void {
-    const idx = this.storageTrieAccess.indexOf(address)
-    if (idx >= 0) {
-      this.storageTrieAccess.splice(idx, 1)
+    // O(1) LRU via Map delete + re-set: Map iterates in insertion order
+    const trie = this.storageTries.get(address)
+    if (trie) {
+      this.storageTries.delete(address)
+      this.storageTries.set(address, trie)
     }
-    this.storageTrieAccess.push(address)
   }
 
   private evictLru(): void {
@@ -448,13 +444,16 @@ export class PersistentStateTrie implements IStateTrie {
     if (this.dirtyAddresses.size >= this.storageTries.size) return
     // Guard: cap iterations to prevent infinite loop when most tries are dirty
     let attempts = 0
-    const maxAttempts = this.storageTrieAccess.length
-    while (this.storageTries.size >= this.maxCachedTries && this.storageTrieAccess.length > 0 && attempts < maxAttempts) {
+    const maxAttempts = this.storageTries.size
+    while (this.storageTries.size >= this.maxCachedTries && this.storageTries.size > 0 && attempts < maxAttempts) {
       attempts++
-      const oldest = this.storageTrieAccess.shift()!
-      // Don't evict dirty tries — skip and try next
+      // Map iterates in insertion order — first key is the LRU (oldest)
+      const oldest = this.storageTries.keys().next().value as string
+      // Don't evict dirty tries — move to end and try next
       if (this.dirtyAddresses.has(oldest)) {
-        this.storageTrieAccess.push(oldest)
+        const trie = this.storageTries.get(oldest)!
+        this.storageTries.delete(oldest)
+        this.storageTries.set(oldest, trie)
         continue
       }
       this.storageTries.delete(oldest)
