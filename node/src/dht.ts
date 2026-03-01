@@ -101,6 +101,10 @@ export class RoutingTable {
    */
   async addPeer(peer: DhtPeer): Promise<boolean> {
     if (peer.id === this.localId) return false
+    // Validate ID format: must be non-empty hex string (with optional 0x prefix)
+    if (!peer.id || peer.id.length < 3) return false
+    const cleanId = peer.id.startsWith("0x") ? peer.id.slice(2) : peer.id
+    if (cleanId.length === 0 || !/^[0-9a-fA-F]+$/.test(cleanId)) return false
 
     const idx = bucketIndex(this.localId, peer.id)
     const bucket = this.buckets[idx]

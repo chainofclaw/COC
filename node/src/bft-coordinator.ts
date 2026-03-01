@@ -44,6 +44,7 @@ export class BftCoordinator {
   private lingerTimer: ReturnType<typeof setInterval> | null = null
   private pendingMessages: BftMessage[] = []
   private deferredBlock: ChainBlock | null = null
+  private lastFinalizedHeight: bigint = 0n
   private warnedNoVerifier = false
   readonly equivocationDetector = new EquivocationDetector()
 
@@ -150,8 +151,12 @@ export class BftCoordinator {
   async handleMessage(msg: BftMessage): Promise<void> {
     if (!this.activeRound) {
       // Buffer messages that arrive before the round starts (race condition)
+      // Dedup by sender+type+height to prevent buffer pollution from repeated messages
       if (this.pendingMessages.length < 50) {
-        this.pendingMessages.push(msg)
+        const isDup = this.pendingMessages.some(
+          (m) => m.senderId === msg.senderId && m.type === msg.type && m.height === msg.height,
+        )
+        if (!isDup) this.pendingMessages.push(msg)
       }
       return
     }
@@ -160,7 +165,10 @@ export class BftCoordinator {
       // Buffer future-height messages for later processing (cap gap to prevent buffer pollution)
       const heightGap = msg.height - this.activeRound.state.height
       if (heightGap > 0n && heightGap <= 10n && this.pendingMessages.length < 50) {
-        this.pendingMessages.push(msg)
+        const isDup = this.pendingMessages.some(
+          (m) => m.senderId === msg.senderId && m.type === msg.type && m.height === msg.height,
+        )
+        if (!isDup) this.pendingMessages.push(msg)
       }
       return
     }
@@ -203,6 +211,7 @@ export class BftCoordinator {
         if (this.activeRound.state.phase === "finalized" && this.activeRound.state.proposedBlock) {
           log.info("BFT round finalized (early commits)", { height: msg.height.toString() })
           const block = this.activeRound.state.proposedBlock
+          this.lastFinalizedHeight = msg.height
           this.startLingerBroadcast(msg.height, block.hash)
           this.clearRound()
           await this.cfg.onFinalized(block)
@@ -224,6 +233,7 @@ export class BftCoordinator {
         if (finalized && this.activeRound.state.proposedBlock) {
           log.info("BFT round finalized", { height: msg.height.toString() })
           const block = this.activeRound.state.proposedBlock
+          this.lastFinalizedHeight = msg.height
           this.startLingerBroadcast(msg.height, block.hash)
           this.clearRound()
           await this.cfg.onFinalized(block)
@@ -333,13 +343,12 @@ export class BftCoordinator {
     this.deferredBlock = null
     if (!block) return
 
-    // Guard: reject stale deferred blocks that are at or below the height
-    // of the round we just finished (could happen if a block was deferred
-    // and then the same height was finalized via a different path)
-    if (this.activeRound && block.number <= this.activeRound.state.height) {
+    // Guard: reject stale deferred blocks that are at or below the last finalized height
+    // (activeRound is null after clearRound, so we track finalized height separately)
+    if (block.number <= this.lastFinalizedHeight) {
       log.warn("BFT discarding stale deferred block", {
         deferredHeight: block.number.toString(),
-        activeHeight: this.activeRound.state.height.toString(),
+        lastFinalized: this.lastFinalizedHeight.toString(),
       })
       return
     }

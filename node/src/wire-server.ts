@@ -60,6 +60,7 @@ interface PeerConnection {
   handshakeComplete: boolean
   msgCount: number
   msgWindowStartMs: number
+  handshakeTimer?: ReturnType<typeof setTimeout>
 }
 
 const MAX_CONNECTIONS_PER_IP = 5
@@ -206,6 +207,16 @@ export class WireServer {
 
     // Send our handshake
     void this.sendHandshake(socket)
+
+    // Handshake timeout: disconnect peers that don't complete handshake in time
+    const HANDSHAKE_TIMEOUT_MS = 10_000
+    conn.handshakeTimer = setTimeout(() => {
+      if (!conn.handshakeComplete) {
+        log.info("wire handshake timeout", { remote: connId })
+        socket.destroy()
+      }
+    }, HANDSHAKE_TIMEOUT_MS)
+    conn.handshakeTimer.unref()
 
     // Idle timeout: disconnect peers that send no data
     socket.setTimeout(IDLE_TIMEOUT_MS, () => {
@@ -375,6 +386,7 @@ export class WireServer {
         }
         conn.nodeId = hs.nodeId
         conn.handshakeComplete = true
+        if (conn.handshakeTimer) clearTimeout(conn.handshakeTimer)
         // Reply with ack if this was a handshake (not ack)
         if (frame.type === MessageType.Handshake) {
           const height = await Promise.resolve(await this.cfg.getHeight())
