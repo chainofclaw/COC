@@ -102,7 +102,12 @@ export function decodeFrame(buf: Uint8Array): { frame: WireFrame; bytesConsumed:
     throw new Error(`invalid wire magic: 0x${magic.toString(16)}`)
   }
 
-  const type = buf[2] as MessageType
+  const rawType = buf[2]
+  const VALID_TYPES = new Set(Object.values(MessageType))
+  if (!VALID_TYPES.has(rawType)) {
+    throw new Error(`unknown wire message type: 0x${rawType.toString(16)}`)
+  }
+  const type = rawType as MessageType
   const payloadLen = view.getUint32(3, false)
 
   if (payloadLen > MAX_PAYLOAD_SIZE) {
