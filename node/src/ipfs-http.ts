@@ -546,7 +546,8 @@ async function readBody(req: http.IncomingMessage, maxSize = DEFAULT_MAX_UPLOAD_
 
 async function readMultipartFile(req: http.IncomingMessage): Promise<{ filename?: string; bytes: Uint8Array }> {
   const contentType = req.headers["content-type"] ?? ""
-  const boundaryMatch = /boundary=([^;]+)/.exec(contentType)
+  // Limit boundary length to prevent split amplification DoS
+  const boundaryMatch = /boundary=([^;\s]{1,256})/.exec(contentType)
   if (!boundaryMatch) {
     const raw = await readBody(req)
     return { bytes: raw }

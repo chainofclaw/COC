@@ -348,8 +348,9 @@ export class ValidatorGovernance {
       if (v?.active) votedStake += v.stake
     }
 
-    const participationPercent = totalStake > 0n ? Number(votedStake * 100n / totalStake) : 0
-    if (participationPercent < this.config.minVoterPercent) return
+    // Use basis points (10000 = 100%) to avoid BigInt integer division truncation
+    const participationBps = totalStake > 0n ? Number(votedStake * 10000n / totalStake) : 0
+    if (participationBps < this.config.minVoterPercent * 100) return
 
     // Count approval stake
     let approvalStake = 0n
@@ -360,12 +361,12 @@ export class ValidatorGovernance {
       }
     }
 
-    const approvalPercent = totalStake > 0n ? Number(approvalStake * 100n / totalStake) : 0
+    const approvalBps = totalStake > 0n ? Number(approvalStake * 10000n / totalStake) : 0
 
-    if (approvalPercent >= this.config.approvalThresholdPercent) {
+    if (approvalBps >= this.config.approvalThresholdPercent * 100) {
       this.executeProposal(proposal)
       this.proposals.set(proposalId, { ...proposal, status: "approved" })
-    } else if (participationPercent >= 100) {
+    } else if (participationBps >= 10000) {
       // All voted but not enough approval
       this.proposals.set(proposalId, { ...proposal, status: "rejected" })
     }

@@ -123,9 +123,13 @@ export class IpfsMfs {
     let finalData = data
     if (existing && !opts?.truncate && opts?.offset !== undefined) {
       if (opts.offset < 0) throw new Error("offset must be non-negative")
+      // Guard against memory exhaustion from large offset + data.length
+      const MAX_WRITE_SIZE = 64 * 1024 * 1024 // 64 MiB
+      const mergedSize = opts.offset + data.length
+      if (mergedSize > MAX_WRITE_SIZE) throw new Error(`write would exceed max size (${MAX_WRITE_SIZE} bytes)`)
       // Append/overwrite at offset
       const existingData = await this.unixfs.readFile(existing.cid)
-      const merged = new Uint8Array(Math.max(existingData.length, opts.offset + data.length))
+      const merged = new Uint8Array(Math.max(existingData.length, mergedSize))
       merged.set(existingData)
       merged.set(data, opts.offset)
       finalData = merged
@@ -164,6 +168,7 @@ export class IpfsMfs {
 
     if (opts?.offset !== undefined || opts?.count !== undefined) {
       const start = Math.max(0, opts?.offset ?? 0)
+      if (start > data.length) return new Uint8Array()
       const count = opts?.count !== undefined ? Math.max(0, opts.count) : undefined
       const end = count !== undefined ? Math.min(start + count, data.length) : data.length
       return data.slice(start, end)
