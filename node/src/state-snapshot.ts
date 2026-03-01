@@ -64,8 +64,13 @@ export async function exportStateSnapshot(
       if (acc) accounts.push(acc)
     }
   } else {
-    // Full trie traversal
+    // Full trie traversal with export cap to prevent OOM on large state tries
+    const MAX_EXPORT_ACCOUNTS = 100_000
     for await (const { address } of stateTrie.iterateAccounts()) {
+      if (accounts.length >= MAX_EXPORT_ACCOUNTS) {
+        log.warn("snapshot export capped at limit", { limit: MAX_EXPORT_ACCOUNTS })
+        break
+      }
       const acc = await exportAccount(stateTrie, address)
       if (acc) accounts.push(acc)
     }

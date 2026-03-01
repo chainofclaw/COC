@@ -551,6 +551,9 @@ async function handleRpc(
           value: txParams.value ?? "0x0",
         })).toString(16)
 
+        if (nonce > BigInt(Number.MAX_SAFE_INTEGER)) {
+          throw new Error(`nonce too large for safe conversion: ${nonce}`)
+        }
         const tx = Transaction.from({
           to: txParams.to,
           value: txParams.value ?? "0x0",
@@ -1208,11 +1211,15 @@ async function handleRpc(
           }
         }
 
-        // Count total txs from last 100 blocks
-        let recentTxCount = 0
+        // Count total txs from last 100 blocks (parallel fetch)
         const scanFrom = height > 100n ? height - 99n : 1n
+        const blockFetches: Promise<unknown>[] = []
         for (let i = scanFrom; i <= height; i++) {
-          const b = await Promise.resolve(chain.getBlockByNumber(i))
+          blockFetches.push(Promise.resolve(chain.getBlockByNumber(i)))
+        }
+        const scannedBlocks = await Promise.all(blockFetches) as Array<{ txs: unknown[] } | null>
+        let recentTxCount = 0
+        for (const b of scannedBlocks) {
           if (b) recentTxCount += b.txs.length
         }
 
@@ -1294,8 +1301,11 @@ async function handleRpc(
       }
       const peerUrl = String((payload.params ?? [])[0] ?? "")
       const peerId = String((payload.params ?? [])[1] ?? `peer-${Date.now()}`)
-      if (!peerUrl.startsWith("http")) {
-        throw { code: -32602, message: "invalid peer URL: must start with http" }
+      try { new URL(peerUrl) } catch {
+        throw { code: -32602, message: "invalid peer URL" }
+      }
+      if (!/^[a-zA-Z0-9\-_.:]+$/.test(peerId)) {
+        throw { code: -32602, message: "invalid peer ID: only alphanumeric, hyphens, underscores, dots, colons allowed" }
       }
       p2p.discovery.addDiscoveredPeers([{ id: peerId, url: peerUrl }])
       return true

@@ -278,8 +278,9 @@ export class PersistentChainEngine {
       // Allow trusted local path (BFT finalize callback) to promote finality metadata.
       if (locallyProposed && block.bftFinalized && !existing.bftFinalized) {
         existing.bftFinalized = true
-        const tip = await this.getTip()
-        if (tip?.hash === existing.hash) {
+        // Use putBlock for tip (updates LATEST_BLOCK_KEY cache), updateBlock for non-tip
+        const currentTip = await this.getTip()
+        if (currentTip?.hash === existing.hash) {
           await this.blockIndex.putBlock(existing)
         } else {
           await this.blockIndex.updateBlock(existing)

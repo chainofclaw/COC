@@ -305,12 +305,14 @@ export class WireServer {
             return
           }
           // Nonce replay protection: in-memory dedup + timestamp window
+          // Atomic check-then-add to prevent TOCTOU race on concurrent connections
           if (this.handshakeNonces.has(hs.nonce)) {
             log.warn("handshake nonce replay detected", { peer: hs.nodeId, nonce: hs.nonce })
             this.cfg.peerScoring?.recordInvalidData(conn.socket.remoteAddress ?? "unknown")
             conn.socket.destroy()
             return
           }
+          this.handshakeNonces.add(hs.nonce)
           // Reject nonces with timestamps too far from current time (replay across restarts)
           // Fail-closed: invalid/missing timestamp → reject (legitimate clients always include timestamp)
           const nonceParts = hs.nonce.split(":")
@@ -348,18 +350,22 @@ export class WireServer {
             conn.socket.destroy()
             return
           }
-          this.handshakeNonces.add(hs.nonce)
+          // nonce already added atomically after has() check above
         }
         // Evict existing connection with same nodeId only when verifier is active
         // (nodeId was cryptographically authenticated). Without verifier, skip eviction
         // to prevent attackers from spoofing nodeId to disconnect legitimate peers.
         if (this.cfg.verifier) {
+          // Collect duplicates first to avoid modifying connections Map during iteration
+          const toEvict: { id: string; conn: typeof conn }[] = []
           for (const [existingId, existingConn] of this.connections) {
             if (existingConn.nodeId === hs.nodeId && existingConn !== conn) {
-              log.warn("duplicate nodeId, closing old connection", { nodeId: hs.nodeId, old: existingId })
-              existingConn.socket.destroy()
-              break
+              toEvict.push({ id: existingId, conn: existingConn })
             }
+          }
+          for (const entry of toEvict) {
+            log.warn("duplicate nodeId, closing old connection", { nodeId: hs.nodeId, old: entry.id })
+            entry.conn.socket.destroy()
           }
         }
         conn.nodeId = hs.nodeId

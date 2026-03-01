@@ -79,7 +79,9 @@ export class Mempool {
       const existing = this.txs.get(existingHash)
       if (existing) {
         // Require minimum gas price bump for replacement
-        const minPrice = existing.gasPrice + (existing.gasPrice * BigInt(this.cfg.minGasBump)) / 100n
+        // Round UP the bump to prevent zero-bump replacement when gasPrice is small
+        const bump = (existing.gasPrice * BigInt(this.cfg.minGasBump) + 99n) / 100n
+        const minPrice = existing.gasPrice + bump
         if (item.gasPrice < minPrice) {
           throw new Error(
             `replacement tx gas price too low: need at least ${minPrice}, got ${item.gasPrice}`

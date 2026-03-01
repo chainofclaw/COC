@@ -140,6 +140,7 @@ export class RoutingTable {
       const alive = await this.pingPeer(oldest)
       // Re-locate oldest by ID after async ping (bucket may have changed during await)
       const pos = bucket.peers.findIndex((p) => p.id === oldestId)
+      // Re-check bucket size — concurrent addPeer calls may have changed it
       if (pos < 0) {
         // Oldest was removed during ping — bucket may have space now
         if (bucket.peers.length < K) {
@@ -147,11 +148,13 @@ export class RoutingTable {
           return true
         }
       } else if (!alive) {
-        // Evict unreachable peer, add new peer at tail
+        // Evict unreachable peer, add new peer at tail (only if bucket won't exceed K)
         bucket.peers.splice(pos, 1)
-        bucket.peers.push({ ...peer, lastSeenMs: Date.now() })
-        log.debug("bucket full, evicted unreachable peer", { idx, evicted: oldestId, added: peer.id })
-        return true
+        if (bucket.peers.length < K) {
+          bucket.peers.push({ ...peer, lastSeenMs: Date.now() })
+          log.debug("bucket full, evicted unreachable peer", { idx, evicted: oldestId, added: peer.id })
+          return true
+        }
       } else {
         // Oldest peer responded — move it to tail, reject new peer
         bucket.peers.splice(pos, 1)
