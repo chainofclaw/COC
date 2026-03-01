@@ -299,6 +299,9 @@ export class PersistentChainEngine {
 
     // Timestamp validation (skip for locally proposed blocks — we set them ourselves)
     if (!locallyProposed) {
+      if (block.timestampMs < 0) {
+        throw new Error("block timestamp cannot be negative")
+      }
       if (prev && block.timestampMs <= prev.timestampMs) {
         throw new Error("block timestamp must be after parent timestamp")
       }

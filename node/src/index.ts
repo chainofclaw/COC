@@ -479,10 +479,12 @@ const poseAuthNonceTracker = new PersistentPoseAuthNonceTracker({
   ttlMs: config.poseAuthNonceTtlMs,
   maxSize: config.poseAuthNonceMaxEntries,
 })
-setInterval(() => poseAuthNonceTracker.cleanup(), 300_000).unref()
-if (config.poseAuthNonceRegistryPath) {
-  setInterval(() => poseAuthNonceTracker.compact(), 60 * 60 * 1000).unref()
-}
+const poseCleanupTimer = setInterval(() => poseAuthNonceTracker.cleanup(), 300_000)
+poseCleanupTimer.unref()
+const poseCompactTimer = config.poseAuthNonceRegistryPath
+  ? setInterval(() => poseAuthNonceTracker.compact(), 60 * 60 * 1000)
+  : null
+poseCompactTimer?.unref()
 const poseChallengerDynamicResolver = resolvePoseChallengerDynamicResolver(config, chain)
 const poseChallengerAuthorizer = poseChallengerDynamicResolver
   ? createPoseChallengerAuthorizer({
@@ -695,6 +697,8 @@ async function shutdown(signal: string) {
   for (const client of wireClients) client.disconnect()
   if (dhtNetwork) dhtNetwork.stop()
   pubsub.stop()
+  clearInterval(poseCleanupTimer)
+  if (poseCompactTimer) clearInterval(poseCompactTimer)
   // Allow in-flight block production/sync to drain before closing DB
   await new Promise((resolve) => setTimeout(resolve, 500))
   const closeable = chain as PersistentChainEngine
