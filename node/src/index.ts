@@ -70,10 +70,11 @@ if (usePersistent) {
 let chain: IChainEngine
 let evm: EvmChain
 let stateTrie: IStateTrie | null = null
+let stateDb: LevelDatabase | null = null
 
 if (usePersistent) {
   // Create persistent state trie backed by LevelDB
-  const stateDb = new LevelDatabase(config.dataDir, "state")
+  stateDb = new LevelDatabase(config.dataDir, "state")
   await stateDb.open()
   const trie = new PersistentStateTrie(stateDb)
   await trie.init()
@@ -479,10 +480,12 @@ const poseAuthNonceTracker = new PersistentPoseAuthNonceTracker({
   ttlMs: config.poseAuthNonceTtlMs,
   maxSize: config.poseAuthNonceMaxEntries,
 })
-setInterval(() => poseAuthNonceTracker.cleanup(), 300_000).unref()
-if (config.poseAuthNonceRegistryPath) {
-  setInterval(() => poseAuthNonceTracker.compact(), 60 * 60 * 1000).unref()
-}
+const poseCleanupTimer = setInterval(() => poseAuthNonceTracker.cleanup(), 300_000)
+poseCleanupTimer.unref()
+const poseCompactTimer = config.poseAuthNonceRegistryPath
+  ? setInterval(() => poseAuthNonceTracker.compact(), 60 * 60 * 1000)
+  : null
+poseCompactTimer?.unref()
 const poseChallengerDynamicResolver = resolvePoseChallengerDynamicResolver(config, chain)
 const poseChallengerAuthorizer = poseChallengerDynamicResolver
   ? createPoseChallengerAuthorizer({
@@ -525,6 +528,9 @@ startRpcServer(
 )
 
 // Start WebSocket RPC server for real-time subscriptions
+// Bind bftCoordinator into the handler closure so WS RPC can access BFT state (e.g. coc_bftRoundState)
+const wsHandleRpcMethod = (method: string, params: unknown[], cId: number, e: EvmChain, c: IChainEngine, p: P2PNode) =>
+  handleRpcMethod(method, params, cId, e, c, p, bftCoordinator)
 const wsServer = startWsRpcServer(
   { port: config.wsPort, bind: config.wsBind, authToken: config.rpcAuthToken },
   config.chainId,
@@ -532,7 +538,7 @@ const wsServer = startWsRpcServer(
   chain,
   p2p,
   chain.events,
-  handleRpcMethod,
+  wsHandleRpcMethod,
 )
 log.info("WebSocket RPC configured", { bind: config.wsBind, port: config.wsPort })
 
@@ -695,11 +701,17 @@ async function shutdown(signal: string) {
   for (const client of wireClients) client.disconnect()
   if (dhtNetwork) dhtNetwork.stop()
   pubsub.stop()
+  clearInterval(poseCleanupTimer)
+  if (poseCompactTimer) clearInterval(poseCompactTimer)
   // Allow in-flight block production/sync to drain before closing DB
   await new Promise((resolve) => setTimeout(resolve, 500))
   const closeable = chain as PersistentChainEngine
   if (typeof closeable.close === "function") {
     await closeable.close()
+  }
+  // Close the separate state trie LevelDB (not covered by PersistentChainEngine.close)
+  if (stateDb) {
+    try { await stateDb.close() } catch { /* best-effort */ }
   }
   log.info("shutdown complete")
   process.exit(0)
@@ -730,11 +742,12 @@ function resolvePoseChallengerDynamicResolver(
   if (config.poseUseGovernanceChallengerAuth) {
     return async (senderId) => {
       if (!hasGovernance(chain)) return false
+      const senderLower = senderId.toLowerCase()
       const activeValidators = chain.governance.getActiveValidators()
       return activeValidators.some((v) =>
         v.active && (
-          v.id.toLowerCase() === senderId ||
-          v.address.toLowerCase() === senderId
+          v.id.toLowerCase() === senderLower ||
+          v.address.toLowerCase() === senderLower
         ),
       )
     }

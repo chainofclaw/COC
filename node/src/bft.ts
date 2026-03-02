@@ -112,8 +112,8 @@ export class BftRound {
       return []
     }
 
-    // Verify block.proposer matches senderId
-    if (block.proposer !== senderId) {
+    // Verify block.proposer matches senderId (case-insensitive for EIP-55 compatibility)
+    if (block.proposer.toLowerCase() !== senderId.toLowerCase()) {
       log.warn("propose block.proposer mismatch", { senderId, blockProposer: block.proposer })
       return []
     }

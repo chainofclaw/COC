@@ -221,6 +221,16 @@ export class WireClient {
       this.connected = false
       this.handshakeComplete = false
       this.remoteNodeId = null
+      // Stop ping timer to prevent stale latency calculations after reconnect
+      this.stopPing()
+      this.lastPingSentMs = 0
+      // Resolve all pending FindNode requests immediately on disconnect
+      // to prevent callers from hanging until timeout and to free resources
+      for (const entry of this.pendingFindNode.values()) {
+        clearTimeout(entry.timer)
+        entry.resolve([])
+      }
+      this.pendingFindNode.clear()
       if (wasConnected) {
         this.cfg.onDisconnected?.()
       }

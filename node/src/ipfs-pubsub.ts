@@ -163,6 +163,11 @@ export class IpfsPubsub {
    * Returns true if the message was new and delivered.
    */
   receiveFromPeer(topic: string, msg: PubsubMessage): boolean {
+    // Validate message identity fields to prevent dedup key injection
+    if (!msg.from || typeof msg.from !== "string" || msg.from.length > 256) return false
+    if (!msg.seqno || typeof msg.seqno !== "string" || msg.seqno.length > 64) return false
+    if (!topic || typeof topic !== "string" || topic.length > 512) return false
+
     const msgId = `${msg.from}:${msg.seqno}`
 
     // Enforce message size limit BEFORE dedup to avoid polluting seenMessages

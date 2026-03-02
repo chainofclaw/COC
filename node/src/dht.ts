@@ -14,6 +14,7 @@ export const K = 20 // max peers per bucket
 export const ID_BITS = 256 // keccak256 produces 256-bit IDs
 export const ALPHA = 3 // parallel lookups
 export const MAX_PEERS_PER_IP_PER_BUCKET = 2 // Sybil protection: max nodes per IP per K-bucket
+export const MAX_PEERS_PER_IP_GLOBAL = 10 // Sybil protection: max nodes per IP across all buckets
 
 export interface DhtPeer {
   id: string // hex-encoded node ID
@@ -100,6 +101,10 @@ export class RoutingTable {
    */
   async addPeer(peer: DhtPeer): Promise<boolean> {
     if (peer.id === this.localId) return false
+    // Validate ID format: must be non-empty hex string (with optional 0x prefix)
+    if (!peer.id || peer.id.length < 3) return false
+    const cleanId = peer.id.startsWith("0x") ? peer.id.slice(2) : peer.id
+    if (cleanId.length === 0 || !/^[0-9a-fA-F]+$/.test(cleanId)) return false
 
     const idx = bucketIndex(this.localId, peer.id)
     const bucket = this.buckets[idx]
@@ -125,6 +130,18 @@ export class RoutingTable {
         log.debug("per-IP bucket limit reached, dropping peer", { ip: peerHost, bucket: idx, peerId: peer.id })
         return false
       }
+      // Global per-IP limit across all buckets to prevent eclipse attacks
+      let globalIpCount = 0
+      for (const b of this.buckets) {
+        for (const p of b.peers) {
+          if (normalizeHostForBucket(extractHost(p.address)) === peerHost) globalIpCount++
+        }
+        if (globalIpCount >= MAX_PEERS_PER_IP_GLOBAL) break
+      }
+      if (globalIpCount >= MAX_PEERS_PER_IP_GLOBAL) {
+        log.debug("global per-IP limit reached, dropping peer", { ip: peerHost, peerId: peer.id })
+        return false
+      }
     }
 
     // Bucket not full, add at tail
@@ -140,6 +157,7 @@ export class RoutingTable {
       const alive = await this.pingPeer(oldest)
       // Re-locate oldest by ID after async ping (bucket may have changed during await)
       const pos = bucket.peers.findIndex((p) => p.id === oldestId)
+      // Re-check bucket size — concurrent addPeer calls may have changed it
       if (pos < 0) {
         // Oldest was removed during ping — bucket may have space now
         if (bucket.peers.length < K) {
@@ -147,11 +165,13 @@ export class RoutingTable {
           return true
         }
       } else if (!alive) {
-        // Evict unreachable peer, add new peer at tail
+        // Evict unreachable peer, add new peer at tail (only if bucket won't exceed K)
         bucket.peers.splice(pos, 1)
-        bucket.peers.push({ ...peer, lastSeenMs: Date.now() })
-        log.debug("bucket full, evicted unreachable peer", { idx, evicted: oldestId, added: peer.id })
-        return true
+        if (bucket.peers.length < K) {
+          bucket.peers.push({ ...peer, lastSeenMs: Date.now() })
+          log.debug("bucket full, evicted unreachable peer", { idx, evicted: oldestId, added: peer.id })
+          return true
+        }
       } else {
         // Oldest peer responded — move it to tail, reject new peer
         bucket.peers.splice(pos, 1)

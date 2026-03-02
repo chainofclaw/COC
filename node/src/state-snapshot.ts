@@ -64,8 +64,13 @@ export async function exportStateSnapshot(
       if (acc) accounts.push(acc)
     }
   } else {
-    // Full trie traversal
+    // Full trie traversal with export cap to prevent OOM on large state tries
+    const MAX_EXPORT_ACCOUNTS = 100_000
     for await (const { address } of stateTrie.iterateAccounts()) {
+      if (accounts.length >= MAX_EXPORT_ACCOUNTS) {
+        log.warn("snapshot export capped at limit", { limit: MAX_EXPORT_ACCOUNTS })
+        break
+      }
       const acc = await exportAccount(stateTrie, address)
       if (acc) accounts.push(acc)
     }
@@ -293,8 +298,8 @@ export function deserializeSnapshot(json: string): StateSnapshot {
 }
 
 function isValidHex(str: string): boolean {
-  // Must be "0x" + even number of hex chars (byte-aligned)
-  return /^0x([0-9a-fA-F]{2})*$/.test(str)
+  // Accept "0x" prefix + any hex chars (odd-length like "0x0" is valid in Ethereum RPC)
+  return /^0x[0-9a-fA-F]*$/.test(str)
 }
 
 function bytesToHexStr(bytes: Uint8Array): string {

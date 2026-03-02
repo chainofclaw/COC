@@ -210,6 +210,7 @@ export class PeerScoring {
     this.decayTimer = setInterval(() => {
       this.applyDecay()
     }, this.cfg.decayIntervalMs)
+    this.decayTimer.unref()
   }
 
   /**
@@ -246,10 +247,11 @@ export class PeerScoring {
   /** Calculate exponential ban duration: baseBanMs * 2^min(banCount-1, 10), max 24h */
   private exponentialBanMs(banCount: number): number {
     const MAX_BAN_MS = 24 * 60 * 60 * 1000 // 24 hours
-    // Clamp exponent to [0,10] to prevent fractional multiplier if banCount <= 0
+    // Use bitwise shift for exact integer powers of 2 (no floating-point error)
     const exponent = Math.min(Math.max(banCount - 1, 0), 10)
-    const multiplier = Math.pow(2, exponent)
-    return Math.min(this.cfg.banDurationMs * multiplier, MAX_BAN_MS)
+    const multiplier = 1 << exponent
+    const banMs = this.cfg.banDurationMs * multiplier
+    return Number.isSafeInteger(banMs) ? Math.min(banMs, MAX_BAN_MS) : MAX_BAN_MS
   }
 
   /**

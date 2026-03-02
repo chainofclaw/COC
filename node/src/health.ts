@@ -74,7 +74,7 @@ export class HealthChecker {
     } catch (err) {
       checks.chain = {
         ok: false,
-        message: `chain check failed: ${err}`,
+        message: "chain check failed",
         latencyMs: Math.round(performance.now() - chainStart),
       }
     }

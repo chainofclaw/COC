@@ -676,8 +676,13 @@ export class P2PNode {
               throw new Error(`invalid BFT message type: ${payload.type}`)
             }
             // Restore BigInt height lost during JSON serialization
-            if (payload.height !== undefined) {
+            if (payload.height === undefined || payload.height === null) {
+              throw new Error("missing BFT height field")
+            }
+            try {
               payload.height = BigInt(payload.height)
+            } catch {
+              throw new Error("invalid BFT height value")
             }
             if (this.handlers.onBftMessage) {
               await this.handlers.onBftMessage(payload)

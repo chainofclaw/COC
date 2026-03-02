@@ -157,8 +157,10 @@ export class PersistentStateManager {
   }
 
   shallowCopy(): PersistentStateManager {
-    // Return same instance; persistent state is shared
-    return this
+    // Create a new instance sharing the same trie but with an independent code cache
+    // so eth_call / estimateGas do not pollute the main state manager's cache
+    const copy = new PersistentStateManager(this.trie)
+    return copy
   }
 
   // Required by some EthereumJS VM paths

@@ -252,10 +252,15 @@ export class ConsensusEngine {
         try {
           await this.bft.startRound(block)
         } catch (bftErr) {
+          this.proposeFailures++
           log.warn("BFT round start failed", {
             error: String(bftErr),
             block: block.number.toString(),
+            consecutive: this.proposeFailures,
           })
+          if (this.proposeFailures >= MAX_CONSECUTIVE_FAILURES) {
+            this.enterDegradedMode("bft-start")
+          }
         }
       }
 

@@ -120,14 +120,14 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
   const poseNonceRegistryPath = process.env.COC_POSE_NONCE_REGISTRY_PATH
     || userPoseNonceRegistryPath
     || join(dataDir, "pose-nonce-registry.log")
-  const poseNonceRegistryTtlMsEnv = process.env.COC_POSE_NONCE_REGISTRY_TTL_MS
-  const poseNonceRegistryTtlMs = poseNonceRegistryTtlMsEnv !== undefined
-    ? Number(poseNonceRegistryTtlMsEnv)
-    : Number((user as Record<string, unknown>).poseNonceRegistryTtlMs ?? (7 * 24 * 60 * 60 * 1000))
-  const poseNonceRegistryMaxEntriesEnv = process.env.COC_POSE_NONCE_REGISTRY_MAX_ENTRIES
-  const poseNonceRegistryMaxEntries = poseNonceRegistryMaxEntriesEnv !== undefined
-    ? Number(poseNonceRegistryMaxEntriesEnv)
-    : Number((user as Record<string, unknown>).poseNonceRegistryMaxEntries ?? 500_000)
+  const poseNonceRegistryTtlMs = safeParseInt(
+    process.env.COC_POSE_NONCE_REGISTRY_TTL_MS,
+    Number((user as Record<string, unknown>).poseNonceRegistryTtlMs ?? (7 * 24 * 60 * 60 * 1000)),
+  )
+  const poseNonceRegistryMaxEntries = safeParseInt(
+    process.env.COC_POSE_NONCE_REGISTRY_MAX_ENTRIES,
+    Number((user as Record<string, unknown>).poseNonceRegistryMaxEntries ?? 500_000),
+  )
   const p2pRequireInboundAuthEnv = process.env.COC_P2P_REQUIRE_INBOUND_AUTH
   const p2pRequireInboundAuthFromEnv = p2pRequireInboundAuthEnv !== undefined
     ? (p2pRequireInboundAuthEnv === "1" || p2pRequireInboundAuthEnv.toLowerCase() === "true")
@@ -147,24 +147,24 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
         ? (p2pRequireInboundAuthFromUser ? "enforce" : "off")
         : "enforce")
   const p2pRequireInboundAuth = p2pInboundAuthMode === "enforce"
-  const p2pAuthMaxClockSkewMsEnv = process.env.COC_P2P_AUTH_MAX_CLOCK_SKEW_MS
-  const p2pAuthMaxClockSkewMs = p2pAuthMaxClockSkewMsEnv !== undefined
-    ? Number(p2pAuthMaxClockSkewMsEnv)
-    : Number((user as Record<string, unknown>).p2pAuthMaxClockSkewMs ?? 120_000)
+  const p2pAuthMaxClockSkewMs = safeParseInt(
+    process.env.COC_P2P_AUTH_MAX_CLOCK_SKEW_MS,
+    Number((user as Record<string, unknown>).p2pAuthMaxClockSkewMs ?? 120_000),
+  )
   const userP2PAuthNonceRegistryPath = typeof (user as Record<string, unknown>).p2pAuthNonceRegistryPath === "string"
     ? ((user as Record<string, unknown>).p2pAuthNonceRegistryPath as string)
     : undefined
   const p2pAuthNonceRegistryPath = process.env.COC_P2P_AUTH_NONCE_REGISTRY_PATH
     || userP2PAuthNonceRegistryPath
     || join(dataDir, "p2p-auth-nonce.log")
-  const p2pAuthNonceTtlMsEnv = process.env.COC_P2P_AUTH_NONCE_TTL_MS
-  const p2pAuthNonceTtlMs = p2pAuthNonceTtlMsEnv !== undefined
-    ? Number(p2pAuthNonceTtlMsEnv)
-    : Number((user as Record<string, unknown>).p2pAuthNonceTtlMs ?? (24 * 60 * 60 * 1000))
-  const p2pAuthNonceMaxEntriesEnv = process.env.COC_P2P_AUTH_NONCE_MAX_ENTRIES
-  const p2pAuthNonceMaxEntries = p2pAuthNonceMaxEntriesEnv !== undefined
-    ? Number(p2pAuthNonceMaxEntriesEnv)
-    : Number((user as Record<string, unknown>).p2pAuthNonceMaxEntries ?? 100_000)
+  const p2pAuthNonceTtlMs = safeParseInt(
+    process.env.COC_P2P_AUTH_NONCE_TTL_MS,
+    Number((user as Record<string, unknown>).p2pAuthNonceTtlMs ?? (24 * 60 * 60 * 1000)),
+  )
+  const p2pAuthNonceMaxEntries = safeParseInt(
+    process.env.COC_P2P_AUTH_NONCE_MAX_ENTRIES,
+    Number((user as Record<string, unknown>).p2pAuthNonceMaxEntries ?? 100_000),
+  )
   const poseRequireInboundAuthEnv = process.env.COC_POSE_REQUIRE_INBOUND_AUTH
   const poseRequireInboundAuthFromEnv = poseRequireInboundAuthEnv !== undefined
     ? (poseRequireInboundAuthEnv === "1" || poseRequireInboundAuthEnv.toLowerCase() === "true")
@@ -183,24 +183,24 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
         ? (poseRequireInboundAuthFromUser ? "enforce" : "off")
         : "enforce")
   const poseRequireInboundAuth = poseInboundAuthMode === "enforce"
-  const poseAuthMaxClockSkewMsEnv = process.env.COC_POSE_AUTH_MAX_CLOCK_SKEW_MS
-  const poseAuthMaxClockSkewMs = poseAuthMaxClockSkewMsEnv !== undefined
-    ? Number(poseAuthMaxClockSkewMsEnv)
-    : Number((user as Record<string, unknown>).poseAuthMaxClockSkewMs ?? 120_000)
+  const poseAuthMaxClockSkewMs = safeParseInt(
+    process.env.COC_POSE_AUTH_MAX_CLOCK_SKEW_MS,
+    Number((user as Record<string, unknown>).poseAuthMaxClockSkewMs ?? 120_000),
+  )
   const userPoseAuthNonceRegistryPath = typeof (user as Record<string, unknown>).poseAuthNonceRegistryPath === "string"
     ? ((user as Record<string, unknown>).poseAuthNonceRegistryPath as string)
     : undefined
   const poseAuthNonceRegistryPath = process.env.COC_POSE_AUTH_NONCE_REGISTRY_PATH
     || userPoseAuthNonceRegistryPath
     || join(dataDir, "pose-auth-nonce.log")
-  const poseAuthNonceTtlMsEnv = process.env.COC_POSE_AUTH_NONCE_TTL_MS
-  const poseAuthNonceTtlMs = poseAuthNonceTtlMsEnv !== undefined
-    ? Number(poseAuthNonceTtlMsEnv)
-    : Number((user as Record<string, unknown>).poseAuthNonceTtlMs ?? (24 * 60 * 60 * 1000))
-  const poseAuthNonceMaxEntriesEnv = process.env.COC_POSE_AUTH_NONCE_MAX_ENTRIES
-  const poseAuthNonceMaxEntries = poseAuthNonceMaxEntriesEnv !== undefined
-    ? Number(poseAuthNonceMaxEntriesEnv)
-    : Number((user as Record<string, unknown>).poseAuthNonceMaxEntries ?? 100_000)
+  const poseAuthNonceTtlMs = safeParseInt(
+    process.env.COC_POSE_AUTH_NONCE_TTL_MS,
+    Number((user as Record<string, unknown>).poseAuthNonceTtlMs ?? (24 * 60 * 60 * 1000)),
+  )
+  const poseAuthNonceMaxEntries = safeParseInt(
+    process.env.COC_POSE_AUTH_NONCE_MAX_ENTRIES,
+    Number((user as Record<string, unknown>).poseAuthNonceMaxEntries ?? 100_000),
+  )
   const userPoseAllowedChallengers = (user as Record<string, unknown>).poseAllowedChallengers
   const poseAllowedChallengersFromUser = Array.isArray(userPoseAllowedChallengers)
     ? userPoseAllowedChallengers.filter((x): x is string => typeof x === "string")
@@ -231,21 +231,23 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     : typeof (user as Record<string, unknown>).poseOnchainAuthPoseManagerAddress === "string"
       ? ((user as Record<string, unknown>).poseOnchainAuthPoseManagerAddress as string)
       : ""
-  const poseOnchainAuthMinOperatorNodes = process.env.COC_POSE_ONCHAIN_AUTH_MIN_OPERATOR_NODES !== undefined
-    ? Number(process.env.COC_POSE_ONCHAIN_AUTH_MIN_OPERATOR_NODES)
-    : Number((user as Record<string, unknown>).poseOnchainAuthMinOperatorNodes ?? 1)
-  const poseOnchainAuthTimeoutMs = process.env.COC_POSE_ONCHAIN_AUTH_TIMEOUT_MS !== undefined
-    ? Number(process.env.COC_POSE_ONCHAIN_AUTH_TIMEOUT_MS)
-    : Number((user as Record<string, unknown>).poseOnchainAuthTimeoutMs ?? 3_000)
+  const poseOnchainAuthMinOperatorNodes = safeParseInt(
+    process.env.COC_POSE_ONCHAIN_AUTH_MIN_OPERATOR_NODES,
+    Number((user as Record<string, unknown>).poseOnchainAuthMinOperatorNodes ?? 1),
+  )
+  const poseOnchainAuthTimeoutMs = safeParseInt(
+    process.env.COC_POSE_ONCHAIN_AUTH_TIMEOUT_MS,
+    Number((user as Record<string, unknown>).poseOnchainAuthTimeoutMs ?? 3_000),
+  )
   const poseOnchainAuthFailOpen = parseBooleanFlag(
     process.env.COC_POSE_ONCHAIN_AUTH_FAIL_OPEN
       ?? (user as Record<string, unknown>).poseOnchainAuthFailOpen,
     false,
   )
-  const poseChallengerAuthCacheTtlMsEnv = process.env.COC_POSE_CHALLENGER_AUTH_CACHE_TTL_MS
-  const poseChallengerAuthCacheTtlMs = poseChallengerAuthCacheTtlMsEnv !== undefined
-    ? Number(poseChallengerAuthCacheTtlMsEnv)
-    : Number((user as Record<string, unknown>).poseChallengerAuthCacheTtlMs ?? 30_000)
+  const poseChallengerAuthCacheTtlMs = safeParseInt(
+    process.env.COC_POSE_CHALLENGER_AUTH_CACHE_TTL_MS,
+    Number((user as Record<string, unknown>).poseChallengerAuthCacheTtlMs ?? 30_000),
+  )
   const dhtRequireAuthenticatedVerify = parseBooleanFlag(
     process.env.COC_DHT_REQUIRE_AUTHENTICATED_VERIFY
       ?? (user as Record<string, unknown>).dhtRequireAuthenticatedVerify,
@@ -411,6 +413,13 @@ function normalizeInboundAuthMode(input: unknown): "off" | "monitor" | "enforce"
   return undefined
 }
 
+function safeParseInt(input: string | undefined, fallback: number): number {
+  if (input === undefined) return fallback
+  const parsed = Number(input)
+  if (!Number.isFinite(parsed)) return fallback
+  return parsed
+}
+
 function parseBooleanFlag(input: unknown, fallback: boolean): boolean {
   if (typeof input === "boolean") return input
   if (typeof input !== "string") return fallback
@@ -421,14 +430,20 @@ function parseBooleanFlag(input: unknown, fallback: boolean): boolean {
 }
 
 async function resolveNodeKey(dataDir: string): Promise<string> {
-  // Priority 1: environment variable
-  if (process.env.COC_NODE_KEY) return process.env.COC_NODE_KEY
+  // Priority 1: environment variable (validate format)
+  if (process.env.COC_NODE_KEY) {
+    const envKey = process.env.COC_NODE_KEY.trim()
+    if (!isValidPrivateKeyHex(envKey)) {
+      throw new Error("COC_NODE_KEY env var must be a 0x-prefixed 64-character hex string (66 chars total)")
+    }
+    return envKey
+  }
 
   // Priority 2: file on disk
   const keyPath = join(dataDir, "node-key")
   try {
     const key = (await readFile(keyPath, "utf-8")).trim()
-    if (key.startsWith("0x") && key.length === 66) return key
+    if (isValidPrivateKeyHex(key)) return key
   } catch {
     // file doesn't exist, generate
   }
@@ -438,6 +453,10 @@ async function resolveNodeKey(dataDir: string): Promise<string> {
   await mkdir(dataDir, { recursive: true })
   await writeFile(keyPath, key + "\n", { mode: 0o600 })
   return key
+}
+
+function isValidPrivateKeyHex(key: string): boolean {
+  return key.startsWith("0x") && key.length === 66 && /^[0-9a-fA-F]+$/.test(key.slice(2))
 }
 
 function resolveDataDir(): string {

@@ -436,11 +436,14 @@ async function handleRpc(
     }
     case "eth_estimateGas": {
       const estParams = ((payload.params ?? [])[0] ?? {}) as Record<string, string>
+      // Default gas cap to block gas limit (30M) to prevent DoS via unbounded execution
+      const gasForEstimate = estParams.gas ?? "0x1c9c380"
       const estimated = await evm.estimateGas({
         from: estParams.from,
         to: estParams.to ?? "",
         data: estParams.data,
         value: estParams.value,
+        gas: gasForEstimate,
       })
       return `0x${estimated.toString(16)}`
     }
@@ -499,11 +502,23 @@ async function handleRpc(
       const newFilterHeight = await Promise.resolve(chain.getHeight())
       const fromBlock = parseBlockTag(query.fromBlock, newFilterHeight)
       const toBlock = query.toBlock !== undefined ? parseBlockTag(query.toBlock, newFilterHeight) : undefined
+      // Normalize address: support both single string and array of addresses
+      let filterAddress: Hex | undefined
+      let filterAddresses: Hex[] | undefined
+      if (query.address) {
+        if (Array.isArray(query.address)) {
+          filterAddresses = (query.address as string[]).map((a) => String(a).toLowerCase() as Hex)
+          filterAddress = filterAddresses.length > 0 ? filterAddresses[0] : undefined
+        } else {
+          filterAddress = String(query.address).toLowerCase() as Hex
+        }
+      }
       const filter: PendingFilter = {
         id,
         fromBlock,
         toBlock,
-        address: query.address ? String(query.address).toLowerCase() as Hex : undefined,
+        address: filterAddress,
+        addresses: filterAddresses,
         topics: Array.isArray(query.topics) ? query.topics.map((t) => (t ? String(t) as Hex : null)) : undefined,
         lastCursor: fromBlock > 0n ? fromBlock - 1n : 0n,
         createdAtMs: Date.now(),
@@ -551,6 +566,9 @@ async function handleRpc(
           value: txParams.value ?? "0x0",
         })).toString(16)
 
+        if (nonce > BigInt(Number.MAX_SAFE_INTEGER)) {
+          throw new Error(`nonce too large for safe conversion: ${nonce}`)
+        }
         const tx = Transaction.from({
           to: txParams.to,
           value: txParams.value ?? "0x0",
@@ -1208,11 +1226,15 @@ async function handleRpc(
           }
         }
 
-        // Count total txs from last 100 blocks
-        let recentTxCount = 0
+        // Count total txs from last 100 blocks (parallel fetch)
         const scanFrom = height > 100n ? height - 99n : 1n
+        const blockFetches: Promise<unknown>[] = []
         for (let i = scanFrom; i <= height; i++) {
-          const b = await Promise.resolve(chain.getBlockByNumber(i))
+          blockFetches.push(Promise.resolve(chain.getBlockByNumber(i)))
+        }
+        const scannedBlocks = await Promise.all(blockFetches) as Array<{ txs: unknown[] } | null>
+        let recentTxCount = 0
+        for (const b of scannedBlocks) {
           if (b) recentTxCount += b.txs.length
         }
 
@@ -1294,8 +1316,11 @@ async function handleRpc(
       }
       const peerUrl = String((payload.params ?? [])[0] ?? "")
       const peerId = String((payload.params ?? [])[1] ?? `peer-${Date.now()}`)
-      if (!peerUrl.startsWith("http")) {
-        throw { code: -32602, message: "invalid peer URL: must start with http" }
+      try { new URL(peerUrl) } catch {
+        throw { code: -32602, message: "invalid peer URL" }
+      }
+      if (!/^[a-zA-Z0-9\-_.:]+$/.test(peerId)) {
+        throw { code: -32602, message: "invalid peer ID: only alphanumeric, hyphens, underscores, dots, colons allowed" }
       }
       p2p.discovery.addDiscoveredPeers([{ id: peerId, url: peerUrl }])
       return true
@@ -1339,6 +1364,10 @@ function safeBigInt(input: string): bigint {
 }
 
 function parseBlockTag(input: unknown, fallback: bigint): bigint {
+  if (typeof input === "number") {
+    if (!Number.isFinite(input) || input < 0) throw { code: -32602, message: `invalid block number` }
+    return BigInt(Math.floor(input))
+  }
   if (typeof input === "string") {
     if (input === "latest" || input === "pending" || input === "safe" || input === "finalized") return fallback
     if (input === "earliest") return 0n
@@ -1438,6 +1467,10 @@ async function queryLogs(chain: IChainEngine, query: Record<string, unknown>, re
   const fromBlock = parseBlockTag(query.fromBlock, height)
   const toBlock = parseBlockTag(query.toBlock, height)
 
+  // Reject invalid range where fromBlock > toBlock
+  if (fromBlock > toBlock) {
+    throw new Error(`invalid block range: fromBlock ${fromBlock} > toBlock ${toBlock}`)
+  }
   // Enforce block range limit to prevent resource exhaustion
   if (toBlock - fromBlock > MAX_LOG_BLOCK_RANGE) {
     throw new Error(`block range too large: max ${MAX_LOG_BLOCK_RANGE} blocks, got ${toBlock - fromBlock}`)
@@ -1541,10 +1574,11 @@ function matchesFilter(
 ): boolean {
   const logAddr = String(log.address ?? "").toLowerCase()
 
-  // Address filter: single or array
-  if (filter.address && logAddr !== filter.address.toLowerCase()) return false
+  // Address filter: prefer array if available, otherwise single
   if (filter.addresses && filter.addresses.length > 0) {
     if (!filter.addresses.some((a) => a === logAddr)) return false
+  } else if (filter.address && logAddr !== filter.address.toLowerCase()) {
+    return false
   }
 
   if (!filter.topics || filter.topics.length === 0) return true

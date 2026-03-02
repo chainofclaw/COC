@@ -60,6 +60,7 @@ interface PeerConnection {
   handshakeComplete: boolean
   msgCount: number
   msgWindowStartMs: number
+  handshakeTimer?: ReturnType<typeof setTimeout>
 }
 
 const MAX_CONNECTIONS_PER_IP = 5
@@ -108,6 +109,7 @@ export class WireServer {
       conn.socket.destroy()
     }
     this.connections.clear()
+    this.connsByIp.clear()
     if (this.server) {
       this.server.close()
       this.server = null
@@ -206,6 +208,16 @@ export class WireServer {
     // Send our handshake
     void this.sendHandshake(socket)
 
+    // Handshake timeout: disconnect peers that don't complete handshake in time
+    const HANDSHAKE_TIMEOUT_MS = 10_000
+    conn.handshakeTimer = setTimeout(() => {
+      if (!conn.handshakeComplete) {
+        log.info("wire handshake timeout", { remote: connId })
+        socket.destroy()
+      }
+    }, HANDSHAKE_TIMEOUT_MS)
+    conn.handshakeTimer.unref()
+
     // Idle timeout: disconnect peers that send no data
     socket.setTimeout(IDLE_TIMEOUT_MS, () => {
       log.info("wire connection idle timeout", { remote: connId })
@@ -213,7 +225,8 @@ export class WireServer {
     })
 
     // Frame processing queue: process frames sequentially to avoid re-entrant
-    // applyBlock errors when multiple Block frames arrive in the same TCP segment
+    // applyBlock errors when multiple Block frames arrive in the same TCP segment.
+    // Always catch to prevent a rejected promise from breaking the chain.
     let frameQueue: Promise<void> = Promise.resolve()
     socket.on("data", (data: Buffer) => {
       this.bytesReceived += data.byteLength
@@ -230,6 +243,9 @@ export class WireServer {
               log.warn("handleFrame error, closing connection", { remote: connId, error: String(err) })
               socket.destroy()
             }
+          }, () => {
+            // Previous link rejected unexpectedly — absorb to keep the chain alive.
+            // The connection may already be destroyed by the prior error handler.
           })
         }
       } catch (err) {
@@ -305,12 +321,14 @@ export class WireServer {
             return
           }
           // Nonce replay protection: in-memory dedup + timestamp window
+          // Atomic check-then-add to prevent TOCTOU race on concurrent connections
           if (this.handshakeNonces.has(hs.nonce)) {
             log.warn("handshake nonce replay detected", { peer: hs.nodeId, nonce: hs.nonce })
             this.cfg.peerScoring?.recordInvalidData(conn.socket.remoteAddress ?? "unknown")
             conn.socket.destroy()
             return
           }
+          this.handshakeNonces.add(hs.nonce)
           // Reject nonces with timestamps too far from current time (replay across restarts)
           // Fail-closed: invalid/missing timestamp → reject (legitimate clients always include timestamp)
           const nonceParts = hs.nonce.split(":")
@@ -348,22 +366,27 @@ export class WireServer {
             conn.socket.destroy()
             return
           }
-          this.handshakeNonces.add(hs.nonce)
+          // nonce already added atomically after has() check above
         }
         // Evict existing connection with same nodeId only when verifier is active
         // (nodeId was cryptographically authenticated). Without verifier, skip eviction
         // to prevent attackers from spoofing nodeId to disconnect legitimate peers.
         if (this.cfg.verifier) {
+          // Collect duplicates first to avoid modifying connections Map during iteration
+          const toEvict: { id: string; conn: typeof conn }[] = []
           for (const [existingId, existingConn] of this.connections) {
             if (existingConn.nodeId === hs.nodeId && existingConn !== conn) {
-              log.warn("duplicate nodeId, closing old connection", { nodeId: hs.nodeId, old: existingId })
-              existingConn.socket.destroy()
-              break
+              toEvict.push({ id: existingId, conn: existingConn })
             }
+          }
+          for (const entry of toEvict) {
+            log.warn("duplicate nodeId, closing old connection", { nodeId: hs.nodeId, old: entry.id })
+            entry.conn.socket.destroy()
           }
         }
         conn.nodeId = hs.nodeId
         conn.handshakeComplete = true
+        if (conn.handshakeTimer) clearTimeout(conn.handshakeTimer)
         // Reply with ack if this was a handshake (not ack)
         if (frame.type === MessageType.Handshake) {
           const height = await Promise.resolve(await this.cfg.getHeight())
@@ -421,13 +444,16 @@ export class WireServer {
       case MessageType.BftCommit: {
         if (!conn.handshakeComplete || !this.cfg.onBftMessage) return
         const msg = decodeJsonPayload<{ type: string; height: string; blockHash: Hex; senderId: string; signature?: string }>(frame)
+        // Derive BFT type from the wire frame type — never trust the JSON payload type field.
+        // This prevents attackers from sending a BftPrepare frame with type:"commit" in payload.
+        const bftType: "prepare" | "commit" = frame.type === MessageType.BftPrepare ? "prepare" : "commit"
         // Validate senderId matches authenticated connection identity
         if (msg.senderId !== conn.nodeId) {
           log.warn("BFT message senderId mismatch", { claimed: msg.senderId, authenticated: conn.nodeId })
           return
         }
         await this.cfg.onBftMessage({
-          type: msg.type as "prepare" | "commit",
+          type: bftType,
           height: BigInt(msg.height),
           blockHash: msg.blockHash,
           senderId: msg.senderId,
