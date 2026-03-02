@@ -344,10 +344,17 @@ export class PersistentChainEngine {
       throw new Error("invalid block hash")
     }
 
+    // Checkpoint state trie for atomic rollback on failure
+    if (this.stateTrie) await this.stateTrie.checkpoint()
+
     // Execute transactions and collect receipts + logs
     const blockLogs: IndexedLog[] = []
     const txReceipts: Array<{ transactionHash: string; status: string; gasUsed: string }> = []
     let totalGasUsed = 0n
+    const confirmedNonces: string[] = []
+    let storedBlock: ChainBlock
+
+    try {
 
     for (let i = 0; i < block.txs.length; i++) {
       const raw = block.txs[i]
@@ -407,21 +414,21 @@ export class PersistentChainEngine {
         }
 
         totalGasUsed += BigInt(receipt.gasUsed.toString())
+
+        // Incremental gas limit check — fail fast before more side effects
+        if (totalGasUsed > BLOCK_GAS_LIMIT) {
+          throw new Error(`block gas used ${totalGasUsed} exceeds limit ${BLOCK_GAS_LIMIT}`)
+        }
+
         txReceipts.push({
           transactionHash: receipt.transactionHash,
           status: String(receipt.status ?? "0x1"),
           gasUsed: String(receipt.gasUsed ?? "0x5208"),
         })
 
-        // Mark transaction as confirmed
-        const nonce = `tx:${result.txHash}`
-        await this.txNonceStore.markUsed(nonce)
+        // Collect nonce marks — applied after all checks pass
+        confirmedNonces.push(`tx:${result.txHash}`)
       }
-    }
-
-    // Enforce block gas limit
-    if (totalGasUsed > BLOCK_GAS_LIMIT) {
-      throw new Error(`block gas used ${totalGasUsed} exceeds limit ${BLOCK_GAS_LIMIT}`)
     }
 
     // Verify gasUsed matches claimed value (post-execution integrity check)
@@ -429,21 +436,38 @@ export class PersistentChainEngine {
       throw new Error(`block gasUsed mismatch: claimed ${block.gasUsed}, computed ${totalGasUsed}`)
     }
 
-    // Store cumulative gas used for baseFee calculation
-    block.gasUsed = totalGasUsed
-    // Never trust remote/non-hash metadata from gossip. Finality is local-state derived.
-    block.finalized = false
-    block.bftFinalized = locallyProposed && block.bftFinalized === true
-
-    // Commit state trie and attach stateRoot to block header
+    // Create immutable stored block — never mutate the input parameter
+    let stateRoot: Hex | undefined
     if (this.stateTrie) {
       const root = await this.stateTrie.commit()
-      block.stateRoot = root as Hex
+      stateRoot = root as Hex
+    }
+
+    storedBlock = {
+      ...block,
+      gasUsed: totalGasUsed,
+      // Never trust remote/non-hash metadata from gossip. Finality is local-state derived.
+      finalized: false,
+      bftFinalized: locallyProposed && block.bftFinalized === true,
+      ...(stateRoot !== undefined ? { stateRoot } : {}),
     }
 
     // Store block and logs
-    await this.blockIndex.putBlock(block)
+    await this.blockIndex.putBlock(storedBlock)
     await this.blockIndex.putLogs(block.number, blockLogs)
+
+    // Mark confirmed transactions only after block is persisted
+    for (const nonce of confirmedNonces) {
+      await this.txNonceStore.markUsed(nonce)
+    }
+
+    } catch (err) {
+      // Revert state trie on any failure to prevent state pollution
+      if (this.stateTrie) {
+        try { await this.stateTrie.revert() } catch { /* best-effort */ }
+      }
+      throw err
+    }
 
     // Update finality flags for recent blocks
     await this.updateFinalityFlags()
@@ -458,9 +482,9 @@ export class PersistentChainEngine {
       }
     }
 
-    // Emit events for subscribers
+    // Emit events for subscribers (use storedBlock with computed fields)
     this.events.emitNewBlock({
-      block,
+      block: storedBlock,
       receipts: txReceipts.map((r) => ({
         transactionHash: r.transactionHash as Hex,
         status: r.status,

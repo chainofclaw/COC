@@ -528,6 +528,9 @@ startRpcServer(
 )
 
 // Start WebSocket RPC server for real-time subscriptions
+// Bind bftCoordinator into the handler closure so WS RPC can access BFT state (e.g. coc_bftRoundState)
+const wsHandleRpcMethod = (method: string, params: unknown[], cId: number, e: EvmChain, c: IChainEngine, p: P2PNode) =>
+  handleRpcMethod(method, params, cId, e, c, p, bftCoordinator)
 const wsServer = startWsRpcServer(
   { port: config.wsPort, bind: config.wsBind, authToken: config.rpcAuthToken },
   config.chainId,
@@ -535,7 +538,7 @@ const wsServer = startWsRpcServer(
   chain,
   p2p,
   chain.events,
-  handleRpcMethod,
+  wsHandleRpcMethod,
 )
 log.info("WebSocket RPC configured", { bind: config.wsBind, port: config.wsPort })
 
