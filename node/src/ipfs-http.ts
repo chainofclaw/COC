@@ -461,6 +461,11 @@ export class IpfsHttpServer {
     try {
       switch (route) {
         case "pub": {
+          if (!topic) {
+            res.writeHead(400, { "content-type": "application/json" })
+            res.end(JSON.stringify({ error: "missing topic" }))
+            break
+          }
           const body = await readBody(req)
           await this.pubsub.publish(topic, body)
           res.writeHead(200, { "content-type": "application/json" })
@@ -468,6 +473,13 @@ export class IpfsHttpServer {
           break
         }
         case "sub": {
+          // Validate topic before sending headers to avoid double writeHead
+          if (!topic) {
+            res.writeHead(400, { "content-type": "application/json" })
+            res.end(JSON.stringify({ error: "missing topic" }))
+            break
+          }
+
           // Long-polling: return recent messages and stream new ones via ndjson
           res.writeHead(200, {
             "content-type": "application/x-ndjson",
@@ -475,15 +487,20 @@ export class IpfsHttpServer {
           })
 
           const handler = (msg: { from: string; seqno: string; data: Uint8Array; topicIDs: string[] }) => {
-            const encoded = Buffer.from(msg.data).toString("base64")
-            res.write(JSON.stringify({
-              from: msg.from,
-              seqno: msg.seqno,
-              data: encoded,
-              topicIDs: msg.topicIDs,
-            }) + "\n")
+            if (res.destroyed || res.writableEnded) return
+            try {
+              const encoded = Buffer.from(msg.data).toString("base64")
+              res.write(JSON.stringify({
+                from: msg.from,
+                seqno: msg.seqno,
+                data: encoded,
+                topicIDs: msg.topicIDs,
+              }) + "\n")
+            } catch {
+              // Connection already closed, unsubscribe on next tick
+              this.pubsub?.unsubscribe(topic, handler)
+            }
           }
-
           this.pubsub.subscribe(topic, handler)
 
           // Clean up on client disconnect
@@ -546,7 +563,8 @@ async function readBody(req: http.IncomingMessage, maxSize = DEFAULT_MAX_UPLOAD_
 
 async function readMultipartFile(req: http.IncomingMessage): Promise<{ filename?: string; bytes: Uint8Array }> {
   const contentType = req.headers["content-type"] ?? ""
-  const boundaryMatch = /boundary=([^;]+)/.exec(contentType)
+  // Limit boundary length to prevent split amplification DoS
+  const boundaryMatch = /boundary=([^;\s]{1,256})/.exec(contentType)
   if (!boundaryMatch) {
     const raw = await readBody(req)
     return { bytes: raw }

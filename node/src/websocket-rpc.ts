@@ -338,6 +338,8 @@ export class WsRpcServer {
     "coc_voteProposal",
     "admin_addPeer",
     "admin_removePeer",
+    "admin_nodeInfo",
+    "admin_peers",
     "eth_newFilter",
     "eth_newBlockFilter",
     "eth_newPendingTransactionFilter",
@@ -521,6 +523,9 @@ function validateLogFilter(params: Record<string, unknown>): LogSubscriptionFilt
 
   if (params.address !== undefined) {
     if (Array.isArray(params.address)) {
+      if (params.address.length > 100) {
+        throw new Error("address filter array too large (max 100)")
+      }
       for (const addr of params.address) {
         if (typeof addr !== "string" || !HEX_ADDRESS_RE.test(addr)) {
           throw new Error(`invalid address in filter: ${addr}`)
@@ -547,6 +552,9 @@ function validateLogFilter(params: Record<string, unknown>): LogSubscriptionFilt
       if (t === null || t === undefined) {
         topics.push(null)
       } else if (Array.isArray(t)) {
+        if (t.length > 100) {
+          throw new Error("topic OR-array too large (max 100)")
+        }
         for (const item of t) {
           if (typeof item !== "string" || !HEX_TOPIC_RE.test(item)) {
             throw new Error(`invalid topic in OR-array: ${item}`)

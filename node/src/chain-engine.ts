@@ -222,6 +222,9 @@ export class ChainEngine {
 
     // Timestamp validation (skip for locally proposed blocks — we set them ourselves)
     if (!locallyProposed) {
+      if (block.timestampMs < 0) {
+        throw new Error("block timestamp cannot be negative")
+      }
       if (prev && block.timestampMs <= prev.timestampMs) {
         throw new Error("block timestamp must be after parent timestamp")
       }
@@ -257,7 +260,7 @@ export class ChainEngine {
       const receipt = this.evm.getReceipt(result.txHash)
       if (receipt) {
         receipts.push(receipt)
-        totalGasUsed += typeof receipt.gasUsed === "bigint" ? receipt.gasUsed : BigInt(parseInt(String(receipt.gasUsed), 16) || 0)
+        totalGasUsed += typeof receipt.gasUsed === "bigint" ? receipt.gasUsed : BigInt(receipt.gasUsed)
       }
       this.txHashSet.add(result.txHash as Hex)
     }
@@ -272,13 +275,16 @@ export class ChainEngine {
       throw new Error(`block gasUsed mismatch: claimed ${block.gasUsed}, computed ${totalGasUsed}`)
     }
 
-    // Store cumulative gas used for baseFee calculation
-    block.gasUsed = totalGasUsed
-    // Never trust remote/non-hash metadata from gossip. Finality is local-state derived.
-    block.finalized = false
-    block.bftFinalized = locallyProposed && block.bftFinalized === true
+    // Create a new block object to avoid mutating the caller's input
+    const storedBlock = {
+      ...block,
+      gasUsed: totalGasUsed,
+      // Never trust remote/non-hash metadata from gossip. Finality is local-state derived.
+      finalized: false,
+      bftFinalized: locallyProposed && block.bftFinalized === true,
+    }
 
-    this.blocks.push(block)
+    this.blocks.push(storedBlock)
     this.receiptsByBlock.set(block.number, receipts)
 
     for (const raw of block.txs) {

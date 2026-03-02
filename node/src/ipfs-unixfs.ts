@@ -32,7 +32,8 @@ export class UnixFsBuilder {
       leafCids.push(cid.toString())
     }
 
-    const rootNode = buildUnixFsRoot(leafCids, bytes.length)
+    const chunkSizes = chunks.map((c) => c.length)
+    const rootNode = buildUnixFsRoot(leafCids, chunkSizes, bytes.length)
     const rootBytes = dagPB.encode(rootNode)
     const rootDigest = await sha256.digest(rootBytes)
     const rootCid = CID.createV1(dagPB.code, rootDigest)
@@ -112,9 +113,9 @@ export async function loadRawBlock(store: IpfsBlockstore, cid: CidString): Promi
   return await store.get(cid)
 }
 
-function buildUnixFsRoot(leaves: CidString[], totalSize: number): dagPB.PBNode {
+function buildUnixFsRoot(leaves: CidString[], chunkSizes: number[], totalSize: number): dagPB.PBNode {
   const unixfs = new UnixFS({ type: "file", filesize: totalSize })
-  const links = leaves.map((cid) => dagPB.createLink("", 0, CID.parse(cid)))
+  const links = leaves.map((cid, i) => dagPB.createLink("", chunkSizes[i] ?? 0, CID.parse(cid)))
   return dagPB.prepare({ Data: unixfs.marshal(), Links: links })
 }
 

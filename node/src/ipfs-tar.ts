@@ -103,7 +103,9 @@ function buildHeader(name: string, size: number): Uint8Array {
 function writeString(buf: Uint8Array, offset: number, str: string, maxLen: number): void {
   const len = Math.min(str.length, maxLen - 1)
   for (let i = 0; i < len; i++) {
-    buf[offset + i] = str.charCodeAt(i)
+    const code = str.charCodeAt(i)
+    // POSIX tar headers require ASCII (0x20-0x7E); replace non-ASCII with '_'
+    buf[offset + i] = (code >= 0x20 && code <= 0x7E) ? code : 0x5F
   }
 }
 

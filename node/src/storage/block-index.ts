@@ -312,7 +312,7 @@ export class BlockIndex implements IBlockIndex {
     const offset = opts?.offset ?? 0
     const limit = opts?.limit ?? 50
     const reverse = opts?.reverse ?? true
-    const fetchLimit = offset + limit
+    const fetchLimit = Math.min(offset + limit, 110_000)
     const keys = await this.db.getKeysWithPrefix(CONTRACT_PREFIX, { limit: fetchLimit, reverse })
     const paged = keys.slice(offset, offset + limit)
 
