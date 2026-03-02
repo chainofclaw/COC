@@ -43,6 +43,7 @@ export interface PendingFilter {
   fromBlock: bigint
   toBlock?: bigint
   address?: Hex
+  addresses?: Hex[]
   topics?: Array<Hex | null>
   lastCursor: bigint
   createdAtMs?: number

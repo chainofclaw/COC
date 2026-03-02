@@ -473,6 +473,13 @@ export class IpfsHttpServer {
           break
         }
         case "sub": {
+          // Validate topic before sending headers to avoid double writeHead
+          if (!topic) {
+            res.writeHead(400, { "content-type": "application/json" })
+            res.end(JSON.stringify({ error: "missing topic" }))
+            break
+          }
+
           // Long-polling: return recent messages and stream new ones via ndjson
           res.writeHead(200, {
             "content-type": "application/x-ndjson",
@@ -493,12 +500,6 @@ export class IpfsHttpServer {
               // Connection already closed, unsubscribe on next tick
               this.pubsub?.unsubscribe(topic, handler)
             }
-          }
-
-          if (!topic) {
-            res.writeHead(400, { "content-type": "application/json" })
-            res.end(JSON.stringify({ error: "missing topic" }))
-            break
           }
           this.pubsub.subscribe(topic, handler)
 

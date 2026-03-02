@@ -504,10 +504,11 @@ async function handleRpc(
       const toBlock = query.toBlock !== undefined ? parseBlockTag(query.toBlock, newFilterHeight) : undefined
       // Normalize address: support both single string and array of addresses
       let filterAddress: Hex | undefined
+      let filterAddresses: Hex[] | undefined
       if (query.address) {
         if (Array.isArray(query.address)) {
-          // For array addresses, store the first one; full array matching uses queryLogs path
-          filterAddress = query.address.length > 0 ? String(query.address[0]).toLowerCase() as Hex : undefined
+          filterAddresses = (query.address as string[]).map((a) => String(a).toLowerCase() as Hex)
+          filterAddress = filterAddresses.length > 0 ? filterAddresses[0] : undefined
         } else {
           filterAddress = String(query.address).toLowerCase() as Hex
         }
@@ -517,6 +518,7 @@ async function handleRpc(
         fromBlock,
         toBlock,
         address: filterAddress,
+        addresses: filterAddresses,
         topics: Array.isArray(query.topics) ? query.topics.map((t) => (t ? String(t) as Hex : null)) : undefined,
         lastCursor: fromBlock > 0n ? fromBlock - 1n : 0n,
         createdAtMs: Date.now(),
@@ -1572,10 +1574,11 @@ function matchesFilter(
 ): boolean {
   const logAddr = String(log.address ?? "").toLowerCase()
 
-  // Address filter: single or array
-  if (filter.address && logAddr !== filter.address.toLowerCase()) return false
+  // Address filter: prefer array if available, otherwise single
   if (filter.addresses && filter.addresses.length > 0) {
     if (!filter.addresses.some((a) => a === logAddr)) return false
+  } else if (filter.address && logAddr !== filter.address.toLowerCase()) {
+    return false
   }
 
   if (!filter.topics || filter.topics.length === 0) return true

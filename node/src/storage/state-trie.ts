@@ -328,8 +328,13 @@ export class PersistentStateTrie implements IStateTrie {
 
   async revert(): Promise<void> {
     await this.trie.revert()
-    for (const storageTrie of this.storageTries.values()) {
-      await storageTrie.revert()
+    for (const [addr, storageTrie] of this.storageTries.entries()) {
+      try {
+        await storageTrie.revert()
+      } catch {
+        // Storage trie created after checkpoint has no checkpoint to revert — remove it
+        this.storageTries.delete(addr)
+      }
     }
     // Invalidate caches and dirty tracking on revert
     this.accountCache.clear()

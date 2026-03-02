@@ -400,7 +400,8 @@ export class ValidatorGovernance {
       }
       case "update_stake": {
         const v = this.validators.get(proposal.targetId)
-        if (v && proposal.stakeAmount !== undefined) {
+        // Only update stake for active validators with valid stake amount
+        if (v && v.active && proposal.stakeAmount !== undefined && proposal.stakeAmount >= this.config.minStake) {
           this.validators.set(proposal.targetId, { ...v, stake: proposal.stakeAmount })
           this.recalcVotingPower()
         }
@@ -420,6 +421,16 @@ export class ValidatorGovernance {
     const newStake = v.stake > amount ? v.stake - amount : 0n
     this.validators.set(validatorId, { ...v, stake: newStake })
     this.recalcVotingPower()
+    return
+  }
+
+  /**
+   * Check if a validator's stake is below the minimum threshold.
+   */
+  isBelowMinStake(validatorId: string): boolean {
+    const v = this.validators.get(validatorId)
+    if (!v) return false
+    return v.stake < this.config.minStake
   }
 
   /**
