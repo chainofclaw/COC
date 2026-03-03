@@ -157,6 +157,9 @@ export class DhtNetwork {
         }),
       )
 
+      // Collect all new peers from query results, then verify in parallel batch
+      const pendingVerify: DhtPeer[] = []
+      const preVerified: DhtPeer[] = []
       for (const result of results) {
         if (result.status !== "fulfilled") continue
         for (const newPeer of result.value) {
@@ -172,19 +175,45 @@ export class DhtNetwork {
           }
 
           if (found.has(normalizedPeer.id)) continue
-          // Verify peer before adding to candidate set / routing table.
           // Skip verification for peers returned from connected clients (already verified).
           const hasConnectedClient = !!(
             this.cfg.wireClientByPeerId?.get(normalizedPeer.id)?.isConnected() ||
             this.cfg.wireClients.find((c) => c.getRemoteNodeId() === normalizedPeer.id && c.isConnected())
           )
-          const reachable = hasConnectedClient || await this.verifyPeer(normalizedPeer)
-          if (!reachable) continue
+          if (hasConnectedClient) {
+            preVerified.push(normalizedPeer)
+          } else {
+            pendingVerify.push(normalizedPeer)
+          }
+        }
+      }
 
-          found.set(normalizedPeer.id, normalizedPeer)
-          await this.routingTable.addPeer(normalizedPeer)
-          this.cfg.onPeerDiscovered(normalizedPeer)
-          improved = true
+      // Add pre-verified peers immediately
+      for (const peer of preVerified) {
+        if (found.has(peer.id)) continue
+        found.set(peer.id, peer)
+        await this.routingTable.addPeer(peer)
+        this.cfg.onPeerDiscovered(peer)
+        improved = true
+      }
+
+      // Verify remaining peers in parallel (concurrent batch instead of serial)
+      if (pendingVerify.length > 0) {
+        const VERIFY_CONCURRENCY = 5
+        for (let i = 0; i < pendingVerify.length; i += VERIFY_CONCURRENCY) {
+          const batch = pendingVerify.slice(i, i + VERIFY_CONCURRENCY)
+          const verifyResults = await Promise.allSettled(
+            batch.map(async (peer) => ({ peer, ok: await this.verifyPeer(peer) })),
+          )
+          for (const vr of verifyResults) {
+            if (vr.status !== "fulfilled" || !vr.value.ok) continue
+            const peer = vr.value.peer
+            if (found.has(peer.id)) continue
+            found.set(peer.id, peer)
+            await this.routingTable.addPeer(peer)
+            this.cfg.onPeerDiscovered(peer)
+            improved = true
+          }
         }
       }
     }
@@ -329,18 +358,19 @@ export class DhtNetwork {
       }))
     }
 
-    // Priority 2: scan wireClients by remoteNodeId (backward compat)
-    const client = this.cfg.wireClients.find(
-      (c) => c.getRemoteNodeId() === peer.id && c.isConnected(),
-    )
-
-    if (client) {
-      const remotePeers = await client.findNode(targetId, LOOKUP_TIMEOUT_MS)
-      return remotePeers.map((p) => ({
-        id: p.id,
-        address: p.address,
-        lastSeenMs: Date.now(),
-      }))
+    // Priority 2: scan wireClients by remoteNodeId (backward compat, limited scan)
+    // Cap the scan to first 20 clients to avoid O(n) on large peer sets
+    const scanLimit = Math.min(this.cfg.wireClients.length, 20)
+    for (let i = 0; i < scanLimit; i++) {
+      const c = this.cfg.wireClients[i]
+      if (c.getRemoteNodeId() === peer.id && c.isConnected()) {
+        const remotePeers = await c.findNode(targetId, LOOKUP_TIMEOUT_MS)
+        return remotePeers.map((p) => ({
+          id: p.id,
+          address: p.address,
+          lastSeenMs: Date.now(),
+        }))
+      }
     }
 
     // Fallback: return peers from local routing table

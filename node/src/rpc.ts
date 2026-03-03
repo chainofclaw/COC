@@ -27,8 +27,13 @@ const CHAIN_STATS_CACHE_TTL_MS = 5_000
 let chainStatsCache: { result: unknown; height: bigint; cachedAtMs: number } | null = null
 let chainStatsComputing: Promise<unknown> | null = null
 
+const FILTER_CLEANUP_THROTTLE_MS = 30_000 // run cleanup at most once per 30s
+let lastFilterCleanupMs = 0
+
 function cleanupExpiredFilters(filters: Map<string, PendingFilter>): void {
   const now = Date.now()
+  if (now - lastFilterCleanupMs < FILTER_CLEANUP_THROTTLE_MS) return
+  lastFilterCleanupMs = now
   for (const [id, filter] of filters) {
     if (filter.createdAtMs && now - filter.createdAtMs > FILTER_TTL_MS) {
       filters.delete(id)
@@ -193,6 +198,7 @@ export function startRpcServer(
     const rawClientIp = req.socket.remoteAddress ?? "unknown"
     const clientIp = rawClientIp.startsWith("::ffff:") ? rawClientIp.slice(7) : rawClientIp
     if (!rateLimiter.allow(clientIp)) {
+      log.warn("RPC rate limit exceeded", { ip: clientIp, url: req.url })
       res.writeHead(429, { "content-type": "application/json" })
       res.end(JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32005, message: "rate limit exceeded" } }))
       return

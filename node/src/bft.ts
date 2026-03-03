@@ -307,12 +307,16 @@ export class EquivocationDetector {
   /** height -> phase -> validatorId -> blockHash */
   private readonly votes = new Map<string, Map<string, Map<string, Hex>>>()
   private readonly evidence: EquivocationEvidence[] = []
+  /** Per-validator evidence count to prevent one validator from flushing another's evidence */
+  private readonly evidenceCountByValidator = new Map<string, number>()
   private readonly maxTrackedHeights: number
   private readonly maxEvidence: number
+  private readonly maxEvidencePerValidator: number
 
-  constructor(maxTrackedHeights = 100, maxEvidence = 1000) {
+  constructor(maxTrackedHeights = 100, maxEvidence = 1000, maxEvidencePerValidator = 100) {
     this.maxTrackedHeights = maxTrackedHeights
     this.maxEvidence = maxEvidence
+    this.maxEvidencePerValidator = maxEvidencePerValidator
   }
 
   /**
@@ -352,11 +356,29 @@ export class EquivocationDetector {
         blockHash2: blockHash,
         detectedAtMs: Date.now(),
       }
-      // Cap evidence array to prevent memory exhaustion
-      if (this.evidence.length >= this.maxEvidence) {
-        this.evidence.shift()
+      // Per-validator evidence cap: prevent one attacker from flushing another validator's evidence
+      const validatorCount = this.evidenceCountByValidator.get(normalizedId) ?? 0
+      if (validatorCount >= this.maxEvidencePerValidator) {
+        // This validator already has max evidence; log but don't store to prevent flush attack
+        log.warn("equivocation evidence cap reached for validator", { validator: normalizedId, cap: this.maxEvidencePerValidator })
+      } else {
+        // Global cap with per-validator fairness: evict oldest from the SAME validator if global is full
+        if (this.evidence.length >= this.maxEvidence) {
+          // Find and remove oldest evidence from the validator with the most entries
+          let maxValidator = normalizedId
+          let maxCount = validatorCount
+          for (const [vid, cnt] of this.evidenceCountByValidator) {
+            if (cnt > maxCount) { maxValidator = vid; maxCount = cnt }
+          }
+          const evictIdx = this.evidence.findIndex((e) => e.validatorId === maxValidator)
+          if (evictIdx >= 0) {
+            this.evidence.splice(evictIdx, 1)
+            this.evidenceCountByValidator.set(maxValidator, (this.evidenceCountByValidator.get(maxValidator) ?? 1) - 1)
+          }
+        }
+        this.evidence.push(ev)
+        this.evidenceCountByValidator.set(normalizedId, validatorCount + 1)
       }
-      this.evidence.push(ev)
       log.warn("equivocation detected!", {
         validator: validatorId,
         height: height.toString(),
@@ -389,6 +411,15 @@ export class EquivocationDetector {
     for (let i = 0; i < this.evidence.length; i++) {
       if (this.evidence[i].height >= height) {
         this.evidence[writeIdx++] = this.evidence[i]
+      } else {
+        // Decrement per-validator counter for removed evidence
+        const vid = this.evidence[i].validatorId
+        const cnt = this.evidenceCountByValidator.get(vid) ?? 1
+        if (cnt <= 1) {
+          this.evidenceCountByValidator.delete(vid)
+        } else {
+          this.evidenceCountByValidator.set(vid, cnt - 1)
+        }
       }
     }
     const removed = this.evidence.length - writeIdx

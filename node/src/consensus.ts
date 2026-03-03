@@ -15,7 +15,15 @@ function recalcCumulativeWeight(blocks: ChainBlock[]): bigint {
   if (blocks.length === 0) return 0n
   const tip = blocks[blocks.length - 1]
   // cumulativeWeight is now bound into block hash, so it's tamper-proof
-  if (tip.cumulativeWeight !== undefined) return BigInt(tip.cumulativeWeight)
+  if (tip.cumulativeWeight !== undefined) {
+    const w = BigInt(tip.cumulativeWeight)
+    // Sanity: cumulativeWeight should be >= tip height (at minimum 1 per block)
+    const tipHeight = BigInt(tip.number)
+    if (w < tipHeight && tipHeight > 0n) {
+      return tipHeight // weight below height is suspicious, use safe fallback
+    }
+    return w
+  }
   // Fallback: use tip height rather than array length. Array length could be
   // misleading if the snapshot is a partial window (blocks 500-600 = length 101
   // but actual chain weight should reflect height 600). Tip height is hash-bound
@@ -323,11 +331,27 @@ export class ConsensusEngine {
       // Build local fork candidate
       let localHeight = await Promise.resolve(this.chain.getHeight())
 
-      // Track sync progress: compute max peer height per sync round (allows decrease after reorgs)
+      // Track sync progress: compute max peer height per sync round (allows decrease after reorgs).
+      // Cap accepted heights to prevent malicious peers from reporting extreme values that
+      // break the progress display (showing 0% forever). A legitimate peer should not
+      // be more than 10x our height + 1000 blocks ahead.
+      const MAX_HEIGHT_MULTIPLIER = 10n
+      const MAX_HEIGHT_BUFFER = 1000n
+      const maxAcceptableHeight = localHeight > 0n
+        ? localHeight * MAX_HEIGHT_MULTIPLIER + MAX_HEIGHT_BUFFER
+        : 100_000n // genesis bootstrap: accept up to 100k
       let roundMaxPeerHeight = 0n
       for (const snap of snapshots) {
         if (Array.isArray(snap.blocks) && snap.blocks.length > 0) {
           const remoteTipHeight = BigInt(snap.blocks[snap.blocks.length - 1].number)
+          if (remoteTipHeight > maxAcceptableHeight) {
+            log.warn("sync: ignoring unreasonable peer height", {
+              peerHeight: remoteTipHeight.toString(),
+              maxAcceptable: maxAcceptableHeight.toString(),
+              localHeight: localHeight.toString(),
+            })
+            continue
+          }
           if (remoteTipHeight > roundMaxPeerHeight) {
             roundMaxPeerHeight = remoteTipHeight
           }
@@ -619,11 +643,15 @@ export class ConsensusEngine {
               this.snapSync.restoreGovernance(importResult.validators)
               log.info("governance state restored from snapshot", { validators: importResult.validators.length })
             } else {
-              log.warn("snap sync: validators hash mismatch, skipping governance restore", {
+              // Governance hash mismatch is a serious integrity issue — state was imported
+              // but governance is inconsistent. Mark this peer as untrusted and skip to next.
+              log.error("snap sync: validators hash mismatch — skipping peer (governance integrity failure)", {
                 peer: peer.url,
                 peerHash: importedVHash,
                 trustedHash: trustedValidatorsHash,
               })
+              stateImported = false
+              continue // try next peer for both state + governance
             }
           }
 

@@ -162,9 +162,9 @@ export class BftCoordinator {
     }
 
     if (msg.height !== this.activeRound.state.height) {
-      // Buffer future-height messages for later processing (cap gap to prevent buffer pollution)
-      const heightGap = msg.height - this.activeRound.state.height
-      if (heightGap > 0n && heightGap <= 10n && this.pendingMessages.length < 50) {
+      // Buffer future-height messages for later processing (cap gap to prevent buffer pollution).
+      // Reject messages for past heights (already finalized) and extreme future heights.
+      if (msg.height > this.activeRound.state.height && msg.height <= this.activeRound.state.height + 10n && this.pendingMessages.length < 50) {
         const isDup = this.pendingMessages.some(
           (m) => m.senderId === msg.senderId && m.type === msg.type && m.height === msg.height,
         )
@@ -185,10 +185,19 @@ export class BftCoordinator {
           log.warn("BFT message signature invalid, dropping", { sender: msg.senderId, type: msg.type })
           return
         }
+      } else if (this.cfg.signer) {
+        // Fail-closed: signer is configured (production mode) but verifier is missing.
+        // This is a misconfiguration — we can sign but cannot verify peers. Reject messages
+        // to prevent accepting forged votes from unauthenticated sources.
+        if (!this.warnedNoVerifier) {
+          this.warnedNoVerifier = true
+          log.warn("BFT signer configured but verifier missing — rejecting unverifiable messages (fail-closed)")
+        }
+        return
       } else if (!this.warnedNoVerifier) {
-        // Log once — verifier should be configured in production deployments
+        // Neither signer nor verifier: test/dev mode. Warn once but allow.
         this.warnedNoVerifier = true
-        log.warn("BFT verifier not configured — message signatures not verified (unsafe for production)")
+        log.warn("BFT crypto not configured — message signatures not verified (unsafe for production)")
       }
     }
 
