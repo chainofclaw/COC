@@ -30,6 +30,37 @@ const DEFAULT_CONFIG: MempoolConfig = {
   chainId: 18780,
 }
 
+/**
+ * In-place partial selection: rearranges arr so that the first k elements are the k smallest.
+ * Average O(n) via Hoare partition (quickselect). No full sort needed.
+ */
+function partialSelect<T>(arr: T[], k: number, compare: (a: T, b: T) => number): void {
+  if (k <= 0 || k >= arr.length) return
+  let lo = 0
+  let hi = arr.length - 1
+  while (lo < hi) {
+    const pivotIdx = lo + ((hi - lo) >> 1)
+    const pivot = arr[pivotIdx]
+    // Move pivot to end
+    ;[arr[pivotIdx], arr[hi]] = [arr[hi], arr[pivotIdx]]
+    let storeIdx = lo
+    for (let i = lo; i < hi; i++) {
+      if (compare(arr[i], pivot) < 0) {
+        ;[arr[storeIdx], arr[i]] = [arr[i], arr[storeIdx]]
+        storeIdx++
+      }
+    }
+    ;[arr[storeIdx], arr[hi]] = [arr[hi], arr[storeIdx]]
+    if (storeIdx < k - 1) {
+      lo = storeIdx + 1
+    } else if (storeIdx > k - 1) {
+      hi = storeIdx - 1
+    } else {
+      break
+    }
+  }
+}
+
 export class Mempool {
   private readonly txs = new Map<Hex, MempoolTx>()
   // Index: sender -> set of tx hashes for fast per-sender lookups
@@ -194,27 +225,32 @@ export class Mempool {
         return a.receivedAtMs - b.receivedAtMs
       })
 
-    const picked: MempoolTx[] = []
+    // Pre-fetch nonces for all unique senders in parallel (instead of serial per-sender)
+    const uniqueSenders = new Set<Hex>()
+    for (const tx of sorted) uniqueSenders.add(tx.from)
     const expected = new Map<Hex, bigint>()
+    const nonceFetches = [...uniqueSenders].map(async (sender) => {
+      try {
+        const nonce = await getOnchainNonce(sender)
+        return { sender, nonce }
+      } catch {
+        return { sender, nonce: -1n }
+      }
+    })
+    const nonceResults = await Promise.all(nonceFetches)
+    for (const { sender, nonce } of nonceResults) {
+      expected.set(sender, nonce)
+    }
+
+    const picked: MempoolTx[] = []
     let cumulativeGas = 0n
 
     for (const tx of sorted) {
       if (picked.length >= maxTx) break
       if (cumulativeGas + tx.gasLimit > blockGasLimit) continue
-      let next = expected.get(tx.from)
-      if (next === undefined) {
-        try {
-          next = await getOnchainNonce(tx.from)
-        } catch {
-          expected.set(tx.from, -1n)
-          continue
-        }
-      }
-      if (next === -1n) continue // sender nonce lookup failed
-      if (tx.nonce !== next) {
-        expected.set(tx.from, next)
-        continue
-      }
+      const next = expected.get(tx.from)
+      if (next === undefined || next === -1n) continue
+      if (tx.nonce !== next) continue
       picked.push(tx)
       cumulativeGas += tx.gasLimit
       expected.set(tx.from, next + 1n)
@@ -349,15 +385,20 @@ export class Mempool {
   }
 
   private evictLowestFee(): void {
-    // Sort by gas price ascending and evict the cheapest txs
-    const sorted = [...this.txs.values()].sort((a, b) => {
+    // Use partial selection (O(n)) instead of full sort (O(n log n)) to find k cheapest txs.
+    // For a pool of 4096 txs with batch=16, this avoids ~49K comparisons from full sort.
+    const all = [...this.txs.values()]
+    const count = Math.min(this.cfg.evictionBatchSize, all.length)
+    if (count === 0) return
+
+    // Partial quickselect: partition around k-th element, then take first k
+    const compare = (a: MempoolTx, b: MempoolTx): number => {
       if (a.gasPrice !== b.gasPrice) return a.gasPrice < b.gasPrice ? -1 : 1
       return a.receivedAtMs - b.receivedAtMs
-    })
-
-    const count = Math.min(this.cfg.evictionBatchSize, sorted.length)
+    }
+    partialSelect(all, count, compare)
     for (let i = 0; i < count; i++) {
-      this.removeTx(sorted[i].hash)
+      this.removeTx(all[i].hash)
     }
   }
 }

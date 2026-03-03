@@ -179,6 +179,18 @@ export class FrameDecoder {
       this.used -= offset
     }
 
+    // Shrink buffer when it is significantly oversized after consuming frames.
+    // Avoid holding 16 MB for a connection that typically sends 1 KB frames.
+    const SHRINK_THRESHOLD = 65_536 // 64 KB minimum before considering shrink
+    if (this.buffer.length > SHRINK_THRESHOLD && this.used < this.buffer.length / 4) {
+      const shrunkCap = Math.max(this.used * 2, SHRINK_THRESHOLD)
+      if (shrunkCap < this.buffer.length) {
+        const shrunk = new Uint8Array(shrunkCap)
+        shrunk.set(this.buffer.subarray(0, this.used), 0)
+        this.buffer = shrunk
+      }
+    }
+
     return frames
   }
 
