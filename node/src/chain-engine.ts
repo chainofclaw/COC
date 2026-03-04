@@ -501,7 +501,8 @@ export class ChainEngine {
     this.txHashSet.clear()
     await this.evm.resetExecution()
 
-    for (const block of blocks) {
+    for (let i = 0; i < blocks.length; i++) {
+      const block = blocks[i]
       const normalized: ChainBlock = {
         ...block,
         number: BigInt(block.number),
@@ -512,7 +513,17 @@ export class ChainEngine {
         ...(block.gasUsed !== undefined ? { gasUsed: BigInt(block.gasUsed) } : {}),
         ...(block.cumulativeWeight !== undefined ? { cumulativeWeight: BigInt(block.cumulativeWeight) } : {}),
       }
-      await this.applyBlock(normalized)
+      try {
+        await this.applyBlock(normalized)
+      } catch (err) {
+        log.error("rebuildFromBlocks failed mid-rebuild, chain state is partial", {
+          failedAt: i,
+          totalBlocks: blocks.length,
+          blockNumber: normalized.number.toString(),
+          error: String(err),
+        })
+        throw err
+      }
     }
   }
 }

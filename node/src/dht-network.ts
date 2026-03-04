@@ -286,6 +286,7 @@ export class DhtNetwork {
 
       socket.on("error", () => {
         clearTimeout(timer)
+        socket.destroy() // Ensure socket is cleaned up on connection error
         this.verifyFailures += 1
         this.verifyFallbackTcpFailures += 1
         resolve(false)

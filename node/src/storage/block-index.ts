@@ -260,8 +260,10 @@ export class BlockIndex implements IBlockIndex {
     for (const key of paged) {
       const data = await this.db.get(key)
       if (!data) continue
-      const txHash = decoder.decode(data) as Hex
-      const tx = await this.getTransactionByHash(txHash)
+      const txHashStr = decoder.decode(data)
+      // Validate hash format: must be 0x + hex chars, max 66 chars (32 bytes)
+      if (!txHashStr.startsWith("0x") || txHashStr.length > 66 || !/^0x[0-9a-fA-F]+$/.test(txHashStr)) continue
+      const tx = await this.getTransactionByHash(txHashStr as Hex)
       if (tx) results.push(tx)
     }
     return results

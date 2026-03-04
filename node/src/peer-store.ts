@@ -180,14 +180,17 @@ export class PeerStore {
   }
 
   private evictOldest(): void {
-    let oldest: { id: string; lastSeenMs: number } | null = null
+    // Composite eviction score: prioritize evicting peers with high failCount
+    // and old lastSeenMs. Penalty of 60s per failure makes high-fail peers evict first.
+    let worst: { id: string; score: number } | null = null
     for (const [id, peer] of this.peers) {
-      if (!oldest || peer.lastSeenMs < oldest.lastSeenMs) {
-        oldest = { id, lastSeenMs: peer.lastSeenMs }
+      const score = peer.lastSeenMs - peer.failCount * 60_000
+      if (!worst || score < worst.score) {
+        worst = { id, score }
       }
     }
-    if (oldest) {
-      this.peers.delete(oldest.id)
+    if (worst) {
+      this.peers.delete(worst.id)
     }
   }
 }

@@ -202,6 +202,7 @@ export class PersistentStateTrie implements IStateTrie {
     const encoded = encoder.encode(JSON.stringify(json))
 
     await this.trie.put(addressBytes, encoded)
+    this.evictAccountCache()
     this.accountCache.set(address, state)
     this.dirtyAddresses.add(address)
     this.lastStateRoot = null // Invalidate cached root

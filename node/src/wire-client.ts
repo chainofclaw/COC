@@ -241,6 +241,11 @@ export class WireClient {
       this.connected = false
       this.handshakeComplete = false
       this.remoteNodeId = null
+      // Clear handshake timer to prevent timer leak on rapid connect/disconnect cycles
+      if (this.handshakeTimer) {
+        clearTimeout(this.handshakeTimer)
+        this.handshakeTimer = null
+      }
       // Stop ping timer to prevent stale latency calculations after reconnect
       this.stopPing()
       this.lastPingSentMs = 0

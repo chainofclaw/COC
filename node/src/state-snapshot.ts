@@ -273,9 +273,15 @@ export function validateSnapshot(snapshot: StateSnapshot): void {
       }
     }
   }
-  // Validate validator stakes if present
+  // Validate validator fields if present
   if (snapshot.validators) {
     for (const v of snapshot.validators) {
+      if (typeof v.id !== "string" || v.id.length === 0 || v.id.length > 256) {
+        throw new Error("validator has invalid id")
+      }
+      if (typeof v.address !== "string" || !v.address.startsWith("0x")) {
+        throw new Error(`validator ${v.id} has invalid address format`)
+      }
       if (typeof v.stake !== "string") throw new Error(`validator ${v.id} has invalid stake type`)
       try {
         const stakeVal = BigInt(v.stake)
