@@ -149,13 +149,20 @@ export class BftRound {
       return []
     }
 
+    // Guard: proposedBlock must exist during prepare phase (set by handlePropose).
+    // If null, the round is in an inconsistent state — reject to avoid null dereference.
+    if (!this.state.proposedBlock) {
+      log.warn("prepare received but no proposed block", { senderId, height: this.state.height.toString() })
+      return []
+    }
+
     if (!this.isKnownValidator(senderId)) {
       log.warn("prepare from unknown validator", { senderId })
       return []
     }
 
     // Only accept votes for the proposed block
-    if (this.state.proposedBlock && blockHash !== this.state.proposedBlock.hash) {
+    if (blockHash !== this.state.proposedBlock.hash) {
       log.warn("prepare vote for wrong block", { senderId, expected: this.state.proposedBlock.hash, got: blockHash })
       return []
     }

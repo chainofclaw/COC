@@ -184,16 +184,20 @@ export class WireServer {
     }
 
     // Per-IP connection limit (normalize IPv4-mapped IPv6 to plain IPv4)
+    // Atomically increment-then-check to prevent TOCTOU race where two connections
+    // from the same IP both read the count before either increments.
     const rawIp = socket.remoteAddress ?? "unknown"
     const remoteIp = rawIp.startsWith("::ffff:") ? rawIp.slice(7) : rawIp
-    const ipCount = this.connsByIp.get(remoteIp) ?? 0
-    if (ipCount >= MAX_CONNECTIONS_PER_IP) {
+    const ipCount = (this.connsByIp.get(remoteIp) ?? 0) + 1
+    this.connsByIp.set(remoteIp, ipCount)
+    if (ipCount > MAX_CONNECTIONS_PER_IP) {
+      // Rollback the increment
+      this.connsByIp.set(remoteIp, ipCount - 1)
       this.connectionsRejected++
       log.warn("per-IP connection limit reached", { ip: remoteIp, count: ipCount })
       socket.destroy()
       return
     }
-    this.connsByIp.set(remoteIp, ipCount + 1)
 
     this.totalConnectionsAccepted++
     const connId = `${socket.remoteAddress}:${socket.remotePort}`
