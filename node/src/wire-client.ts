@@ -284,6 +284,14 @@ export class WireClient {
     switch (frame.type) {
       case MessageType.Handshake:
       case MessageType.HandshakeAck: {
+        // Reject re-handshake: server already authenticated, ignore duplicate handshake frames.
+        // We allow HandshakeAck after Handshake (both arrive in initial exchange) but reject
+        // any handshake frame after the connection is fully established.
+        if (this.handshakeComplete && frame.type === MessageType.Handshake) {
+          log.warn("rejecting re-handshake from server", { peer: this.remoteNodeId })
+          this.socket?.destroy()
+          return
+        }
         const hs = decodeJsonPayload<HandshakePayload>(frame)
         if (hs.chainId !== this.cfg.chainId) {
           log.warn("chain ID mismatch", { expected: this.cfg.chainId, got: hs.chainId })
@@ -391,6 +399,7 @@ export class WireClient {
       this.reconnectTimer = null
       this.attemptConnect()
     }, this.reconnectMs)
+    this.reconnectTimer.unref()
 
     // Exponential backoff with cap
     this.reconnectMs = Math.min(this.reconnectMs * 2, MAX_RECONNECT_MS)

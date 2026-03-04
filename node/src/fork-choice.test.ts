@@ -70,9 +70,17 @@ describe("compareForks", () => {
     assert.equal(result.reason, "lower-hash")
   })
 
-  it("equal candidates return equal reason", () => {
+  it("equal candidates with different peerId use peerId tiebreaker", () => {
     const a = makeCandidate({ peerId: "a" })
     const b = makeCandidate({ peerId: "b" })
+    const result = compareForks(a, b)
+    assert.equal(result.reason, "lower-hash")
+    assert.equal(result.winner.peerId, "a")
+  })
+
+  it("truly equal candidates return equal reason", () => {
+    const a = makeCandidate({ peerId: "same" })
+    const b = makeCandidate({ peerId: "same" })
     const result = compareForks(a, b)
     assert.equal(result.reason, "equal")
   })
