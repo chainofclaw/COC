@@ -24,7 +24,9 @@ export type MessageHandler = (msg: PubsubMessage) => void
 
 interface TopicState {
   handlers: Set<MessageHandler>
-  recentMessages: PubsubMessage[] // Ring buffer for recent messages
+  recentMessages: PubsubMessage[]
+  ringHead: number // Ring buffer write index for O(1) push
+  ringCount: number // Actual message count in ring buffer
 }
 
 export interface PubsubConfig {
@@ -97,7 +99,7 @@ export class IpfsPubsub {
       if (this.topics.size >= this.cfg.maxTopics) {
         throw new Error(`max topics reached: ${this.cfg.maxTopics}`)
       }
-      state = { handlers: new Set(), recentMessages: [] }
+      state = { handlers: new Set(), recentMessages: new Array(this.cfg.maxRecentMessages), ringHead: 0, ringCount: 0 }
       this.topics.set(topic, state)
     }
     if (state.handlers.size >= this.cfg.maxSubscribersPerTopic) {
@@ -170,6 +172,9 @@ export class IpfsPubsub {
 
     const msgId = `${msg.from}:${msg.seqno}`
 
+    // Validate msg.data type before accessing .byteLength (prevent runtime crash on malformed input)
+    if (msg.data && !(msg.data instanceof Uint8Array)) return false
+
     // Enforce message size limit BEFORE dedup to avoid polluting seenMessages
     if (msg.data && msg.data.byteLength > this.cfg.maxMessageSize) {
       log.warn("oversized peer message rejected", { topic, size: msg.data.byteLength })
@@ -202,21 +207,31 @@ export class IpfsPubsub {
   }
 
   /**
-   * Get recent messages for a topic.
+   * Get recent messages for a topic (returns ordered snapshot from ring buffer).
    */
   getRecentMessages(topic: string): PubsubMessage[] {
-    return this.topics.get(topic)?.recentMessages ?? []
+    const state = this.topics.get(topic)
+    if (!state || state.ringCount === 0) return []
+    const max = this.cfg.maxRecentMessages
+    const result: PubsubMessage[] = []
+    // Read from oldest to newest in ring buffer order
+    const start = state.ringCount < max ? 0 : state.ringHead
+    for (let i = 0; i < state.ringCount; i++) {
+      const idx = (start + i) % max
+      if (state.recentMessages[idx]) result.push(state.recentMessages[idx])
+    }
+    return result
   }
 
   private deliverToSubscribers(topic: string, msg: PubsubMessage): void {
     const state = this.topics.get(topic)
     if (!state) return
 
-    // Store in recent messages
-    state.recentMessages.push(msg)
-    if (state.recentMessages.length > this.cfg.maxRecentMessages) {
-      state.recentMessages.shift()
-    }
+    // Store in ring buffer — O(1) instead of O(n) shift()
+    const max = this.cfg.maxRecentMessages
+    state.recentMessages[state.ringHead] = msg
+    state.ringHead = (state.ringHead + 1) % max
+    if (state.ringCount < max) state.ringCount++
 
     // Deliver to all handlers
     for (const handler of state.handlers) {
@@ -233,9 +248,17 @@ export class IpfsPubsub {
     const cutoff = now - this.cfg.messageRetentionMs
 
     for (const [, state] of this.topics) {
-      state.recentMessages = state.recentMessages.filter(
-        (msg) => msg.receivedAt > cutoff
-      )
+      // Null out expired messages in ring buffer (don't reallocate)
+      const max = this.cfg.maxRecentMessages
+      let removed = 0
+      for (let i = 0; i < max; i++) {
+        const msg = state.recentMessages[i]
+        if (msg && msg.receivedAt <= cutoff) {
+          state.recentMessages[i] = undefined as unknown as PubsubMessage
+          removed++
+        }
+      }
+      state.ringCount = Math.max(0, state.ringCount - removed)
     }
 
     // BoundedSet handles FIFO eviction automatically — no manual clear needed

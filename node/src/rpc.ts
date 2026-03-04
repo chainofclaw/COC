@@ -42,16 +42,19 @@ function cleanupExpiredFilters(filters: Map<string, PendingFilter>): void {
 }
 
 // BigInt-safe JSON serializer for RPC responses
-/** Constant-time string comparison to prevent timing attacks on auth tokens */
+/** Constant-time string comparison to prevent timing attacks on auth tokens.
+ *  Pads both buffers to the same length so the comparison time is independent
+ *  of the secret token length (prevents length oracle via timing). */
 function constantTimeEqual(a: string, b: string): boolean {
   const bufA = Buffer.from(a, "utf8")
   const bufB = Buffer.from(b, "utf8")
-  if (bufA.length !== bufB.length) {
-    // Compare against self to maintain constant time even on length mismatch
-    timingSafeEqual(bufA, bufA)
-    return false
-  }
-  return timingSafeEqual(bufA, bufB)
+  const maxLen = Math.max(bufA.length, bufB.length)
+  const paddedA = Buffer.alloc(maxLen)
+  const paddedB = Buffer.alloc(maxLen)
+  bufA.copy(paddedA)
+  bufB.copy(paddedB)
+  const equal = timingSafeEqual(paddedA, paddedB)
+  return equal && bufA.length === bufB.length
 }
 
 function jsonStringify(obj: unknown): string {
@@ -82,7 +85,9 @@ const rateLimiter = new RateLimiter()
 setInterval(() => rateLimiter.cleanup(), 300_000).unref()
 
 function isDevAccountsEnabled(): boolean {
-  return process.env.COC_DEV_ACCOUNTS === "1" || process.env.NODE_ENV === "test"
+  // Only enable dev accounts with explicit opt-in — NODE_ENV=test no longer sufficient
+  // to prevent accidental exposure of hardcoded private keys in production
+  return process.env.COC_DEV_ACCOUNTS === "1"
 }
 
 // Debug/trace RPC feature gate: only enabled when COC_DEBUG_RPC=1
@@ -230,6 +235,7 @@ export function startRpcServer(
     let bodySize = 0
     let aborted = false
     req.on("data", (chunk: Buffer | string) => {
+      if (aborted) return
       bodySize += typeof chunk === "string" ? chunk.length : chunk.byteLength
       if (bodySize > MAX_RPC_BODY) {
         aborted = true
@@ -489,6 +495,10 @@ async function handleRpc(
     }
     case "eth_sendRawTransaction": {
       const raw = String((payload.params ?? [])[0] ?? "") as Hex
+      // Reject oversized raw transactions to prevent CPU abuse (128 KB ~= Ethereum mainnet limit)
+      if (raw.length > 262_144) {
+        throw { code: -32602, message: `raw transaction too large: ${raw.length} chars` }
+      }
       const tx = await chain.addRawTx(raw)
       await p2p.receiveTx(raw)
       return tx.hash

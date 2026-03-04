@@ -193,6 +193,10 @@ export class BoundedSet<T> {
     this.items.set(value, true)
   }
 
+  clear(): void {
+    this.items.clear()
+  }
+
   get size(): number {
     return this.items.size
   }
@@ -310,8 +314,14 @@ export class PersistentAuthNonceTracker implements AuthNonceTracker {
     }
   }
 
+  private lastPruneMs = 0
+  private static readonly PRUNE_THROTTLE_MS = 30_000
+
   private pruneExpired(now: number): void {
     if (this.ttlMs <= 0) return
+    // Throttle pruning to avoid O(n) scan on every has()/add() call
+    if (now - this.lastPruneMs < PersistentAuthNonceTracker.PRUNE_THROTTLE_MS) return
+    this.lastPruneMs = now
     const cutoff = now - this.ttlMs
     for (const [key, ts] of this.items.entries()) {
       if (ts < cutoff) {

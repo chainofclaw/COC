@@ -7,6 +7,7 @@ import { Transaction } from "ethers"
 import { ChainEventEmitter } from "./chain-events.ts"
 import type { NodeSigner, SignatureVerifier } from "./crypto/signer.ts"
 import { calculateBaseFee, genesisBaseFee, BLOCK_GAS_LIMIT } from "./base-fee.ts"
+import { BoundedSet } from "./p2p.ts"
 import { createLogger } from "./logger.ts"
 
 const log = createLogger("chain-engine")
@@ -46,8 +47,10 @@ export class ChainEngine {
   readonly events: ChainEventEmitter
   private readonly storage: ChainStorage
   private readonly blocks: ChainBlock[] = []
+  private readonly blockByNumber = new Map<bigint, ChainBlock>()
+  private readonly blockByHash = new Map<Hex, ChainBlock>()
   private readonly receiptsByBlock = new Map<bigint, TxReceipt[]>()
-  private readonly txHashSet = new Set<Hex>()
+  private readonly txHashSet = new BoundedSet<Hex>(500_000)
   private readonly cfg: ChainEngineConfig
   private readonly evm: EvmChain
   private nodeSigner: NodeSigner | null = null
@@ -86,11 +89,11 @@ export class ChainEngine {
   }
 
   getBlockByNumber(number: bigint): ChainBlock | null {
-    return this.blocks.find((b) => b.number === number) ?? null
+    return this.blockByNumber.get(number) ?? null
   }
 
   getBlockByHash(hash: Hex): ChainBlock | null {
-    return this.blocks.find((b) => b.hash === hash) ?? null
+    return this.blockByHash.get(hash) ?? null
   }
 
   getBlocks(): ChainBlock[] {
@@ -113,16 +116,22 @@ export class ChainEngine {
     if (set.length === 0) {
       return this.cfg.nodeId
     }
+    // Guard against nextHeight <= 0 which would produce negative BigInt modulo
+    if (nextHeight < 1n) {
+      return set[0]
+    }
     const idx = Number((nextHeight - 1n) % BigInt(set.length))
     return set[idx]
   }
 
   async addRawTx(rawTx: Hex): Promise<MempoolTx> {
-    const tx = this.mempool.addRawTx(rawTx)
-    if (this.txHashSet.has(tx.hash)) {
-      this.mempool.remove(tx.hash)
+    // Pre-check: decode tx hash and reject if already confirmed BEFORE adding to mempool
+    // Fixes TOCTOU race where tx could be picked by pickForBlock between add and check
+    const decoded = Transaction.from(rawTx)
+    if (this.txHashSet.has(decoded.hash as Hex)) {
       throw new Error("tx already confirmed")
     }
+    const tx = this.mempool.addRawTx(rawTx)
 
     this.events.emitPendingTx({
       hash: tx.hash,
@@ -168,7 +177,15 @@ export class ChainEngine {
       if (this.nodeSigner) {
         emptyBlock.signature = this.nodeSigner.sign(`block:${emptyBlock.hash}`) as Hex
       }
-      await this.applyBlock(emptyBlock, true)
+      try {
+        await this.applyBlock(emptyBlock, true)
+      } catch (emptyErr) {
+        log.error("CRITICAL: empty block fallback also failed", {
+          height: nextHeight.toString(),
+          error: String(emptyErr),
+        })
+        return null
+      }
       return emptyBlock
     }
     return block
@@ -183,7 +200,7 @@ export class ChainEngine {
     try {
 
     // Duplicate block detection (inside guard to prevent TOCTOU race)
-    const existing = this.blocks.find((b) => b.hash === block.hash)
+    const existing = this.blockByHash.get(block.hash)
     if (existing) {
       // Allow trusted local path (BFT finalize callback) to promote finality metadata.
       if (locallyProposed && block.bftFinalized && !existing.bftFinalized) {
@@ -284,8 +301,27 @@ export class ChainEngine {
       bftFinalized: locallyProposed && block.bftFinalized === true,
     }
 
+    // Persist BEFORE committing to memory — if persistence fails, the block is
+    // still added (chain must progress) but with a critical warning. This ordering
+    // ensures makeSnapshot() includes the new block for the save operation.
     this.blocks.push(storedBlock)
+    this.blockByNumber.set(storedBlock.number, storedBlock)
+    this.blockByHash.set(storedBlock.hash, storedBlock)
     this.receiptsByBlock.set(block.number, receipts)
+
+    this.updateFinalityFlags()
+    try {
+      await this.storage.save(this.makeSnapshot())
+    } catch (saveErr) {
+      // CRITICAL: block is in memory but not persisted. On restart, this block
+      // will be lost, creating state inconsistency. Log at error level.
+      log.error("CRITICAL: failed to persist block — node restart will lose this block", {
+        height: block.number.toString(),
+        hash: block.hash,
+        error: String(saveErr),
+        dataDir: this.cfg.dataDir,
+      })
+    }
 
     for (const raw of block.txs) {
       try {
@@ -294,16 +330,6 @@ export class ChainEngine {
       } catch {
         // ignore parse failures
       }
-    }
-
-    this.updateFinalityFlags()
-    try {
-      await this.storage.save(this.makeSnapshot())
-    } catch (saveErr) {
-      log.error("failed to persist chain snapshot (block accepted in memory)", {
-        height: block.number.toString(),
-        error: String(saveErr),
-      })
     }
 
     // Emit new block event
@@ -393,10 +419,16 @@ export class ChainEngine {
         return false
       }
 
-      // Verify proposer signature if verifier available
-      if (this.signatureVerifier && block.signature) {
-        const canonical = `block:${block.hash}`
-        if (!this.signatureVerifier.verifyNodeSig(canonical, block.signature, block.proposer)) {
+      // Verify proposer signature — must respect signatureEnforcement policy
+      const sigMode = this.cfg.signatureEnforcement ?? "enforce"
+      if (this.signatureVerifier && sigMode !== "off") {
+        if (block.signature) {
+          const canonical = `block:${block.hash}`
+          if (!this.signatureVerifier.verifyNodeSig(canonical, block.signature, block.proposer)) {
+            return false
+          }
+        } else if (sigMode === "enforce") {
+          // Block missing signature in enforce mode — reject
           return false
         }
       }
@@ -450,12 +482,18 @@ export class ChainEngine {
     const idx = Number(newlyFinalBlock - 1n)
     const block = this.blocks[idx]
     if (block && !block.finalized) {
-      block.finalized = true
+      // Create new object instead of mutating — preserves immutability principle
+      const updated = { ...block, finalized: true }
+      this.blocks[idx] = updated
+      this.blockByNumber.set(updated.number, updated)
+      this.blockByHash.set(updated.hash, updated)
     }
   }
 
   private async rebuildFromBlocks(blocks: ChainBlock[]): Promise<void> {
     this.blocks.length = 0
+    this.blockByNumber.clear()
+    this.blockByHash.clear()
     this.receiptsByBlock.clear()
     this.txHashSet.clear()
     await this.evm.resetExecution()

@@ -227,24 +227,32 @@ export class WsRpcServer {
     })
 
     // Heartbeat: ping all clients every 30s, terminate unresponsive/idle ones
+    // Collect candidates first, then clean up — avoids Map mutation during iteration
     this.heartbeatTimer = setInterval(() => {
       const now = Date.now()
+      const toTerminate: WebSocket[] = []
+      const toClose: WebSocket[] = []
       for (const [ws, client] of this.clients) {
         if (!client.alive) {
-          log.info("terminating unresponsive client")
-          ws.terminate()
-          this.cleanupClient(ws)
+          toTerminate.push(ws)
           continue
         }
-        // Close idle clients (no activity for IDLE_TIMEOUT_MS)
         if (now - client.lastActivityMs > IDLE_TIMEOUT_MS) {
-          log.info("closing idle client", { idleMs: now - client.lastActivityMs })
-          ws.close(1000, "idle timeout")
-          this.cleanupClient(ws)
+          toClose.push(ws)
           continue
         }
         client.alive = false
         ws.ping()
+      }
+      for (const ws of toTerminate) {
+        log.info("terminating unresponsive client")
+        this.cleanupClient(ws)
+        ws.terminate()
+      }
+      for (const ws of toClose) {
+        log.info("closing idle client")
+        this.cleanupClient(ws)
+        ws.close(1000, "idle timeout")
       }
     }, HEARTBEAT_INTERVAL_MS)
     this.heartbeatTimer.unref()
@@ -504,15 +512,21 @@ function generateSubscriptionId(): string {
   return "0x" + crypto.randomBytes(16).toString("hex")
 }
 
-/** Constant-time string comparison to prevent timing attacks on auth tokens */
+/** Constant-time string comparison to prevent timing attacks on auth tokens.
+ *  Pads both buffers to the same length so the comparison time is independent
+ *  of the secret token length (prevents length oracle via timing). */
 function constantTimeEqualWs(a: string, b: string): boolean {
   const bufA = Buffer.from(a, "utf8")
   const bufB = Buffer.from(b, "utf8")
-  if (bufA.length !== bufB.length) {
-    timingSafeEqual(bufA, bufA)
-    return false
-  }
-  return timingSafeEqual(bufA, bufB)
+  const maxLen = Math.max(bufA.length, bufB.length)
+  const paddedA = Buffer.alloc(maxLen)
+  const paddedB = Buffer.alloc(maxLen)
+  bufA.copy(paddedA)
+  bufB.copy(paddedB)
+  // timingSafeEqual runs in constant time for equal-length buffers
+  const equal = timingSafeEqual(paddedA, paddedB)
+  // Length must also match — check AFTER timing-safe compare to avoid short-circuit
+  return equal && bufA.length === bufB.length
 }
 
 /**

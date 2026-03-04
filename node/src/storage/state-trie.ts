@@ -143,17 +143,26 @@ export class PersistentStateTrie implements IStateTrie {
     if (rootData) {
       const rootHex = new TextDecoder().decode(rootData)
       if (rootHex.startsWith("0x") && rootHex.length === 66) {
-        const rootBytes = hexToBytes(rootHex)
-        this.trie = new Trie({ db: this.trieDb as any, root: rootBytes })
-        this.lastStateRoot = rootHex
+        try {
+          const rootBytes = hexToBytes(rootHex)
+          this.trie = new Trie({ db: this.trieDb as any, root: rootBytes })
+          this.lastStateRoot = rootHex
+        } catch (err) {
+          // Corrupted state root on disk — start with fresh trie instead of crashing
+          log.warn("corrupted state root in storage, starting fresh trie", {
+            rootHex,
+            error: String(err),
+          })
+        }
       }
     }
   }
 
   async get(address: string): Promise<AccountState | null> {
-    // Check read cache first
+    // Check read cache first — return a copy to prevent external mutation of cache
     if (this.accountCache.has(address)) {
-      return this.accountCache.get(address)!
+      const cached = this.accountCache.get(address)!
+      return cached ? { ...cached } : null
     }
 
     const addressBytes = hexToBytes(address)
@@ -287,8 +296,9 @@ export class PersistentStateTrie implements IStateTrie {
   }
 
   async commit(): Promise<string> {
-    // Only commit dirty storage tries
-    for (const address of this.dirtyAddresses) {
+    // Only commit dirty storage tries — iterate snapshot to avoid Set mutation during iteration
+    const dirtySnapshot = [...this.dirtyAddresses]
+    for (const address of dirtySnapshot) {
       const storageTrie = this.storageTries.get(address)
       if (storageTrie) {
         const account = await this.get(address)
@@ -418,9 +428,18 @@ export class PersistentStateTrie implements IStateTrie {
     let storageTrie = this.storageTries.get(address)
 
     if (storageTrie) {
-      // Update LRU order
-      this.touchLru(address)
-      return storageTrie
+      // Verify cached trie root matches expected storage root to prevent stale reads
+      const cachedRoot = bytesToHex(storageTrie.root())
+      const emptyRoot = "0x" + "0".repeat(64)
+      if (storageRoot !== emptyRoot && cachedRoot !== storageRoot) {
+        // Stale cache — discard and recreate
+        this.storageTries.delete(address)
+        storageTrie = undefined
+      } else {
+        // Update LRU order
+        this.touchLru(address)
+        return storageTrie
+      }
     }
 
     // Evict if over limit
@@ -447,21 +466,27 @@ export class PersistentStateTrie implements IStateTrie {
   private evictLru(): void {
     // Early exit: if all cached tries are dirty, nothing can be evicted
     if (this.dirtyAddresses.size >= this.storageTries.size) return
-    // Guard: cap iterations to prevent infinite loop when most tries are dirty
+    // Compute evictable count upfront to avoid wasted iterations
+    const evictableCount = this.storageTries.size - this.dirtyAddresses.size
+    if (evictableCount <= 0) return
+    const toEvict = this.storageTries.size - this.maxCachedTries + 1
+    if (toEvict <= 0) return
+    // Cap iterations to evictable count (skip dirty moves entirely)
+    let evicted = 0
     let attempts = 0
     const maxAttempts = this.storageTries.size
-    while (this.storageTries.size >= this.maxCachedTries && this.storageTries.size > 0 && attempts < maxAttempts) {
+    while (evicted < toEvict && this.storageTries.size > 0 && attempts < maxAttempts) {
       attempts++
-      // Map iterates in insertion order — first key is the LRU (oldest)
       const oldest = this.storageTries.keys().next().value as string
-      // Don't evict dirty tries — move to end and try next
       if (this.dirtyAddresses.has(oldest)) {
+        // Move dirty entry to end; but if we've moved more than evictableCount entries, stop
         const trie = this.storageTries.get(oldest)!
         this.storageTries.delete(oldest)
         this.storageTries.set(oldest, trie)
         continue
       }
       this.storageTries.delete(oldest)
+      evicted++
     }
   }
 }

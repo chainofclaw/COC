@@ -5,7 +5,7 @@
  * expiration filtering to prune stale peers.
  */
 
-import { readFile, writeFile, mkdir } from "node:fs/promises"
+import { readFile, writeFile, mkdir, rename } from "node:fs/promises"
 import { dirname } from "node:path"
 import type { NodePeer } from "./blockchain-types.ts"
 import { createLogger } from "./logger.ts"
@@ -49,11 +49,18 @@ export class PeerStore {
       if (!Array.isArray(data)) return []
       const now = Date.now()
 
-      // Filter out expired peers (validate fields defensively)
-      const valid = (data as StoredPeer[]).filter((p) =>
-        p && typeof p.id === "string" && typeof p.lastSeenMs === "number" &&
-        now - p.lastSeenMs < this.cfg.maxAgeMs,
-      )
+      // Filter out expired peers (validate all required fields defensively)
+      const valid = (data as StoredPeer[]).filter((p) => {
+        if (!p || typeof p.id !== "string" || p.id.length === 0) return false
+        if (typeof p.url !== "string" || p.url.length === 0) return false
+        if (typeof p.lastSeenMs !== "number" || !Number.isFinite(p.lastSeenMs)) return false
+        if (now - p.lastSeenMs >= this.cfg.maxAgeMs) return false
+        // Validate URL format to prevent SSRF via corrupted peers.json
+        try { new URL(p.url) } catch { return false }
+        // Validate peer ID length to prevent storage bloat via injected IDs
+        if (p.id.length > 256) return false
+        return true
+      })
 
       this.peers.clear()
       for (const peer of valid) {
@@ -79,7 +86,10 @@ export class PeerStore {
     try {
       await mkdir(dirname(this.cfg.filePath), { recursive: true })
       const data = [...this.peers.values()]
-      await writeFile(this.cfg.filePath, JSON.stringify(data, null, 2))
+      // Atomic write: write to temp file then rename to prevent corruption on crash
+      const tmpPath = this.cfg.filePath + ".tmp"
+      await writeFile(tmpPath, JSON.stringify(data, null, 2))
+      await rename(tmpPath, this.cfg.filePath)
       this.dirty = false
     } catch (err) {
       log.error("failed to save peers", { error: String(err) })

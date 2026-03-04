@@ -224,11 +224,16 @@ export class BlockIndex implements IBlockIndex {
     if (!data) return null
 
     const tx = deserializeJSON(decoder.decode(data))
-    // Convert bigints back
+    // Convert bigints back — wrap in try-catch to prevent corrupted data from crashing the node
     if (tx.receipt) {
-      tx.receipt.blockNumber = BigInt(tx.receipt.blockNumber)
-      tx.receipt.gasUsed = BigInt(tx.receipt.gasUsed)
-      tx.receipt.status = BigInt(tx.receipt.status)
+      try {
+        tx.receipt.blockNumber = BigInt(tx.receipt.blockNumber)
+        tx.receipt.gasUsed = BigInt(tx.receipt.gasUsed)
+        tx.receipt.status = BigInt(tx.receipt.status)
+      } catch {
+        // Corrupted receipt data — return null to avoid type-inconsistent objects
+        return null
+      }
     }
     return tx
   }
@@ -271,9 +276,12 @@ export class BlockIndex implements IBlockIndex {
     const from = filter.fromBlock ?? 0n
     const to = filter.toBlock ?? (await this.getLatestBlock())?.number ?? 0n
     const maxResults = 10_000
+    // Cap block range to prevent DoS via large range scans
+    const MAX_LOG_BLOCK_RANGE = 10_000n
+    const effectiveTo = to - from > MAX_LOG_BLOCK_RANGE ? from + MAX_LOG_BLOCK_RANGE : to
     const results: IndexedLog[] = []
 
-    for (let n = from; n <= to; n++) {
+    for (let n = from; n <= effectiveTo; n++) {
       const key = LOG_BY_BLOCK_PREFIX + n.toString()
       const data = await this.db.get(key)
       if (!data) continue
@@ -361,6 +369,7 @@ export class BlockIndex implements IBlockIndex {
 
 // Zero-pad block number for lexicographic ordering (20 digits)
 function padBlockNumber(n: bigint): string {
+  if (n < 0n) throw new Error(`block number must be non-negative: ${n}`)
   return n.toString().padStart(20, "0")
 }
 

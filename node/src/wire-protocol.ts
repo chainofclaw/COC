@@ -45,6 +45,9 @@ export interface FindNodeResponsePayload {
 
 export type MessageType = (typeof MessageType)[keyof typeof MessageType]
 
+// Pre-computed valid message types set — avoids allocation on every decodeFrame call
+const VALID_MESSAGE_TYPES = new Set(Object.values(MessageType))
+
 export interface WireFrame {
   type: MessageType
   payload: Uint8Array
@@ -103,8 +106,7 @@ export function decodeFrame(buf: Uint8Array): { frame: WireFrame; bytesConsumed:
   }
 
   const rawType = buf[2]
-  const VALID_TYPES = new Set(Object.values(MessageType))
-  if (!VALID_TYPES.has(rawType)) {
+  if (!VALID_MESSAGE_TYPES.has(rawType)) {
     throw new Error(`unknown wire message type: 0x${rawType.toString(16)}`)
   }
   const type = rawType as MessageType

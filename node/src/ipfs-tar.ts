@@ -17,6 +17,12 @@ export interface TarEntry {
  * Create a single tar entry (header + data + padding).
  */
 export function createTarEntry(entry: TarEntry): Uint8Array {
+  if (!entry.name || entry.name.length === 0) {
+    throw new Error("tar entry name must not be empty")
+  }
+  if (entry.name.length > 99) {
+    throw new Error(`tar entry name too long: ${entry.name.length} > 99 (POSIX tar limit)`)
+  }
   if (/^\/|[\\]|\.\./.test(entry.name) || entry.name.includes("\0")) {
     throw new Error(`unsafe tar entry name: ${entry.name}`)
   }
@@ -29,6 +35,8 @@ export function createTarEntry(entry: TarEntry): Uint8Array {
   return result
 }
 
+const MAX_ARCHIVE_SIZE = 100 * 1024 * 1024 // 100 MB hard cap to prevent OOM
+
 /**
  * Create a tar archive from multiple entries.
  */
@@ -40,6 +48,9 @@ export function createTarArchive(entries: TarEntry[]): Uint8Array {
     const block = createTarEntry(entry)
     parts.push(block)
     totalSize += block.length
+    if (totalSize > MAX_ARCHIVE_SIZE) {
+      throw new Error(`tar archive exceeds max size: ${totalSize} > ${MAX_ARCHIVE_SIZE}`)
+    }
   }
 
   // End-of-archive: two 512-byte blocks of zeros
