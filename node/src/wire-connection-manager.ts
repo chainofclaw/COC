@@ -44,12 +44,22 @@ export class WireConnectionManager {
   }
 
   /** Add a peer connection. Returns false if at max capacity or already connected. */
-  addPeer(host: string, port: number): boolean {
+  addPeer(host: string, port: number, remoteNodeId?: string): boolean {
     const key = `${host}:${port}`
     if (this.connections.has(key)) return false
     if (this.connections.size >= this.maxConnections) {
       log.warn("max connections reached", { max: this.maxConnections })
       return false
+    }
+    // Prevent duplicate connections to the same nodeId via different host:port
+    if (remoteNodeId) {
+      for (const [, conn] of this.connections) {
+        const existingId = conn.client.getRemoteNodeId()
+        if (existingId && existingId === remoteNodeId) {
+          log.debug("already connected to nodeId via different address", { nodeId: remoteNodeId, existingKey: key })
+          return false
+        }
+      }
     }
 
     const clientCfg: WireClientConfig = {

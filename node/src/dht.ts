@@ -86,6 +86,8 @@ export class RoutingTable {
   readonly localId: string
   private readonly buckets: KBucket[]
   private readonly pingPeer: ((peer: DhtPeer) => Promise<boolean>) | null
+  // Pre-computed global IP count index for O(1) Sybil checks (avoids O(n²) full scan)
+  private readonly globalIpCount = new Map<string, number>()
 
   constructor(localId: string, opts?: { pingPeer?: (peer: DhtPeer) => Promise<boolean> }) {
     this.localId = localId
@@ -131,13 +133,8 @@ export class RoutingTable {
         return false
       }
       // Global per-IP limit across all buckets to prevent eclipse attacks
-      let globalIpCount = 0
-      for (const b of this.buckets) {
-        for (const p of b.peers) {
-          if (normalizeHostForBucket(extractHost(p.address)) === peerHost) globalIpCount++
-        }
-        if (globalIpCount >= MAX_PEERS_PER_IP_GLOBAL) break
-      }
+      // Uses pre-computed index for O(1) lookup instead of O(n) full scan
+      const globalIpCount = this.globalIpCount.get(peerHost) ?? 0
       if (globalIpCount >= MAX_PEERS_PER_IP_GLOBAL) {
         log.debug("global per-IP limit reached, dropping peer", { ip: peerHost, peerId: peer.id })
         return false
@@ -147,6 +144,7 @@ export class RoutingTable {
     // Bucket not full, add at tail
     if (bucket.peers.length < K) {
       bucket.peers.push({ ...peer, lastSeenMs: Date.now() })
+      this.incrementGlobalIpCount(peerHost)
       return true
     }
 
@@ -162,13 +160,17 @@ export class RoutingTable {
         // Oldest was removed during ping — bucket may have space now
         if (bucket.peers.length < K) {
           bucket.peers.push({ ...peer, lastSeenMs: Date.now() })
+          this.incrementGlobalIpCount(peerHost)
           return true
         }
       } else if (!alive) {
         // Evict unreachable peer, add new peer at tail (only if bucket won't exceed K)
+        const evictedHost = normalizeHostForBucket(extractHost(bucket.peers[pos].address))
         bucket.peers.splice(pos, 1)
+        this.decrementGlobalIpCount(evictedHost)
         if (bucket.peers.length < K) {
           bucket.peers.push({ ...peer, lastSeenMs: Date.now() })
+          this.incrementGlobalIpCount(peerHost)
           log.debug("bucket full, evicted unreachable peer", { idx, evicted: oldestId, added: peer.id })
           return true
         }
@@ -191,7 +193,9 @@ export class RoutingTable {
     const bucket = this.buckets[idx]
     const pos = bucket.peers.findIndex((p) => p.id === peerId)
     if (pos >= 0) {
+      const removedHost = normalizeHostForBucket(extractHost(bucket.peers[pos].address))
       bucket.peers.splice(pos, 1)
+      this.decrementGlobalIpCount(removedHost)
       return true
     }
     return false
@@ -269,6 +273,19 @@ export class RoutingTable {
       if (ok) added++
     }
     return added
+  }
+
+  private incrementGlobalIpCount(host: string): void {
+    this.globalIpCount.set(host, (this.globalIpCount.get(host) ?? 0) + 1)
+  }
+
+  private decrementGlobalIpCount(host: string): void {
+    const count = (this.globalIpCount.get(host) ?? 1) - 1
+    if (count <= 0) {
+      this.globalIpCount.delete(host)
+    } else {
+      this.globalIpCount.set(host, count)
+    }
   }
 
   /**

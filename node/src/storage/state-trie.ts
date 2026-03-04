@@ -341,7 +341,13 @@ export class PersistentStateTrie implements IStateTrie {
   }
 
   async revert(): Promise<void> {
-    await this.trie.revert()
+    try {
+      await this.trie.revert()
+    } catch (err) {
+      // Revert without matching checkpoint — trie state may be inconsistent.
+      // Log but don't throw to allow recovery attempts to continue.
+      log.warn("trie revert failed (no matching checkpoint?)", { error: String(err) })
+    }
     for (const [addr, storageTrie] of this.storageTries.entries()) {
       try {
         await storageTrie.revert()

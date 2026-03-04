@@ -162,11 +162,15 @@ export class BlockIndex implements IBlockIndex {
     if (!data) return null
 
     const block = deserializeJSON(decoder.decode(data))
-    // Convert number back to bigint
-    block.number = BigInt(block.number)
-    if (block.baseFee !== undefined) block.baseFee = BigInt(block.baseFee)
-    if (block.gasUsed !== undefined) block.gasUsed = BigInt(block.gasUsed)
-    if (block.cumulativeWeight !== undefined) block.cumulativeWeight = BigInt(block.cumulativeWeight)
+    // Convert number back to bigint — wrap in try-catch to prevent corrupted data from crashing
+    try {
+      block.number = BigInt(block.number)
+      if (block.baseFee !== undefined) block.baseFee = BigInt(block.baseFee)
+      if (block.gasUsed !== undefined) block.gasUsed = BigInt(block.gasUsed)
+      if (block.cumulativeWeight !== undefined) block.cumulativeWeight = BigInt(block.cumulativeWeight)
+    } catch {
+      return null // corrupted block data
+    }
     return block
   }
 
@@ -187,10 +191,14 @@ export class BlockIndex implements IBlockIndex {
     if (!data) return null
 
     const block = deserializeJSON(decoder.decode(data))
-    block.number = BigInt(block.number)
-    if (block.baseFee !== undefined) block.baseFee = BigInt(block.baseFee)
-    if (block.gasUsed !== undefined) block.gasUsed = BigInt(block.gasUsed)
-    if (block.cumulativeWeight !== undefined) block.cumulativeWeight = BigInt(block.cumulativeWeight)
+    try {
+      block.number = BigInt(block.number)
+      if (block.baseFee !== undefined) block.baseFee = BigInt(block.baseFee)
+      if (block.gasUsed !== undefined) block.gasUsed = BigInt(block.gasUsed)
+      if (block.cumulativeWeight !== undefined) block.cumulativeWeight = BigInt(block.cumulativeWeight)
+    } catch {
+      return null // corrupted block data
+    }
     return block
   }
 
@@ -275,6 +283,11 @@ export class BlockIndex implements IBlockIndex {
   async getLogs(filter: LogFilter): Promise<IndexedLog[]> {
     const from = filter.fromBlock ?? 0n
     const to = filter.toBlock ?? (await this.getLatestBlock())?.number ?? 0n
+    // Reject negative/inverted range: from > to could cause zero iterations (harmless)
+    // but from < 0 would produce invalid keys, and crafted negative BigInt ranges
+    // could bypass the MAX_LOG_BLOCK_RANGE cap via underflow.
+    if (from < 0n || to < 0n) return []
+    if (from > to) return []
     const maxResults = 10_000
     // Cap block range to prevent DoS via large range scans
     const MAX_LOG_BLOCK_RANGE = 10_000n
@@ -368,8 +381,11 @@ export class BlockIndex implements IBlockIndex {
 }
 
 // Zero-pad block number for lexicographic ordering (20 digits)
+// Cap at 20 digits to prevent key overflow in LevelDB (BigInt has no max)
+const MAX_BLOCK_NUMBER = 10n ** 20n - 1n // 99999999999999999999
 function padBlockNumber(n: bigint): string {
   if (n < 0n) throw new Error(`block number must be non-negative: ${n}`)
+  if (n > MAX_BLOCK_NUMBER) throw new Error(`block number exceeds max: ${n}`)
   return n.toString().padStart(20, "0")
 }
 

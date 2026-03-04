@@ -37,6 +37,7 @@ export class PeerStore {
   private peers = new Map<string, StoredPeer>()
   private dirty = false
   private saveTimer: ReturnType<typeof setInterval> | null = null
+  private saving = false // Serialize concurrent save() calls
 
   constructor(config?: Partial<PeerStoreConfig>) {
     this.cfg = { ...DEFAULT_CONFIG, ...config }
@@ -82,6 +83,8 @@ export class PeerStore {
 
   async save(): Promise<void> {
     if (!this.dirty) return
+    if (this.saving) return // Skip concurrent save — next auto-save will pick up changes
+    this.saving = true
 
     try {
       await mkdir(dirname(this.cfg.filePath), { recursive: true })
@@ -93,6 +96,8 @@ export class PeerStore {
       this.dirty = false
     } catch (err) {
       log.error("failed to save peers", { error: String(err) })
+    } finally {
+      this.saving = false
     }
   }
 

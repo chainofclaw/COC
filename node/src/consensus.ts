@@ -16,7 +16,17 @@ function recalcCumulativeWeight(blocks: ChainBlock[]): bigint {
   const tip = blocks[blocks.length - 1]
   // cumulativeWeight is now bound into block hash, so it's tamper-proof
   if (tip.cumulativeWeight !== undefined) {
-    const w = BigInt(tip.cumulativeWeight)
+    let w: bigint
+    try {
+      w = BigInt(tip.cumulativeWeight)
+    } catch {
+      // Non-numeric cumulativeWeight — treat as missing
+      return BigInt(tip.number) > 0n ? BigInt(tip.number) : BigInt(blocks.length)
+    }
+    // Sanity: reject negative weights (could come from malicious BigInt conversion)
+    if (w < 0n) {
+      return BigInt(tip.number) > 0n ? BigInt(tip.number) : BigInt(blocks.length)
+    }
     // Sanity: cumulativeWeight should be >= tip height (at minimum 1 per block)
     const tipHeight = BigInt(tip.number)
     if (w < tipHeight && tipHeight > 0n) {
@@ -728,7 +738,7 @@ export class ConsensusEngine {
  *  Sort by id, serialize as JSON, then keccak256. Returns empty-hash for undefined/empty. */
 function hashValidators(validators: Array<{ id: string; address: string; stake: string; active: boolean }> | undefined): string {
   if (!validators || validators.length === 0) return "0x"
-  const sorted = [...validators].sort((a, b) => a.id.localeCompare(b.id))
+  const sorted = [...validators].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
   // Explicit property order for deterministic cross-node JSON serialization
   const json = JSON.stringify(sorted.map(v => ({ active: v.active, address: v.address, id: v.id, stake: v.stake })))
   return keccak256Hex(Buffer.from(json, "utf8"))

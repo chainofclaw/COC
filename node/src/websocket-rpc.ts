@@ -483,6 +483,17 @@ export class WsRpcServer {
   private sendSubscription(ws: WebSocket, subId: string, result: unknown): void {
     if (ws.readyState !== WebSocket.OPEN) return
 
+    // Backpressure: if the client's write buffer is too large, drop notification
+    // to prevent memory exhaustion from slow consumers (subscription flooding).
+    const MAX_WS_BUFFER = 4 * 1024 * 1024 // 4 MB
+    if (ws.bufferedAmount > MAX_WS_BUFFER) {
+      log.warn("dropping subscription notification due to backpressure", {
+        subId,
+        buffered: ws.bufferedAmount,
+      })
+      return
+    }
+
     this.send(ws, {
       jsonrpc: "2.0",
       method: "eth_subscription",
