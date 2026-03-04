@@ -181,8 +181,12 @@ export class BlockIndex implements IBlockIndex {
 
     if (!numData) return null
 
-    const blockNum = BigInt(decoder.decode(numData))
-    return this.getBlockByNumber(blockNum)
+    try {
+      const blockNum = BigInt(decoder.decode(numData))
+      return this.getBlockByNumber(blockNum)
+    } catch {
+      return null // corrupted hash-to-number mapping
+    }
   }
 
   async getLatestBlock(): Promise<ChainBlock | null> {

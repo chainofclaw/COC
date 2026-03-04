@@ -187,8 +187,8 @@ export class IpfsPubsub {
     }
     this.seenMessages.add(msgId)
 
-    msg.receivedAt = Date.now()
-    this.deliverToSubscribers(topic, msg)
+    const delivered: PubsubMessage = { ...msg, receivedAt: Date.now() }
+    this.deliverToSubscribers(topic, delivered)
     return true
   }
 

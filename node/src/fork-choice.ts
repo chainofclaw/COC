@@ -69,6 +69,15 @@ export function compareForks(a: ForkCandidate, b: ForkCandidate): ForkChoice {
     return { winner: b, loser: a, reason: "lower-hash" }
   }
 
+  // Rule 5: Lower peerId as final deterministic sub-tiebreaker
+  // Ensures selectBestFork produces the same result regardless of candidate array order
+  if (a.peerId < b.peerId) {
+    return { winner: a, loser: b, reason: "lower-hash" }
+  }
+  if (b.peerId < a.peerId) {
+    return { winner: b, loser: a, reason: "lower-hash" }
+  }
+
   return { winner: a, loser: b, reason: "equal" }
 }
 

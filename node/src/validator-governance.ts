@@ -372,7 +372,9 @@ export class ValidatorGovernance {
 
     if (approvalBps >= this.config.approvalThresholdPercent * 100) {
       this.executeProposal(proposal)
-      this.proposals.set(proposalId, { ...proposal, status: "approved" })
+      // Re-read proposal from Map to include any votes added since initial read
+      const current = this.proposals.get(proposalId) ?? proposal
+      this.proposals.set(proposalId, { ...current, status: "approved" })
     } else if (participationBps >= 10000) {
       // All voted but not enough approval
       this.proposals.set(proposalId, { ...proposal, status: "rejected" })

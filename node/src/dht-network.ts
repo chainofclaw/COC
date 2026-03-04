@@ -425,7 +425,10 @@ export class DhtNetwork {
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true })
       }
-      fs.writeFileSync(this.cfg.peerStorePath, JSON.stringify(peers, null, 2))
+      // Atomic write: write to temp file then rename to prevent corruption on crash
+      const tmpPath = this.cfg.peerStorePath + ".tmp"
+      fs.writeFileSync(tmpPath, JSON.stringify(peers, null, 2))
+      fs.renameSync(tmpPath, this.cfg.peerStorePath)
       log.info("DHT peers saved", { count: peers.length, path: this.cfg.peerStorePath })
       return peers.length
     } catch (err) {

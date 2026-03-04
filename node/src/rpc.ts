@@ -69,6 +69,10 @@ function requireHexParam(params: unknown[], index: number, name: string): Hex {
   if (typeof value !== "string" || !value.startsWith("0x")) {
     throw { code: -32602, message: `invalid ${name}: expected hex string` }
   }
+  // Validate hex content and cap length to prevent injection of arbitrary strings
+  if (value.length > 66 || !/^0x[0-9a-fA-F]*$/.test(value)) {
+    throw { code: -32602, message: `invalid ${name}: malformed hex string` }
+  }
   return value as Hex
 }
 
