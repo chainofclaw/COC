@@ -106,6 +106,7 @@ export class WireServer {
 
   stop(): void {
     for (const [, conn] of this.connections) {
+      if (conn.handshakeTimer) clearTimeout(conn.handshakeTimer)
       conn.socket.destroy()
     }
     this.connections.clear()
@@ -309,6 +310,13 @@ export class WireServer {
     switch (frame.type) {
       case MessageType.Handshake:
       case MessageType.HandshakeAck: {
+        // Reject re-handshake: a peer that already completed handshake must not
+        // be allowed to switch identity by sending another handshake frame.
+        if (conn.handshakeComplete) {
+          log.warn("rejecting re-handshake from already authenticated peer", { peer: conn.nodeId })
+          conn.socket.destroy()
+          return
+        }
         const hs = decodeJsonPayload<HandshakePayload>(frame)
         if (hs.chainId !== this.cfg.chainId) {
           log.warn("chain ID mismatch, closing", { remote: hs.nodeId, expected: this.cfg.chainId, got: hs.chainId })

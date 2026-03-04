@@ -146,8 +146,28 @@ export class PoSeEngine {
     })
     quota.commitIssue(nodeId as Hex32, this.epochId, challengeBucket, nowMs)
     this.issuedChallengeCount += 1
+    // Evict expired challenges before adding new ones to prevent unbounded memory
+    // growth when challenges are never responded to
+    this.evictExpiredChallenges()
     this.issuedChallenges.set(challenge.challengeId, challenge)
     return challenge
+  }
+
+  /** Remove challenges whose deadline has passed to prevent memory leaks */
+  private evictExpiredChallenges(): void {
+    const now = Date.now()
+    // Only run eviction when map is getting large to avoid overhead per issue
+    if (this.issuedChallenges.size < 100) return
+    for (const [id, ch] of this.issuedChallenges) {
+      if (ch.deadlineMs !== undefined && ch.deadlineMs !== null &&
+          ch.issuedAtMs !== undefined && ch.issuedAtMs !== null) {
+        const absoluteDeadline = Number(ch.issuedAtMs) + Number(ch.deadlineMs)
+        // Add 60s grace period beyond deadline before eviction
+        if (now > absoluteDeadline + 60_000) {
+          this.issuedChallenges.delete(id)
+        }
+      }
+    }
   }
 
   submitReceipt(challenge: ChallengeMessage, receipt: ReceiptMessage): void {
@@ -160,7 +180,10 @@ export class PoSeEngine {
     }
     // Enforce challenge deadline — late receipts should not receive credit
     // deadlineMs is relative (e.g. 2500ms), issuedAtMs is absolute timestamp
-    if (issued.deadlineMs && issued.issuedAtMs) {
+    // Use explicit !== undefined checks instead of truthiness to handle
+    // legitimate zero values (0 is falsy but valid)
+    if (issued.deadlineMs !== undefined && issued.deadlineMs !== null &&
+        issued.issuedAtMs !== undefined && issued.issuedAtMs !== null) {
       const absoluteDeadline = Number(issued.issuedAtMs) + Number(issued.deadlineMs)
       if (Date.now() > absoluteDeadline) {
         this.issuedChallenges.delete(issued.challengeId)
@@ -178,7 +201,8 @@ export class PoSeEngine {
       throw new Error("unknown challenge")
     }
     // Enforce challenge deadline — late receipts should not receive credit
-    if (issued.deadlineMs && issued.issuedAtMs) {
+    if (issued.deadlineMs !== undefined && issued.deadlineMs !== null &&
+        issued.issuedAtMs !== undefined && issued.issuedAtMs !== null) {
       const absoluteDeadline = Number(issued.issuedAtMs) + Number(issued.deadlineMs)
       if (Date.now() > absoluteDeadline) {
         this.issuedChallenges.delete(issued.challengeId)
@@ -305,16 +329,18 @@ function aggregateReceiptStats(
   }))
 }
 
-function stableStringify(value: unknown): string {
+function stableStringify(value: unknown, depth = 0): string {
+  // Guard against deeply nested objects that could cause stack overflow
+  if (depth > 64) throw new Error("stableStringify: object too deeply nested")
   if (typeof value === "bigint") return value.toString()
   if (value === null || typeof value !== "object") {
     return JSON.stringify(value)
   }
   if (Array.isArray(value)) {
-    return `[${value.map((x) => stableStringify(x)).join(",")}]`
+    return `[${value.map((x) => stableStringify(x, depth + 1)).join(",")}]`
   }
   const obj = value as Record<string, unknown>
-  const keys = Object.keys(obj).sort()
-  const props = keys.map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`)
+  const keys = Object.keys(obj).filter((k) => k !== "__proto__" && k !== "constructor" && k !== "prototype").sort()
+  const props = keys.map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k], depth + 1)}`)
   return `{${props.join(",")}}`
 }

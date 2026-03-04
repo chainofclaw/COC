@@ -411,6 +411,10 @@ function normalizePath(path: string): string {
   if (path.length > MAX_PATH_LENGTH) {
     throw new Error(`path too long (max ${MAX_PATH_LENGTH}): ${path.length} chars`)
   }
+  // Reject null bytes which can truncate paths in filesystem operations
+  if (path.includes("\0")) {
+    throw new Error(`null byte in path not allowed`)
+  }
   if (!path.startsWith("/")) path = "/" + path
   // Remove trailing slash (except root)
   if (path.length > 1 && path.endsWith("/")) {

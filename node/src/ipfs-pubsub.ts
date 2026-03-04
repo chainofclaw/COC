@@ -172,8 +172,8 @@ export class IpfsPubsub {
 
     const msgId = `${msg.from}:${msg.seqno}`
 
-    // Validate msg.data type before accessing .byteLength (prevent runtime crash on malformed input)
-    if (msg.data && !(msg.data instanceof Uint8Array)) return false
+    // Validate msg.data: must be present and Uint8Array (reject null, undefined, or wrong types)
+    if (!msg.data || !(msg.data instanceof Uint8Array)) return false
 
     // Enforce message size limit BEFORE dedup to avoid polluting seenMessages
     if (msg.data && msg.data.byteLength > this.cfg.maxMessageSize) {

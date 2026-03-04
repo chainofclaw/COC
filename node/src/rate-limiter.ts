@@ -35,7 +35,12 @@ export class RateLimiter {
       return true
     }
 
-    bucket.count++
+    // Cap the counter at maxRequests + 1 to prevent unbounded integer growth.
+    // Once rate-limited, further increments provide no useful information and
+    // could theoretically overflow Number.MAX_SAFE_INTEGER on sustained attack.
+    if (bucket.count <= this.maxRequests) {
+      bucket.count++
+    }
     return bucket.count <= this.maxRequests
   }
 

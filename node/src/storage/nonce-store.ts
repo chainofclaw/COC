@@ -43,10 +43,12 @@ export class PersistentNonceStore implements INonceStore {
    */
   async cleanup(olderThan?: number): Promise<number> {
     const threshold = olderThan ?? Date.now() - CLEANUP_THRESHOLD_MS
+    const MAX_CLEANUP_BATCH = 1000 // cap per-call to avoid blocking event loop on large tables
     let count = 0
 
     const keys = await this.db.getKeysWithPrefix(NONCE_PREFIX)
     for (const key of keys) {
+      if (count >= MAX_CLEANUP_BATCH) break
       const value = await this.db.get(key)
       if (!value) continue
       const timestamp = Number(new TextDecoder().decode(value))

@@ -276,6 +276,19 @@ export function startRpcServer(
         }
         const scopedOpts = Object.keys(rpcOpts).length > 0 ? rpcOpts : undefined
         const MAX_BATCH_SIZE = 100
+        // Batch RPC: charge rate limit for each item in the batch, not just the outer request.
+        // Without this, a single batch of 100 items counts as 1 rate-limit hit.
+        if (Array.isArray(payload) && payload.length > 1) {
+          const batchCost = Math.min(payload.length, MAX_BATCH_SIZE) - 1 // -1 because outer request already counted
+          for (let i = 0; i < batchCost; i++) {
+            if (!rateLimiter.allow(clientIp)) {
+              log.warn("RPC batch rate limit exceeded", { ip: clientIp, batchSize: payload.length })
+              res.writeHead(429, { "content-type": "application/json" })
+              res.end(JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32005, message: "rate limit exceeded (batch)" } }))
+              return
+            }
+          }
+        }
         const response = Array.isArray(payload)
           ? await Promise.all(payload.slice(0, MAX_BATCH_SIZE).map((item) => handleOne(item, chainId, evm, chain, p2p, filters, bftCoordinator, scopedOpts)))
           : await handleOne(payload, chainId, evm, chain, p2p, filters, bftCoordinator, scopedOpts)
@@ -523,6 +536,10 @@ async function handleRpc(
       let filterAddresses: Hex[] | undefined
       if (query.address) {
         if (Array.isArray(query.address)) {
+          const MAX_FILTER_ADDRESSES = 100
+          if (query.address.length > MAX_FILTER_ADDRESSES) {
+            throw { code: -32602, message: `address array too large: ${query.address.length} > ${MAX_FILTER_ADDRESSES}` }
+          }
           filterAddresses = (query.address as string[]).map((a) => String(a).toLowerCase() as Hex)
           filterAddress = filterAddresses.length > 0 ? filterAddresses[0] : undefined
         } else {

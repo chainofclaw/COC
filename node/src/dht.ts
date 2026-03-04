@@ -349,6 +349,13 @@ function normalizeHostForBucket(host: string): string {
     }
   }
 
+  // DNS hostnames (non-IP addresses) bypass per-IP Sybil protection because each
+  // hostname gets its own quota. Map all non-IP hostnames to a single sentinel
+  // so they share a unified quota, preventing DNS-based Sybil attacks.
+  if (isIP(normalized) === 0 && normalized !== "localhost") {
+    return "__dns_hostname__"
+  }
+
   return normalized
 }
 

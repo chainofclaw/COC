@@ -1,6 +1,6 @@
 import http from "node:http"
 import { parse as parseUrl } from "node:url"
-import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { mkdir, readFile, writeFile, rename } from "node:fs/promises"
 import { join } from "node:path"
 import type { IpfsBlockstore } from "./ipfs-blockstore.ts"
 import { UnixFsBuilder, storeRawBlock, loadRawBlock } from "./ipfs-unixfs.ts"
@@ -329,17 +329,38 @@ export class IpfsHttpServer {
     return join(this.cfg.storageDir, "file-meta.json")
   }
 
+  private fileMetaLock: Promise<void> = Promise.resolve()
+
   private async saveFileMeta(meta: UnixFsFileMeta): Promise<void> {
-    await mkdir(this.cfg.storageDir, { recursive: true })
-    const all = await this.readFileMeta()
-    all[meta.cid] = meta
-    await writeFile(this.metaPath(), JSON.stringify(all, null, 2))
+    // Serialize concurrent writes to prevent TOCTOU race where two
+    // concurrent adds both read the same file-meta.json, each writes
+    // their own entry, and the second write silently overwrites the first.
+    this.fileMetaLock = this.fileMetaLock.then(async () => {
+      await mkdir(this.cfg.storageDir, { recursive: true })
+      const all = await this.readFileMeta()
+      all[meta.cid] = meta
+      const tmpPath = this.metaPath() + ".tmp"
+      await writeFile(tmpPath, JSON.stringify(all, null, 2))
+      await rename(tmpPath, this.metaPath())
+    }).catch(() => { /* prevent lock chain break */ })
+    await this.fileMetaLock
   }
 
   async readFileMeta(): Promise<Record<string, UnixFsFileMeta>> {
     try {
       const raw = await readFile(this.metaPath(), "utf-8")
-      return JSON.parse(raw) as Record<string, UnixFsFileMeta>
+      const parsed = JSON.parse(raw)
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        return {}
+      }
+      // Use Object.create(null) to prevent prototype pollution from
+      // crafted file-meta.json containing __proto__ keys
+      const safe: Record<string, UnixFsFileMeta> = Object.create(null)
+      for (const key of Object.keys(parsed)) {
+        if (key === "__proto__" || key === "constructor" || key === "prototype") continue
+        safe[key] = parsed[key]
+      }
+      return safe
     } catch {
       return {}
     }
@@ -459,6 +480,13 @@ export class IpfsHttpServer {
     const topic = (url.query?.arg as string) ?? ""
 
     try {
+      // Validate topic length to prevent memory exhaustion via oversized topic names
+      if (topic.length > 512) {
+        res.writeHead(400, { "content-type": "application/json" })
+        res.end(JSON.stringify({ error: "topic too long (max 512 chars)" }))
+        return
+      }
+
       switch (route) {
         case "pub": {
           if (!topic) {

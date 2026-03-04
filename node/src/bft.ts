@@ -46,6 +46,10 @@ export interface BftRoundState {
  */
 export function quorumThreshold(validators: Array<{ id: string; stake: bigint }>): bigint {
   const total = validators.reduce((sum, v) => sum + v.stake, 0n)
+  // Guard: if total stake is zero (all validators have stake=0), return MAX_SAFE to
+  // prevent quorum from ever being reached. Without this, threshold would be 1n
+  // but accumulatedStake always returns 0n, causing infinite timeout loops.
+  if (total === 0n) return BigInt(Number.MAX_SAFE_INTEGER)
   return (total * 2n) / 3n + 1n
 }
 

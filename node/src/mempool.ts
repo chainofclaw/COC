@@ -203,17 +203,22 @@ export class Mempool {
     this.evictExpired()
 
     // EIP-1559 effective gas price: min(maxFeePerGas, baseFee + maxPriorityFeePerGas)
-    // For legacy txs (no maxFeePerGas), gasPrice is used directly
+    // For legacy txs (maxPriorityFeePerGas === 0n), use gasPrice directly to avoid
+    // the EIP-1559 formula reducing effective price to min(gasPrice, baseFee).
     const effectivePrice = (tx: MempoolTx): bigint => {
-      if (tx.maxFeePerGas > 0n) {
+      if (tx.maxFeePerGas > 0n && tx.maxPriorityFeePerGas > 0n) {
         const dynamic = baseFeePerGas + tx.maxPriorityFeePerGas
         return tx.maxFeePerGas < dynamic ? tx.maxFeePerGas : dynamic
       }
       return tx.gasPrice
     }
 
-    // A transaction cannot be included when its max fee cap is below current base fee.
-    const canPayBaseFee = (tx: MempoolTx): boolean => tx.maxFeePerGas >= baseFeePerGas
+    // A transaction cannot be included when its fee cap is below current base fee.
+    // For legacy txs, gasPrice must cover baseFee; for EIP-1559, maxFeePerGas must.
+    const canPayBaseFee = (tx: MempoolTx): boolean => {
+      const feeCap = tx.maxFeePerGas > 0n ? tx.maxFeePerGas : tx.gasPrice
+      return feeCap >= baseFeePerGas
+    }
 
     const sorted = [...this.txs.values()]
       .filter((tx) => canPayBaseFee(tx) && effectivePrice(tx) >= minGasPriceWei)

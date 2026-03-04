@@ -158,8 +158,11 @@ export class PersistentStateManager {
 
   shallowCopy(): PersistentStateManager {
     // Create a new instance sharing the same trie but with an independent code cache
-    // so eth_call / estimateGas do not pollute the main state manager's cache
+    // so eth_call / estimateGas do not pollute the main state manager's cache.
+    // Auto-checkpoint on creation to isolate concurrent checkpoint/revert operations
+    // from the main state manager (e.g., eth_call running while block production commits).
     const copy = new PersistentStateManager(this.trie)
+    void copy.checkpoint() // isolate copy's changes from main trie
     return copy
   }
 

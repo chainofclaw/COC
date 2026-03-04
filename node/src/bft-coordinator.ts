@@ -223,7 +223,11 @@ export class BftCoordinator {
           this.lastFinalizedHeight = msg.height
           this.startLingerBroadcast(msg.height, block.hash)
           this.clearRound()
-          await this.cfg.onFinalized(block)
+          try {
+            await this.cfg.onFinalized(block)
+          } catch (err) {
+            log.error("onFinalized callback failed (early commits path)", { height: msg.height.toString(), error: String(err) })
+          }
           await this.processDeferredBlock()
           return
         }
@@ -245,7 +249,11 @@ export class BftCoordinator {
           this.lastFinalizedHeight = msg.height
           this.startLingerBroadcast(msg.height, block.hash)
           this.clearRound()
-          await this.cfg.onFinalized(block)
+          try {
+            await this.cfg.onFinalized(block)
+          } catch (err) {
+            log.error("onFinalized callback failed", { height: msg.height.toString(), error: String(err) })
+          }
           await this.processDeferredBlock()
         }
         break
@@ -336,7 +344,9 @@ export class BftCoordinator {
         })
         this.activeRound.fail()
         this.clearRound()
-        void this.processDeferredBlock()
+        this.processDeferredBlock().catch((err) => {
+          log.error("processDeferredBlock failed in timeout handler", { error: String(err) })
+        })
       }
     }, totalTimeout)
   }

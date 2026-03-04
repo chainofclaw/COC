@@ -266,6 +266,10 @@ export function validateSnapshot(snapshot: StateSnapshot): void {
       for (const entry of acc.storage) {
         if (!isValidHex(entry.slot)) throw new Error(`account ${acc.address} has invalid storage slot hex: ${entry.slot}`)
         if (!isValidHex(entry.value)) throw new Error(`account ${acc.address} has invalid storage value hex: ${entry.value}`)
+        // EVM storage slots and values are 32 bytes (66 hex chars with 0x prefix)
+        // Reject oversized values to prevent memory exhaustion via crafted snapshots
+        if (entry.slot.length > 66) throw new Error(`account ${acc.address} storage slot too large: ${entry.slot.length} chars`)
+        if (entry.value.length > 66) throw new Error(`account ${acc.address} storage value too large: ${entry.value.length} chars`)
       }
     }
   }
@@ -292,9 +296,34 @@ export function serializeSnapshot(snapshot: StateSnapshot): string {
  * Deserialize a snapshot from JSON string.
  */
 export function deserializeSnapshot(json: string): StateSnapshot {
+  // Reject prototype pollution payloads before parsing into typed object
+  if (json.includes("__proto__") || json.includes("constructor")) {
+    // Re-check with actual parse to avoid false positives on legitimate data values
+    const raw = JSON.parse(json)
+    rejectProtoPollution(raw)
+  }
   const parsed = JSON.parse(json) as StateSnapshot
   validateSnapshot(parsed)
   return parsed
+}
+
+/**
+ * Recursively check parsed JSON for prototype pollution keys.
+ * Throws if __proto__ or constructor appear as object keys at any depth.
+ */
+function rejectProtoPollution(obj: unknown): void {
+  if (obj === null || typeof obj !== "object") return
+  if (Array.isArray(obj)) {
+    for (const item of obj) rejectProtoPollution(item)
+    return
+  }
+  const record = obj as Record<string, unknown>
+  for (const key of Object.keys(record)) {
+    if (key === "__proto__" || key === "constructor" || key === "prototype") {
+      throw new Error(`snapshot contains forbidden key: ${key}`)
+    }
+    rejectProtoPollution(record[key])
+  }
 }
 
 function isValidHex(str: string): boolean {

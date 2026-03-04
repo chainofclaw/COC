@@ -46,6 +46,7 @@ export class WireClient {
   private remoteNodeId: string | null = null
   private reconnectMs = MIN_RECONNECT_MS
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  private handshakeTimer: ReturnType<typeof setTimeout> | null = null
   private stopped = false
   private readonly pendingFindNode = new Map<string, {
     resolve: (peers: Array<{ id: string; address: string }>) => void
@@ -74,6 +75,10 @@ export class WireClient {
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null
+    }
+    if (this.handshakeTimer) {
+      clearTimeout(this.handshakeTimer)
+      this.handshakeTimer = null
     }
     // Clean up pending FindNode requests to prevent memory leak
     for (const entry of this.pendingFindNode.values()) {
@@ -199,6 +204,16 @@ export class WireClient {
           hs.signature = this.cfg.signer.sign(msg)
         }
         socket.write(encodeJsonPayload(MessageType.Handshake, hs))
+
+        // Handshake timeout: disconnect if server doesn't complete handshake in time
+        const HANDSHAKE_TIMEOUT_MS = 10_000
+        this.handshakeTimer = setTimeout(() => {
+          if (!this.handshakeComplete) {
+            log.warn("wire client handshake timeout", { host: this.cfg.host, port: this.cfg.port })
+            socket.destroy()
+          }
+        }, HANDSHAKE_TIMEOUT_MS)
+        this.handshakeTimer.unref()
       },
     )
 
@@ -289,6 +304,10 @@ export class WireClient {
         }
         this.remoteNodeId = hs.nodeId
         this.handshakeComplete = true
+        if (this.handshakeTimer) {
+          clearTimeout(this.handshakeTimer)
+          this.handshakeTimer = null
+        }
         this.cfg.onConnected?.()
         break
       }

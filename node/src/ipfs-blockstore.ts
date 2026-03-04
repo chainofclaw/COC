@@ -58,9 +58,21 @@ export class IpfsBlockstore {
     await this.init()
     const entries = await readdir(this.blocksDir())
     let size = 0
-    for (const entry of entries) {
-      const info = await statFile(this.blockPath(entry))
-      size += info.size
+    // Stat files in batches to avoid file descriptor exhaustion on large repos
+    const BATCH_SIZE = 64
+    for (let i = 0; i < entries.length; i += BATCH_SIZE) {
+      const batch = entries.slice(i, i + BATCH_SIZE)
+      const results = await Promise.all(
+        batch.map((entry) => {
+          // Use join directly to avoid blockPath validation on readdir output
+          // (readdir returns sanitized filesystem entries, not user input)
+          const filePath = join(this.blocksDir(), entry)
+          return statFile(filePath).catch(() => null)
+        }),
+      )
+      for (const info of results) {
+        if (info) size += info.size
+      }
     }
     const pins = await this.readPins()
     return { numBlocks: entries.length, repoSize: size, pins: pins.size }
@@ -85,8 +97,14 @@ export class IpfsBlockstore {
   private async readPins(): Promise<Set<CidString>> {
     try {
       const raw = await readFile(this.pinsPath(), "utf-8")
-      const parsed = JSON.parse(raw) as { pins?: CidString[] }
-      return new Set(parsed.pins ?? [])
+      const parsed = JSON.parse(raw) as { pins?: unknown }
+      // Validate pins array structure to prevent prototype pollution or type confusion
+      if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.pins)) {
+        return new Set()
+      }
+      // Only accept string CIDs, reject objects/arrays that could carry __proto__
+      const safe = parsed.pins.filter((p: unknown) => typeof p === "string")
+      return new Set(safe as CidString[])
     } catch {
       return new Set()
     }

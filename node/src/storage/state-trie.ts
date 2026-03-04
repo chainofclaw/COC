@@ -312,7 +312,11 @@ export class PersistentStateTrie implements IStateTrie {
       }
     }
 
-    this.dirtyAddresses.clear()
+    // Delete only processed addresses (not clear()) to preserve addresses
+    // dirtied during the commit loop by the put() calls above
+    for (const address of dirtySnapshot) {
+      this.dirtyAddresses.delete(address)
+    }
     this.lastStateRoot = bytesToHex(this.trie.root())
 
     // Persist state root for recovery across restarts

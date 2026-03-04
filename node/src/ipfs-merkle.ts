@@ -2,7 +2,10 @@ import { keccak256Hex } from "../../services/relayer/keccak256.ts"
 import type { Hex } from "./ipfs-types.ts"
 
 export function hashLeaf(data: Uint8Array): Hex {
-  return `0x${keccak256Hex(data)}` as Hex
+  // Domain-separate leaf hashes from internal node hashes to prevent
+  // second-preimage attacks: H(0x00 || data) vs internal H(0x01 || left || right)
+  const prefixed = Buffer.concat([Buffer.from([0x00]), data])
+  return `0x${keccak256Hex(prefixed)}` as Hex
 }
 
 export function buildMerkleRoot(leaves: Hex[]): Hex {
@@ -48,7 +51,9 @@ export function buildMerklePath(leaves: Hex[], index: number): Hex[] {
 }
 
 export function hashPair(left: Hex, right: Hex): Hex {
-  const data = Buffer.concat([hexToBytes(left), hexToBytes(right)])
+  // Domain-separate internal node hashes from leaf hashes to prevent
+  // second-preimage attacks: H(0x01 || left || right) vs leaf H(0x00 || data)
+  const data = Buffer.concat([Buffer.from([0x01]), hexToBytes(left), hexToBytes(right)])
   return `0x${keccak256Hex(data)}` as Hex
 }
 

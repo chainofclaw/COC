@@ -484,7 +484,9 @@ async function isChallengerAllowed(
   return staticAllowlist.size === 0
 }
 
-function stableStringify(value: unknown): string {
+function stableStringify(value: unknown, depth = 0): string {
+  // Guard against deeply nested objects that could cause stack overflow
+  if (depth > 64) throw new Error("stableStringify: object too deeply nested")
   if (typeof value === "bigint") {
     return JSON.stringify(value.toString())
   }
@@ -492,10 +494,11 @@ function stableStringify(value: unknown): string {
     return JSON.stringify(value)
   }
   if (Array.isArray(value)) {
-    return `[${value.map((item) => stableStringify(item)).join(",")}]`
+    return `[${value.map((item) => stableStringify(item, depth + 1)).join(",")}]`
   }
   const obj = value as Record<string, unknown>
-  const keys = Object.keys(obj).sort()
-  const props = keys.map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`)
+  // Use only own enumerable properties and skip prototype pollution keys
+  const keys = Object.keys(obj).filter((k) => k !== "__proto__" && k !== "constructor" && k !== "prototype").sort()
+  const props = keys.map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k], depth + 1)}`)
   return `{${props.join(",")}}`
 }

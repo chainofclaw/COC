@@ -275,6 +275,13 @@ export class ValidatorGovernance {
     const voter = this.validators.get(voterId)
     if (!voter?.active) throw new Error("voter is not an active validator")
 
+    // Prevent vote flipping: once a validator has voted, their vote is immutable.
+    // Without this, a validator could change their vote to manipulate quorum timing
+    // or flip a resolved proposal's outcome during the same epoch.
+    if (proposal.votes.has(voterId)) {
+      throw new Error("validator has already voted on this proposal")
+    }
+
     const updatedVotes = new Map(proposal.votes)
     updatedVotes.set(voterId, approve)
     this.proposals.set(proposalId, { ...proposal, votes: updatedVotes })
@@ -317,7 +324,7 @@ export class ValidatorGovernance {
    */
   getValidatorIds(): string[] {
     return this.getActiveValidators()
-      .sort((a, b) => a.id.localeCompare(b.id))
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
       .map((v) => v.id)
   }
 

@@ -479,12 +479,15 @@ export class ChainEngine {
     const tip = this.getHeight()
     const newlyFinalBlock = tip - depth
     if (newlyFinalBlock < 1n) return
-    const idx = Number(newlyFinalBlock - 1n)
-    const block = this.blocks[idx]
+    // Use blockByNumber map instead of array index. Array index assumes blocks
+    // start at block 1 contiguously, which breaks after snap sync or partial rebuild.
+    const block = this.blockByNumber.get(newlyFinalBlock)
     if (block && !block.finalized) {
       // Create new object instead of mutating — preserves immutability principle
       const updated = { ...block, finalized: true }
-      this.blocks[idx] = updated
+      // Update array entry by finding the correct index
+      const arrIdx = this.blocks.indexOf(block)
+      if (arrIdx >= 0) this.blocks[arrIdx] = updated
       this.blockByNumber.set(updated.number, updated)
       this.blockByHash.set(updated.hash, updated)
     }
