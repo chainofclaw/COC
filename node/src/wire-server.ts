@@ -399,6 +399,12 @@ export class WireServer {
             entry.conn.socket.destroy()
           }
         }
+        // Reject self-connection to prevent message loop amplification
+        if (hs.nodeId && this.cfg.nodeId && hs.nodeId.toLowerCase() === this.cfg.nodeId.toLowerCase()) {
+          log.warn("rejecting self-connection", { nodeId: hs.nodeId })
+          conn.socket.destroy()
+          return
+        }
         conn.nodeId = hs.nodeId
         conn.handshakeComplete = true
         if (conn.handshakeTimer) clearTimeout(conn.handshakeTimer)

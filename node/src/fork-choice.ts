@@ -23,7 +23,7 @@ export interface ForkCandidate {
   peerId: string
 }
 
-export type ForkReason = "bft-finality" | "longer-chain" | "higher-weight" | "lower-hash" | "equal"
+export type ForkReason = "bft-finality" | "longer-chain" | "higher-weight" | "lower-hash" | "lower-peer-id" | "equal"
 
 export interface ForkChoice {
   winner: ForkCandidate
@@ -72,10 +72,10 @@ export function compareForks(a: ForkCandidate, b: ForkCandidate): ForkChoice {
   // Rule 5: Lower peerId as final deterministic sub-tiebreaker
   // Ensures selectBestFork produces the same result regardless of candidate array order
   if (a.peerId < b.peerId) {
-    return { winner: a, loser: b, reason: "lower-hash" }
+    return { winner: a, loser: b, reason: "lower-peer-id" }
   }
   if (b.peerId < a.peerId) {
-    return { winner: b, loser: a, reason: "lower-hash" }
+    return { winner: b, loser: a, reason: "lower-peer-id" }
   }
 
   return { winner: a, loser: b, reason: "equal" }

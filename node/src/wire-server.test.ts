@@ -621,7 +621,7 @@ describe("WireServer handshake nonce replay and peer scoring", () => {
 
     server = new WireServer({
       port,
-      nodeId: serverSigner.address,
+      nodeId: serverSigner.nodeId,
       chainId: 18780,
       onBlock: async () => {},
       onTx: async () => {},
@@ -682,7 +682,7 @@ describe("WireServer handshake nonce replay and peer scoring", () => {
     let scoringCalls: string[] = []
     server = new WireServer({
       port,
-      nodeId: serverSigner.address,
+      nodeId: serverSigner.nodeId,
       chainId: 18780,
       onBlock: async () => {},
       onTx: async () => {},

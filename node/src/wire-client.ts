@@ -150,6 +150,7 @@ export class WireClient {
   startPing(intervalMs = 30_000): void {
     this.stopPing()
     this.pingTimer = setInterval(() => { this.ping() }, intervalMs)
+    this.pingTimer.unref()
   }
 
   /** Stop periodic ping */

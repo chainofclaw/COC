@@ -204,7 +204,12 @@ export class ChainEngine {
     if (existing) {
       // Allow trusted local path (BFT finalize callback) to promote finality metadata.
       if (locallyProposed && block.bftFinalized && !existing.bftFinalized) {
-        existing.bftFinalized = true
+        // Immutable update: create new block object instead of mutating stored reference
+        const updated = { ...existing, bftFinalized: true }
+        const arrIdx = this.blocks.indexOf(existing)
+        if (arrIdx >= 0) this.blocks[arrIdx] = updated
+        this.blockByNumber.set(updated.number, updated)
+        this.blockByHash.set(updated.hash, updated)
         try {
           await this.storage.save(this.makeSnapshot())
         } catch {

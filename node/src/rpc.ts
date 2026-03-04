@@ -80,6 +80,7 @@ function optionalHexParam(params: unknown[], index: number): Hex | undefined {
   const value = (params ?? [])[index]
   if (value === undefined || value === null) return undefined
   if (typeof value !== "string" || !value.startsWith("0x")) return undefined
+  if (value.length > 66 || !/^0x[0-9a-fA-F]*$/.test(value)) return undefined
   return value as Hex
 }
 

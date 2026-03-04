@@ -316,10 +316,11 @@ export function deserializeSnapshot(json: string): StateSnapshot {
  * Recursively check parsed JSON for prototype pollution keys.
  * Throws if __proto__ or constructor appear as object keys at any depth.
  */
-function rejectProtoPollution(obj: unknown): void {
+function rejectProtoPollution(obj: unknown, depth = 0): void {
+  if (depth > 20) throw new Error("snapshot nesting too deep")
   if (obj === null || typeof obj !== "object") return
   if (Array.isArray(obj)) {
-    for (const item of obj) rejectProtoPollution(item)
+    for (const item of obj) rejectProtoPollution(item, depth + 1)
     return
   }
   const record = obj as Record<string, unknown>
@@ -327,7 +328,7 @@ function rejectProtoPollution(obj: unknown): void {
     if (key === "__proto__" || key === "constructor" || key === "prototype") {
       throw new Error(`snapshot contains forbidden key: ${key}`)
     }
-    rejectProtoPollution(record[key])
+    rejectProtoPollution(record[key], depth + 1)
   }
 }
 

@@ -74,7 +74,7 @@ describe("compareForks", () => {
     const a = makeCandidate({ peerId: "a" })
     const b = makeCandidate({ peerId: "b" })
     const result = compareForks(a, b)
-    assert.equal(result.reason, "lower-hash")
+    assert.equal(result.reason, "lower-peer-id")
     assert.equal(result.winner.peerId, "a")
   })
 

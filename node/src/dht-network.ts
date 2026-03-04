@@ -88,11 +88,13 @@ export class DhtNetwork {
     this.refreshTimer = setInterval(() => {
       void this.refresh()
     }, REFRESH_INTERVAL_MS)
+    this.refreshTimer.unref()
 
     // Periodic announce: broadcast our presence to known peers
     this.announceTimer = setInterval(() => {
       this.announce()
     }, ANNOUNCE_INTERVAL_MS)
+    this.announceTimer.unref()
   }
 
   stop(): void {
