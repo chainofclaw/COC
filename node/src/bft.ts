@@ -216,8 +216,16 @@ export class BftRound {
       return false
     }
 
+    // Guard: reject commits when proposedBlock is null — without a known proposal,
+    // we cannot verify blockHash validity. Blindly storing commits could let an attacker
+    // pre-load votes for arbitrary hashes that later match a crafted proposal.
+    if (!this.state.proposedBlock) {
+      log.warn("commit received but no proposed block", { senderId, height: this.state.height.toString() })
+      return false
+    }
+
     // Only accept commits for the proposed block
-    if (this.state.proposedBlock && blockHash !== this.state.proposedBlock.hash) {
+    if (blockHash !== this.state.proposedBlock.hash) {
       log.warn("commit vote for wrong block", { senderId, expected: this.state.proposedBlock.hash, got: blockHash })
       return false
     }
@@ -227,8 +235,10 @@ export class BftRound {
     // Only check quorum if already in commit phase
     if (this.state.phase === "commit") {
       // Filter commit votes to only count those matching the proposed block
+      // proposedBlock is guaranteed non-null here (null check above rejects early)
+      const proposedHash = this.state.proposedBlock!.hash
       const matchingVoters = [...this.state.commitVotes.entries()]
-        .filter(([, hash]) => !this.state.proposedBlock || hash === this.state.proposedBlock.hash)
+        .filter(([, hash]) => hash === proposedHash)
         .map(([id]) => id)
       if (hasQuorum(matchingVoters, this.config.validators)) {
         this.state.phase = "finalized"

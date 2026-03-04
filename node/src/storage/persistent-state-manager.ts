@@ -11,6 +11,8 @@ import type { IStateTrie, AccountState } from "./state-trie.ts"
 
 const EMPTY_CODE_HASH = keccak256(new Uint8Array(0))
 
+const MAX_CODE_CACHE_SIZE = 500
+
 export class PersistentStateManager {
   private readonly trie: IStateTrie
   private readonly codeCache = new Map<string, Uint8Array>()
@@ -97,6 +99,7 @@ export class PersistentStateManager {
     const code = await this.trie.getCode(state.codeHash)
     if (!code) return new Uint8Array(0)
 
+    this.evictCodeCache()
     this.codeCache.set(addr, code)
     return code
   }
@@ -118,6 +121,7 @@ export class PersistentStateManager {
       })
     }
 
+    this.evictCodeCache()
     this.codeCache.set(addr, value)
   }
 
@@ -174,6 +178,15 @@ export class PersistentStateManager {
 
   clearCaches(): void {
     this.codeCache.clear()
+  }
+
+  /** Evict oldest code cache entries when over limit (LRU via Map insertion order) */
+  private evictCodeCache(): void {
+    while (this.codeCache.size >= MAX_CODE_CACHE_SIZE) {
+      const oldest = this.codeCache.keys().next().value
+      if (oldest === undefined) break
+      this.codeCache.delete(oldest)
+    }
   }
 
   async clearStorage(address: Address): Promise<void> {

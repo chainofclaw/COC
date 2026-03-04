@@ -426,9 +426,13 @@ export class ValidatorGovernance {
     const v = this.validators.get(validatorId)
     if (!v || !v.active) return
     const newStake = v.stake > amount ? v.stake - amount : 0n
-    this.validators.set(validatorId, { ...v, stake: newStake })
+    // Auto-deactivate when stake reaches exactly 0n: a stake=0 active validator
+    // creates broken quorum (total stake = 0 → quorumThreshold returns MAX_SAFE_INTEGER
+    // → consensus permanently stalls). For non-zero but below-minStake, callers can
+    // use isBelowMinStake() + deactivateValidator() to decide.
+    const shouldDeactivate = newStake === 0n
+    this.validators.set(validatorId, { ...v, stake: newStake, active: !shouldDeactivate })
     this.recalcVotingPower()
-    return
   }
 
   /**

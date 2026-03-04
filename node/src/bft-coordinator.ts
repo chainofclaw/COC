@@ -94,7 +94,9 @@ export class BftCoordinator {
     this.deferredBlock = null
 
     const roundCfg: BftRoundConfig = {
-      validators: this.cfg.validators,
+      // Snapshot validators for this round — prevents mid-round mutation from
+      // updateValidators() affecting quorum calculations in an active round.
+      validators: this.cfg.validators.map(v => ({ id: v.id, stake: v.stake })),
       localId: this.cfg.localId,
       prepareTimeoutMs: this.cfg.prepareTimeoutMs ?? DEFAULT_PREPARE_TIMEOUT_MS,
       commitTimeoutMs: this.cfg.commitTimeoutMs ?? DEFAULT_COMMIT_TIMEOUT_MS,
@@ -327,7 +329,10 @@ export class BftCoordinator {
    * Update the validator set (e.g., after governance changes).
    */
   updateValidators(validators: Array<{ id: string; stake: bigint }>): void {
-    this.cfg.validators = validators
+    // Defensive copy to prevent external mutation of the active validator set.
+    // Without this, the caller could modify the array after passing it, potentially
+    // corrupting quorum calculations in an active BFT round.
+    this.cfg.validators = validators.map(v => ({ id: v.id, stake: v.stake }))
   }
 
   private startTimeout(): void {

@@ -250,15 +250,18 @@ export class IpfsPubsub {
     for (const [, state] of this.topics) {
       // Null out expired messages in ring buffer (don't reallocate)
       const max = this.cfg.maxRecentMessages
-      let removed = 0
+      let remaining = 0
       for (let i = 0; i < max; i++) {
         const msg = state.recentMessages[i]
         if (msg && msg.receivedAt <= cutoff) {
           state.recentMessages[i] = undefined as unknown as PubsubMessage
-          removed++
+        } else if (msg) {
+          remaining++
         }
       }
-      state.ringCount = Math.max(0, state.ringCount - removed)
+      // Recount: subtraction was inaccurate because ringCount could drift
+      // when messages at non-contiguous positions were expired.
+      state.ringCount = remaining
     }
 
     // BoundedSet handles FIFO eviction automatically — no manual clear needed

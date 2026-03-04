@@ -53,6 +53,11 @@ export class WireClient {
     timer: ReturnType<typeof setTimeout>
   }>()
 
+  // Inbound message rate limiting
+  private inboundMsgCount = 0
+  private inboundWindowStart = 0
+  private static readonly MAX_INBOUND_PER_SECOND = 200
+
   // Ping/pong latency tracking
   private lastPingSentMs = 0
   private lastLatencyMs = -1
@@ -258,6 +263,19 @@ export class WireClient {
   }
 
   private handleFrame(frame: WireFrame): void {
+    // Inbound message rate limiting: disconnect peers that flood frames
+    const now = Date.now()
+    if (now - this.inboundWindowStart > 1000) {
+      this.inboundMsgCount = 0
+      this.inboundWindowStart = now
+    }
+    this.inboundMsgCount++
+    if (this.inboundMsgCount > WireClient.MAX_INBOUND_PER_SECOND) {
+      log.warn("inbound rate limit exceeded, disconnecting", { peer: this.remoteNodeId })
+      this.socket?.destroy()
+      return
+    }
+
     switch (frame.type) {
       case MessageType.Handshake:
       case MessageType.HandshakeAck: {
@@ -301,6 +319,16 @@ export class WireClient {
             this.socket?.destroy()
             return
           }
+        }
+        // Reject identity switch: if handshake already completed with a different nodeId,
+        // this is either a re-handshake attack or protocol violation.
+        if (this.handshakeComplete && this.remoteNodeId && hs.nodeId !== this.remoteNodeId) {
+          log.warn("rejecting identity switch attempt", {
+            existing: this.remoteNodeId,
+            attempted: hs.nodeId,
+          })
+          this.socket?.destroy()
+          return
         }
         this.remoteNodeId = hs.nodeId
         this.handshakeComplete = true

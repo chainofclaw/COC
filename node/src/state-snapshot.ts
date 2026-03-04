@@ -296,15 +296,14 @@ export function serializeSnapshot(snapshot: StateSnapshot): string {
  * Deserialize a snapshot from JSON string.
  */
 export function deserializeSnapshot(json: string): StateSnapshot {
-  // Reject prototype pollution payloads before parsing into typed object
-  if (json.includes("__proto__") || json.includes("constructor")) {
-    // Re-check with actual parse to avoid false positives on legitimate data values
-    const raw = JSON.parse(json)
-    rejectProtoPollution(raw)
-  }
-  const parsed = JSON.parse(json) as StateSnapshot
+  // Always parse once and run full prototype pollution check.
+  // Previous approach used string-level pre-check (json.includes("__proto__"))
+  // which could be bypassed via Unicode escapes (\u005f\u005fproto\u005f\u005f)
+  // because JSON.parse resolves escapes before creating object keys.
+  const parsed = JSON.parse(json)
+  rejectProtoPollution(parsed)
   validateSnapshot(parsed)
-  return parsed
+  return parsed as StateSnapshot
 }
 
 /**
