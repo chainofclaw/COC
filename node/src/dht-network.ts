@@ -340,11 +340,14 @@ export class DhtNetwork {
           settle(true)
         },
       }
-      probe = this.cfg.wireProbeFactory
-        ? this.cfg.wireProbeFactory(probeCfg)
-        : new WireClient(probeCfg)
-
-      probe.connect()
+      try {
+        probe = this.cfg.wireProbeFactory
+          ? this.cfg.wireProbeFactory(probeCfg)
+          : new WireClient(probeCfg)
+        probe.connect()
+      } catch {
+        settle(false)
+      }
     })
   }
 

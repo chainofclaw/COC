@@ -57,6 +57,7 @@ export class WireClient {
   private inboundMsgCount = 0
   private inboundWindowStart = 0
   private static readonly MAX_INBOUND_PER_SECOND = 200
+  private static readonly MAX_PENDING_FIND_NODE = 50
 
   // Ping/pong latency tracking
   private lastPingSentMs = 0
@@ -165,6 +166,10 @@ export class WireClient {
   findNode(targetId: string, timeoutMs = 5000): Promise<Array<{ id: string; address: string }>> {
     return new Promise((resolve, reject) => {
       if (!this.isConnected()) {
+        resolve([])
+        return
+      }
+      if (this.pendingFindNode.size >= WireClient.MAX_PENDING_FIND_NODE) {
         resolve([])
         return
       }

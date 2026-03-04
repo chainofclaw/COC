@@ -305,10 +305,16 @@ export class BlockIndex implements IBlockIndex {
       const data = await this.db.get(key)
       if (!data) continue
 
-      const blockLogs: IndexedLog[] = deserializeJSON(decoder.decode(data))
+      let blockLogs: IndexedLog[]
+      try {
+        blockLogs = deserializeJSON(decoder.decode(data))
+        if (!Array.isArray(blockLogs)) continue
+      } catch {
+        continue // skip corrupted log data
+      }
       for (const log of blockLogs) {
         // Restore bigint fields
-        log.blockNumber = BigInt(log.blockNumber)
+        try { log.blockNumber = BigInt(log.blockNumber) } catch { continue }
 
         if (!matchLogFilter(log, filter)) continue
         results.push(log)

@@ -569,14 +569,15 @@ export class P2PNode {
 
       req.on("data", (chunk: Buffer | string) => {
         if (aborted) return
-        bodySize += typeof chunk === "string" ? chunk.length : chunk.byteLength
-        if (bodySize > MAX_REQUEST_BODY) {
+        const chunkSize = typeof chunk === "string" ? chunk.length : chunk.byteLength
+        if (bodySize + chunkSize > MAX_REQUEST_BODY) {
           aborted = true
           res.writeHead(413)
           res.end(serializeJson({ error: "request body too large" }))
           req.destroy()
           return
         }
+        bodySize += chunkSize
         body += chunk
       })
       req.on("end", async () => {

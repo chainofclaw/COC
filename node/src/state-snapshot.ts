@@ -102,9 +102,10 @@ async function exportAccount(
   const account = await stateTrie.get(address)
   if (!account) return null
 
-  // Collect storage slots via trie iteration
+  // Collect storage slots via trie iteration (capped to match import validation limit)
   const storage: Array<{ slot: string; value: string }> = []
   for await (const entry of stateTrie.iterateStorage(address)) {
+    if (storage.length >= MAX_STORAGE_PER_ACCOUNT) break
     storage.push(entry)
   }
 

@@ -7,6 +7,7 @@
 
 const BLOCK_SIZE = 512
 const EOF_BLOCKS = 2 // 1024 bytes of zeros to terminate
+const MAX_ARCHIVE_SIZE = 100 * 1024 * 1024 // 100 MB hard cap to prevent OOM
 
 export interface TarEntry {
   name: string
@@ -26,6 +27,9 @@ export function createTarEntry(entry: TarEntry): Uint8Array {
   if (/^\/|[\\]|\.\./.test(entry.name) || entry.name.includes("\0")) {
     throw new Error(`unsafe tar entry name: ${entry.name}`)
   }
+  if (entry.data.length > MAX_ARCHIVE_SIZE) {
+    throw new Error(`tar entry data too large: ${entry.data.length} bytes`)
+  }
   const header = buildHeader(entry.name, entry.data.length)
   const dataBlocks = Math.ceil(entry.data.length / BLOCK_SIZE)
   const paddedSize = dataBlocks * BLOCK_SIZE
@@ -34,8 +38,6 @@ export function createTarEntry(entry: TarEntry): Uint8Array {
   result.set(entry.data, BLOCK_SIZE)
   return result
 }
-
-const MAX_ARCHIVE_SIZE = 100 * 1024 * 1024 // 100 MB hard cap to prevent OOM
 
 /**
  * Create a tar archive from multiple entries.

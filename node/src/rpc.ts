@@ -1294,8 +1294,8 @@ async function handleRpc(
       if (hasBlockIndex(chain)) {
         const opts = (payload.params ?? [])[0] as Record<string, unknown> | undefined
         const contracts = await chain.blockIndex.getContracts({
-          limit: Number(opts?.limit ?? 50),
-          offset: Number(opts?.offset ?? 0),
+          limit: Math.min(Math.max(Number(opts?.limit ?? 50) || 50, 1), 10_000),
+          offset: Math.min(Math.max(Number(opts?.offset ?? 0) || 0, 0), 100_000),
           reverse: opts?.reverse !== false,
         })
         return contracts.map((c) => ({

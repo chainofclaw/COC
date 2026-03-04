@@ -110,18 +110,24 @@ export class RoutingTable {
 
     const idx = bucketIndex(this.localId, peer.id)
     const bucket = this.buckets[idx]
+    const peerHost = normalizeHostForBucket(extractHost(peer.address))
 
     // Check if peer already exists
     const existing = bucket.peers.findIndex((p) => p.id === peer.id)
     if (existing >= 0) {
-      // Move to tail (most recently seen)
+      // Move to tail (most recently seen); update global IP count if address changed
+      const oldPeer = bucket.peers[existing]
+      const oldHost = normalizeHostForBucket(extractHost(oldPeer.address))
       bucket.peers.splice(existing, 1)
       bucket.peers.push({ ...peer, lastSeenMs: Date.now() })
+      if (oldHost !== peerHost) {
+        this.decrementGlobalIpCount(oldHost)
+        this.incrementGlobalIpCount(peerHost)
+      }
       return true
     }
 
     // Sybil protection: limit peers from the same IP within this bucket (skip loopback)
-    const peerHost = normalizeHostForBucket(extractHost(peer.address))
     if (!isLoopbackHost(peerHost)) {
       let sameHostInBucket = 0
       for (const p of bucket.peers) {
