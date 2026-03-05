@@ -387,6 +387,7 @@ export class WsRpcServer {
     switch (type) {
       case "newHeads": {
         const handler = (event: BlockEvent) => {
+          if (!this.clients.has(ws)) return
           const notification = formatNewHeadsNotification(event.block)
           this.sendSubscription(ws, subId, notification)
         }
@@ -397,6 +398,7 @@ export class WsRpcServer {
       }
       case "newPendingTransactions": {
         const handler = (event: PendingTxEvent) => {
+          if (!this.clients.has(ws)) return
           this.sendSubscription(ws, subId, event.hash)
         }
         this.events.onPendingTx(handler as (event: PendingTxEvent) => void)
@@ -409,6 +411,7 @@ export class WsRpcServer {
         const filter = validateLogFilter(filterParam)
 
         const handler = (event: LogEvent) => {
+          if (!this.clients.has(ws)) return
           if (matchesSubscriptionFilter(event.log, filter)) {
             const notification = formatLogNotification(event.log)
             this.sendSubscription(ws, subId, notification)

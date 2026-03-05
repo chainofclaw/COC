@@ -703,8 +703,9 @@ export function validateConfig(cfg: Partial<NodeConfig>): string[] {
     if (!Array.isArray(cfg.prefund)) {
       errors.push("prefund must be an array")
     } else {
+      const addrRe = /^0x[0-9a-fA-F]{40}$/
       for (const entry of cfg.prefund) {
-        if (!entry.address || !entry.address.startsWith("0x")) {
+        if (!entry.address || !addrRe.test(entry.address)) {
           errors.push(`prefund address invalid: ${entry.address}`)
         }
       }

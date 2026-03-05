@@ -167,6 +167,9 @@ export class BftRound {
       return []
     }
 
+    // Reject duplicate votes from the same validator (equivocation detector handles evidence)
+    if (this.state.prepareVotes.has(senderId.toLowerCase())) return []
+
     this.state.prepareVotes.set(senderId.toLowerCase(), blockHash)
 
     // Check quorum
@@ -229,6 +232,9 @@ export class BftRound {
       log.warn("commit vote for wrong block", { senderId, expected: this.state.proposedBlock.hash, got: blockHash })
       return false
     }
+
+    // Reject duplicate commit votes from the same validator
+    if (this.state.commitVotes.has(senderId.toLowerCase())) return false
 
     this.state.commitVotes.set(senderId.toLowerCase(), blockHash)
 

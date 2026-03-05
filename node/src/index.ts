@@ -319,8 +319,8 @@ if (bftEnabled) {
           try {
             const existing = await persistentEngine.blockIndex.getBlockByHash(block.hash)
             if (existing && !existing.bftFinalized) {
-              existing.bftFinalized = true
-              await persistentEngine.blockIndex.updateBlock(existing)
+              const updated = { ...existing, bftFinalized: true }
+              await persistentEngine.blockIndex.updateBlock(updated)
             }
           } catch {
             // best-effort finality persistence

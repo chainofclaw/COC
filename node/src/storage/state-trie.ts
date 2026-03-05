@@ -145,7 +145,10 @@ export class PersistentStateTrie implements IStateTrie {
       if (rootHex.startsWith("0x") && rootHex.length === 66) {
         try {
           const rootBytes = hexToBytes(rootHex)
-          this.trie = new Trie({ db: this.trieDb as any, root: rootBytes })
+          const candidate = new Trie({ db: this.trieDb as any, root: rootBytes })
+          // Verify root node is readable (detects missing/corrupted root after LevelDB repair)
+          await candidate.get(new Uint8Array(20))
+          this.trie = candidate
           this.lastStateRoot = rootHex
         } catch (err) {
           // Corrupted state root on disk — start with fresh trie instead of crashing
@@ -375,7 +378,13 @@ export class PersistentStateTrie implements IStateTrie {
   async *iterateAccounts(): AsyncIterable<{ address: string; state: AccountState }> {
     const stream = this.trie.createReadStream()
     let skipped = 0
+    let yielded = 0
+    const MAX_ITERATE = 500_000
     for await (const item of stream) {
+      if (yielded >= MAX_ITERATE) {
+        log.warn("iterateAccounts capped at limit", { limit: MAX_ITERATE })
+        break
+      }
       try {
         const address = bytesToHex(item.key as Uint8Array)
         const json = JSON.parse(new TextDecoder().decode(item.value as Uint8Array))
@@ -388,6 +397,7 @@ export class PersistentStateTrie implements IStateTrie {
             codeHash: json.codeHash,
           },
         }
+        yielded++
       } catch (err) {
         skipped++
         log.warn("skipped malformed account entry during iteration", { error: String(err), skipped })
