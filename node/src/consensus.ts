@@ -349,7 +349,7 @@ export class ConsensusEngine {
       const MAX_HEIGHT_BUFFER = 1000n
       const maxAcceptableHeight = localHeight > 0n
         ? localHeight * MAX_HEIGHT_MULTIPLIER + MAX_HEIGHT_BUFFER
-        : 100_000n // genesis bootstrap: accept up to 100k
+        : 10_000n // genesis bootstrap: accept up to 10k
       let roundMaxPeerHeight = 0n
       for (const snap of snapshots) {
         if (Array.isArray(snap.blocks) && snap.blocks.length > 0) {

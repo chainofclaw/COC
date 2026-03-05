@@ -466,6 +466,12 @@ async function handleRpc(
     }
     case "eth_estimateGas": {
       const estParams = ((payload.params ?? [])[0] ?? {}) as Record<string, string>
+      if (estParams.to && !/^0x[0-9a-fA-F]{1,40}$/i.test(estParams.to)) {
+        throw { code: -32602, message: "invalid to address" }
+      }
+      if (estParams.from && !/^0x[0-9a-fA-F]{1,40}$/i.test(estParams.from)) {
+        throw { code: -32602, message: "invalid from address" }
+      }
       // Default gas cap to block gas limit (30M) to prevent DoS via unbounded execution
       const gasForEstimate = estParams.gas ?? "0x1c9c380"
       const estimated = await evm.estimateGas({
@@ -478,14 +484,21 @@ async function handleRpc(
       return `0x${estimated.toString(16)}`
     }
     case "eth_getCode": {
-      const codeAddr = String((payload.params ?? [])[0] ?? "")
+      const codeAddr = requireHexParam(payload.params, 0, "address")
       return await evm.getCode(codeAddr)
     }
     case "eth_call": {
       const callParams = ((payload.params ?? [])[0] ?? {}) as Record<string, string>
+      const to = callParams.to ?? ""
+      if (to && !/^0x[0-9a-fA-F]{1,40}$/i.test(to)) {
+        throw { code: -32602, message: "invalid to address" }
+      }
+      if (callParams.from && !/^0x[0-9a-fA-F]{1,40}$/i.test(callParams.from)) {
+        throw { code: -32602, message: "invalid from address" }
+      }
       const callResult = await evm.callRaw({
         from: callParams.from,
-        to: callParams.to ?? "",
+        to,
         data: callParams.data,
         value: callParams.value,
         gas: callParams.gas,
@@ -493,7 +506,7 @@ async function handleRpc(
       return callResult.returnValue
     }
     case "eth_getStorageAt": {
-      const storageAddr = String((payload.params ?? [])[0] ?? "")
+      const storageAddr = requireHexParam(payload.params, 0, "address")
       const storageSlot = String((payload.params ?? [])[1] ?? "0x0")
       return await evm.getStorageAt(storageAddr, storageSlot)
     }

@@ -212,9 +212,10 @@ export class EvmChain {
 
   async callRaw(params: { from?: string; to: string; data?: string; value?: string; gas?: string }): Promise<{ returnValue: string; gasUsed: bigint }> {
     const caller = params.from ? Address.fromString(params.from) : Address.zero()
-    const to = Address.fromString(params.to)
+    const to = params.to ? Address.fromString(params.to) : Address.zero()
     const data = params.data ? hexToBytes(params.data) : new Uint8Array()
-    const value = params.value ? BigInt(params.value) : 0n
+    let value: bigint
+    try { value = params.value ? BigInt(params.value) : 0n } catch { value = 0n }
     const MAX_CALL_GAS = 30_000_000n
     const requestedGas = params.gas ? BigInt(params.gas) : 10_000_000n
     const gasLimit = requestedGas > MAX_CALL_GAS ? MAX_CALL_GAS : requestedGas

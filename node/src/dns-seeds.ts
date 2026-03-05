@@ -134,9 +134,9 @@ function isPrivateHost(hostname: string): boolean {
     : hostname
   // Filter localhost and IPv6 loopback/private ranges
   if (h === "localhost" || h === "::1" || h === "::" || h === "0:0:0:0:0:0:0:1" || h === "0:0:0:0:0:0:0:0") return true
-  // IPv6 ULA (fd00::/8) and link-local (fe80::/10)
+  // IPv6 ULA (fc00::/7 = fc00::/8 + fd00::/8) and link-local (fe80::/10)
   const lower = h.toLowerCase()
-  if (lower.startsWith("fd") || lower.startsWith("fe80")) return true
+  if (lower.startsWith("fc") || lower.startsWith("fd") || lower.startsWith("fe80")) return true
   // IPv4-mapped IPv6
   const v4 = lower.startsWith("::ffff:") ? lower.slice(7) : lower
   const parts = v4.split(".")
