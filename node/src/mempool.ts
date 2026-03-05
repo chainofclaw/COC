@@ -91,6 +91,13 @@ export class Mempool {
     const maxPriorityFeePerGas = tx.maxPriorityFeePerGas ?? 0n
     const gasLimit = tx.gasLimit ?? 21000n
 
+    // Reject transactions with gasLimit exceeding block gas limit (prevents
+    // mempool pollution with txs that can never be included in a block)
+    const MAX_TX_GAS_LIMIT = 30_000_000n
+    if (gasLimit > MAX_TX_GAS_LIMIT) {
+      throw new Error(`gasLimit exceeds maximum: ${gasLimit} > ${MAX_TX_GAS_LIMIT}`)
+    }
+
     const item: MempoolTx = {
       hash: tx.hash as Hex,
       rawTx,

@@ -168,7 +168,17 @@ export class FrameDecoder {
     let offset = 0
 
     while (offset + HEADER_SIZE <= this.used) {
-      const result = decodeFrame(this.buffer.subarray(offset, this.used))
+      let result: { frame: WireFrame; bytesConsumed: number } | null
+      try {
+        result = decodeFrame(this.buffer.subarray(offset, this.used))
+      } catch (err) {
+        // Compact buffer to preserve already-decoded frames before rethrowing
+        if (offset > 0) {
+          this.buffer.copyWithin(0, offset, this.used)
+          this.used -= offset
+        }
+        throw err
+      }
       if (!result) break
 
       frames.push(result.frame)

@@ -235,6 +235,9 @@ export class IpfsMfs {
     const srcNorm = normalizePath(source)
     const destNorm = normalizePath(dest)
 
+    // No-op when source and destination are identical
+    if (srcNorm === destNorm) return
+
     // Prevent moving a directory into its own subtree
     if (destNorm.startsWith(srcNorm + "/")) {
       throw new Error(`cannot move directory into its own subdirectory: ${srcNorm} -> ${destNorm}`)
@@ -280,6 +283,9 @@ export class IpfsMfs {
   async cp(source: string, dest: string): Promise<void> {
     const srcNorm = normalizePath(source)
     const destNorm = normalizePath(dest)
+
+    // No-op when source and destination are identical
+    if (srcNorm === destNorm) return
 
     // Prevent copying a directory into its own subtree (infinite recursion)
     if (destNorm.startsWith(srcNorm + "/")) {
