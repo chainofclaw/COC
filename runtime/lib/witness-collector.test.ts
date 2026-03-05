@@ -1,7 +1,7 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import http from "node:http"
 import type { Hex32 } from "../../services/common/pose-types.ts"
+import { collectBatchWitnessSignatures } from "./witness-collector.ts"
 
 // Test the bitmap/quorum logic in isolation (no real HTTP)
 describe("witness-collector", () => {
@@ -99,5 +99,91 @@ describe("witness-collector", () => {
     let v = bitmap
     while (v) { count += v & 1; v >>>= 1 }
     assert.equal(count, 3)
+  })
+
+  it("collectBatchWitnessSignatures returns ordered signatures and quorum", async () => {
+    const merkleRoot = `0x${"ab".repeat(32)}` as Hex32
+    const witnessSet = [
+      `0x${"01".repeat(32)}`,
+      `0x${"02".repeat(32)}`,
+      `0x${"03".repeat(32)}`,
+    ] as Hex32[]
+    const mkSig = (byte: string) => `0x${byte.repeat(130)}`
+
+    const result = await collectBatchWitnessSignatures(
+      merkleRoot,
+      witnessSet,
+      (_nodeId, witnessIndex) => `http://witness-${witnessIndex}.local`,
+      async (url, _method, body) => {
+        const payload = body as { witnessIndex: number; nodeId: string; challengeId: string; responseBodyHash: string }
+        const index = Number(url.split("-").at(-1)?.split(".")[0] ?? "0")
+        return {
+          status: 200,
+          json: {
+            challengeId: payload.challengeId,
+            nodeId: payload.nodeId,
+            responseBodyHash: payload.responseBodyHash,
+            witnessIndex: index,
+            witnessSig: mkSig((index + 1).toString(16)),
+          },
+        }
+      },
+    )
+
+    assert.equal(result.bitmap, 0b111)
+    assert.equal(result.signedCount, 3)
+    assert.equal(result.requiredCount, 2)
+    assert.equal(result.quorumMet, true)
+    assert.equal(result.signatures.length, 3)
+    assert.equal(result.signatures[0], mkSig("1"))
+    assert.equal(result.signatures[1], mkSig("2"))
+    assert.equal(result.signatures[2], mkSig("3"))
+  })
+
+  it("collectBatchWitnessSignatures drops invalid responses and reports quorum miss", async () => {
+    const merkleRoot = `0x${"cd".repeat(32)}` as Hex32
+    const witnessSet = [
+      `0x${"11".repeat(32)}`,
+      `0x${"22".repeat(32)}`,
+      `0x${"33".repeat(32)}`,
+    ] as Hex32[]
+    const validSig = `0x${"aa".repeat(65)}`
+
+    const result = await collectBatchWitnessSignatures(
+      merkleRoot,
+      witnessSet,
+      (_nodeId, witnessIndex) => (witnessIndex === 2 ? null : `http://witness-${witnessIndex}.local`),
+      async (url, _method, body) => {
+        const payload = body as { witnessIndex: number; nodeId: string; challengeId: string; responseBodyHash: string }
+        if (url.includes("witness-0")) {
+          return {
+            status: 200,
+            json: {
+              challengeId: payload.challengeId,
+              nodeId: payload.nodeId,
+              responseBodyHash: payload.responseBodyHash,
+              witnessIndex: 0,
+              witnessSig: validSig,
+            },
+          }
+        }
+        return {
+          status: 200,
+          json: {
+            challengeId: payload.challengeId,
+            nodeId: `0x${"ff".repeat(32)}`, // wrong node id -> should be dropped
+            responseBodyHash: payload.responseBodyHash,
+            witnessIndex: 1,
+            witnessSig: validSig,
+          },
+        }
+      },
+    )
+
+    assert.equal(result.bitmap, 0b001)
+    assert.equal(result.signedCount, 1)
+    assert.equal(result.requiredCount, 2)
+    assert.equal(result.quorumMet, false)
+    assert.equal(result.signatures.length, 1)
   })
 })

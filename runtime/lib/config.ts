@@ -33,6 +33,7 @@ export interface CocRuntimeConfig {
   verifyingContract?: string;
   witnessNodes?: { url: string; witnessIndex: number }[];
   requiredWitnesses?: number;
+  allowEmptyBatchWitnessSubmission?: boolean;
   tipToleranceBlocks?: number;
   challengeBondWei?: string;
   insuranceFundAddress?: string;

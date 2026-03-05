@@ -179,6 +179,7 @@ describe("PoSeManagerV2", function () {
 
   describe("submitBatchV2 witness mode", function () {
     it("reverts empty witness submissions when transition mode is disabled", async function () {
+      await registerNode(manager, deployer)
       await manager.setAllowEmptyWitnessSubmission(false)
       const latestBlock = await ethers.provider.getBlock("latest")
       const epochId = Math.floor(Number(latestBlock.timestamp) / 3600)
