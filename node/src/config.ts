@@ -413,11 +413,11 @@ function normalizeInboundAuthMode(input: unknown): "off" | "monitor" | "enforce"
   return undefined
 }
 
-function safeParseInt(input: string | undefined, fallback: number): number {
+function safeParseInt(input: string | undefined, fallback: number, min = 0): number {
   if (input === undefined) return fallback
   const parsed = Number(input)
-  if (!Number.isFinite(parsed)) return fallback
-  return parsed
+  if (!Number.isFinite(parsed) || parsed < min) return fallback
+  return Math.floor(parsed)
 }
 
 function parseBooleanFlag(input: unknown, fallback: boolean): boolean {

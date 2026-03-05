@@ -561,9 +561,12 @@ export class IpfsHttpServer {
   }
 }
 
-/** Reject CIDs with path traversal or null bytes */
+/** Reject CIDs with path traversal, null bytes, whitespace, or excessive length */
 function isValidCid(cid: string): boolean {
-  return !!cid && !/[\/\\]|\.\.|\0/.test(cid)
+  if (!cid || cid.length > 512) return false
+  const trimmed = cid.trim()
+  if (trimmed !== cid || trimmed.length === 0) return false
+  return !/[\/\\]|\.\.|\0|\s/.test(cid)
 }
 
 const DEFAULT_MAX_UPLOAD_SIZE = 10 * 1024 * 1024 // 10 MB
@@ -609,7 +612,9 @@ async function readMultipartFile(req: http.IncomingMessage): Promise<{ filename?
     const headerRaw = part.slice(0, separatorIdx)
     let body = part.slice(separatorIdx + 4)
     const filenameMatch = /filename="([^"]+)"/.exec(headerRaw)
-    const filename = filenameMatch ? filenameMatch[1] : undefined
+    const rawFilename = filenameMatch ? filenameMatch[1] : undefined
+    // Strip path components to prevent directory traversal in metadata
+    const filename = rawFilename ? rawFilename.replace(/.*[/\\]/, "").slice(0, 255) || undefined : undefined
     if (body.endsWith("\r\n")) body = body.slice(0, -2)
     return { filename, bytes: Buffer.from(body, "binary") }
   }

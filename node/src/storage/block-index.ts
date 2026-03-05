@@ -252,8 +252,8 @@ export class BlockIndex implements IBlockIndex {
 
   async getTransactionsByAddress(address: Hex, opts?: AddressTxQuery): Promise<TxWithReceipt[]> {
     const prefix = ADDR_TX_PREFIX + address.toLowerCase() + ":"
-    const offset = opts?.offset ?? 0
-    const limit = opts?.limit ?? 50
+    const offset = Math.max(0, Math.floor(opts?.offset ?? 0))
+    const limit = Math.max(1, Math.min(Math.floor(opts?.limit ?? 50), 10_000))
     const reverse = opts?.reverse ?? true
     // Fetch extra keys to handle offset (cap to prevent memory abuse)
     const fetchLimit = Math.min(offset + limit, 110_000)
@@ -342,8 +342,8 @@ export class BlockIndex implements IBlockIndex {
   }
 
   async getContracts(opts?: AddressTxQuery): Promise<ContractRecord[]> {
-    const offset = opts?.offset ?? 0
-    const limit = opts?.limit ?? 50
+    const offset = Math.max(0, Math.floor(opts?.offset ?? 0))
+    const limit = Math.max(1, Math.min(Math.floor(opts?.limit ?? 50), 10_000))
     const reverse = opts?.reverse ?? true
     const fetchLimit = Math.min(offset + limit, 110_000)
     const keys = await this.db.getKeysWithPrefix(CONTRACT_PREFIX, { limit: fetchLimit, reverse })
