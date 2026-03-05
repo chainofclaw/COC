@@ -266,7 +266,7 @@ export class RateLimiter {
     }
 
     // Refill tokens
-    const elapsed = (now - bucket.lastRefill) / 1000
+    const elapsed = Math.max(0, (now - bucket.lastRefill) / 1000)
     const refill = elapsed * this.refillRatePerSec
     bucket.tokens = Math.min(this.maxTokens, bucket.tokens + refill)
     bucket.lastRefill = now

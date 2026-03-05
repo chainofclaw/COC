@@ -93,7 +93,8 @@ export async function traceTransaction(
     throw new Error(`transaction not found: ${txHash}`)
   }
 
-  const gasUsed = parseInt(receipt.gasUsed, 16)
+  const gasUsedRaw = parseInt(receipt.gasUsed, 16)
+  const gasUsed = Number.isFinite(gasUsedRaw) ? gasUsedRaw : 0
   const failed = receipt.status === "0x0"
 
   // Build trace from receipt data with log events as synthetic steps

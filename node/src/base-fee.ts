@@ -22,9 +22,11 @@ export interface BaseFeeParams {
 }
 
 export function calculateBaseFee(params: BaseFeeParams): bigint {
-  const { parentBaseFee, parentGasUsed } = params
+  const { parentBaseFee } = params
   const gasLimit = params.gasLimit ?? GAS_LIMIT
   if (gasLimit <= 0n) return parentBaseFee
+  // Clamp parentGasUsed to gasLimit to prevent base fee spike from corrupted storage
+  const parentGasUsed = params.parentGasUsed > gasLimit ? gasLimit : params.parentGasUsed
   const targetGas = (gasLimit * TARGET_GAS_UTILIZATION) / 100n
 
   if (targetGas === 0n) return parentBaseFee
