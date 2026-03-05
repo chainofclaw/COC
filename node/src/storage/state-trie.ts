@@ -206,7 +206,7 @@ export class PersistentStateTrie implements IStateTrie {
 
     await this.trie.put(addressBytes, encoded)
     this.evictAccountCache()
-    this.accountCache.set(address, state)
+    this.accountCache.set(address, { ...state })
     this.dirtyAddresses.add(address)
     this.lastStateRoot = null // Invalidate cached root
   }
@@ -526,7 +526,8 @@ export class InMemoryStateTrie implements IStateTrie {
   }> = []
 
   async get(address: string): Promise<AccountState | null> {
-    return this.accounts.get(address) ?? null
+    const account = this.accounts.get(address)
+    return account ? { ...account } : null
   }
 
   async put(address: string, state: AccountState): Promise<void> {
@@ -585,8 +586,12 @@ export class InMemoryStateTrie implements IStateTrie {
   }
 
   async checkpoint(): Promise<void> {
+    const accountsCopy = new Map<string, AccountState>()
+    for (const [addr, state] of this.accounts) {
+      accountsCopy.set(addr, { ...state })
+    }
     this.checkpoints.push({
-      accounts: new Map(this.accounts),
+      accounts: accountsCopy,
       storage: new Map(
         Array.from(this.storage.entries()).map(([addr, slots]) => [addr, new Map(slots)])
       ),

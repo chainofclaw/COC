@@ -231,10 +231,16 @@ export function validateSnapshot(snapshot: StateSnapshot): void {
   if (snapshot.accounts.length > MAX_SNAPSHOT_ACCOUNTS) {
     throw new Error(`snapshot too large: ${snapshot.accounts.length} accounts (max ${MAX_SNAPSHOT_ACCOUNTS})`)
   }
+  const seenAddresses = new Set<string>()
   for (const acc of snapshot.accounts) {
     if (!acc.address || typeof acc.address !== "string" || !acc.address.startsWith("0x")) {
       throw new Error("account has invalid address format")
     }
+    const normalizedAddr = acc.address.toLowerCase()
+    if (seenAddresses.has(normalizedAddr)) {
+      throw new Error(`duplicate account address in snapshot: ${acc.address}`)
+    }
+    seenAddresses.add(normalizedAddr)
     if (typeof acc.nonce !== "string" || typeof acc.balance !== "string") {
       throw new Error(`account ${acc.address} has invalid nonce/balance`)
     }
@@ -334,8 +340,8 @@ function rejectProtoPollution(obj: unknown, depth = 0): void {
 }
 
 function isValidHex(str: string): boolean {
-  // Accept "0x" prefix + any hex chars (odd-length like "0x0" is valid in Ethereum RPC)
-  return /^0x[0-9a-fA-F]*$/.test(str)
+  // Accept "0x" prefix + at least one hex char (odd-length like "0x0" is valid in Ethereum RPC)
+  return /^0x[0-9a-fA-F]+$/.test(str)
 }
 
 function bytesToHexStr(bytes: Uint8Array): string {

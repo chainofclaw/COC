@@ -1245,19 +1245,23 @@ function resolveInboundAuthMode(cfg: P2PConfig): "off" | "monitor" | "enforce" {
   return "off"
 }
 
-function stableStringify(value: unknown): string {
+function stableStringify(value: unknown, depth = 0, seen?: WeakSet<object>): string {
+  if (depth > 64) throw new Error("stableStringify: nesting too deep")
   if (typeof value === "bigint") {
     return JSON.stringify(value.toString())
   }
   if (value === null || typeof value !== "object") {
     return JSON.stringify(value)
   }
+  const tracker = seen ?? new WeakSet<object>()
+  if (tracker.has(value as object)) throw new Error("stableStringify: circular reference")
+  tracker.add(value as object)
   if (Array.isArray(value)) {
-    return `[${value.map((item) => stableStringify(item)).join(",")}]`
+    return `[${value.map((item) => stableStringify(item, depth + 1, tracker)).join(",")}]`
   }
 
   const obj = value as Record<string, unknown>
-  const keys = Object.keys(obj).sort()
-  const props = keys.map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`)
+  const keys = Object.keys(obj).filter(k => k !== "__proto__" && k !== "constructor" && k !== "prototype").sort()
+  const props = keys.map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k], depth + 1, tracker)}`)
   return `{${props.join(",")}}`
 }
