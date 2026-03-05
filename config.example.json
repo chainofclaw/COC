@@ -2,6 +2,9 @@
   "nodeBind": "127.0.0.1",
   "nodePort": 18780,
   "nodeUrl": "http://127.0.0.1:18780",
+  "nodeEndpoints": {
+    "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": "http://127.0.0.1:18780"
+  },
   "storageDir": "/var/lib/coc/storage",
   "agentIntervalMs": 60000,
   "agentBatchSize": 5,
@@ -12,6 +15,12 @@
   "nonceRegistryMaxEntries": 500000,
   "endpointFingerprintMode": "strict",
   "relayerIntervalMs": 60000,
+  "protocolVersion": 2,
+  "poseManagerV2Address": "0xYOUR_POSE_MANAGER_V2_ADDRESS",
+  "verifyingContract": "0xYOUR_POSE_MANAGER_V2_ADDRESS",
+  "chainId": 20241224,
+  "requiredWitnesses": 0,
+  "tipToleranceBlocks": 10,
   "challengerSet": [],
   "aggregatorSet": [],
   "nodeIds": [

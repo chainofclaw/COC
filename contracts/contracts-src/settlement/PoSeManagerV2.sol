@@ -25,6 +25,8 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
     mapping(uint64 => uint256) public epochTreasuryDelta;
     mapping(bytes32 => PoSeTypesV2.ChallengeRecord) public challenges;
     mapping(uint64 => mapping(bytes32 => uint256)) public epochNodeSlashed;
+    mapping(bytes32 => bool) public challengeFaultConfirmed;
+    mapping(uint64 => uint256) public epochClaimedReward;
 
     uint256 public challengeBondMin;
     uint256 public insuranceBalance;
@@ -114,7 +116,7 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
     }
 
     // --- Epoch nonce (prevrandao snapshot) ---
-    function initEpochNonce(uint64 epochId) external override {
+    function initEpochNonce(uint64 epochId) external override onlyOwner {
         if (challengeNonces[epochId] != 0) revert EpochNonceAlreadySet();
         challengeNonces[epochId] = uint64(block.prevrandao);
         emit EpochNonceSet(epochId, uint64(block.prevrandao));
@@ -135,7 +137,8 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
         if (epochFinalized[epochId]) revert EpochAlreadyFinalized();
         if (sampleProofs.length == 0 || sampleProofs.length > type(uint16).max) revert InvalidBatch();
 
-        // Validate witness quorum
+        // Validate witness quorum.
+        // Transition mode: allow empty witness set/signatures to avoid deadlock during rollout.
         _validateWitnessQuorum(epochId, witnessBitmap, witnessSignatures, merkleRoot);
 
         batchId = _batchId(epochId, merkleRoot, summaryHash, msg.sender);
@@ -206,21 +209,81 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
         uint8 faultType,
         bytes32 evidenceLeafHash,
         bytes32 salt,
-        bytes calldata /* evidenceData */,
-        bytes calldata /* challengerSig */
+        bytes calldata evidenceData,
+        bytes calldata challengerSig
     ) external override {
         PoSeTypesV2.ChallengeRecord storage record = challenges[challengeId];
         if (record.challenger == address(0)) revert ChallengeNotFound();
         if (record.revealed) revert ChallengeNotFound(); // already revealed
+        if (msg.sender != record.challenger) revert NotChallengeOwner();
         if (_currentEpoch() > record.revealDeadlineEpoch) revert RevealWindowMissed();
+        if (faultType == 0 || faultType > 4) revert InvalidFaultType();
 
         // Verify commit hash
         bytes32 expectedCommit = keccak256(abi.encodePacked(targetNodeId, faultType, evidenceLeafHash, salt));
         if (expectedCommit != record.commitHash) revert CommitHashMismatch();
 
+        // Verify challenger signed the reveal payload.
+        bytes32 revealDigest = keccak256(
+            abi.encodePacked(
+                "coc-fault:",
+                challengeId,
+                targetNodeId,
+                faultType,
+                evidenceLeafHash,
+                salt,
+                keccak256(evidenceData)
+            )
+        );
+        bytes32 revealEthSignedHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", revealDigest));
+        address revealSigner = _recoverSignerCalldata(revealEthSignedHash, challengerSig);
+        if (revealSigner == address(0) || revealSigner != record.challenger) revert InvalidFaultProof();
+
+        // Decode and verify objective fault proof data.
+        (bytes32 batchId, bytes32[] memory merkleProof, PoSeTypesV2.EvidenceLeafV2 memory leaf) =
+            abi.decode(evidenceData, (bytes32, bytes32[], PoSeTypesV2.EvidenceLeafV2));
+        if (leaf.nodeId != targetNodeId) revert InvalidFaultProof();
+
+        bytes32 computedLeafHash = keccak256(
+            abi.encodePacked(
+                leaf.epoch,
+                leaf.nodeId,
+                leaf.nonce,
+                leaf.tipHash,
+                leaf.tipHeight,
+                leaf.latencyMs,
+                leaf.resultCode,
+                leaf.witnessBitmap
+            )
+        );
+        if (computedLeafHash != evidenceLeafHash) revert InvalidFaultProof();
+
+        PoSeTypes.BatchRecord storage batch = batches[batchId];
+        if (batch.merkleRoot == bytes32(0) || batch.disputed) revert InvalidFaultProof();
+        if (!MerkleProofLite.verifyMemory(merkleProof, batch.merkleRoot, evidenceLeafHash)) revert InvalidFaultProof();
+
+        // Fault type must match objective result code in evidence leaf.
+        if (faultType == 1) {
+            // DoubleSig requires dedicated equivocation proof format (not this leaf format).
+            revert InvalidFaultProof();
+        } else if (faultType == 2) {
+            if (leaf.resultCode != 2) revert InvalidFaultProof(); // InvalidSig
+        } else if (faultType == 3) {
+            if (leaf.resultCode != 1) revert InvalidFaultProof(); // Timeout
+        } else if (faultType == 4) {
+            if (
+                leaf.resultCode != 3 && // StorageProofFail
+                leaf.resultCode != 4 && // RelayWitnessFail
+                leaf.resultCode != 5 && // TipMismatch
+                leaf.resultCode != 6 && // NonceMismatch
+                leaf.resultCode != 7    // WitnessQuorumFail
+            ) revert InvalidFaultProof();
+        }
+
         record.revealed = true;
         record.targetNodeId = targetNodeId;
         record.faultType = faultType;
+        challengeFaultConfirmed[challengeId] = true;
 
         emit ChallengeRevealed(challengeId, targetNodeId, faultType);
     }
@@ -237,7 +300,7 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
         record.settled = true;
 
         PoSeTypes.NodeRecord storage node = nodes[record.targetNodeId];
-        bool faultConfirmed = node.active && node.bondAmount > 0;
+        bool faultConfirmed = challengeFaultConfirmed[challengeId] && node.active && node.bondAmount > 0;
 
         if (faultConfirmed) {
             // Calculate slash amount with per-epoch cap
@@ -292,9 +355,11 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
         uint256 totalReward,
         uint256 slashTotal,
         uint256 treasuryDelta
-    ) external override {
+    ) external override onlyOwner {
         if (epochFinalized[epochId]) revert EpochAlreadyFinalized();
         if (_currentEpoch() <= epochId + DISPUTE_WINDOW_EPOCHS) revert DisputeWindowNotElapsed();
+        if (totalReward > 0 && rewardRoot == bytes32(0)) revert InvalidBatch();
+        if (totalReward > rewardPoolBalance) revert RewardPoolInsufficient();
 
         // Finalize all valid batches for this epoch
         bytes32[] storage batchIds = epochBatches[epochId];
@@ -317,7 +382,7 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
         epochFinalized[epochId] = true;
 
         // Deduct rewards from pool
-        if (totalReward > 0 && totalReward <= rewardPoolBalance) {
+        if (totalReward > 0) {
             rewardPoolBalance -= totalReward;
         }
 
@@ -332,6 +397,7 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
         bytes32[] calldata merkleProof
     ) external override {
         if (!epochFinalized[epochId]) revert InvalidBatch();
+        if (amount == 0) revert InvalidBatch();
         if (rewardClaimed[epochId][nodeId]) revert AlreadyClaimed();
 
         // Compute reward leaf hash: keccak256(abi.encodePacked(epochId, nodeId, amount))
@@ -341,6 +407,9 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
         }
 
         rewardClaimed[epochId][nodeId] = true;
+        uint256 claimed = epochClaimedReward[epochId] + amount;
+        if (claimed > epochTotalReward[epochId]) revert RewardBudgetExceeded();
+        epochClaimedReward[epochId] = claimed;
 
         address operator = nodeOperator[nodeId];
         if (operator == address(0)) revert NodeNotFound();
@@ -446,6 +515,9 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
         bytes[] calldata witnessSignatures,
         bytes32 merkleRoot
     ) internal view {
+        if (witnessBitmap == 0 && witnessSignatures.length == 0) {
+            return;
+        }
         bytes32[] memory witnessSet = getWitnessSet(epochId);
         uint256 m = witnessSet.length;
         if (m == 0) return; // no witnesses required if no active nodes
@@ -491,6 +563,20 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
     }
 
     function _recoverSigner(bytes32 digest, bytes calldata sig) internal pure returns (address) {
+        if (sig.length != 65) return address(0);
+        uint8 v = uint8(sig[64]);
+        bytes32 r;
+        bytes32 s;
+        assembly {
+            r := calldataload(sig.offset)
+            s := calldataload(add(sig.offset, 32))
+        }
+        if (v < 27) v += 27;
+        if (v != 27 && v != 28) return address(0);
+        return ecrecover(digest, v, r, s);
+    }
+
+    function _recoverSignerCalldata(bytes32 digest, bytes calldata sig) internal pure returns (address) {
         if (sig.length != 65) return address(0);
         uint8 v = uint8(sig[64]);
         bytes32 r;

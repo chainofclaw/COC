@@ -322,6 +322,61 @@
     "title": "COC Network Status",
     "subtitle": "Real-time monitoring of blockchain network health",
     "realTimeStats": "Real-time Statistics",
+    "blockHeight": "Block Height",
+    "avgBlockTime": "Avg Block Time",
+    "gasPrice": "Gas Price",
+    "chainId": "Chain ID",
+    "peers": "Connected Peers",
+    "syncStatus": "Sync Status",
+    "syncing": "Syncing",
+    "synced": "Synced",
+    "error": "Failed to connect to COC network node",
+    "chainStats": {
+      "title": "Chain Statistics",
+      "blockHeight": "Block Height",
+      "blockRate": "Block Rate",
+      "tps": "Transactions/Sec",
+      "pendingTx": "Pending Transactions",
+      "validatorCount": "Active Validators"
+    },
+    "bftStatus": {
+      "title": "BFT Consensus Status",
+      "enabled": "Enabled",
+      "disabled": "Disabled",
+      "active": "Active",
+      "inactive": "Inactive",
+      "phase": "Current Phase",
+      "prepareVotes": "Prepare Votes",
+      "commitVotes": "Commit Votes",
+      "equivocations": "Equivocations Detected"
+    },
+    "networkTopology": {
+      "title": "Network Topology",
+      "httpPeers": "HTTP Peers",
+      "wireConnections": "Wire Connections",
+      "dhtNodes": "DHT Nodes",
+      "securityMetrics": "P2P Security Metrics"
+    },
+    "gasHistory": {
+      "title": "Gas Fee History",
+      "currentGasPrice": "Current Gas Price",
+      "baseFee": "Base Fee",
+      "trend": "Trend"
+    },
+    "daoStats": {
+      "title": "DAO Governance",
+      "currentEpoch": "Current Epoch",
+      "activeValidators": "Active Validators",
+      "totalStake": "Total Stake",
+      "pendingProposals": "Pending Proposals",
+      "treasuryBalance": "Treasury Balance"
+    },
+    "mempool": {
+      "title": "Mempool",
+      "pending": "Pending",
+      "queued": "Queued",
+      "total": "Total"
+    },
     "nodeInfo": {
       "title": "Node Information",
       "runtime": "Runtime",

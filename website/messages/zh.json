@@ -482,6 +482,61 @@
     "title": "COC网络状态",
     "subtitle": "实时监控区块链网络健康状况",
     "realTimeStats": "实时统计",
+    "blockHeight": "区块高度",
+    "avgBlockTime": "平均出块时间",
+    "gasPrice": "Gas价格",
+    "chainId": "链ID",
+    "peers": "连接节点",
+    "syncStatus": "同步状态",
+    "syncing": "同步中",
+    "synced": "已同步",
+    "error": "无法连接到COC网络节点",
+    "chainStats": {
+      "title": "链统计",
+      "blockHeight": "区块高度",
+      "blockRate": "出块速率",
+      "tps": "交易速率",
+      "pendingTx": "待处理交易",
+      "validatorCount": "验证者数"
+    },
+    "bftStatus": {
+      "title": "BFT共识状态",
+      "enabled": "已启用",
+      "disabled": "未启用",
+      "active": "活跃",
+      "inactive": "非活跃",
+      "phase": "当前阶段",
+      "prepareVotes": "Prepare投票",
+      "commitVotes": "Commit投票",
+      "equivocations": "双投检测"
+    },
+    "networkTopology": {
+      "title": "网络拓扑",
+      "httpPeers": "HTTP Peers",
+      "wireConnections": "Wire连接",
+      "dhtNodes": "DHT节点",
+      "securityMetrics": "P2P安全指标"
+    },
+    "gasHistory": {
+      "title": "Gas费用历史",
+      "currentGasPrice": "当前Gas价格",
+      "baseFee": "基础费用",
+      "trend": "趋势"
+    },
+    "daoStats": {
+      "title": "DAO治理",
+      "currentEpoch": "当前Epoch",
+      "activeValidators": "活跃验证者",
+      "totalStake": "总质押",
+      "pendingProposals": "待处理提案",
+      "treasuryBalance": "国库余额"
+    },
+    "mempool": {
+      "title": "内存池",
+      "pending": "待处理",
+      "queued": "排队中",
+      "total": "总数"
+    },
     "nodeInfo": {
       "title": "节点信息",
       "runtime": "运行时",

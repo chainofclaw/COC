@@ -56,6 +56,7 @@ export class PersistentChainEngine {
   private nodeSigner: NodeSigner | null = null
   private signatureVerifier: SignatureVerifier | null = null
   private applyingBlock = false
+  private validatorAddressMap: Map<string, string> = new Map()
 
   constructor(cfg: PersistentChainEngineConfig, evm: EvmChain) {
     this.cfg = cfg
@@ -85,6 +86,16 @@ export class PersistentChainEngine {
   setNodeSigner(signer: NodeSigner, verifier: SignatureVerifier): void {
     this.nodeSigner = signer
     this.signatureVerifier = verifier
+  }
+
+  /** Set validator address map for identity alignment (nodeId → address) */
+  setValidatorAddressMap(map: Map<string, string>): void {
+    this.validatorAddressMap = map
+  }
+
+  /** Resolve validator nodeId to address for signature verification */
+  private resolveValidatorAddress(nodeId: string): string {
+    return this.validatorAddressMap.get(nodeId) ?? nodeId
   }
 
   async init(): Promise<void> {
@@ -321,7 +332,8 @@ export class PersistentChainEngine {
     if (!locallyProposed && this.signatureVerifier && sigMode !== "off") {
       if (block.signature) {
         const canonical = `block:${block.hash}`
-        if (!this.signatureVerifier.verifyNodeSig(canonical, block.signature, block.proposer)) {
+        const proposerAddr = this.resolveValidatorAddress(block.proposer)
+        if (!this.signatureVerifier.verifyNodeSig(canonical, block.signature, proposerAddr)) {
           throw new Error("block proposer signature invalid")
         }
       } else if (sigMode === "enforce") {
@@ -443,9 +455,35 @@ export class PersistentChainEngine {
       stateRoot = root as Hex
     }
 
+    // Post-execution stateRoot signature
+    let stateRootSig = block.stateRootSig
+    if (locallyProposed && this.nodeSigner && stateRoot) {
+      const stateRootMsg = `stateRoot:${block.hash}:${stateRoot}`
+      stateRootSig = this.nodeSigner.sign(stateRootMsg) as Hex
+    } else if (!locallyProposed && block.stateRootSig && stateRoot && this.signatureVerifier) {
+      // Verify remote stateRoot against locally computed
+      if (block.stateRoot && block.stateRoot !== stateRoot) {
+        const sigMode = this.cfg.signatureEnforcement ?? "enforce"
+        if (sigMode === "enforce") {
+          throw new Error(`stateRoot mismatch: claimed ${block.stateRoot}, computed ${stateRoot}`)
+        }
+        log.warn("stateRoot mismatch", { height: block.number.toString(), claimed: block.stateRoot, computed: stateRoot })
+      }
+      const stateRootMsg = `stateRoot:${block.hash}:${stateRoot}`
+      const sigMode = this.cfg.signatureEnforcement ?? "enforce"
+      const proposerAddr = this.resolveValidatorAddress(block.proposer)
+      if (!this.signatureVerifier.verifyNodeSig(stateRootMsg, block.stateRootSig, proposerAddr)) {
+        if (sigMode === "enforce") {
+          throw new Error("stateRoot signature invalid")
+        }
+        log.warn("stateRoot signature mismatch", { height: block.number.toString(), proposer: block.proposer })
+      }
+    }
+
     storedBlock = {
       ...block,
       gasUsed: totalGasUsed,
+      stateRootSig,
       // Never trust remote/non-hash metadata from gossip. Finality is local-state derived.
       finalized: false,
       bftFinalized: locallyProposed && block.bftFinalized === true,

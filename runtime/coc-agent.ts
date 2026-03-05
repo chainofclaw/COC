@@ -25,8 +25,7 @@ import { hashPair } from "../node/src/ipfs-merkle.ts";
 import type { UnixFsFileMeta, Hex } from "../node/src/ipfs-types.ts";
 import { createLogger } from "../node/src/logger.ts";
 import { createNodeSigner, createNodeSignerV2, buildReceiptSignMessage } from "../node/src/crypto/signer.ts";
-import { buildDomain, RECEIPT_TYPES } from "../node/src/crypto/eip712-types.ts";
-import { createEip712Signer } from "../node/src/crypto/eip712-signer.ts";
+import { buildDomain, CHALLENGE_TYPES, RECEIPT_TYPES } from "../node/src/crypto/eip712-types.ts";
 import { buildSignedPosePayload } from "../node/src/pose-http.ts";
 import { collectWitnesses } from "./lib/witness-collector.ts";
 import { ContractReader } from "./lib/contract-reader.ts";
@@ -117,6 +116,9 @@ const poseContract = poseManagerAddress ? new Contract(poseManagerAddress, poseA
 const useV2 = config.protocolVersion === 2;
 const v2ChainId = config.chainId ?? 20241224;
 const v2VerifyingContract = config.verifyingContract ?? config.poseManagerV2Address ?? "0x0000000000000000000000000000000000000000";
+if (useV2 && (!config.poseManagerV2Address || !config.verifyingContract)) {
+  throw new Error("v2 protocol requires both poseManagerV2Address and verifyingContract in config");
+}
 const v2Domain = buildDomain(BigInt(v2ChainId), v2VerifyingContract);
 const agentSignerV2 = useV2 ? createNodeSignerV2(operatorPrivateKey, v2Domain) : null;
 
@@ -141,6 +143,9 @@ const poseV2Abi = [
   "function submitBatchV2(uint64 epochId, bytes32 merkleRoot, bytes32 summaryHash, tuple(bytes32 leaf, bytes32[] merkleProof, uint32 leafIndex)[] sampleProofs, uint32 witnessBitmap, bytes[] witnessSignatures) returns (bytes32 batchId)",
   "function getActiveNodeCount() view returns (uint256)",
   "function challengeNonces(uint64 epochId) view returns (uint64)",
+  "function registerNode(bytes32 nodeId, bytes pubkeyNode, uint8 serviceFlags, bytes32 serviceCommitment, bytes32 endpointCommitment, bytes32 metadataHash, bytes ownershipSig, bytes endpointAttestation) payable",
+  "function getNode(bytes32 nodeId) view returns (tuple(bytes32 nodeId, bytes pubkeyNode, uint8 serviceFlags, bytes32 serviceCommitment, bytes32 endpointCommitment, uint256 bondAmount, bytes32 metadataHash, uint64 registeredAtEpoch, uint64 unlockEpoch, bool active))",
+  "function operatorNodeCount(address) view returns (uint8)",
 ];
 
 const poseV2Address = config.poseManagerV2Address;
@@ -260,6 +265,7 @@ const aggregator = new BatchAggregator({
 });
 
 const trackedNodeIds = normalizeNodeIds(config.nodeIds);
+const nodeEndpointMap = normalizeNodeEndpointMap(config.nodeEndpoints);
 const nodeScores = new Map<string, { uptimeOk: number; uptimeTotal: number; storageOk: number; storageTotal: number; relayOk: number; relayTotal: number; verifiedStorageBytes: number }>();
 
 // Persistent pending receipts store — survives crash/restart
@@ -306,6 +312,13 @@ const pendingPath = process.env.COC_PENDING_PATH || join(config.dataDir, "pendin
 const pending = new PendingReceiptStore(pendingPath);
 let currentEpoch = currentEpochId();
 log.info("endpoint fingerprint mode", { mode: endpointFingerprintMode });
+
+if (useV2 && trackedNodeIds.length > 1) {
+  const missing = trackedNodeIds.filter((id) => !nodeEndpointMap.has(id.toLowerCase()));
+  if (missing.length > 0) {
+    log.warn("v2 mode: missing nodeEndpoints mapping for tracked nodes; these nodes will be skipped", { missing });
+  }
+}
 
 // Evidence pipeline: agent writes, relayer consumes
 const evidencePath = process.env.COC_EVIDENCE_PATH || join(config.dataDir, "evidence-agent.jsonl");
@@ -371,7 +384,13 @@ async function tick(): Promise<void> {
 // --- v2 Challenge and Batch ---
 
 async function tryChallengeV2(nodeId: string, kind: keyof typeof ChallengeType): Promise<void> {
-  if (!factoryV2 || !contractReader) return;
+  if (!factoryV2 || !contractReader || !agentSignerV2) return;
+
+  const targetUrl = resolveNodeEndpoint(nodeId);
+  if (!targetUrl) {
+    log.warn("v2 challenge skipped: missing node endpoint mapping", { nodeId });
+    return;
+  }
 
   const code = ChallengeType[kind];
   const canIssue = quota.canIssue(nodeId as any, BigInt(currentEpoch), code, BigInt(Date.now()));
@@ -399,12 +418,12 @@ async function tryChallengeV2(nodeId: string, kind: keyof typeof ChallengeType):
   let receiptPayload: any;
   try {
     await requestJson(
-      `${nodeUrl}/pose/challenge`,
+      `${targetUrl}/pose/challenge`,
       "POST",
       buildSignedPosePayload("/pose/challenge", challenge as unknown as Record<string, unknown>, agentSigner),
     );
     const receiptResp = await requestJson(
-      `${nodeUrl}/pose/receipt`,
+      `${targetUrl}/pose/receipt`,
       "POST",
       buildSignedPosePayload("/pose/receipt", {
         challengeId: challenge.challengeId,
@@ -420,10 +439,83 @@ async function tryChallengeV2(nodeId: string, kind: keyof typeof ChallengeType):
   }
 
   try {
-    // Collect witnesses
-    const responseBodyHash = receiptPayload.responseBodyHash ??
-      `0x${keccak256Hex(Buffer.from(stableStringifyAgent(receiptPayload.responseBody ?? {}), "utf8"))}`;
+    const receiptNodeId = typeof receiptPayload.nodeId === "string" ? receiptPayload.nodeId.toLowerCase() : "";
+    if (receiptNodeId !== nodeId.toLowerCase()) {
+      throw new Error("receipt nodeId mismatch");
+    }
+    if (typeof receiptPayload.nodeSig !== "string" || !receiptPayload.nodeSig.startsWith("0x")) {
+      throw new Error("missing receipt node signature");
+    }
 
+    const responseBody =
+      receiptPayload.responseBody && typeof receiptPayload.responseBody === "object"
+        ? (receiptPayload.responseBody as Record<string, unknown>)
+        : {};
+    const responseBodyHash = `0x${keccak256Hex(Buffer.from(stableStringifyAgent(responseBody), "utf8"))}`;
+    if (receiptPayload.responseBodyHash && String(receiptPayload.responseBodyHash).toLowerCase() !== responseBodyHash.toLowerCase()) {
+      throw new Error("response body hash mismatch");
+    }
+
+    const responseAtMs = BigInt(receiptPayload.responseAtMs ?? 0);
+    if (responseAtMs < challenge.issuedAtMs || responseAtMs > challenge.issuedAtMs + BigInt(challenge.deadlineMs)) {
+      throw new Error("receipt deadline violation");
+    }
+
+    const challengeTypeNum = code === "U" ? 0 : code === "S" ? 1 : 2;
+    const challengeData = {
+      challengeId: challenge.challengeId,
+      epochId: challenge.epochId,
+      nodeId: challenge.nodeId,
+      challengeType: challengeTypeNum,
+      nonce: challenge.nonce,
+      challengeNonce: challenge.challengeNonce,
+      querySpecHash: challenge.querySpecHash,
+      issuedAtMs: challenge.issuedAtMs,
+      deadlineMs: BigInt(challenge.deadlineMs),
+      challengerId: challenge.challengerId,
+    };
+    const challengerAddr = hex32ToAddress(challenge.challengerId);
+    if (!agentSignerV2.eip712.verifyTypedData(CHALLENGE_TYPES, challengeData, challenge.challengerSig, challengerAddr)) {
+      throw new Error("invalid challenger signature");
+    }
+
+    const tipHashRaw = typeof receiptPayload.tipHash === "string" ? receiptPayload.tipHash : "";
+    if (!/^0x[0-9a-fA-F]{64}$/.test(tipHashRaw)) {
+      throw new Error("invalid tipHash");
+    }
+    const tipHash = tipHashRaw as `0x${string}`;
+    const tipHeight = BigInt(receiptPayload.tipHeight ?? 0);
+    if (tipHeight < 0n) {
+      throw new Error("invalid tipHeight");
+    }
+
+    let chainTip: { hash: `0x${string}`; number: bigint } | null = null;
+    try {
+      chainTip = await contractReader.getChainTip();
+    } catch (tipErr) {
+      log.warn("v2 tip check skipped due chain tip fetch failure", { nodeId, error: String(tipErr) });
+    }
+    if (chainTip) {
+      const diff = tipHeight > chainTip.number ? tipHeight - chainTip.number : chainTip.number - tipHeight;
+      if (diff > BigInt(v2TipTolerance)) {
+        throw new Error("tip height out of tolerance");
+      }
+    }
+
+    const receiptData = {
+      challengeId: challenge.challengeId,
+      nodeId: nodeId as `0x${string}`,
+      responseAtMs,
+      responseBodyHash: responseBodyHash as `0x${string}`,
+      tipHash,
+      tipHeight,
+    };
+    const nodeAddr = hex32ToAddress(nodeId);
+    if (!agentSignerV2.eip712.verifyTypedData(RECEIPT_TYPES, receiptData, receiptPayload.nodeSig, nodeAddr)) {
+      throw new Error("invalid node receipt signature");
+    }
+
+    // Collect witnesses
     const witnessResult = v2WitnessNodes.length > 0
       ? await collectWitnesses(
           { witnessNodes: v2WitnessNodes, requiredWitnesses: v2RequiredWitnesses, timeoutMs: 5000 },
@@ -433,16 +525,13 @@ async function tryChallengeV2(nodeId: string, kind: keyof typeof ChallengeType):
         )
       : { attestations: [], bitmap: 0, quorumMet: v2RequiredWitnesses === 0 };
 
-    const tipHash = receiptPayload.tipHash ?? "0x" + "0".repeat(64);
-    const tipHeight = BigInt(receiptPayload.tipHeight ?? "0");
-
     const evidenceLeaf = {
       epoch: BigInt(currentEpoch),
       nodeId: nodeId as `0x${string}`,
       nonce: challenge.nonce,
-      tipHash: tipHash as `0x${string}`,
+      tipHash,
       tipHeight,
-      latencyMs: Number(BigInt(receiptPayload.responseAtMs ?? Date.now()) - challenge.issuedAtMs),
+      latencyMs: Number(responseAtMs - challenge.issuedAtMs),
       resultCode: witnessResult.quorumMet ? ResultCode.Ok : ResultCode.WitnessQuorumFail,
       witnessBitmap: witnessResult.bitmap,
     };
@@ -452,9 +541,9 @@ async function tryChallengeV2(nodeId: string, kind: keyof typeof ChallengeType):
       receipt: {
         challengeId: challenge.challengeId,
         nodeId: nodeId as any,
-        responseAtMs: BigInt(receiptPayload.responseAtMs ?? Date.now()),
-        responseBody: receiptPayload.responseBody ?? {},
-        responseBodyHash,
+        responseAtMs,
+        responseBody,
+        responseBodyHash: responseBodyHash as `0x${string}`,
         tipHash: tipHash as any,
         tipHeight,
         nodeSig: receiptPayload.nodeSig,
@@ -466,7 +555,7 @@ async function tryChallengeV2(nodeId: string, kind: keyof typeof ChallengeType):
     };
 
     pendingV2.push(verified);
-    updateScore(nodeId, kind, true, storageTarget?.fileSize);
+    updateScore(nodeId, kind, witnessResult.quorumMet, storageTarget?.fileSize);
   } catch (error) {
     updateScore(nodeId, kind, false);
     log.warn("v2 verification failed", { nodeId, kind, error: String(error) });
@@ -516,8 +605,8 @@ async function flushBatchV2(epochId: number, receipts: VerifiedReceiptV2[]): Pro
       batch.merkleRoot,
       batch.summaryHash,
       batch.sampleProofs,
-      batch.witnessBitmap,
-      [], // witness signatures collected per-batch
+      0,  // transition mode: per-batch witness signatures are not yet collected
+      [],
     );
     await tx.wait();
 
@@ -533,19 +622,21 @@ async function flushBatchV2(epochId: number, receipts: VerifiedReceiptV2[]): Pro
 }
 
 async function ensureNodeRegistered(): Promise<void> {
-  if (!poseContract) {
+  const registerContract = useV2 ? poseV2Contract : poseContract;
+  if (!registerContract) {
     return;
   }
   try {
     const pubkey = signer.signingKey.publicKey;
     const nodeId = keccak256(pubkey);
-    const node = await poseContract.getNode(nodeId);
+    const node = await registerContract.getNode(nodeId);
     if (node?.active) {
       return;
     }
 
-    // Query progressive bond requirement from contract
-    const bondRequired = await poseContract.requiredBond(signer.address) as bigint;
+    // Query progressive bond requirement from contract (v2 uses the same MIN_BOND << operatorNodeCount rule).
+    const operatorCount = Number(await registerContract.operatorNodeCount(signer.address));
+    const bondRequired = useV2 ? (MIN_BOND_WEI << operatorCount) : await poseContract!.requiredBond(signer.address) as bigint;
 
     const serviceCommitment = keccak256(toUtf8Bytes(`service:${signer.address.toLowerCase()}`));
     const fingerprint = computeMachineFingerprint(pubkey);
@@ -571,7 +662,7 @@ async function ensureNodeRegistered(): Promise<void> {
       Buffer.from(keccak256(toUtf8Bytes(endpointMsg)).slice(2), "hex"),
     );
 
-    const tx = await poseContract.registerNode(
+    const tx = await registerContract.registerNode(
       nodeId,
       pubkey,
       0x07,
@@ -583,13 +674,19 @@ async function ensureNodeRegistered(): Promise<void> {
       { value: bondRequired },
     );
     await tx.wait();
-    log.info("registered node onchain", { nodeId, bond: bondRequired.toString() });
+    log.info("registered node onchain", { nodeId, bond: bondRequired.toString(), protocolVersion: useV2 ? 2 : 1 });
   } catch (error) {
     log.error("register node failed", { error: String(error) });
   }
 }
 
 async function tryChallenge(nodeId: string, kind: keyof typeof ChallengeType): Promise<void> {
+  const targetUrl = resolveNodeEndpoint(nodeId);
+  if (!targetUrl) {
+    log.warn("challenge skipped: missing node endpoint mapping", { nodeId, protocolVersion: useV2 ? 2 : 1 });
+    return;
+  }
+
   const code = ChallengeType[kind];
   const canIssue = quota.canIssue(nodeId as any, BigInt(currentEpoch), code, BigInt(Date.now()));
   if (!canIssue.ok) {
@@ -615,12 +712,12 @@ async function tryChallenge(nodeId: string, kind: keyof typeof ChallengeType): P
   let receiptPayload: any | undefined;
   try {
     await requestJson(
-      `${nodeUrl}/pose/challenge`,
+      `${targetUrl}/pose/challenge`,
       "POST",
       buildSignedPosePayload("/pose/challenge", challenge as unknown as Record<string, unknown>, agentSigner),
     );
     const receiptResp = await requestJson(
-      `${nodeUrl}/pose/receipt`,
+      `${targetUrl}/pose/receipt`,
       "POST",
       buildSignedPosePayload("/pose/receipt", {
         challengeId: challenge.challengeId,
@@ -841,11 +938,15 @@ async function flushBatch(epochId: number, receipts: Array<any>): Promise<void> 
 let selfNodeRegistered = false;
 
 async function refreshSelfNodeStatus(): Promise<void> {
-  if (!poseContract) return;
+  const statusContract = useV2 ? poseV2Contract : poseContract;
+  if (!statusContract) {
+    selfNodeRegistered = false;
+    return;
+  }
   try {
     const pubkey = signer.signingKey.publicKey;
     const nodeId = keccak256(pubkey);
-    const node = await poseContract.getNode(nodeId);
+    const node = await statusContract.getNode(nodeId);
     selfNodeRegistered = Boolean(node?.active);
   } catch {
     // keep previous value on failure
@@ -874,6 +975,23 @@ function normalizeNodeIds(input: string[] | undefined): string[] {
     return ["0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"];
   }
   return input.map((x) => x.toLowerCase());
+}
+
+function normalizeNodeEndpointMap(input: Record<string, string> | undefined): Map<string, string> {
+  const map = new Map<string, string>();
+  if (!input) return map;
+  for (const [nodeId, url] of Object.entries(input)) {
+    if (!nodeId || typeof url !== "string" || url.length === 0) continue;
+    map.set(nodeId.toLowerCase(), url);
+  }
+  return map;
+}
+
+function resolveNodeEndpoint(nodeId: string): string | null {
+  const mapped = nodeEndpointMap.get(nodeId.toLowerCase());
+  if (mapped) return mapped;
+  if (trackedNodeIds.length === 1) return nodeUrl;
+  return null;
 }
 
 function currentEpochId(): number {

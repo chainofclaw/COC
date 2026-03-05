@@ -34,6 +34,67 @@ type BlockData = {
   gasUsed?: bigint
 }
 
+type ChainStats = {
+  blockHeight: string
+  blocksPerMinute: number
+  pendingTxCount: number
+  recentTxCount: number
+  validatorCount: number
+  chainId: string
+  latestBlockTime: number
+}
+
+type BftStatus = {
+  enabled: boolean
+  active?: boolean
+  height?: string
+  phase?: string
+  prepareVotes?: number
+  commitVotes?: number
+  equivocations?: number
+}
+
+type NetworkStats = {
+  blockHeight: string
+  peerCount: number
+  p2p?: {
+    peers: number
+    protocol: string
+    security?: {
+      rateLimitedRequests: number
+      authAcceptedRequests: number
+      authInvalidRequests: number
+    }
+  }
+  wire?: {
+    enabled: boolean
+    peers?: number
+  }
+  dht?: {
+    enabled: boolean
+    nodes?: number
+  }
+  bft?: BftStatus
+  consensus?: {
+    state: string
+  }
+}
+
+type MemPoolStatus = {
+  pending: string
+  queued: string
+}
+
+type DaoStats = {
+  enabled: boolean
+  activeValidators?: number
+  totalStake?: string
+  pendingProposals?: number
+  totalProposals?: number
+  currentEpoch?: string
+  treasuryBalance?: string
+}
+
 export default function NetworkPage() {
   const t = useTranslations('network')
   const [nodeInfo, setNodeInfo] = useState<NodeInfo>(null)
@@ -43,21 +104,46 @@ export default function NetworkPage() {
   const [avgTxCount, setAvgTxCount] = useState(0)
   const [avgGasUsed, setAvgGasUsed] = useState(0n)
   const [isLoading, setIsLoading] = useState(true)
+  const [chainStats, setChainStats] = useState<ChainStats | null>(null)
+  const [bftStatus, setBftStatus] = useState<BftStatus | null>(null)
+  const [networkStats, setNetworkStats] = useState<NetworkStats | null>(null)
+  const [memPoolStatus, setMemPoolStatus] = useState<MemPoolStatus | null>(null)
+  const [daoStats, setDaoStats] = useState<DaoStats | null>(null)
 
   useEffect(() => {
     async function fetchData() {
       setIsLoading(true)
       try {
-        // Fetch node info
-        const info = await rpcCall<NodeInfo>('coc_nodeInfo').catch(() => null)
-        setNodeInfo(info)
+        // Parallel fetch all RPC data
+        const [
+          info,
+          vals,
+          chainStatsData,
+          bftStatusData,
+          networkStatsData,
+          memPoolStatusData,
+          daoStatsData,
+          blockNumber
+        ] = await Promise.all([
+          rpcCall<NodeInfo>('coc_nodeInfo').catch(() => null),
+          rpcCall<Validator[]>('coc_validators').catch(() => []),
+          rpcCall<ChainStats>('coc_chainStats').catch(() => null),
+          rpcCall<BftStatus>('coc_getBftStatus').catch(() => null),
+          rpcCall<NetworkStats>('coc_getNetworkStats').catch(() => null),
+          rpcCall<MemPoolStatus>('txpool_status').catch(() => null),
+          rpcCall<DaoStats>('coc_getDaoStats').catch(() => null),
+          provider.getBlockNumber().catch(() => 0)
+        ])
 
-        // Fetch validators
-        const vals = await rpcCall<Validator[]>('coc_validators').catch(() => [])
+        setNodeInfo(info)
         setValidators(vals)
+        setChainStats(chainStatsData)
+        setBftStatus(bftStatusData)
+        setNetworkStats(networkStatsData)
+        setMemPoolStatus(memPoolStatusData)
+        setDaoStats(daoStatsData)
 
         // Fetch recent blocks
-        const blockNumber = await provider.getBlockNumber()
         const count = Math.min(10, blockNumber + 1)
         const blocks = await Promise.all(
           Array.from({ length: count }, (_, i) => provider.getBlock(blockNumber - i))
@@ -84,6 +170,8 @@ export default function NetworkPage() {
     }
 
     fetchData()
+    const interval = setInterval(fetchData, 5000)
+    return () => clearInterval(interval)
   }, [])
 
   return (
@@ -135,6 +223,161 @@ export default function NetworkPage() {
             <NetworkStats />
           </div>
         </section>
+
+        {/* Chain Statistics */}
+        {!isLoading && chainStats && (
+          <section className="mb-16 fade-in-up">
+            <h2 className="text-2xl md:text-3xl font-display font-bold mb-6 text-text-primary">
+              {t('chainStats.title')}
+            </h2>
+            <div className="grid md:grid-cols-5 gap-4">
+              <StatMetricCard
+                title={t('chainStats.blockHeight')}
+                value={parseInt(chainStats.blockHeight, 16).toLocaleString()}
+              />
+              <StatMetricCard
+                title={t('chainStats.blockRate')}
+                value={`${chainStats.blocksPerMinute.toFixed(1)}`}
+                unit="块/分钟"
+              />
+              <StatMetricCard
+                title={t('chainStats.tps')}
+                value={`${(chainStats.recentTxCount / 10 / 3).toFixed(2)}`}
+                unit="tx/s"
+              />
+              <StatMetricCard
+                title={t('chainStats.pendingTx')}
+                value={chainStats.pendingTxCount.toString()}
+              />
+              <StatMetricCard
+                title={t('chainStats.validatorCount')}
+                value={chainStats.validatorCount.toString()}
+              />
+            </div>
+          </section>
+        )}
+
+        {/* BFT Consensus Status */}
+        {!isLoading && bftStatus && (
+          <section className="mb-16 fade-in-delay-1">
+            <h2 className="text-2xl md:text-3xl font-display font-bold mb-6 text-text-primary">
+              {t('bftStatus.title')}
+            </h2>
+            <div className="bg-bg-elevated rounded-xl p-8 border border-text-muted/10 hover:border-accent-cyan/30 transition-all duration-500 shadow-glow-sm hover:shadow-glow-md noise-texture">
+              <div className="grid md:grid-cols-2 gap-6">
+                <InfoRow
+                  label={t('bftStatus.enabled')}
+                  value={bftStatus.enabled ? t('bftStatus.enabled') : t('bftStatus.disabled')}
+                />
+                {bftStatus.enabled && bftStatus.active !== undefined && (
+                  <>
+                    <InfoRow
+                      label={t('bftStatus.active')}
+                      value={bftStatus.active ? '活跃' : '非活跃'}
+                    />
+                    <InfoRow
+                      label={t('bftStatus.phase')}
+                      value={bftStatus.phase || 'N/A'}
+                    />
+                    <InfoRow
+                      label={t('bftStatus.prepareVotes')}
+                      value={bftStatus.prepareVotes?.toString() || '0'}
+                    />
+                    <InfoRow
+                      label={t('bftStatus.commitVotes')}
+                      value={bftStatus.commitVotes?.toString() || '0'}
+                    />
+                    <InfoRow
+                      label={t('bftStatus.equivocations')}
+                      value={bftStatus.equivocations?.toString() || '0'}
+                    />
+                  </>
+                )}
+              </div>
+            </div>
+          </section>
+        )}
+
+        {/* Network Topology */}
+        {!isLoading && networkStats && (
+          <section className="mb-16 fade-in-delay-1">
+            <h2 className="text-2xl md:text-3xl font-display font-bold mb-6 text-text-primary">
+              {t('networkTopology.title')}
+            </h2>
+            <div className="grid md:grid-cols-4 gap-4">
+              <StatMetricCard
+                title={t('networkTopology.httpPeers')}
+                value={networkStats.peerCount?.toString() || '0'}
+              />
+              <StatMetricCard
+                title={t('networkTopology.wireConnections')}
+                value={networkStats.wire?.peers?.toString() || '0'}
+                status={networkStats.wire?.enabled ? 'enabled' : 'disabled'}
+              />
+              <StatMetricCard
+                title={t('networkTopology.dhtNodes')}
+                value={networkStats.dht?.nodes?.toString() || '0'}
+                status={networkStats.dht?.enabled ? 'enabled' : 'disabled'}
+              />
+              <StatMetricCard
+                title={t('networkTopology.securityMetrics')}
+                value={`${networkStats.p2p?.security?.authAcceptedRequests || 0}`}
+                unit="认证请求"
+              />
+            </div>
+          </section>
+        )}
+
+        {/* Mempool Status */}
+        {!isLoading && memPoolStatus && (
+          <section className="mb-16 fade-in-delay-2">
+            <h2 className="text-2xl md:text-3xl font-display font-bold mb-6 text-text-primary">
+              {t('mempool.title')}
+            </h2>
+            <div className="grid md:grid-cols-3 gap-4">
+              <StatMetricCard
+                title={t('mempool.pending')}
+                value={parseInt(memPoolStatus.pending, 16).toString()}
+              />
+              <StatMetricCard
+                title={t('mempool.queued')}
+                value={parseInt(memPoolStatus.queued, 16).toString()}
+              />
+              <StatMetricCard
+                title={t('mempool.total')}
+                value={(parseInt(memPoolStatus.pending, 16) + parseInt(memPoolStatus.queued, 16)).toString()}
+              />
+            </div>
+          </section>
+        )}
+
+        {/* DAO Governance Stats */}
+        {!isLoading && daoStats && daoStats.enabled && (
+          <section className="mb-16 fade-in-delay-2">
+            <h2 className="text-2xl md:text-3xl font-display font-bold mb-6 text-text-primary">
+              {t('daoStats.title')}
+            </h2>
+            <div className="grid md:grid-cols-4 gap-4">
+              <StatMetricCard
+                title={t('daoStats.currentEpoch')}
+                value={daoStats.currentEpoch ? parseInt(daoStats.currentEpoch, 16).toString() : '0'}
+              />
+              <StatMetricCard
+                title={t('daoStats.activeValidators')}
+                value={daoStats.activeValidators?.toString() || '0'}
+              />
+              <StatMetricCard
+                title={t('daoStats.pendingProposals')}
+                value={daoStats.pendingProposals?.toString() || '0'}
+              />
+              <StatMetricCard
+                title={t('daoStats.treasuryBalance')}
+                value={daoStats.treasuryBalance ? `${parseInt(daoStats.treasuryBalance, 16) / 1e18}` : '0'}
+                unit="Token"
+              />
+            </div>
+          </section>
+        )}
 
         {/* Node Info */}
         {!isLoading && nodeInfo && (
@@ -402,6 +645,44 @@ function MetricCard({
       </div>
 
       {/* Bottom Border Accent */}
+      <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-accent-cyan to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+    </div>
+  )
+}
+
+function StatMetricCard({
+  title,
+  value,
+  unit,
+  status,
+}: {
+  title: string
+  value: string
+  unit?: string
+  status?: 'enabled' | 'disabled'
+}) {
+  const statusColor = status === 'enabled' ? 'text-green-500' : status === 'disabled' ? 'text-gray-500' : ''
+  const statusBg = status === 'enabled' ? 'bg-green-500/10' : status === 'disabled' ? 'bg-gray-500/10' : ''
+
+  return (
+    <div className={`group relative bg-bg-elevated rounded-xl p-6 border border-text-muted/10 hover:border-accent-cyan/50 transition-all duration-500 shadow-glow-sm hover:shadow-glow-md noise-texture ${statusBg}`}>
+      <div className="relative z-10">
+        <h3 className="text-xs font-display font-semibold text-text-muted uppercase tracking-wider mb-3">
+          {title}
+        </h3>
+        <div className="flex items-baseline gap-2">
+          <p className="text-2xl md:text-3xl font-display font-bold text-accent-cyan group-hover:glow-text transition-all duration-500">
+            {value}
+          </p>
+          {unit && <p className="text-xs font-body text-text-secondary">{unit}</p>}
+        </div>
+        {status && (
+          <div className={`text-xs font-display mt-2 ${statusColor}`}>
+            {status === 'enabled' ? '✓ 启用' : '✗ 禁用'}
+          </div>
+        )}
+      </div>
+
       <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-accent-cyan to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
     </div>
   )

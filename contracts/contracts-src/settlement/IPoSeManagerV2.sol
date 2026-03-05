@@ -33,6 +33,10 @@ interface IPoSeManagerV2 {
     error ChallengeAlreadySettled();
     error ChallengeNotRevealed();
     error InvalidFaultProof();
+    error NotChallengeOwner();
+    error InvalidFaultType();
+    error RewardPoolInsufficient();
+    error RewardBudgetExceeded();
 
     // Functions
     function initEpochNonce(uint64 epochId) external;

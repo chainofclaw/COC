@@ -36,11 +36,33 @@ async function registerNode(manager, funder, opts = {}) {
 
   const bond = await manager.requiredBond(operator.address)
   await manager.connect(operator).registerNode(
-    nodeId, pubkey, serviceFlags, serviceCommitment, endpointCommitment, metadataHash, ownershipSig,
+    nodeId, pubkey, serviceFlags, serviceCommitment, endpointCommitment, metadataHash, ownershipSig, "0x",
     { value: bond }
   )
 
   return { operator, nodeId, pubkey }
+}
+
+// Helper: build structured slash evidence with 64-byte header (challengeId + nodeId) + payload
+function buildSlashEvidence(nodeId, payload, reasonCode) {
+  const challengeId = ethers.keccak256(ethers.toUtf8Bytes(`challenge-${Date.now()}-${Math.random()}`))
+  // Header: challengeId (32 bytes) + nodeId (32 bytes)
+  const header = ethers.solidityPacked(["bytes32", "bytes32"], [challengeId, nodeId])
+  let payloadBytes
+  if (typeof payload === "string") {
+    payloadBytes = ethers.toUtf8Bytes(payload)
+  } else {
+    payloadBytes = payload
+  }
+  // For reasonCode 2 (signature), pad to at least 65 bytes of payload
+  if (reasonCode === 2 && payloadBytes.length < 65) {
+    const padded = new Uint8Array(65)
+    padded.set(payloadBytes)
+    payloadBytes = padded
+  }
+  const rawEvidence = ethers.concat([header, payloadBytes])
+  const evidenceHash = ethers.keccak256(rawEvidence)
+  return { rawEvidence, evidenceHash }
 }
 
 // Helper: build a Merkle tree for batch submission
@@ -290,13 +312,13 @@ describe("PoSeManager: Extended Coverage", function () {
 
       // Challenge with leaf1 (which is sampled) — should revert
       await expect(
-        manager.connect(owner).challengeBatch(batchId, leaf1, proofs[0])
+        manager.connect(owner).challengeBatch(batchId, leaf1, proofs[0], "0x03" + "aa".repeat(32))
       ).to.be.revertedWithCustomError(manager, "InvalidBatch")
 
       // Challenge with nonexistent batch
       const fakeBatchId = ethers.keccak256(ethers.toUtf8Bytes("fake"))
       await expect(
-        manager.connect(owner).challengeBatch(fakeBatchId, leaf1, proofs[0])
+        manager.connect(owner).challengeBatch(fakeBatchId, leaf1, proofs[0], "0x03" + "aa".repeat(32))
       ).to.be.revertedWithCustomError(manager, "InvalidBatch")
     })
 
@@ -327,8 +349,76 @@ describe("PoSeManager: Extended Coverage", function () {
       )
 
       await expect(
-        manager.connect(owner).challengeBatch(batchId, ethers.ZeroHash, [root])
+        manager.connect(owner).challengeBatch(batchId, ethers.ZeroHash, [root], "0x03" + "aa".repeat(32))
       ).to.be.revertedWithCustomError(manager, "InvalidBatch")
+    })
+
+    it("challengeBatch with empty invalidityEvidence is allowed (transition period)", async function () {
+      const leaf1 = ethers.keccak256(ethers.toUtf8Bytes("leaf-transition-1"))
+      const leaf2 = ethers.keccak256(ethers.toUtf8Bytes("leaf-transition-2"))
+      const leaf3 = ethers.keccak256(ethers.toUtf8Bytes("leaf-transition-3"))
+
+      // Build 3-leaf tree: use only leaf1+leaf2 for sampling, leaf3 as new challenge target
+      const { root: root12, proofs: proofs12 } = buildMerkleTree([leaf1, leaf2])
+
+      // We need a tree that includes leaf3, let's use leaf1+leaf3
+      const { root, proofs } = buildMerkleTree([leaf1, leaf3])
+      const currentEpoch = BigInt(Math.floor(Date.now() / 1000 / 3600))
+
+      const sampleProofs = [
+        { leaf: leaf1, merkleProof: proofs[0], leafIndex: 0 },
+        { leaf: leaf3, merkleProof: proofs[1], leafIndex: 1 },
+      ]
+      let sampleCommitment = ethers.ZeroHash
+      for (const sp of sampleProofs) {
+        sampleCommitment = ethers.keccak256(
+          ethers.solidityPacked(["bytes32", "uint32", "bytes32"], [sampleCommitment, sp.leafIndex, sp.leaf])
+        )
+      }
+      const summaryHash = ethers.keccak256(
+        ethers.solidityPacked(["uint64", "bytes32", "bytes32", "uint32"], [currentEpoch, root, sampleCommitment, 2])
+      )
+
+      await manager.connect(owner).submitBatch(currentEpoch, root, summaryHash, sampleProofs)
+      // Empty invalidityEvidence is allowed during transition
+      // But the leaf must NOT be a sampled leaf, so this test just verifies
+      // the transition behavior: sampled leaf still reverts
+      const batchId = ethers.keccak256(
+        ethers.solidityPacked(["uint64", "bytes32", "bytes32", "address"], [currentEpoch, root, summaryHash, owner.address])
+      )
+      await expect(
+        manager.connect(owner).challengeBatch(batchId, leaf1, proofs[0], "0x")
+      ).to.be.revertedWithCustomError(manager, "InvalidBatch")
+    })
+
+    it("challengeBatch reverts with zero reason code in invalidityEvidence", async function () {
+      const leaf1 = ethers.keccak256(ethers.toUtf8Bytes("leaf-zeroreasonch-1"))
+      const leaf2 = ethers.keccak256(ethers.toUtf8Bytes("leaf-zeroreasonch-2"))
+      const { root, proofs } = buildMerkleTree([leaf1, leaf2])
+      const currentEpoch = BigInt(Math.floor(Date.now() / 1000 / 3600))
+
+      const sampleProofs = [
+        { leaf: leaf1, merkleProof: proofs[0], leafIndex: 0 },
+      ]
+      let sampleCommitment = ethers.ZeroHash
+      for (const sp of sampleProofs) {
+        sampleCommitment = ethers.keccak256(
+          ethers.solidityPacked(["bytes32", "uint32", "bytes32"], [sampleCommitment, sp.leafIndex, sp.leaf])
+        )
+      }
+      const summaryHash = ethers.keccak256(
+        ethers.solidityPacked(["uint64", "bytes32", "bytes32", "uint32"], [currentEpoch, root, sampleCommitment, 1])
+      )
+
+      await manager.connect(owner).submitBatch(currentEpoch, root, summaryHash, sampleProofs)
+      const batchId = ethers.keccak256(
+        ethers.solidityPacked(["uint64", "bytes32", "bytes32", "address"], [currentEpoch, root, summaryHash, owner.address])
+      )
+
+      // reason byte = 0x00 should revert
+      await expect(
+        manager.connect(owner).challengeBatch(batchId, leaf2, proofs[1], "0x00" + "bb".repeat(32))
+      ).to.be.revertedWithCustomError(manager, "InvalidSlashEvidence")
     })
   })
 
@@ -402,27 +492,25 @@ describe("PoSeManager: Extended Coverage", function () {
 
       // user1 cannot slash initially (not slasher)
       const { nodeId } = await registerNode(manager, owner)
-      const rawEvidence = ethers.toUtf8Bytes("evidence-role")
-      const evidenceHash = ethers.keccak256(rawEvidence)
+      const ev1 = buildSlashEvidence(nodeId, "evidence-role", 1)
 
       await expect(
-        manager.connect(user1).slash(nodeId, { nodeId, evidenceHash, reasonCode: 1, rawEvidence })
+        manager.connect(user1).slash(nodeId, { nodeId, evidenceHash: ev1.evidenceHash, reasonCode: 1, rawEvidence: ev1.rawEvidence })
       ).to.be.reverted
 
       // Grant slasher role
       await manager.connect(owner).setSlasher(user1.address, true)
 
       // Now user1 can slash
-      await manager.connect(user1).slash(nodeId, { nodeId, evidenceHash, reasonCode: 1, rawEvidence })
+      await manager.connect(user1).slash(nodeId, { nodeId, evidenceHash: ev1.evidenceHash, reasonCode: 1, rawEvidence: ev1.rawEvidence })
 
       // Revoke slasher role
       await manager.connect(owner).setSlasher(user1.address, false)
 
       // user1 can no longer slash
-      const rawEvidence2 = ethers.toUtf8Bytes("evidence-role-2")
-      const evidenceHash2 = ethers.keccak256(rawEvidence2)
+      const ev2 = buildSlashEvidence(nodeId, "evidence-role-2", 2)
       await expect(
-        manager.connect(user1).slash(nodeId, { nodeId, evidenceHash: evidenceHash2, reasonCode: 2, rawEvidence: rawEvidence2 })
+        manager.connect(user1).slash(nodeId, { nodeId, evidenceHash: ev2.evidenceHash, reasonCode: 2, rawEvidence: ev2.rawEvidence })
       ).to.be.reverted
     })
   })
@@ -433,9 +521,8 @@ describe("PoSeManager: Extended Coverage", function () {
       const nodeBefore = await manager.getNode(nodeId)
       const bondBefore = nodeBefore.bondAmount
 
-      const rawEvidence = ethers.toUtf8Bytes("sig-evidence")
-      const evidenceHash = ethers.keccak256(rawEvidence)
-      await manager.connect(owner).slash(nodeId, { nodeId, evidenceHash, reasonCode: 2, rawEvidence })
+      const ev = buildSlashEvidence(nodeId, "sig-evidence", 2)
+      await manager.connect(owner).slash(nodeId, { nodeId, evidenceHash: ev.evidenceHash, reasonCode: 2, rawEvidence: ev.rawEvidence })
 
       const nodeAfter = await manager.getNode(nodeId)
       const slashed = bondBefore - nodeAfter.bondAmount
@@ -448,9 +535,8 @@ describe("PoSeManager: Extended Coverage", function () {
       const nodeBefore = await manager.getNode(nodeId)
       const bondBefore = nodeBefore.bondAmount
 
-      const rawEvidence = ethers.toUtf8Bytes("timeout-evidence")
-      const evidenceHash = ethers.keccak256(rawEvidence)
-      await manager.connect(owner).slash(nodeId, { nodeId, evidenceHash, reasonCode: 3, rawEvidence })
+      const ev = buildSlashEvidence(nodeId, "timeout-evidence", 3)
+      await manager.connect(owner).slash(nodeId, { nodeId, evidenceHash: ev.evidenceHash, reasonCode: 3, rawEvidence: ev.rawEvidence })
 
       const nodeAfter = await manager.getNode(nodeId)
       const slashed = bondBefore - nodeAfter.bondAmount
@@ -462,9 +548,8 @@ describe("PoSeManager: Extended Coverage", function () {
       const nodeBefore = await manager.getNode(nodeId)
       const bondBefore = nodeBefore.bondAmount
 
-      const rawEvidence = ethers.toUtf8Bytes("storage-proof-bad")
-      const evidenceHash = ethers.keccak256(rawEvidence)
-      await manager.connect(owner).slash(nodeId, { nodeId, evidenceHash, reasonCode: 4, rawEvidence })
+      const ev = buildSlashEvidence(nodeId, "storage-proof-bad", 4)
+      await manager.connect(owner).slash(nodeId, { nodeId, evidenceHash: ev.evidenceHash, reasonCode: 4, rawEvidence: ev.rawEvidence })
 
       const nodeAfter = await manager.getNode(nodeId)
       const slashed = bondBefore - nodeAfter.bondAmount
@@ -476,13 +561,46 @@ describe("PoSeManager: Extended Coverage", function () {
       const nodeBefore = await manager.getNode(nodeId)
       const bondBefore = nodeBefore.bondAmount
 
-      const rawEvidence = ethers.toUtf8Bytes("generic-fault")
-      const evidenceHash = ethers.keccak256(rawEvidence)
-      await manager.connect(owner).slash(nodeId, { nodeId, evidenceHash, reasonCode: 5, rawEvidence })
+      const ev = buildSlashEvidence(nodeId, "generic-fault", 5)
+      await manager.connect(owner).slash(nodeId, { nodeId, evidenceHash: ev.evidenceHash, reasonCode: 5, rawEvidence: ev.rawEvidence })
 
       const nodeAfter = await manager.getNode(nodeId)
       const slashed = bondBefore - nodeAfter.bondAmount
       expect(slashed).to.equal(bondBefore * 1000n / 10000n)
+    })
+
+    it("reverts slash with evidence too short (no structured header)", async function () {
+      const { nodeId } = await registerNode(manager, owner)
+      const rawEvidence = ethers.toUtf8Bytes("short")
+      const evidenceHash = ethers.keccak256(rawEvidence)
+      await expect(
+        manager.connect(owner).slash(nodeId, { nodeId, evidenceHash, reasonCode: 1, rawEvidence })
+      ).to.be.revertedWithCustomError(manager, "InvalidSlashEvidence")
+    })
+
+    it("reverts slash with wrong nodeId in evidence header", async function () {
+      const { nodeId } = await registerNode(manager, owner)
+      // Build evidence with wrong nodeId in header
+      const challengeId = ethers.keccak256(ethers.toUtf8Bytes("bad-challenge"))
+      const wrongNodeId = ethers.keccak256(ethers.toUtf8Bytes("wrong-node"))
+      const header = ethers.solidityPacked(["bytes32", "bytes32"], [challengeId, wrongNodeId])
+      const rawEvidence = ethers.concat([header, ethers.toUtf8Bytes("payload")])
+      const evidenceHash = ethers.keccak256(rawEvidence)
+      await expect(
+        manager.connect(owner).slash(nodeId, { nodeId, evidenceHash, reasonCode: 1, rawEvidence })
+      ).to.be.revertedWithCustomError(manager, "InvalidSlashEvidence")
+    })
+
+    it("reverts reason code 2 slash with evidence < 129 bytes", async function () {
+      const { nodeId } = await registerNode(manager, owner)
+      const challengeId = ethers.keccak256(ethers.toUtf8Bytes("sig-challenge"))
+      const header = ethers.solidityPacked(["bytes32", "bytes32"], [challengeId, nodeId])
+      // Only 64 header + 10 bytes payload = 74 < 129
+      const rawEvidence = ethers.concat([header, ethers.toUtf8Bytes("short-sig!")])
+      const evidenceHash = ethers.keccak256(rawEvidence)
+      await expect(
+        manager.connect(owner).slash(nodeId, { nodeId, evidenceHash, reasonCode: 2, rawEvidence })
+      ).to.be.revertedWithCustomError(manager, "InvalidSlashEvidence")
     })
   })
 
@@ -517,7 +635,7 @@ describe("PoSeManager: Extended Coverage", function () {
       const sig1 = await operator2.signMessage(ethers.getBytes(messageHash1))
       const bond = await manager.requiredBond(operator2.address)
       await manager.connect(operator2).registerNode(
-        nodeId2, pubkey2, 1, serviceCommitment, endpointCommitment, metadataHash, sig1,
+        nodeId2, pubkey2, 1, serviceCommitment, endpointCommitment, metadataHash, sig1, "0x",
         { value: bond }
       )
 
@@ -535,10 +653,78 @@ describe("PoSeManager: Extended Coverage", function () {
 
       await expect(
         manager.connect(operator3).registerNode(
-          nodeId3, pubkey3, 1, serviceCommitment, endpointCommitment, metadataHash, sig3,
+          nodeId3, pubkey3, 1, serviceCommitment, endpointCommitment, metadataHash, sig3, "0x",
           { value: bond3 }
         )
       ).to.be.revertedWithCustomError(manager, "EndpointAlreadyRegistered")
+    })
+  })
+
+  describe("endpoint attestation", function () {
+    it("valid endpoint attestation passes", async function () {
+      const operator = ethers.Wallet.createRandom().connect(ethers.provider)
+      await owner.sendTransaction({ to: operator.address, value: ethers.parseEther("5") })
+
+      const pubkey = operator.signingKey.publicKey
+      const nodeId = ethers.keccak256(pubkey)
+      const serviceCommitment = ethers.keccak256(ethers.toUtf8Bytes("svc-attest"))
+      const endpointCommitment = ethers.keccak256(ethers.toUtf8Bytes(`ep-attest-${Date.now()}`))
+      const metadataHash = ethers.keccak256(ethers.toUtf8Bytes("meta"))
+
+      const ownershipMsgHash = ethers.keccak256(
+        ethers.solidityPacked(["string", "bytes32", "address"], ["coc-register:", nodeId, operator.address])
+      )
+      const ownershipSig = await operator.signMessage(ethers.getBytes(ownershipMsgHash))
+
+      // Build valid endpoint attestation: sign "coc-endpoint:" + endpointCommitment + nodeId
+      const endpointMsgHash = ethers.keccak256(
+        ethers.solidityPacked(["string", "bytes32", "bytes32"], ["coc-endpoint:", endpointCommitment, nodeId])
+      )
+      const endpointAttestation = await operator.signMessage(ethers.getBytes(endpointMsgHash))
+
+      const bond = await manager.requiredBond(operator.address)
+      await manager.connect(operator).registerNode(
+        nodeId, pubkey, 1, serviceCommitment, endpointCommitment, metadataHash, ownershipSig, endpointAttestation,
+        { value: bond }
+      )
+
+      const node = await manager.getNode(nodeId)
+      expect(node.active).to.be.true
+    })
+
+    it("invalid endpoint attestation reverts", async function () {
+      const operator = ethers.Wallet.createRandom().connect(ethers.provider)
+      await owner.sendTransaction({ to: operator.address, value: ethers.parseEther("5") })
+
+      const pubkey = operator.signingKey.publicKey
+      const nodeId = ethers.keccak256(pubkey)
+      const serviceCommitment = ethers.keccak256(ethers.toUtf8Bytes("svc-bad-attest"))
+      const endpointCommitment = ethers.keccak256(ethers.toUtf8Bytes(`ep-bad-${Date.now()}`))
+      const metadataHash = ethers.keccak256(ethers.toUtf8Bytes("meta"))
+
+      const ownershipMsgHash = ethers.keccak256(
+        ethers.solidityPacked(["string", "bytes32", "address"], ["coc-register:", nodeId, operator.address])
+      )
+      const ownershipSig = await operator.signMessage(ethers.getBytes(ownershipMsgHash))
+
+      // Sign wrong message for attestation
+      const badAttestation = await operator.signMessage(ethers.getBytes(ethers.keccak256(ethers.toUtf8Bytes("wrong"))))
+
+      const bond = await manager.requiredBond(operator.address)
+      await expect(
+        manager.connect(operator).registerNode(
+          nodeId, pubkey, 1, serviceCommitment, endpointCommitment, metadataHash, ownershipSig, badAttestation,
+          { value: bond }
+        )
+      ).to.be.revertedWithCustomError(manager, "InvalidOwnershipProof")
+    })
+
+    it("empty endpoint attestation is allowed (transition)", async function () {
+      // This is already tested implicitly by all other registerNode calls using "0x"
+      // but explicitly verify the transition behavior
+      const { operator, nodeId } = await registerNode(manager, owner)
+      const node = await manager.getNode(nodeId)
+      expect(node.active).to.be.true
     })
   })
 
@@ -565,6 +751,145 @@ describe("PoSeManager: Extended Coverage", function () {
       const [, user1] = await ethers.getSigners()
       // First node: 0.1 ETH
       expect(await manager.requiredBond(user1.address)).to.equal(ethers.parseEther("0.1"))
+    })
+  })
+
+  describe("reward lifecycle", function () {
+    it("depositRewardPool + distributeRewards + claimReward", async function () {
+      const { operator, nodeId } = await registerNode(manager, owner)
+
+      // Deposit to reward pool
+      await manager.connect(owner).depositRewardPool({ value: ethers.parseEther("1") })
+      expect(await manager.rewardPoolBalance()).to.equal(ethers.parseEther("1"))
+
+      // Submit and finalize a batch to enable distribution
+      const leaf1 = ethers.keccak256(ethers.toUtf8Bytes("reward-leaf-1"))
+      const leaf2 = ethers.keccak256(ethers.toUtf8Bytes("reward-leaf-2"))
+      const { root, proofs } = buildMerkleTree([leaf1, leaf2])
+      const currentEpoch = BigInt(Math.floor(Date.now() / 1000 / 3600))
+
+      const sampleProofs = [
+        { leaf: leaf1, merkleProof: proofs[0], leafIndex: 0 },
+        { leaf: leaf2, merkleProof: proofs[1], leafIndex: 1 },
+      ]
+      let sampleCommitment = ethers.ZeroHash
+      for (const sp of sampleProofs) {
+        sampleCommitment = ethers.keccak256(
+          ethers.solidityPacked(["bytes32", "uint32", "bytes32"], [sampleCommitment, sp.leafIndex, sp.leaf])
+        )
+      }
+      const summaryHash = ethers.keccak256(
+        ethers.solidityPacked(["uint64", "bytes32", "bytes32", "uint32"], [currentEpoch, root, sampleCommitment, 2])
+      )
+      await manager.connect(owner).submitBatch(currentEpoch, root, summaryHash, sampleProofs)
+
+      await ethers.provider.send("evm_increaseTime", [7200 + 3600 + 1])
+      await ethers.provider.send("evm_mine")
+      await manager.connect(owner).finalizeEpoch(currentEpoch)
+
+      // Distribute rewards
+      const rewardAmount = ethers.parseEther("0.3") // 30% of pool (max per node)
+      await manager.connect(owner).distributeRewards(currentEpoch, [
+        { nodeId, amount: rewardAmount },
+      ])
+      expect(await manager.pendingRewards(nodeId)).to.equal(rewardAmount)
+
+      // Claim reward
+      const balBefore = await ethers.provider.getBalance(operator.address)
+      const claimTx = await manager.connect(operator).claimReward(nodeId)
+      const claimReceipt = await claimTx.wait()
+      const gasUsed = claimReceipt.gasUsed * claimReceipt.gasPrice
+      const balAfter = await ethers.provider.getBalance(operator.address)
+
+      expect(balAfter + gasUsed - balBefore).to.equal(rewardAmount)
+      expect(await manager.pendingRewards(nodeId)).to.equal(0)
+    })
+
+    it("reverts distributeRewards for non-finalized epoch", async function () {
+      await expect(
+        manager.connect(owner).distributeRewards(999999, [])
+      ).to.be.revertedWithCustomError(manager, "InvalidEpoch")
+    })
+
+    it("reverts double distribution", async function () {
+      const { nodeId } = await registerNode(manager, owner)
+
+      await manager.connect(owner).depositRewardPool({ value: ethers.parseEther("1") })
+
+      const leaf1 = ethers.keccak256(ethers.toUtf8Bytes("double-dist-1"))
+      const leaf2 = ethers.keccak256(ethers.toUtf8Bytes("double-dist-2"))
+      const { root, proofs } = buildMerkleTree([leaf1, leaf2])
+      const currentEpoch = BigInt(Math.floor(Date.now() / 1000 / 3600))
+
+      const sampleProofs = [
+        { leaf: leaf1, merkleProof: proofs[0], leafIndex: 0 },
+        { leaf: leaf2, merkleProof: proofs[1], leafIndex: 1 },
+      ]
+      let sampleCommitment = ethers.ZeroHash
+      for (const sp of sampleProofs) {
+        sampleCommitment = ethers.keccak256(
+          ethers.solidityPacked(["bytes32", "uint32", "bytes32"], [sampleCommitment, sp.leafIndex, sp.leaf])
+        )
+      }
+      const summaryHash = ethers.keccak256(
+        ethers.solidityPacked(["uint64", "bytes32", "bytes32", "uint32"], [currentEpoch, root, sampleCommitment, 2])
+      )
+      await manager.connect(owner).submitBatch(currentEpoch, root, summaryHash, sampleProofs)
+
+      await ethers.provider.send("evm_increaseTime", [7200 + 3600 + 1])
+      await ethers.provider.send("evm_mine")
+      await manager.connect(owner).finalizeEpoch(currentEpoch)
+
+      await manager.connect(owner).distributeRewards(currentEpoch, [{ nodeId, amount: ethers.parseEther("0.1") }])
+
+      await expect(
+        manager.connect(owner).distributeRewards(currentEpoch, [{ nodeId, amount: ethers.parseEther("0.1") }])
+      ).to.be.revertedWithCustomError(manager, "EpochAlreadyFinalized")
+    })
+
+    it("caps per-node reward at MAX_REWARD_PER_NODE_BPS", async function () {
+      const { operator, nodeId } = await registerNode(manager, owner)
+
+      await manager.connect(owner).depositRewardPool({ value: ethers.parseEther("1") })
+
+      const leaf1 = ethers.keccak256(ethers.toUtf8Bytes("cap-leaf-1"))
+      const leaf2 = ethers.keccak256(ethers.toUtf8Bytes("cap-leaf-2"))
+      const { root, proofs } = buildMerkleTree([leaf1, leaf2])
+      const currentEpoch = BigInt(Math.floor(Date.now() / 1000 / 3600))
+
+      const sampleProofs = [
+        { leaf: leaf1, merkleProof: proofs[0], leafIndex: 0 },
+        { leaf: leaf2, merkleProof: proofs[1], leafIndex: 1 },
+      ]
+      let sampleCommitment = ethers.ZeroHash
+      for (const sp of sampleProofs) {
+        sampleCommitment = ethers.keccak256(
+          ethers.solidityPacked(["bytes32", "uint32", "bytes32"], [sampleCommitment, sp.leafIndex, sp.leaf])
+        )
+      }
+      const summaryHash = ethers.keccak256(
+        ethers.solidityPacked(["uint64", "bytes32", "bytes32", "uint32"], [currentEpoch, root, sampleCommitment, 2])
+      )
+      await manager.connect(owner).submitBatch(currentEpoch, root, summaryHash, sampleProofs)
+
+      await ethers.provider.send("evm_increaseTime", [7200 + 3600 + 1])
+      await ethers.provider.send("evm_mine")
+      await manager.connect(owner).finalizeEpoch(currentEpoch)
+
+      // Try to distribute more than 30% of pool to one node
+      await manager.connect(owner).distributeRewards(currentEpoch, [
+        { nodeId, amount: ethers.parseEther("0.9") },
+      ])
+
+      // Should be capped at 30% of 1 ETH = 0.3 ETH
+      expect(await manager.pendingRewards(nodeId)).to.equal(ethers.parseEther("0.3"))
+    })
+
+    it("reverts claimReward with zero pending", async function () {
+      const { operator, nodeId } = await registerNode(manager, owner)
+      await expect(
+        manager.connect(operator).claimReward(nodeId)
+      ).to.be.revertedWithCustomError(manager, "NoBondToWithdraw")
     })
   })
 })

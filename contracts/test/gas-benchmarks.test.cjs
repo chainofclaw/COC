@@ -118,7 +118,7 @@ describe("Gas Benchmarks: PoSeManager", function () {
     )
     const ownershipSig = await operator.signMessage(ethers.getBytes(ownershipMessageHash))
     const tx = await manager.connect(operator).registerNode(
-      nodeId, pubkeyNode, 0x07, serviceCommitment, endpointCommitment, metadataHash, ownershipSig,
+      nodeId, pubkeyNode, 0x07, serviceCommitment, endpointCommitment, metadataHash, ownershipSig, "0x",
       { value: bondRequired }
     )
     const receipt = await tx.wait()
@@ -140,11 +140,13 @@ describe("Gas Benchmarks: PoSeManager", function () {
     )
     const ownershipSig = await operator.signMessage(ethers.getBytes(ownershipMessageHash))
     await manager.connect(operator).registerNode(
-      nodeId, pubkeyNode, 0x07, serviceCommitment, endpointCommitment, metadataHash, ownershipSig,
+      nodeId, pubkeyNode, 0x07, serviceCommitment, endpointCommitment, metadataHash, ownershipSig, "0x",
       { value: bondRequired }
     )
 
-    const rawEvidence = ethers.toUtf8Bytes("evidence-bench")
+    const challengeId = ethers.keccak256(ethers.toUtf8Bytes("bench-challenge"))
+    const header = ethers.solidityPacked(["bytes32", "bytes32"], [challengeId, nodeId])
+    const rawEvidence = ethers.concat([header, ethers.toUtf8Bytes("evidence-bench")])
     const evidenceHash = ethers.keccak256(rawEvidence)
     const tx = await manager.slash(nodeId, { nodeId, evidenceHash, reasonCode: 1, rawEvidence })
     const receipt = await tx.wait()

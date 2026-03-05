@@ -90,6 +90,11 @@ export interface NodeConfig {
   enableAdminRpc: boolean
   // Block signature enforcement: "off" = ignore, "monitor" = warn, "enforce" = reject
   signatureEnforcement: "off" | "monitor" | "enforce"
+  // Governance module
+  enableGovernance: boolean
+  validatorStakes: Array<{ id: string; address: string; stake: string }>
+  // Identity mapping: nodeId → address for signature verification
+  validatorAddresses?: Record<string, string>
 }
 
 export async function loadNodeConfig(): Promise<NodeConfig> {
@@ -284,6 +289,32 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     ?? (user as Record<string, unknown>).signatureEnforcement
   const signatureEnforcement = normalizeSigEnforcement(sigEnforcementRaw)
 
+  // Governance module
+  const enableGovernance = parseBooleanFlag(
+    process.env.COC_ENABLE_GOVERNANCE ?? (user as Record<string, unknown>).enableGovernance,
+    false,
+  )
+  const userValidatorStakes = (user as Record<string, unknown>).validatorStakes
+  const validatorStakes: Array<{ id: string; address: string; stake: string }> = Array.isArray(userValidatorStakes)
+    ? userValidatorStakes.filter(
+        (x): x is { id: string; address: string; stake: string } =>
+          typeof x === "object" && x !== null &&
+          typeof (x as Record<string, unknown>).id === "string" &&
+          typeof (x as Record<string, unknown>).address === "string"
+      ).map((x) => ({ id: x.id, address: x.address, stake: String((x as Record<string, unknown>).stake ?? "1000000000000000000") }))
+    : []
+
+  // Validator address mapping for identity alignment
+  const userValidatorAddresses = (user as Record<string, unknown>).validatorAddresses
+  const validatorAddresses: Record<string, string> | undefined =
+    typeof userValidatorAddresses === "object" && userValidatorAddresses !== null && !Array.isArray(userValidatorAddresses)
+      ? Object.fromEntries(
+          Object.entries(userValidatorAddresses as Record<string, unknown>)
+            .filter(([, v]) => typeof v === "string")
+            .map(([k, v]) => [k, v as string])
+        )
+      : undefined
+
   // Resolve node private key: env var → file → auto-generate
   const nodePrivateKey = await resolveNodeKey(dataDir)
 
@@ -344,6 +375,8 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     poseOnchainAuthTimeoutMs,
     poseOnchainAuthFailOpen,
     poseChallengerAuthCacheTtlMs,
+    enableGovernance: false,
+    validatorStakes: [],
     enableBft: false,
     bftPrepareTimeoutMs: 5000,
     bftCommitTimeoutMs: 5000,
@@ -393,6 +426,9 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     enableAdminRpc,
     signatureEnforcement,
     nodePrivateKey,
+    enableGovernance,
+    validatorStakes,
+    validatorAddresses,
     storage: { ...storageDefaults, ...userStorage },
   }
 }
@@ -733,6 +769,22 @@ export function validateConfig(cfg: Partial<NodeConfig>): string[] {
   if (cfg.poseNonceRegistryMaxEntries !== undefined) {
     if (!Number.isInteger(cfg.poseNonceRegistryMaxEntries) || cfg.poseNonceRegistryMaxEntries < 1) {
       errors.push("poseNonceRegistryMaxEntries must be a positive integer")
+    }
+  }
+
+  if (cfg.enableGovernance !== undefined && typeof cfg.enableGovernance !== "boolean") {
+    errors.push("enableGovernance must be a boolean")
+  }
+
+  if (cfg.validatorStakes !== undefined) {
+    if (!Array.isArray(cfg.validatorStakes)) {
+      errors.push("validatorStakes must be an array")
+    }
+  }
+
+  if (cfg.validatorAddresses !== undefined) {
+    if (typeof cfg.validatorAddresses !== "object" || cfg.validatorAddresses === null || Array.isArray(cfg.validatorAddresses)) {
+      errors.push("validatorAddresses must be a Record<string, string>")
     }
   }
 

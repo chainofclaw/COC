@@ -7,6 +7,7 @@ export interface CocRuntimeConfig {
   nodeBind?: string;
   nodePort?: number;
   nodeUrl?: string;
+  nodeEndpoints?: Record<string, string>;
   storageDir?: string;
   agentIntervalMs?: number;
   agentBatchSize?: number;

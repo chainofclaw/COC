@@ -82,6 +82,45 @@ function pairHash(a, b) {
   return ethers.keccak256(ethers.solidityPacked(["bytes32", "bytes32"], [x, y]))
 }
 
+async function submitSingleLeafBatchV2(manager, epochId, leafHash) {
+  const sampleProofs = [{ leaf: leafHash, merkleProof: [leafHash], leafIndex: 0 }]
+  const sampleCommitment = ethers.keccak256(
+    ethers.solidityPacked(["bytes32", "uint32", "bytes32"], [ethers.ZeroHash, 0, leafHash])
+  )
+  const summaryHash = ethers.keccak256(
+    ethers.solidityPacked(["uint64", "bytes32", "bytes32", "uint32"], [epochId, pairHash(leafHash, leafHash), sampleCommitment, 1])
+  )
+  const tx = await manager.submitBatchV2(
+    epochId,
+    pairHash(leafHash, leafHash),
+    summaryHash,
+    sampleProofs,
+    0,
+    [],
+  )
+  const receipt = await tx.wait()
+  const event = receipt.logs.find((l) => {
+    try { return manager.interface.parseLog(l)?.name === "BatchSubmittedV2" } catch { return false }
+  })
+  return manager.interface.parseLog(event).args[1] // batchId
+}
+
+function hashEvidenceLeafV2(leaf) {
+  return ethers.keccak256(
+    ethers.solidityPacked(
+      ["uint64", "bytes32", "bytes16", "bytes32", "uint64", "uint32", "uint8", "uint32"],
+      [leaf.epoch, leaf.nodeId, leaf.nonce, leaf.tipHash, leaf.tipHeight, leaf.latencyMs, leaf.resultCode, leaf.witnessBitmap]
+    )
+  )
+}
+
+function encodeEvidenceData(batchId, merkleProof, leaf) {
+  return ethers.AbiCoder.defaultAbiCoder().encode(
+    ["bytes32", "bytes32[]", "tuple(uint64 epoch,bytes32 nodeId,bytes16 nonce,bytes32 tipHash,uint64 tipHeight,uint32 latencyMs,uint8 resultCode,uint32 witnessBitmap)"],
+    [batchId, merkleProof, leaf]
+  )
+}
+
 describe("PoSeManagerV2", function () {
   let manager
   let deployer
@@ -242,10 +281,26 @@ describe("PoSeManagerV2", function () {
       // Set challenge bond min
       await manager.setChallengeBondMin(ethers.parseEther("0.01"))
 
-      // Open challenge
+      const latestBlock = await ethers.provider.getBlock("latest")
+      const epochId = Math.floor(Number(latestBlock.timestamp) / 3600)
+
+      // Build objective fault evidence leaf (resultCode=2 => InvalidSig)
       const targetNodeId = nodeId
-      const faultType = 1 // DoubleSig
-      const evidenceLeafHash = ethers.keccak256(ethers.toUtf8Bytes("evidence"))
+      const faultType = 2
+      const leaf = {
+        epoch: epochId,
+        nodeId: targetNodeId,
+        nonce: "0x" + "11".repeat(16),
+        tipHash: ethers.keccak256(ethers.toUtf8Bytes("tip")),
+        tipHeight: 100,
+        latencyMs: 1200,
+        resultCode: 2,
+        witnessBitmap: 0,
+      }
+      const evidenceLeafHash = hashEvidenceLeafV2(leaf)
+      const batchId = await submitSingleLeafBatchV2(manager, epochId, evidenceLeafHash)
+      const evidenceData = encodeEvidenceData(batchId, [evidenceLeafHash], leaf)
+
       const salt = ethers.keccak256(ethers.toUtf8Bytes("salt"))
       const commitHash = ethers.keccak256(
         ethers.solidityPacked(
@@ -261,9 +316,17 @@ describe("PoSeManagerV2", function () {
       })
       const challengeId = manager.interface.parseLog(event).args[0]
 
+      const revealDigest = ethers.keccak256(
+        ethers.solidityPacked(
+          ["string", "bytes32", "bytes32", "uint8", "bytes32", "bytes32", "bytes32"],
+          ["coc-fault:", challengeId, targetNodeId, faultType, evidenceLeafHash, salt, ethers.keccak256(evidenceData)]
+        )
+      )
+      const challengerSig = await deployer.signMessage(ethers.getBytes(revealDigest))
+
       // Reveal
       await manager.revealChallenge(
-        challengeId, targetNodeId, faultType, evidenceLeafHash, salt, "0x", "0x"
+        challengeId, targetNodeId, faultType, evidenceLeafHash, salt, evidenceData, challengerSig
       )
 
       const record = await manager.getChallenge(challengeId)
@@ -308,14 +371,31 @@ describe("PoSeManagerV2", function () {
     })
 
     it("settle before adjudication window reverts", async function () {
+      const { nodeId } = await registerNode(manager, deployer)
       await manager.setChallengeBondMin(ethers.parseEther("0.01"))
-      const targetNode = ethers.keccak256(ethers.toUtf8Bytes("node"))
+      const latestBlock = await ethers.provider.getBlock("latest")
+      const epochId = Math.floor(Number(latestBlock.timestamp) / 3600)
+
+      const targetNode = nodeId
+      const leaf = {
+        epoch: epochId,
+        nodeId: targetNode,
+        nonce: "0x" + "22".repeat(16),
+        tipHash: ethers.keccak256(ethers.toUtf8Bytes("tip-2")),
+        tipHeight: 200,
+        latencyMs: 2400,
+        resultCode: 2,
+        witnessBitmap: 0,
+      }
+      const evidenceHash = hashEvidenceLeafV2(leaf)
+      const batchId = await submitSingleLeafBatchV2(manager, epochId, evidenceHash)
+      const evidenceData = encodeEvidenceData(batchId, [evidenceHash], leaf)
       const salt = ethers.keccak256(ethers.toUtf8Bytes("s"))
-      const evidenceHash = ethers.keccak256(ethers.toUtf8Bytes("e"))
+      const faultType = 2
       const commitHash = ethers.keccak256(
         ethers.solidityPacked(
           ["bytes32", "uint8", "bytes32", "bytes32"],
-          [targetNode, 1, evidenceHash, salt]
+          [targetNode, faultType, evidenceHash, salt]
         )
       )
 
@@ -326,7 +406,15 @@ describe("PoSeManagerV2", function () {
       })
       const challengeId = manager.interface.parseLog(event).args[0]
 
-      await manager.revealChallenge(challengeId, targetNode, 1, evidenceHash, salt, "0x", "0x")
+      const revealDigest = ethers.keccak256(
+        ethers.solidityPacked(
+          ["string", "bytes32", "bytes32", "uint8", "bytes32", "bytes32", "bytes32"],
+          ["coc-fault:", challengeId, targetNode, faultType, evidenceHash, salt, ethers.keccak256(evidenceData)]
+        )
+      )
+      const challengerSig = await deployer.signMessage(ethers.getBytes(revealDigest))
+
+      await manager.revealChallenge(challengeId, targetNode, faultType, evidenceHash, salt, evidenceData, challengerSig)
 
       await expect(
         manager.settleChallenge(challengeId)

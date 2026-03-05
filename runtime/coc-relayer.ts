@@ -66,8 +66,8 @@ async function tick(): Promise<void> {
       await tryFinalizeV2();
     } else {
       await tryFinalize();
+      await tryDispute();
     }
-    await tryDispute();
     log.info("tick ok");
   } catch (error) {
     log.error("tick failed", { error: String(error) });
@@ -223,8 +223,16 @@ async function tryFinalizeV2(): Promise<void> {
   } catch { /* proceed to try finalize */ }
 
   try {
-    // v2 allows empty epochs — pass zero root if no batches
+    // Fail-closed: never finalize non-empty epochs with a synthetic zero reward root.
     const batchIds: string[] = await poseV2Contract.getEpochBatchIds(BigInt(candidate));
+    if (batchIds.length > 0) {
+      log.warn("finalizeV2 skipped: epoch has batches but no authoritative reward root pipeline is wired", {
+        epochId: candidate,
+        batches: batchIds.length,
+      });
+      return;
+    }
+
     const rewardRoot = "0x" + "0".repeat(64);
     const totalReward = 0n;
     const slashTotal = 0n;

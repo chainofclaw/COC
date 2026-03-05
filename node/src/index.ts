@@ -96,6 +96,8 @@ if (usePersistent) {
       signatureEnforcement: config.signatureEnforcement,
       prefundAccounts: prefund,
       stateTrie: trie,
+      enableGovernance: config.enableGovernance,
+      validatorStakes: config.validatorStakes.map((v) => ({ ...v, stake: BigInt(v.stake) })),
     },
     evm,
   )
@@ -115,6 +117,8 @@ if (usePersistent) {
       maxTxPerBlock: config.maxTxPerBlock,
       minGasPriceWei: BigInt(config.minGasPriceWei),
       signatureEnforcement: config.signatureEnforcement,
+      enableGovernance: config.enableGovernance,
+      validatorStakes: config.validatorStakes.map((v) => ({ ...v, stake: BigInt(v.stake) })),
     },
     evm,
   )
@@ -132,6 +136,17 @@ if (typeof (chain as PersistentChainEngine).setNodeSigner === "function") {
   (chain as PersistentChainEngine).setNodeSigner(nodeSigner, nodeSigner)
 } else if (typeof (chain as ChainEngine).setNodeSigner === "function") {
   (chain as ChainEngine).setNodeSigner(nodeSigner, nodeSigner)
+}
+
+// Build validator address map for identity alignment (nodeId → ETH address)
+if (config.validatorAddresses) {
+  const addrMap = new Map<string, string>(Object.entries(config.validatorAddresses))
+  if (typeof (chain as PersistentChainEngine).setValidatorAddressMap === "function") {
+    (chain as PersistentChainEngine).setValidatorAddressMap(addrMap)
+  } else if (typeof (chain as ChainEngine).setValidatorAddressMap === "function") {
+    (chain as ChainEngine).setValidatorAddressMap(addrMap)
+  }
+  log.info("validator address map loaded", { entries: addrMap.size })
 }
 
 // BFT coordinator setup

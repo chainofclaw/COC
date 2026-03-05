@@ -36,6 +36,12 @@ abstract contract PoSeManagerStorage {
     // Sybil防护: 全局唯一 endpointCommitment，防止同机器多节点注册
     mapping(bytes32 => bool) public endpointCommitmentUsed;
 
+    // Reward pool
+    uint256 public rewardPoolBalance;
+    mapping(uint64 => bool) public epochRewardsDistributed;
+    mapping(bytes32 => uint256) public pendingRewards;
+    uint16 public constant MAX_REWARD_PER_NODE_BPS = 3000; // 30% cap per node
+
     modifier onlyOwner() {
         require(msg.sender == owner, "not owner");
         _;
