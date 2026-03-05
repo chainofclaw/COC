@@ -340,6 +340,21 @@ async function handleOne(
   }
 }
 
+/** Bitwise OR two 256-byte hex bloom filters (EIP-2718 logsBloom format). */
+function orBlooms(a: string, b: string): string {
+  // Both inputs should be "0x" + 512 hex chars (256 bytes)
+  const aHex = a.startsWith("0x") ? a.slice(2) : a
+  const bHex = b.startsWith("0x") ? b.slice(2) : b
+  if (aHex.length !== 512 || bHex.length !== 512) return b // fallback: use b
+  const result: string[] = []
+  for (let i = 0; i < 512; i += 2) {
+    const byteA = parseInt(aHex.slice(i, i + 2), 16)
+    const byteB = parseInt(bHex.slice(i, i + 2), 16)
+    result.push((byteA | byteB).toString(16).padStart(2, "0"))
+  }
+  return "0x" + result.join("")
+}
+
 function sendError(res: http.ServerResponse, id: string | number | null, message: string, code = -32603) {
   if (!res.headersSent) {
     res.writeHead(200, { "content-type": "application/json" })
@@ -1440,9 +1455,12 @@ async function formatBlock(block: Awaited<ReturnType<IChainEngine["getBlockByNum
     if (receipts.length > 0) {
       totalGasUsed = 0n
       for (const receipt of receipts) {
-        totalGasUsed += typeof receipt.gasUsed === "bigint" ? receipt.gasUsed : BigInt(parseInt(String(receipt.gasUsed), 16) || 0)
+        try {
+          totalGasUsed += typeof receipt.gasUsed === "bigint" ? receipt.gasUsed : BigInt(receipt.gasUsed)
+        } catch { /* skip malformed gasUsed */ }
+        // OR-combine bloom filters to include logs from ALL transactions in the block
         if (receipt.logsBloom && receipt.logsBloom !== "0x" + "0".repeat(512)) {
-          aggregatedBloom = receipt.logsBloom
+          aggregatedBloom = orBlooms(aggregatedBloom, receipt.logsBloom)
         }
       }
     }
