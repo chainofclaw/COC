@@ -42,3 +42,19 @@ export interface VerifiedReceipt {
   verifiedAtMs: bigint
   responseBodyHash: Hex32
 }
+
+export const PROTOCOL_VERSION_V1 = 1
+
+// Re-export v2 types
+export {
+  PROTOCOL_VERSION_V2,
+  ResultCode,
+  FaultType,
+  type ChallengeMessageV2,
+  type ReceiptMessageV2,
+  type WitnessAttestation,
+  type EvidenceLeafV2,
+  type RewardLeaf,
+  type VerifiedReceiptV2,
+  type FaultProof,
+} from "./pose-types-v2.ts"

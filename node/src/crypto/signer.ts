@@ -62,3 +62,24 @@ export function buildReceiptSignMessage(
   const base = `pose:receipt:${challengeId}:${nodeId}:${responseBodyHash}`
   return responseAtMs !== undefined ? `${base}:${responseAtMs.toString()}` : base
 }
+
+// --- v2 EIP-712 extensions ---
+
+import type { Eip712Signer } from "./eip712-signer.ts"
+import { createEip712Signer } from "./eip712-signer.ts"
+import type { Eip712Domain } from "./eip712-types.ts"
+
+export interface NodeSignerV2 extends NodeSigner {
+  readonly eip712: Eip712Signer
+}
+
+export function createNodeSignerV2(privateKey: string, domain: Eip712Domain): NodeSignerV2 & SignatureVerifier {
+  const base = createNodeSigner(privateKey)
+  const wallet = new Wallet(privateKey)
+  const eip712 = createEip712Signer(wallet, domain)
+
+  return {
+    ...base,
+    eip712,
+  }
+}

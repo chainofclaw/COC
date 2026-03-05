@@ -25,6 +25,17 @@ export interface CocRuntimeConfig {
   rewardPoolWei?: string;
   slasherPrivateKey?: string;
   endpointFingerprintMode?: "strict" | "legacy";
+  minBondWei?: string;
+  // v2 protocol config
+  protocolVersion?: 1 | 2;
+  chainId?: number;
+  verifyingContract?: string;
+  witnessNodes?: { url: string; witnessIndex: number }[];
+  requiredWitnesses?: number;
+  tipToleranceBlocks?: number;
+  challengeBondWei?: string;
+  insuranceFundAddress?: string;
+  poseManagerV2Address?: string;
 }
 
 export function resolveDataDir(): string {

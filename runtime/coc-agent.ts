@@ -8,19 +8,28 @@ import { loadConfig } from "./lib/config.ts";
 import { requestJson } from "./lib/http-client.ts";
 import { EvidenceStore } from "./lib/evidence-store.ts";
 import { ChallengeFactory, buildChallengeVerifyPayload } from "../services/challenger/challenge-factory.ts";
+import { ChallengeFactoryV2 } from "../services/challenger/challenge-factory-v2.ts";
 import { ChallengeQuota } from "../services/challenger/challenge-quota.ts";
 import { ReceiptVerifier } from "../services/verifier/receipt-verifier.ts";
 import { NonceRegistry } from "../services/verifier/nonce-registry.ts";
 import { BatchAggregator } from "../services/aggregator/batch-aggregator.ts";
+import { BatchAggregatorV2 } from "../services/aggregator/batch-aggregator-v2.ts";
 import { computeEpochRewards } from "../services/verifier/scoring.ts";
+import { buildRewardRoot } from "../services/common/reward-tree.ts";
 import { AntiCheatPolicy, EvidenceReason } from "../services/verifier/anti-cheat-policy.ts";
 import { keccak256Hex } from "../services/relayer/keccak256.ts";
 import { ChallengeType } from "../services/common/pose-types.ts";
+import type { ChallengeMessageV2, VerifiedReceiptV2 } from "../services/common/pose-types-v2.ts";
+import { ResultCode } from "../services/common/pose-types-v2.ts";
 import { hashPair } from "../node/src/ipfs-merkle.ts";
 import type { UnixFsFileMeta, Hex } from "../node/src/ipfs-types.ts";
 import { createLogger } from "../node/src/logger.ts";
-import { createNodeSigner, buildReceiptSignMessage } from "../node/src/crypto/signer.ts";
+import { createNodeSigner, createNodeSignerV2, buildReceiptSignMessage } from "../node/src/crypto/signer.ts";
+import { buildDomain, RECEIPT_TYPES } from "../node/src/crypto/eip712-types.ts";
+import { createEip712Signer } from "../node/src/crypto/eip712-signer.ts";
 import { buildSignedPosePayload } from "../node/src/pose-http.ts";
+import { collectWitnesses } from "./lib/witness-collector.ts";
+import { ContractReader } from "./lib/contract-reader.ts";
 
 const log = createLogger("coc-agent");
 
@@ -92,7 +101,7 @@ function hex32ToAddress(hex32: string): string {
 }
 
 const poseAbi = [
-  "function registerNode(bytes32 nodeId, bytes pubkeyNode, uint8 serviceFlags, bytes32 serviceCommitment, bytes32 endpointCommitment, bytes32 metadataHash, bytes ownershipSig) payable",
+  "function registerNode(bytes32 nodeId, bytes pubkeyNode, uint8 serviceFlags, bytes32 serviceCommitment, bytes32 endpointCommitment, bytes32 metadataHash, bytes ownershipSig, bytes endpointAttestation) payable",
   "function updateCommitment(bytes32 nodeId, bytes32 newCommitment)",
   "function getNode(bytes32 nodeId) view returns (tuple(bytes32 nodeId, bytes pubkeyNode, uint8 serviceFlags, bytes32 serviceCommitment, bytes32 endpointCommitment, uint256 bondAmount, bytes32 metadataHash, uint64 registeredAtEpoch, uint64 unlockEpoch, bool active))",
   "function submitBatch(uint64 epochId, bytes32 merkleRoot, bytes32 summaryHash, tuple(bytes32 leaf, bytes32[] merkleProof, uint32 leafIndex)[] sampleProofs) returns (bytes32 batchId)",
@@ -103,6 +112,39 @@ const poseAbi = [
 const MIN_BOND_WEI = BigInt(process.env.COC_MIN_BOND_WEI || config.minBondWei || "100000000000000000"); // 0.1 ETH
 
 const poseContract = poseManagerAddress ? new Contract(poseManagerAddress, poseAbi, signer) : null;
+
+// --- v2 Protocol Setup ---
+const useV2 = config.protocolVersion === 2;
+const v2ChainId = config.chainId ?? 20241224;
+const v2VerifyingContract = config.verifyingContract ?? config.poseManagerV2Address ?? "0x0000000000000000000000000000000000000000";
+const v2Domain = buildDomain(BigInt(v2ChainId), v2VerifyingContract);
+const agentSignerV2 = useV2 ? createNodeSignerV2(operatorPrivateKey, v2Domain) : null;
+
+const factoryV2 = useV2 && agentSignerV2 ? new ChallengeFactoryV2({
+  challengerId: addressToHex32(agentSigner.nodeId),
+  eip712Signer: agentSignerV2.eip712,
+}) : null;
+
+const aggregatorV2 = useV2 ? new BatchAggregatorV2({ sampleSize }) : null;
+const contractReader = useV2 ? new ContractReader({
+  l2RpcUrl: config.l2RpcUrl ?? "http://127.0.0.1:18780",
+  poseManagerV2Address: config.poseManagerV2Address,
+}) : null;
+
+const v2WitnessNodes = config.witnessNodes ?? [];
+const v2RequiredWitnesses = config.requiredWitnesses ?? 0;
+const v2TipTolerance = config.tipToleranceBlocks ?? 10;
+const pendingV2: VerifiedReceiptV2[] = [];
+
+const poseV2Abi = [
+  "function initEpochNonce(uint64 epochId)",
+  "function submitBatchV2(uint64 epochId, bytes32 merkleRoot, bytes32 summaryHash, tuple(bytes32 leaf, bytes32[] merkleProof, uint32 leafIndex)[] sampleProofs, uint32 witnessBitmap, bytes[] witnessSignatures) returns (bytes32 batchId)",
+  "function getActiveNodeCount() view returns (uint256)",
+  "function challengeNonces(uint64 epochId) view returns (uint64)",
+];
+
+const poseV2Address = config.poseManagerV2Address;
+const poseV2Contract = poseV2Address && signer ? new Contract(poseV2Address, poseV2Abi, signer) : null;
 
 const factory = new ChallengeFactory({
   challengerId: addressToHex32(agentSigner.nodeId),
@@ -142,6 +184,19 @@ const verifier = new ReceiptVerifier({
     // Verify blockNumber is within expected range from challenge querySpec
     const minBn = Number((challenge.querySpec as any)?.minBlockNumber ?? 0);
     if (minBn > 0 && bn < minBn) return false;
+    // Validate blockHash format if present (phase-in: missing is accepted with warning)
+    const blockHash = receipt.responseBody?.blockHash;
+    if (blockHash !== undefined && blockHash !== null) {
+      if (typeof blockHash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(blockHash)) {
+        log.warn("uptime receipt has malformed blockHash, rejecting", { blockHash });
+        return false;
+      }
+    } else {
+      log.warn("uptime receipt missing blockHash (phase-in period, accepting)", {
+        nodeId: receipt.nodeId,
+        challengeId: challenge.challengeId,
+      });
+    }
     return true;
   },
   verifyStorageProof: (challenge, receipt) => {
@@ -264,30 +319,216 @@ async function tick(): Promise<void> {
     await refreshLatestBlock();
     await refreshSelfNodeStatus();
     const nowEpoch = currentEpochId();
-    if (nowEpoch !== currentEpoch && pending.length > 0) {
-      await flushBatch(currentEpoch, pending.drain());
-      emitEpochScores(currentEpoch);
-      nodeScores.clear();
-      currentEpoch = nowEpoch;
-    }
 
-    if (!canRunForEpochRole(currentEpoch)) {
-      return;
-    }
+    if (useV2) {
+      // v2 path
+      if (nowEpoch !== currentEpoch && pendingV2.length > 0) {
+        await flushBatchV2(currentEpoch, pendingV2.splice(0));
+        emitEpochScores(currentEpoch);
+        nodeScores.clear();
+        currentEpoch = nowEpoch;
+      }
 
-    for (const nodeId of trackedNodeIds) {
-      await tryChallenge(nodeId, "Uptime");
-      await tryChallenge(nodeId, "Storage");
-      await tryChallenge(nodeId, "Relay");
-    }
+      if (!canRunForEpochRole(currentEpoch)) return;
 
-    if (pending.length >= batchSize) {
-      await flushBatch(currentEpoch, pending.drain());
+      for (const nodeId of trackedNodeIds) {
+        await tryChallengeV2(nodeId, "Uptime");
+        await tryChallengeV2(nodeId, "Storage");
+        await tryChallengeV2(nodeId, "Relay");
+      }
+
+      if (pendingV2.length >= batchSize) {
+        await flushBatchV2(currentEpoch, pendingV2.splice(0));
+      }
+    } else {
+      // v1 path
+      if (nowEpoch !== currentEpoch && pending.length > 0) {
+        await flushBatch(currentEpoch, pending.drain());
+        emitEpochScores(currentEpoch);
+        nodeScores.clear();
+        currentEpoch = nowEpoch;
+      }
+
+      if (!canRunForEpochRole(currentEpoch)) return;
+
+      for (const nodeId of trackedNodeIds) {
+        await tryChallenge(nodeId, "Uptime");
+        await tryChallenge(nodeId, "Storage");
+        await tryChallenge(nodeId, "Relay");
+      }
+
+      if (pending.length >= batchSize) {
+        await flushBatch(currentEpoch, pending.drain());
+      }
     }
 
     log.info("tick ok");
   } catch (error) {
     log.error("tick failed", { error: String(error) });
+  }
+}
+
+// --- v2 Challenge and Batch ---
+
+async function tryChallengeV2(nodeId: string, kind: keyof typeof ChallengeType): Promise<void> {
+  if (!factoryV2 || !contractReader) return;
+
+  const code = ChallengeType[kind];
+  const canIssue = quota.canIssue(nodeId as any, BigInt(currentEpoch), code, BigInt(Date.now()));
+  if (!canIssue.ok) return;
+
+  const storageTarget = kind === "Storage" ? await pickStorageTarget(storageDir) : null;
+  if (kind === "Storage" && !storageTarget) return;
+
+  let challengeNonce = 0n;
+  try {
+    challengeNonce = await contractReader.getChallengeNonce(BigInt(currentEpoch));
+  } catch { /* use 0 */ }
+
+  const challenge = await factoryV2.issue({
+    epochId: BigInt(currentEpoch),
+    nodeId: nodeId as any,
+    challengeType: kind,
+    issuedAtMs: BigInt(Date.now()),
+    querySpec: buildQuerySpec(kind, storageTarget),
+    challengeNonce,
+  });
+
+  quota.commitIssue(nodeId as any, BigInt(currentEpoch), code, BigInt(Date.now()));
+
+  let receiptPayload: any;
+  try {
+    await requestJson(
+      `${nodeUrl}/pose/challenge`,
+      "POST",
+      buildSignedPosePayload("/pose/challenge", challenge as unknown as Record<string, unknown>, agentSigner),
+    );
+    const receiptResp = await requestJson(
+      `${nodeUrl}/pose/receipt`,
+      "POST",
+      buildSignedPosePayload("/pose/receipt", {
+        challengeId: challenge.challengeId,
+        challengeType: code,
+        payload: { nodeId, kind },
+      }, agentSigner),
+    );
+    receiptPayload = receiptResp.json;
+  } catch (networkError) {
+    log.warn("node unreachable (v2)", { nodeId, kind, error: String(networkError) });
+    updateScore(nodeId, kind, false);
+    return;
+  }
+
+  try {
+    // Collect witnesses
+    const responseBodyHash = receiptPayload.responseBodyHash ??
+      `0x${keccak256Hex(Buffer.from(stableStringifyAgent(receiptPayload.responseBody ?? {}), "utf8"))}`;
+
+    const witnessResult = v2WitnessNodes.length > 0
+      ? await collectWitnesses(
+          { witnessNodes: v2WitnessNodes, requiredWitnesses: v2RequiredWitnesses, timeoutMs: 5000 },
+          challenge.challengeId,
+          nodeId as any,
+          responseBodyHash,
+        )
+      : { attestations: [], bitmap: 0, quorumMet: v2RequiredWitnesses === 0 };
+
+    const tipHash = receiptPayload.tipHash ?? "0x" + "0".repeat(64);
+    const tipHeight = BigInt(receiptPayload.tipHeight ?? "0");
+
+    const evidenceLeaf = {
+      epoch: BigInt(currentEpoch),
+      nodeId: nodeId as `0x${string}`,
+      nonce: challenge.nonce,
+      tipHash: tipHash as `0x${string}`,
+      tipHeight,
+      latencyMs: Number(BigInt(receiptPayload.responseAtMs ?? Date.now()) - challenge.issuedAtMs),
+      resultCode: witnessResult.quorumMet ? ResultCode.Ok : ResultCode.WitnessQuorumFail,
+      witnessBitmap: witnessResult.bitmap,
+    };
+
+    const verified: VerifiedReceiptV2 = {
+      challenge,
+      receipt: {
+        challengeId: challenge.challengeId,
+        nodeId: nodeId as any,
+        responseAtMs: BigInt(receiptPayload.responseAtMs ?? Date.now()),
+        responseBody: receiptPayload.responseBody ?? {},
+        responseBodyHash,
+        tipHash: tipHash as any,
+        tipHeight,
+        nodeSig: receiptPayload.nodeSig,
+      },
+      witnesses: witnessResult.attestations,
+      witnessBitmap: witnessResult.bitmap,
+      evidenceLeaf,
+      verifiedAtMs: BigInt(Date.now()),
+    };
+
+    pendingV2.push(verified);
+    updateScore(nodeId, kind, true, storageTarget?.fileSize);
+  } catch (error) {
+    updateScore(nodeId, kind, false);
+    log.warn("v2 verification failed", { nodeId, kind, error: String(error) });
+  }
+}
+
+function stableStringifyAgent(value: unknown): string {
+  if (typeof value === "bigint") return value.toString();
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map((x) => stableStringifyAgent(x)).join(",")}]`;
+  const obj = value as Record<string, unknown>;
+  const keys = Object.keys(obj).sort();
+  const props = keys.map((k) => `${JSON.stringify(k)}:${stableStringifyAgent(obj[k])}`);
+  return `{${props.join(",")}}`;
+}
+
+async function flushBatchV2(epochId: number, receipts: VerifiedReceiptV2[]): Promise<void> {
+  if (!aggregatorV2 || receipts.length === 0) return;
+
+  try {
+    const batch = aggregatorV2.buildBatch(BigInt(epochId), receipts);
+
+    // Compute reward root from epoch scores
+    const stats = [...nodeScores.entries()].map(([nodeId, item]) => ({
+      nodeId: nodeId as `0x${string}`,
+      uptimeBps: ratioBps(item.uptimeOk, item.uptimeTotal),
+      storageBps: ratioBps(item.storageOk, item.storageTotal),
+      relayBps: ratioBps(item.relayOk, item.relayTotal),
+      storageGb: bytesToGb(item.verifiedStorageBytes),
+    }));
+    const rewardPool = BigInt(config.rewardPoolWei ?? "1000000000000000000");
+    const scoringResult = computeEpochRewards(rewardPool, stats);
+    const { root: rewardRoot } = buildRewardRoot(BigInt(epochId), scoringResult);
+
+    if (!poseV2Contract || !canRunAggregatorRole(epochId)) {
+      log.info("batchV2(local)", {
+        epochId,
+        merkleRoot: batch.merkleRoot,
+        rewardRoot,
+        receipts: receipts.length,
+      });
+      return;
+    }
+
+    const tx = await poseV2Contract.submitBatchV2(
+      BigInt(epochId),
+      batch.merkleRoot,
+      batch.summaryHash,
+      batch.sampleProofs,
+      batch.witnessBitmap,
+      [], // witness signatures collected per-batch
+    );
+    await tx.wait();
+
+    log.info("batchV2(onchain)", {
+      epochId,
+      txHash: tx.hash,
+      merkleRoot: batch.merkleRoot,
+      rewardRoot,
+    });
+  } catch (error) {
+    log.error("batchV2 failed", { error: String(error) });
   }
 }
 
@@ -324,6 +565,12 @@ async function ensureNodeRegistered(): Promise<void> {
       Buffer.from(messageHash.slice(2), "hex"),
     );
 
+    // Build endpoint attestation: node signs "coc-endpoint:{endpointCommitment}:{nodeId}"
+    const endpointMsg = `coc-endpoint:${endpointCommitment}:${nodeId}`;
+    const endpointAttestation = agentSigner.signBytes(
+      Buffer.from(keccak256(toUtf8Bytes(endpointMsg)).slice(2), "hex"),
+    );
+
     const tx = await poseContract.registerNode(
       nodeId,
       pubkey,
@@ -332,6 +579,7 @@ async function ensureNodeRegistered(): Promise<void> {
       endpointCommitment,
       metadataHash,
       ownershipSig,
+      endpointAttestation,
       { value: bondRequired },
     );
     await tx.wait();
