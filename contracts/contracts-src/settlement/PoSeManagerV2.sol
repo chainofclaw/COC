@@ -27,10 +27,13 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
     mapping(uint64 => mapping(bytes32 => uint256)) public epochNodeSlashed;
     mapping(bytes32 => bool) public challengeFaultConfirmed;
     mapping(uint64 => uint256) public epochClaimedReward;
+    mapping(bytes32 => bool) public consumedFaultEvidence;
+    mapping(bytes32 => uint64) public challengeFaultEpochPlusOne;
 
     uint256 public challengeBondMin;
     uint256 public insuranceBalance;
     bytes32 public DOMAIN_SEPARATOR;
+    bool public allowEmptyWitnessSubmission = true;
     uint256 private _challengeCounter;
 
     // Active node tracking for witness set selection
@@ -260,7 +263,12 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
 
         PoSeTypes.BatchRecord storage batch = batches[batchId];
         if (batch.merkleRoot == bytes32(0) || batch.disputed) revert InvalidFaultProof();
+        if (_currentEpoch() > batch.disputeDeadlineEpoch) revert InvalidFaultProof();
+        if (leaf.epoch != batch.epochId) revert InvalidFaultProof();
         if (!MerkleProofLite.verifyMemory(merkleProof, batch.merkleRoot, evidenceLeafHash)) revert InvalidFaultProof();
+
+        bytes32 evidenceKey = keccak256(abi.encodePacked(batchId, targetNodeId, faultType, evidenceLeafHash));
+        if (consumedFaultEvidence[evidenceKey]) revert InvalidFaultProof();
 
         // Fault type must match objective result code in evidence leaf.
         if (faultType == 1) {
@@ -283,6 +291,8 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
         record.revealed = true;
         record.targetNodeId = targetNodeId;
         record.faultType = faultType;
+        consumedFaultEvidence[evidenceKey] = true;
+        challengeFaultEpochPlusOne[challengeId] = leaf.epoch + 1;
         challengeFaultConfirmed[challengeId] = true;
 
         emit ChallengeRevealed(challengeId, targetNodeId, faultType);
@@ -292,7 +302,13 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
         PoSeTypesV2.ChallengeRecord storage record = challenges[challengeId];
         if (record.challenger == address(0)) revert ChallengeNotFound();
         if (record.settled) revert ChallengeAlreadySettled();
-        if (!record.revealed) revert ChallengeNotRevealed();
+        if (!record.revealed) {
+            if (_currentEpoch() <= record.revealDeadlineEpoch) revert ChallengeNotRevealed();
+            record.settled = true;
+            insuranceBalance += record.bond;
+            emit ChallengeSettled(challengeId, false, 0);
+            return;
+        }
         if (_currentEpoch() < record.revealDeadlineEpoch + ADJUDICATION_WINDOW_EPOCHS) {
             revert AdjudicationWindowNotElapsed();
         }
@@ -303,9 +319,15 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
         bool faultConfirmed = challengeFaultConfirmed[challengeId] && node.active && node.bondAmount > 0;
 
         if (faultConfirmed) {
+            uint64 slashEpoch = record.commitEpoch;
+            uint64 proofEpochPlusOne = challengeFaultEpochPlusOne[challengeId];
+            if (proofEpochPlusOne != 0) {
+                slashEpoch = proofEpochPlusOne - 1;
+            }
+
             // Calculate slash amount with per-epoch cap
             uint256 maxSlash = (node.bondAmount * SLASH_EPOCH_CAP_BPS) / BPS_DENOMINATOR;
-            uint256 alreadySlashed = epochNodeSlashed[record.commitEpoch][record.targetNodeId];
+            uint256 alreadySlashed = epochNodeSlashed[slashEpoch][record.targetNodeId];
             uint256 available = maxSlash > alreadySlashed ? maxSlash - alreadySlashed : 0;
             uint256 slashAmount = available > 0 ? available : 0;
 
@@ -315,7 +337,7 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
 
             if (slashAmount > 0) {
                 node.bondAmount -= slashAmount;
-                epochNodeSlashed[record.commitEpoch][record.targetNodeId] += slashAmount;
+                epochNodeSlashed[slashEpoch][record.targetNodeId] += slashAmount;
 
                 // Distribute slash: 50% burn / 30% challenger / 20% insurance
                 uint256 burnAmount = (slashAmount * SLASH_BURN_BPS) / BPS_DENOMINATOR;
@@ -507,6 +529,10 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
         challengeBondMin = newMin;
     }
 
+    function setAllowEmptyWitnessSubmission(bool allowed) external onlyOwner {
+        allowEmptyWitnessSubmission = allowed;
+    }
+
     // --- Internal helpers ---
 
     function _validateWitnessQuorum(
@@ -516,6 +542,7 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
         bytes32 merkleRoot
     ) internal view {
         if (witnessBitmap == 0 && witnessSignatures.length == 0) {
+            if (!allowEmptyWitnessSubmission) revert InvalidWitnessQuorum();
             return;
         }
         bytes32[] memory witnessSet = getWitnessSet(epochId);
