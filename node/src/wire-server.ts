@@ -353,6 +353,13 @@ export class WireServer {
             return
           }
           if (nonceParts.length >= 2) {
+            // Strict digits-only check: parseInt("123abc",10) silently returns 123,
+            // which could bypass timestamp validation for crafted nonces.
+            if (!/^\d{1,15}$/.test(nonceParts[0])) {
+              log.warn("handshake nonce timestamp invalid format", { peer: hs.nodeId, nonce: hs.nonce })
+              conn.socket.destroy()
+              return
+            }
             const nonceTs = parseInt(nonceParts[0], 10)
             if (isNaN(nonceTs)) {
               log.warn("handshake nonce timestamp invalid", { peer: hs.nodeId, nonce: hs.nonce })
@@ -473,9 +480,21 @@ export class WireServer {
           log.warn("BFT message senderId mismatch", { claimed: msg.senderId, authenticated: conn.nodeId })
           return
         }
+        // Safely parse height — malicious peer could send non-numeric string
+        let bftHeight: bigint
+        try {
+          bftHeight = BigInt(msg.height)
+        } catch {
+          log.warn("BFT message height invalid", { peer: conn.nodeId, height: msg.height })
+          return
+        }
+        if (bftHeight < 0n) {
+          log.warn("BFT message height negative", { peer: conn.nodeId, height: msg.height })
+          return
+        }
         await this.cfg.onBftMessage({
           type: bftType,
-          height: BigInt(msg.height),
+          height: bftHeight,
           blockHash: msg.blockHash,
           senderId: msg.senderId,
           signature: (msg.signature ?? "") as Hex,

@@ -643,26 +643,28 @@ export class ConsensusEngine {
             continue
           }
 
-          const importResult = await this.snapSync.importStateSnapshot(stateSnap, trustedStateRoot)
-          await this.snapSync.setStateRoot(trustedStateRoot)
-
-          // Restore governance only if validators hash matches cross-peer consensus
-          if (importResult.validators && this.snapSync.restoreGovernance) {
+          // Validate governance hash BEFORE importing state + setting root.
+          // This prevents the half-imported state where stateRoot is set but
+          // governance is inconsistent (if hash fails, no state mutation occurs).
+          if (this.snapSync.restoreGovernance && trustedValidatorsHash) {
             const importedVHash = hashValidators(stateSnap.validators)
-            if (trustedValidatorsHash && importedVHash === trustedValidatorsHash) {
-              this.snapSync.restoreGovernance(importResult.validators)
-              log.info("governance state restored from snapshot", { validators: importResult.validators.length })
-            } else {
-              // Governance hash mismatch is a serious integrity issue — state was imported
-              // but governance is inconsistent. Mark this peer as untrusted and skip to next.
-              log.error("snap sync: validators hash mismatch — skipping peer (governance integrity failure)", {
+            if (importedVHash !== trustedValidatorsHash) {
+              log.error("snap sync: validators hash mismatch — skipping peer (pre-import check)", {
                 peer: peer.url,
                 peerHash: importedVHash,
                 trustedHash: trustedValidatorsHash,
               })
-              stateImported = false
-              continue // try next peer for both state + governance
+              continue // try next peer without touching state
             }
+          }
+
+          const importResult = await this.snapSync.importStateSnapshot(stateSnap, trustedStateRoot)
+          await this.snapSync.setStateRoot(trustedStateRoot)
+
+          // Restore governance (hash already validated above)
+          if (importResult.validators && this.snapSync.restoreGovernance) {
+            this.snapSync.restoreGovernance(importResult.validators)
+            log.info("governance state restored from snapshot", { validators: importResult.validators.length })
           }
 
           stateImported = true

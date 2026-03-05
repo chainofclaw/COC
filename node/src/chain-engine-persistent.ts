@@ -677,8 +677,9 @@ export class PersistentChainEngine {
 
     const block = await this.getBlockByNumber(newlyFinalBlock)
     if (block && !block.finalized) {
-      block.finalized = true
-      await this.blockIndex.updateBlock(block)
+      // Immutable update: create new object instead of mutating the retrieved reference
+      const updated = { ...block, finalized: true }
+      await this.blockIndex.updateBlock(updated)
     }
   }
 

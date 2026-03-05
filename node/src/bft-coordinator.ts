@@ -354,6 +354,10 @@ export class BftCoordinator {
         })
       }
     }, totalTimeout)
+    // Prevent BFT timeout timer from keeping the process alive during shutdown
+    if (this.timeoutTimer && typeof this.timeoutTimer.unref === "function") {
+      this.timeoutTimer.unref()
+    }
   }
 
   private signMessage(msg: BftMessage): void {
@@ -378,7 +382,16 @@ export class BftCoordinator {
     }
 
     log.info("BFT processing deferred block", { height: block.number.toString() })
-    await this.startRound(block)
+    try {
+      await this.startRound(block)
+    } catch (err) {
+      // Isolate startRound failures so they don't propagate up to handleMessage
+      // and break the BFT coordinator's ability to process future messages.
+      log.error("BFT deferred startRound failed", {
+        height: block.number.toString(),
+        error: String(err),
+      })
+    }
   }
 
   /**
@@ -405,6 +418,10 @@ export class BftCoordinator {
       this.signMessage(msg)
       void this.cfg.broadcastMessage(msg)
     }, RETRY_INTERVAL_MS)
+    // Prevent commit retry timer from keeping the process alive during shutdown
+    if (this.commitRetryTimer && typeof this.commitRetryTimer.unref === "function") {
+      this.commitRetryTimer.unref()
+    }
   }
 
   private stopCommitRetry(): void {
@@ -440,6 +457,10 @@ export class BftCoordinator {
       this.signMessage(msg)
       void this.cfg.broadcastMessage(msg)
     }, LINGER_INTERVAL_MS)
+    // Prevent linger timer from keeping the process alive during shutdown
+    if (this.lingerTimer && typeof this.lingerTimer.unref === "function") {
+      this.lingerTimer.unref()
+    }
   }
 
   private stopLinger(): void {
