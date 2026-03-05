@@ -17,6 +17,8 @@ export interface CocRuntimeConfig {
   l2RpcUrl?: string;
   poseManagerAddress?: string;
   operatorPrivateKey?: string;
+  pendingPath?: string;
+  pendingV2Path?: string;
   nonceRegistryPath?: string;
   nonceRegistryTtlMs?: number;
   nonceRegistryMaxEntries?: number;

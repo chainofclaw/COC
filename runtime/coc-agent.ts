@@ -137,7 +137,6 @@ const v2WitnessNodes = config.witnessNodes ?? [];
 const v2RequiredWitnesses = config.requiredWitnesses ?? 0;
 const allowEmptyBatchWitnessSubmission = config.allowEmptyBatchWitnessSubmission ?? true;
 const v2TipTolerance = config.tipToleranceBlocks ?? 10;
-const pendingV2: VerifiedReceiptV2[] = [];
 
 const poseV2Abi = [
   "function initEpochNonce(uint64 epochId)",
@@ -271,29 +270,105 @@ const nodeEndpointMap = normalizeNodeEndpointMap(config.nodeEndpoints);
 const nodeScores = new Map<string, { uptimeOk: number; uptimeTotal: number; storageOk: number; storageTotal: number; relayOk: number; relayTotal: number; verifiedStorageBytes: number }>();
 
 // Persistent pending receipts store — survives crash/restart
-class PendingReceiptStore {
-  private items: Array<any> = [];
+class PendingReceiptStore<T> {
+  private items: T[] = [];
   private readonly path: string;
+  private readonly label: string;
 
-  constructor(persistencePath: string) {
+  constructor(persistencePath: string, label: string) {
     this.path = persistencePath;
+    this.label = label;
     this.loadFromDisk();
   }
 
   get length(): number { return this.items.length; }
 
-  push(item: any): void {
+  push(item: T): void {
     this.items.push(item);
+    this.appendToDisk(item);
+  }
+
+  extend(items: T[]): void {
+    if (items.length === 0) return;
+    this.items.push(...items);
+    this.rewriteDisk();
+  }
+
+  drain(): T[] {
+    const result = this.items.splice(0);
+    this.rewriteDisk();
+    return result;
+  }
+
+  listWhere(predicate: (item: T) => boolean): T[] {
+    return this.items.filter(predicate);
+  }
+
+  countWhere(predicate: (item: T) => boolean): number {
+    let count = 0;
+    for (const item of this.items) {
+      if (predicate(item)) count += 1;
+    }
+    return count;
+  }
+
+  removeWhere(predicate: (item: T) => boolean): number {
+    const kept: T[] = [];
+    let removed = 0;
+    for (const item of this.items) {
+      if (predicate(item)) {
+        removed += 1;
+      } else {
+        kept.push(item);
+      }
+    }
+    if (removed > 0) {
+      this.items = kept;
+      this.rewriteDisk();
+    }
+    return removed;
+  }
+
+  private appendToDisk(item: T): void {
     try {
       mkdirSync(dirname(this.path), { recursive: true });
-      appendFileSync(this.path, JSON.stringify(item) + "\n");
+      appendFileSync(this.path, this.serialize(item) + "\n");
     } catch { /* best-effort */ }
   }
 
-  drain(): Array<any> {
-    const result = this.items.splice(0);
-    try { writeFileSync(this.path, ""); } catch { /* best-effort */ }
-    return result;
+  private rewriteDisk(): void {
+    try {
+      mkdirSync(dirname(this.path), { recursive: true });
+      if (this.items.length === 0) {
+        writeFileSync(this.path, "");
+        return;
+      }
+      const content = this.items.map((item) => this.serialize(item)).join("\n") + "\n";
+      writeFileSync(this.path, content);
+    } catch { /* best-effort */ }
+  }
+
+  private serialize(value: unknown): string {
+    return JSON.stringify(value, (_key, v) => {
+      if (typeof v === "bigint") {
+        return { __coc_bigint__: v.toString() };
+      }
+      return v;
+    });
+  }
+
+  private deserialize(line: string): T {
+    return JSON.parse(line, (_key, v) => {
+      if (
+        v &&
+        typeof v === "object" &&
+        "__coc_bigint__" in v &&
+        typeof (v as { __coc_bigint__?: unknown }).__coc_bigint__ === "string"
+      ) {
+        return BigInt((v as { __coc_bigint__: string }).__coc_bigint__);
+      }
+      return v;
+    }) as T;
   }
 
   private loadFromDisk(): void {
@@ -301,17 +376,19 @@ class PendingReceiptStore {
     try {
       const raw = readFileSync(this.path, "utf-8");
       for (const line of raw.split("\n").filter((l) => l.trim())) {
-        try { this.items.push(JSON.parse(line)); } catch { /* skip */ }
+        try { this.items.push(this.deserialize(line)); } catch { /* skip */ }
       }
       if (this.items.length > 0) {
-        log.info("restored pending receipts from disk", { count: this.items.length });
+        log.info("restored pending receipts from disk", { label: this.label, count: this.items.length, path: this.path });
       }
     } catch { /* ignore */ }
   }
 }
 
-const pendingPath = process.env.COC_PENDING_PATH || join(config.dataDir, "pending-receipts.jsonl");
-const pending = new PendingReceiptStore(pendingPath);
+const pendingPath = process.env.COC_PENDING_PATH || config.pendingPath || join(config.dataDir, "pending-receipts.jsonl");
+const pendingV2Path = process.env.COC_PENDING_V2_PATH || config.pendingV2Path || join(config.dataDir, "pending-receipts-v2.jsonl");
+const pending = new PendingReceiptStore<any>(pendingPath, "v1");
+const pendingV2 = new PendingReceiptStore<VerifiedReceiptV2>(pendingV2Path, "v2");
 let currentEpoch = currentEpochId();
 log.info("endpoint fingerprint mode", { mode: endpointFingerprintMode });
 
@@ -330,26 +407,15 @@ const antiCheat = new AntiCheatPolicy();
 await ensureNodeRegistered();
 
 function countPendingV2ByEpoch(epochId: number): number {
-  let count = 0;
-  for (const item of pendingV2) {
-    if (Number(item.evidenceLeaf.epoch) === epochId) count += 1;
-  }
-  return count;
+  return pendingV2.countWhere((item) => Number(item.evidenceLeaf.epoch) === epochId);
 }
 
 function listPendingV2ByEpoch(epochId: number): VerifiedReceiptV2[] {
-  return pendingV2.filter((item) => Number(item.evidenceLeaf.epoch) === epochId);
+  return pendingV2.listWhere((item) => Number(item.evidenceLeaf.epoch) === epochId);
 }
 
 function removePendingV2ByEpoch(epochId: number): number {
-  let removed = 0;
-  for (let i = pendingV2.length - 1; i >= 0; i--) {
-    if (Number(pendingV2[i].evidenceLeaf.epoch) === epochId) {
-      pendingV2.splice(i, 1);
-      removed += 1;
-    }
-  }
-  return removed;
+  return pendingV2.removeWhere((item) => Number(item.evidenceLeaf.epoch) === epochId);
 }
 
 async function tick(): Promise<void> {
@@ -405,7 +471,7 @@ async function tick(): Promise<void> {
           const rolloverReceipts = pending.drain();
           const ok = await flushBatch(currentEpoch, rolloverReceipts);
           if (!ok) {
-            for (const item of rolloverReceipts) pending.push(item);
+            pending.extend(rolloverReceipts);
             log.warn("v1 epoch rollover deferred: pending batch flush failed", {
               epochId: currentEpoch,
               pending: rolloverReceipts.length,
@@ -430,7 +496,7 @@ async function tick(): Promise<void> {
         const receipts = pending.drain();
         const ok = await flushBatch(currentEpoch, receipts);
         if (!ok) {
-          for (const item of receipts) pending.push(item);
+          pending.extend(receipts);
           log.warn("v1 batch flush failed; receipts retained for retry", {
             epochId: currentEpoch,
             pending: receipts.length,
