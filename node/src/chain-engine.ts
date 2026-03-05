@@ -337,9 +337,9 @@ export class ChainEngine {
       }
     }
 
-    // Emit new block event
+    // Emit new block event (use storedBlock with computed gasUsed and finality flags)
     this.events.emitNewBlock({
-      block,
+      block: storedBlock,
       receipts: receipts.map((r) => ({
         transactionHash: (r.transactionHash ?? "0x") as Hex,
         status: String(r.status ?? "0x1"),
@@ -347,8 +347,10 @@ export class ChainEngine {
       })),
     })
 
-    // Emit log events
-    for (const receipt of receipts) {
+    // Emit log events with correct transaction and log indices
+    let globalLogIdx = 0
+    for (let txIdx = 0; txIdx < receipts.length; txIdx++) {
+      const receipt = receipts[txIdx]
       const recLogs = Array.isArray(receipt.logs) ? receipt.logs : []
       for (const logEntry of recLogs as Array<Record<string, unknown>>) {
         this.events.emitLog({
@@ -359,8 +361,8 @@ export class ChainEngine {
             blockNumber: block.number,
             blockHash: block.hash,
             transactionHash: (receipt.transactionHash ?? "0x") as Hex,
-            transactionIndex: 0,
-            logIndex: 0,
+            transactionIndex: txIdx,
+            logIndex: globalLogIdx++,
           },
         })
       }
