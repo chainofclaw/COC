@@ -748,6 +748,7 @@ async function handleRpc(
     case "eth_getTransactionByBlockHashAndIndex": {
       const blockHash = String((payload.params ?? [])[0] ?? "") as Hex
       const txIndex = Number((payload.params ?? [])[1] ?? 0)
+      if (!Number.isInteger(txIndex) || txIndex < 0) return null
       const block = await Promise.resolve(chain.getBlockByHash(blockHash))
       if (!block || txIndex >= block.txs.length) return null
       const rawTx = block.txs[txIndex]
@@ -771,6 +772,7 @@ async function handleRpc(
     case "eth_getTransactionByBlockNumberAndIndex": {
       const tag = String((payload.params ?? [])[0] ?? "latest")
       const txIdx = Number((payload.params ?? [])[1] ?? 0)
+      if (!Number.isInteger(txIdx) || txIdx < 0) return null
       const height = await Promise.resolve(chain.getHeight())
       const num = parseBlockTag(tag, height)
       const block = await Promise.resolve(chain.getBlockByNumber(num))
