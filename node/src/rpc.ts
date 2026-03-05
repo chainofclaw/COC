@@ -340,11 +340,11 @@ async function handleOne(
   }
 }
 
-function sendError(res: http.ServerResponse, id: string | number | null, message: string) {
+function sendError(res: http.ServerResponse, id: string | number | null, message: string, code = -32603) {
   if (!res.headersSent) {
-    res.writeHead(500, { "content-type": "application/json" })
+    res.writeHead(200, { "content-type": "application/json" })
   }
-  res.end(JSON.stringify({ jsonrpc: "2.0", id, error: { message } }))
+  res.end(JSON.stringify({ jsonrpc: "2.0", id, error: { code, message } }))
 }
 
 /**
