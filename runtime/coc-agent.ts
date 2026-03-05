@@ -329,6 +329,29 @@ const antiCheat = new AntiCheatPolicy();
 
 await ensureNodeRegistered();
 
+function countPendingV2ByEpoch(epochId: number): number {
+  let count = 0;
+  for (const item of pendingV2) {
+    if (Number(item.evidenceLeaf.epoch) === epochId) count += 1;
+  }
+  return count;
+}
+
+function listPendingV2ByEpoch(epochId: number): VerifiedReceiptV2[] {
+  return pendingV2.filter((item) => Number(item.evidenceLeaf.epoch) === epochId);
+}
+
+function removePendingV2ByEpoch(epochId: number): number {
+  let removed = 0;
+  for (let i = pendingV2.length - 1; i >= 0; i--) {
+    if (Number(pendingV2[i].evidenceLeaf.epoch) === epochId) {
+      pendingV2.splice(i, 1);
+      removed += 1;
+    }
+  }
+  return removed;
+}
+
 async function tick(): Promise<void> {
   try {
     await refreshLatestBlock();
@@ -337,8 +360,19 @@ async function tick(): Promise<void> {
 
     if (useV2) {
       // v2 path
-      if (nowEpoch !== currentEpoch && pendingV2.length > 0) {
-        await flushBatchV2(currentEpoch, pendingV2.splice(0));
+      if (nowEpoch !== currentEpoch) {
+        const rolloverReceipts = listPendingV2ByEpoch(currentEpoch);
+        if (rolloverReceipts.length > 0) {
+          const ok = await flushBatchV2(currentEpoch, rolloverReceipts);
+          if (!ok) {
+            log.warn("v2 epoch rollover deferred: pending batch flush failed", {
+              epochId: currentEpoch,
+              pending: rolloverReceipts.length,
+            });
+            return;
+          }
+          removePendingV2ByEpoch(currentEpoch);
+        }
         emitEpochScores(currentEpoch);
         nodeScores.clear();
         currentEpoch = nowEpoch;
@@ -352,13 +386,33 @@ async function tick(): Promise<void> {
         await tryChallengeV2(nodeId, "Relay");
       }
 
-      if (pendingV2.length >= batchSize) {
-        await flushBatchV2(currentEpoch, pendingV2.splice(0));
+      if (countPendingV2ByEpoch(currentEpoch) >= batchSize) {
+        const currentEpochReceipts = listPendingV2ByEpoch(currentEpoch);
+        const ok = await flushBatchV2(currentEpoch, currentEpochReceipts);
+        if (ok) {
+          removePendingV2ByEpoch(currentEpoch);
+        } else {
+          log.warn("v2 batch flush failed; receipts retained for retry", {
+            epochId: currentEpoch,
+            pending: currentEpochReceipts.length,
+          });
+        }
       }
     } else {
       // v1 path
-      if (nowEpoch !== currentEpoch && pending.length > 0) {
-        await flushBatch(currentEpoch, pending.drain());
+      if (nowEpoch !== currentEpoch) {
+        if (pending.length > 0) {
+          const rolloverReceipts = pending.drain();
+          const ok = await flushBatch(currentEpoch, rolloverReceipts);
+          if (!ok) {
+            for (const item of rolloverReceipts) pending.push(item);
+            log.warn("v1 epoch rollover deferred: pending batch flush failed", {
+              epochId: currentEpoch,
+              pending: rolloverReceipts.length,
+            });
+            return;
+          }
+        }
         emitEpochScores(currentEpoch);
         nodeScores.clear();
         currentEpoch = nowEpoch;
@@ -373,7 +427,15 @@ async function tick(): Promise<void> {
       }
 
       if (pending.length >= batchSize) {
-        await flushBatch(currentEpoch, pending.drain());
+        const receipts = pending.drain();
+        const ok = await flushBatch(currentEpoch, receipts);
+        if (!ok) {
+          for (const item of receipts) pending.push(item);
+          log.warn("v1 batch flush failed; receipts retained for retry", {
+            epochId: currentEpoch,
+            pending: receipts.length,
+          });
+        }
       }
     }
 
@@ -594,8 +656,8 @@ async function collectBatchWitnessQuorum(epochId: number, merkleRoot: `0x${strin
   );
 }
 
-async function flushBatchV2(epochId: number, receipts: VerifiedReceiptV2[]): Promise<void> {
-  if (!aggregatorV2 || receipts.length === 0) return;
+async function flushBatchV2(epochId: number, receipts: VerifiedReceiptV2[]): Promise<boolean> {
+  if (!aggregatorV2 || receipts.length === 0) return true;
 
   try {
     const batch = aggregatorV2.buildBatch(BigInt(epochId), receipts);
@@ -619,7 +681,7 @@ async function flushBatchV2(epochId: number, receipts: VerifiedReceiptV2[]): Pro
         rewardRoot,
         receipts: receipts.length,
       });
-      return;
+      return true;
     }
 
     let witnessBitmap = 0;
@@ -636,7 +698,7 @@ async function flushBatchV2(epochId: number, receipts: VerifiedReceiptV2[]): Pro
           signed: witnessResult.signedCount,
           required: witnessResult.requiredCount,
         });
-        return;
+        return false;
       } else {
         log.warn("batchV2 witness quorum not met, fallback to empty witness submission", {
           epochId,
@@ -652,7 +714,7 @@ async function flushBatchV2(epochId: number, receipts: VerifiedReceiptV2[]): Pro
           merkleRoot: batch.merkleRoot,
           error: String(witnessError),
         });
-        return;
+        return false;
       }
       log.warn("batchV2 witness collection failed, fallback to empty witness submission", {
         epochId,
@@ -679,8 +741,10 @@ async function flushBatchV2(epochId: number, receipts: VerifiedReceiptV2[]): Pro
       witnessBitmap,
       witnessSignatures: witnessSignatures.length,
     });
+    return true;
   } catch (error) {
     log.error("batchV2 failed", { error: String(error) });
+    return false;
   }
 }
 
@@ -959,7 +1023,8 @@ function ratioBps(ok: number, total: number): number {
   return Math.floor((ok / total) * 10_000);
 }
 
-async function flushBatch(epochId: number, receipts: Array<any>): Promise<void> {
+async function flushBatch(epochId: number, receipts: Array<any>): Promise<boolean> {
+  if (receipts.length === 0) return true;
   try {
     const batch = aggregator.buildBatch(BigInt(epochId), receipts);
 
@@ -970,7 +1035,7 @@ async function flushBatch(epochId: number, receipts: Array<any>): Promise<void> 
         summaryHash: batch.summaryHash,
         sampleProofs: batch.sampleProofs.length,
       });
-      return;
+      return true;
     }
 
     const tx = await poseContract.submitBatch(BigInt(epochId), batch.merkleRoot, batch.summaryHash, batch.sampleProofs);
@@ -992,8 +1057,10 @@ async function flushBatch(epochId: number, receipts: Array<any>): Promise<void> 
       summaryHash: batch.summaryHash,
       sampleProofs: batch.sampleProofs.length,
     });
+    return true;
   } catch (error) {
     log.error("batch failed", { error: String(error) });
+    return false;
   }
 }
 
