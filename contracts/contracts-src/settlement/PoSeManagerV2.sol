@@ -542,7 +542,9 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
         bytes32 merkleRoot
     ) internal view {
         if (witnessBitmap == 0 && witnessSignatures.length == 0) {
-            if (!allowEmptyWitnessSubmission) revert InvalidWitnessQuorum();
+            if (!allowEmptyWitnessSubmission && getWitnessSet(epochId).length > 0) {
+                revert InvalidWitnessQuorum();
+            }
             return;
         }
         bytes32[] memory witnessSet = getWitnessSet(epochId);

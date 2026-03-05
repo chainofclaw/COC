@@ -27,7 +27,7 @@ import { createLogger } from "../node/src/logger.ts";
 import { createNodeSigner, createNodeSignerV2, buildReceiptSignMessage } from "../node/src/crypto/signer.ts";
 import { buildDomain, CHALLENGE_TYPES, RECEIPT_TYPES } from "../node/src/crypto/eip712-types.ts";
 import { buildSignedPosePayload } from "../node/src/pose-http.ts";
-import { collectWitnesses } from "./lib/witness-collector.ts";
+import { collectBatchWitnessSignatures, collectWitnesses } from "./lib/witness-collector.ts";
 import { ContractReader } from "./lib/contract-reader.ts";
 
 const log = createLogger("coc-agent");
@@ -135,6 +135,7 @@ const contractReader = useV2 ? new ContractReader({
 
 const v2WitnessNodes = config.witnessNodes ?? [];
 const v2RequiredWitnesses = config.requiredWitnesses ?? 0;
+const allowEmptyBatchWitnessSubmission = config.allowEmptyBatchWitnessSubmission ?? true;
 const v2TipTolerance = config.tipToleranceBlocks ?? 10;
 const pendingV2: VerifiedReceiptV2[] = [];
 
@@ -142,6 +143,7 @@ const poseV2Abi = [
   "function initEpochNonce(uint64 epochId)",
   "function submitBatchV2(uint64 epochId, bytes32 merkleRoot, bytes32 summaryHash, tuple(bytes32 leaf, bytes32[] merkleProof, uint32 leafIndex)[] sampleProofs, uint32 witnessBitmap, bytes[] witnessSignatures) returns (bytes32 batchId)",
   "function getActiveNodeCount() view returns (uint256)",
+  "function getWitnessSet(uint64 epochId) view returns (bytes32[])",
   "function challengeNonces(uint64 epochId) view returns (uint64)",
   "function registerNode(bytes32 nodeId, bytes pubkeyNode, uint8 serviceFlags, bytes32 serviceCommitment, bytes32 endpointCommitment, bytes32 metadataHash, bytes ownershipSig, bytes endpointAttestation) payable",
   "function getNode(bytes32 nodeId) view returns (tuple(bytes32 nodeId, bytes pubkeyNode, uint8 serviceFlags, bytes32 serviceCommitment, bytes32 endpointCommitment, uint256 bondAmount, bytes32 metadataHash, uint64 registeredAtEpoch, uint64 unlockEpoch, bool active))",
@@ -572,6 +574,26 @@ function stableStringifyAgent(value: unknown): string {
   return `{${props.join(",")}}`;
 }
 
+async function collectBatchWitnessQuorum(epochId: number, merkleRoot: `0x${string}`): Promise<{
+  bitmap: number;
+  signatures: string[];
+  signedCount: number;
+  requiredCount: number;
+  quorumMet: boolean;
+}> {
+  if (!poseV2Contract) {
+    return { bitmap: 0, signatures: [], signedCount: 0, requiredCount: 0, quorumMet: true };
+  }
+
+  const witnessSetRaw = await poseV2Contract.getWitnessSet(BigInt(epochId)) as string[];
+  const witnessSet = witnessSetRaw.map((x) => x.toLowerCase() as `0x${string}`);
+  return collectBatchWitnessSignatures(
+    merkleRoot,
+    witnessSet,
+    (nodeId) => resolveNodeEndpointStrict(nodeId),
+  );
+}
+
 async function flushBatchV2(epochId: number, receipts: VerifiedReceiptV2[]): Promise<void> {
   if (!aggregatorV2 || receipts.length === 0) return;
 
@@ -600,13 +622,52 @@ async function flushBatchV2(epochId: number, receipts: VerifiedReceiptV2[]): Pro
       return;
     }
 
+    let witnessBitmap = 0;
+    let witnessSignatures: string[] = [];
+    try {
+      const witnessResult = await collectBatchWitnessQuorum(epochId, batch.merkleRoot as `0x${string}`);
+      if (witnessResult.quorumMet) {
+        witnessBitmap = witnessResult.bitmap;
+        witnessSignatures = witnessResult.signatures;
+      } else if (!allowEmptyBatchWitnessSubmission && witnessResult.requiredCount > 0) {
+        log.error("batchV2 skipped: witness quorum not met and empty fallback disabled", {
+          epochId,
+          merkleRoot: batch.merkleRoot,
+          signed: witnessResult.signedCount,
+          required: witnessResult.requiredCount,
+        });
+        return;
+      } else {
+        log.warn("batchV2 witness quorum not met, fallback to empty witness submission", {
+          epochId,
+          merkleRoot: batch.merkleRoot,
+          signed: witnessResult.signedCount,
+          required: witnessResult.requiredCount,
+        });
+      }
+    } catch (witnessError) {
+      if (!allowEmptyBatchWitnessSubmission) {
+        log.error("batchV2 skipped: witness collection failed and empty fallback disabled", {
+          epochId,
+          merkleRoot: batch.merkleRoot,
+          error: String(witnessError),
+        });
+        return;
+      }
+      log.warn("batchV2 witness collection failed, fallback to empty witness submission", {
+        epochId,
+        merkleRoot: batch.merkleRoot,
+        error: String(witnessError),
+      });
+    }
+
     const tx = await poseV2Contract.submitBatchV2(
       BigInt(epochId),
       batch.merkleRoot,
       batch.summaryHash,
       batch.sampleProofs,
-      0,  // transition mode: per-batch witness signatures are not yet collected
-      [],
+      witnessBitmap,
+      witnessSignatures,
     );
     await tx.wait();
 
@@ -615,6 +676,8 @@ async function flushBatchV2(epochId: number, receipts: VerifiedReceiptV2[]): Pro
       txHash: tx.hash,
       merkleRoot: batch.merkleRoot,
       rewardRoot,
+      witnessBitmap,
+      witnessSignatures: witnessSignatures.length,
     });
   } catch (error) {
     log.error("batchV2 failed", { error: String(error) });
@@ -992,6 +1055,10 @@ function resolveNodeEndpoint(nodeId: string): string | null {
   if (mapped) return mapped;
   if (trackedNodeIds.length === 1) return nodeUrl;
   return null;
+}
+
+function resolveNodeEndpointStrict(nodeId: string): string | null {
+  return nodeEndpointMap.get(nodeId.toLowerCase()) ?? null;
 }
 
 function currentEpochId(): number {

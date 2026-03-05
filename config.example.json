@@ -20,6 +20,7 @@
   "verifyingContract": "0xYOUR_POSE_MANAGER_V2_ADDRESS",
   "chainId": 20241224,
   "requiredWitnesses": 0,
+  "allowEmptyBatchWitnessSubmission": true,
   "tipToleranceBlocks": 10,
   "challengerSet": [],
   "aggregatorSet": [],
