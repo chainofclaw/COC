@@ -248,20 +248,28 @@ export class IpfsPubsub {
     const cutoff = now - this.cfg.messageRetentionMs
 
     for (const [, state] of this.topics) {
-      // Null out expired messages in ring buffer (don't reallocate)
+      // Compact surviving messages into contiguous positions [0..remaining-1]
+      // to keep ringHead/ringCount consistent with getRecentMessages reader.
+      // Without compaction, cleanup nulls gaps but ringHead stays stale,
+      // causing new messages written at stale positions to be invisible to
+      // getRecentMessages which reads [0..ringCount-1] when ringCount < max.
       const max = this.cfg.maxRecentMessages
-      let remaining = 0
-      for (let i = 0; i < max; i++) {
-        const msg = state.recentMessages[i]
-        if (msg && msg.receivedAt <= cutoff) {
-          state.recentMessages[i] = undefined as unknown as PubsubMessage
-        } else if (msg) {
-          remaining++
+      const surviving: PubsubMessage[] = []
+      // Collect in ring order (oldest to newest) to preserve message ordering
+      const start = state.ringCount < max ? 0 : state.ringHead
+      for (let i = 0; i < state.ringCount; i++) {
+        const idx = (start + i) % max
+        const msg = state.recentMessages[idx]
+        if (msg && msg.receivedAt > cutoff) {
+          surviving.push(msg)
         }
       }
-      // Recount: subtraction was inaccurate because ringCount could drift
-      // when messages at non-contiguous positions were expired.
-      state.ringCount = remaining
+      // Reset ring buffer with compacted entries
+      for (let i = 0; i < max; i++) {
+        state.recentMessages[i] = surviving[i] ?? (undefined as unknown as PubsubMessage)
+      }
+      state.ringHead = surviving.length % max
+      state.ringCount = surviving.length
     }
 
     // BoundedSet handles FIFO eviction automatically — no manual clear needed

@@ -484,7 +484,7 @@ async function isChallengerAllowed(
   return staticAllowlist.size === 0
 }
 
-function stableStringify(value: unknown, depth = 0): string {
+function stableStringify(value: unknown, depth = 0, seen?: WeakSet<object>): string {
   // Guard against deeply nested objects that could cause stack overflow
   if (depth > 64) throw new Error("stableStringify: object too deeply nested")
   if (typeof value === "bigint") {
@@ -493,12 +493,18 @@ function stableStringify(value: unknown, depth = 0): string {
   if (value === null || typeof value !== "object") {
     return JSON.stringify(value)
   }
+  // Detect circular references to prevent infinite recursion from crafted payloads
+  const tracker = seen ?? new WeakSet<object>()
+  if (tracker.has(value as object)) {
+    throw new Error("stableStringify: circular reference detected")
+  }
+  tracker.add(value as object)
   if (Array.isArray(value)) {
-    return `[${value.map((item) => stableStringify(item, depth + 1)).join(",")}]`
+    return `[${value.map((item) => stableStringify(item, depth + 1, tracker)).join(",")}]`
   }
   const obj = value as Record<string, unknown>
   // Use only own enumerable properties and skip prototype pollution keys
   const keys = Object.keys(obj).filter((k) => k !== "__proto__" && k !== "constructor" && k !== "prototype").sort()
-  const props = keys.map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k], depth + 1)}`)
+  const props = keys.map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k], depth + 1, tracker)}`)
   return `{${props.join(",")}}`
 }
