@@ -41,7 +41,8 @@ contract PoSeManager is IPoSeManager, PoSeManagerStorage {
         bytes32 serviceCommitment,
         bytes32 endpointCommitment,
         bytes32 metadataHash,
-        bytes calldata ownershipSig
+        bytes calldata ownershipSig,
+        bytes calldata endpointAttestation
     ) external payable override {
         if (msg.value < _requiredBond(operatorNodeCount[msg.sender])) revert InsufficientBond();
         if (operatorNodeCount[msg.sender] >= MAX_NODES_PER_OPERATOR) revert TooManyNodes();
@@ -50,6 +51,11 @@ contract PoSeManager is IPoSeManager, PoSeManagerStorage {
         if (endpointCommitmentUsed[endpointCommitment]) revert EndpointAlreadyRegistered();
 
         _verifyOwnership(nodeId, pubkeyNode, ownershipSig);
+
+        // Verify endpoint attestation if provided (transition: empty allowed)
+        if (endpointAttestation.length > 0) {
+            _verifyEndpointAttestation(endpointCommitment, nodeId, pubkeyNode, endpointAttestation);
+        }
 
         endpointCommitmentUsed[endpointCommitment] = true;
         uint64 currentEpoch = _currentEpoch();
@@ -135,7 +141,7 @@ contract PoSeManager is IPoSeManager, PoSeManagerStorage {
         emit BatchSubmitted(epochId, batchId, merkleRoot, summaryHash);
     }
 
-    function challengeBatch(bytes32 batchId, bytes32 receiptLeaf, bytes32[] calldata merkleProof)
+    function challengeBatch(bytes32 batchId, bytes32 receiptLeaf, bytes32[] calldata merkleProof, bytes calldata invalidityEvidence)
         external
         override
         onlyRole(SLASHER_ROLE)
@@ -148,6 +154,16 @@ contract PoSeManager is IPoSeManager, PoSeManagerStorage {
         if (receiptLeaf == bytes32(0) || merkleProof.length == 0) revert InvalidBatch();
         if (!MerkleProofLite.verify(merkleProof, batch.merkleRoot, receiptLeaf)) revert InvalidBatch();
         if (batchSampledLeaf[batchId][receiptLeaf]) revert InvalidBatch();
+
+        // Invalidity evidence required (transition: empty allowed but logged)
+        if (invalidityEvidence.length > 0) {
+            // First byte is reason code, remaining bytes are evidence payload
+            uint8 reason = uint8(invalidityEvidence[0]);
+            if (reason == 0) revert InvalidSlashEvidence();
+            // Reason-specific minimum size checks
+            if (reason == 1 && invalidityEvidence.length < 33) revert InvalidSlashEvidence(); // nonce replay needs 32+ bytes
+            if (reason == 2 && invalidityEvidence.length < 66) revert InvalidSlashEvidence(); // signature needs 65+ bytes
+        }
 
         bytes32 replayKey = keccak256(abi.encodePacked("challenge-batch", batchId, receiptLeaf));
         if (usedReplayKeys[replayKey]) revert EvidenceAlreadyUsed();
@@ -194,6 +210,8 @@ contract PoSeManager is IPoSeManager, PoSeManagerStorage {
         if (evidence.nodeId != nodeId) revert InvalidSlashEvidence();
         if (evidence.reasonCode == 0) revert InvalidSlashEvidence();
         if (evidence.evidenceHash != keccak256(evidence.rawEvidence)) revert InvalidSlashEvidence();
+
+        _validateSlashEvidence(evidence.reasonCode, evidence.rawEvidence, nodeId);
 
         bytes32 replayKey = keccak256(abi.encodePacked("slash-evidence", nodeId, evidence.reasonCode, evidence.evidenceHash));
         if (usedReplayKeys[replayKey]) revert EvidenceAlreadyUsed();
@@ -255,6 +273,55 @@ contract PoSeManager is IPoSeManager, PoSeManagerStorage {
         _setRole(SLASHER_ROLE, account, enabled);
     }
 
+    function depositRewardPool() external payable override {
+        if (msg.value == 0) revert InsufficientBond();
+        rewardPoolBalance += msg.value;
+        emit RewardPoolDeposited(msg.sender, msg.value);
+    }
+
+    function distributeRewards(uint64 epochId, PoSeTypes.EpochReward[] calldata rewards) external override onlyRole(SLASHER_ROLE) {
+        if (!epochFinalized[epochId]) revert InvalidEpoch();
+        if (epochRewardsDistributed[epochId]) revert EpochAlreadyFinalized();
+
+        uint256 totalDistributed = 0;
+        uint256 maxPerNode = (rewardPoolBalance * MAX_REWARD_PER_NODE_BPS) / BPS_DENOMINATOR;
+
+        for (uint256 i = 0; i < rewards.length; i++) {
+            bytes32 nId = rewards[i].nodeId;
+            uint256 amt = rewards[i].amount;
+            // Skip inactive nodes
+            if (!nodes[nId].active) continue;
+            // Cap per-node reward at 30% of pool
+            if (amt > maxPerNode) amt = maxPerNode;
+            // Don't exceed remaining pool
+            if (totalDistributed + amt > rewardPoolBalance) amt = rewardPoolBalance - totalDistributed;
+            if (amt == 0) continue;
+
+            pendingRewards[nId] += amt;
+            totalDistributed += amt;
+        }
+
+        if (totalDistributed > 0) {
+            rewardPoolBalance -= totalDistributed;
+        }
+        epochRewardsDistributed[epochId] = true;
+        emit RewardsDistributed(epochId, totalDistributed);
+    }
+
+    function claimReward(bytes32 nodeId) external override {
+        if (nodeOperator[nodeId] != msg.sender) revert NotNodeOperator();
+        uint256 amount = pendingRewards[nodeId];
+        if (amount == 0) revert NoBondToWithdraw();
+
+        // CEI pattern: zero before transfer
+        pendingRewards[nodeId] = 0;
+
+        (bool ok,) = payable(msg.sender).call{value: amount}("");
+        if (!ok) revert TransferFailed();
+
+        emit RewardClaimed(nodeId, msg.sender, amount);
+    }
+
     // Read helpers for off-chain indexer and relayer.
     function getNode(bytes32 nodeId) external view returns (PoSeTypes.NodeRecord memory) {
         return nodes[nodeId];
@@ -299,6 +366,35 @@ contract PoSeManager is IPoSeManager, PoSeManagerStorage {
         if (recovered != nodeAddr) revert InvalidOwnershipProof();
     }
 
+    function _verifyEndpointAttestation(
+        bytes32 endpointCommitment,
+        bytes32 nodeId,
+        bytes calldata pubkeyNode,
+        bytes calldata attestation
+    ) internal pure {
+        // Node signs: "coc-endpoint:{endpointCommitment}:{nodeId}"
+        if (attestation.length != 65) revert InvalidOwnershipProof();
+
+        bytes32 messageHash = keccak256(abi.encodePacked("coc-endpoint:", endpointCommitment, nodeId));
+        bytes32 ethSignedHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", messageHash));
+
+        uint8 v = uint8(attestation[64]);
+        bytes32 r;
+        bytes32 s;
+        assembly {
+            r := calldataload(attestation.offset)
+            s := calldataload(add(attestation.offset, 32))
+        }
+        if (v < 27) v += 27;
+        require(v == 27 || v == 28, "invalid attestation v value");
+
+        address recovered = ecrecover(ethSignedHash, v, r, s);
+        if (recovered == address(0)) revert InvalidOwnershipProof();
+
+        address nodeAddr = _pubkeyToAddress(pubkeyNode);
+        if (recovered != nodeAddr) revert InvalidOwnershipProof();
+    }
+
     function _pubkeyToAddress(bytes calldata pubkey) internal pure returns (address) {
         if (pubkey.length == 65) {
             return address(uint160(uint256(keccak256(pubkey[1:]))));
@@ -316,6 +412,19 @@ contract PoSeManager is IPoSeManager, PoSeManagerStorage {
 
     function requiredBond(address operator) external view returns (uint256) {
         return _requiredBond(operatorNodeCount[operator]);
+    }
+
+    function _validateSlashEvidence(uint8 reasonCode, bytes calldata rawEvidence, bytes32 nodeId) internal pure {
+        // Structured evidence: minimum 64 bytes header = ABI-encoded (challengeId, targetNodeId)
+        if (rawEvidence.length < 64) revert InvalidSlashEvidence();
+        // Decode target nodeId from header bytes [32..64) and verify it matches
+        bytes32 targetNodeId;
+        assembly {
+            targetNodeId := calldataload(add(rawEvidence.offset, 32))
+        }
+        if (targetNodeId != nodeId) revert InvalidSlashEvidence();
+        // Per-reasonCode size checks
+        if (reasonCode == 2 && rawEvidence.length < 129) revert InvalidSlashEvidence(); // signature evidence needs 64 header + 65 sig
     }
 
     function _slashBps(uint8 reasonCode) internal pure returns (uint16) {

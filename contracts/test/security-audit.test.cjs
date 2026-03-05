@@ -32,7 +32,7 @@ async function registerNode(pose, operator) {
 
   await pose
     .connect(operator)
-    .registerNode(nodeId, pubkeyNode, 0x07, serviceCommitment, endpointCommitment, metadataHash, ownershipSig, {
+    .registerNode(nodeId, pubkeyNode, 0x07, serviceCommitment, endpointCommitment, metadataHash, ownershipSig, "0x", {
       value: bondRequired,
     })
   return { nodeId, bondRequired }
@@ -492,7 +492,7 @@ describe("Security: PoSeManager", function () {
     const sig = await operator1.signMessage(ethers.getBytes(msgHash))
 
     await expect(
-      pose.connect(operator1).registerNode(nodeId, pubkey, 7, sc, ec, meta, sig, {
+      pose.connect(operator1).registerNode(nodeId, pubkey, 7, sc, ec, meta, sig, "0x", {
         value: ethers.parseEther("0.01"), // < 0.1 ETH min
       })
     ).to.be.revertedWithCustomError(pose, "InsufficientBond")
@@ -510,7 +510,7 @@ describe("Security: PoSeManager", function () {
     const sig = await operator1.signMessage(ethers.getBytes(msgHash))
 
     await expect(
-      pose.connect(operator1).registerNode(fakeNodeId, pubkey, 7, sc, ec, meta, sig, {
+      pose.connect(operator1).registerNode(fakeNodeId, pubkey, 7, sc, ec, meta, sig, "0x", {
         value: ethers.parseEther("0.1"),
       })
     ).to.be.revertedWithCustomError(pose, "InvalidNodeId")
@@ -533,7 +533,7 @@ describe("Security: PoSeManager", function () {
     const sig = await operator2.signMessage(ethers.getBytes(msgHash))
 
     await expect(
-      pose.connect(operator2).registerNode(nodeId2, pubkey2, 7, sc, ec, meta, sig, { value: bondRequired })
+      pose.connect(operator2).registerNode(nodeId2, pubkey2, 7, sc, ec, meta, sig, "0x", { value: bondRequired })
     ).to.be.revertedWithCustomError(pose, "EndpointAlreadyRegistered")
   })
 
@@ -552,14 +552,16 @@ describe("Security: PoSeManager", function () {
     const sig = await operator1.signMessage(ethers.getBytes(msgHash))
 
     await expect(
-      pose.connect(operator1).registerNode(nodeId, pubkey, 7, sc, ec, meta, sig, { value: bondRequired })
+      pose.connect(operator1).registerNode(nodeId, pubkey, 7, sc, ec, meta, sig, "0x", { value: bondRequired })
     ).to.be.revertedWithCustomError(pose, "NodeAlreadyRegistered")
   })
 
   it("slash replay prevention", async function () {
     const { nodeId } = await registerNode(pose, operator1)
 
-    const rawEvidence = ethers.toUtf8Bytes("evidence:replay-test")
+    const challengeId = ethers.keccak256(ethers.toUtf8Bytes("replay-challenge"))
+    const header = ethers.solidityPacked(["bytes32", "bytes32"], [challengeId, nodeId])
+    const rawEvidence = ethers.concat([header, ethers.toUtf8Bytes("evidence:replay-test")])
     const evidenceHash = ethers.keccak256(rawEvidence)
 
     await pose.slash(nodeId, { nodeId, evidenceHash, reasonCode: 3, rawEvidence })
@@ -573,24 +575,28 @@ describe("Security: PoSeManager", function () {
   it("slash with different reason codes on same evidence hash is also blocked", async function () {
     const { nodeId } = await registerNode(pose, operator1)
 
-    const rawEvidence = ethers.toUtf8Bytes("evidence:multi-reason")
+    const challengeId = ethers.keccak256(ethers.toUtf8Bytes("multi-reason-challenge"))
+    const header = ethers.solidityPacked(["bytes32", "bytes32"], [challengeId, nodeId])
+    const rawEvidence = ethers.concat([header, ethers.toUtf8Bytes("evidence:multi-reason")])
     const evidenceHash = ethers.keccak256(rawEvidence)
 
     await pose.slash(nodeId, { nodeId, evidenceHash, reasonCode: 1, rawEvidence })
 
     // Different reasonCode but same evidenceHash → different replay key → allowed
     // (This tests that replay keys are domain-separated by reasonCode)
-    await pose.slash(nodeId, { nodeId, evidenceHash, reasonCode: 2, rawEvidence })
+    await pose.slash(nodeId, { nodeId, evidenceHash, reasonCode: 3, rawEvidence })
 
     const node = await pose.getNode(nodeId)
-    // After two slashes: (100% - 20%) = 80%, then (80% - 15%) = 65% of original
+    // After two slashes: (100% - 20%) = 80%, then (80% - 5%) = 76% of original
     expect(node.bondAmount).to.be.lt(await pose.requiredBond(operator1.address))
   })
 
   it("non-slasher cannot slash", async function () {
     const { nodeId } = await registerNode(pose, operator1)
 
-    const rawEvidence = ethers.toUtf8Bytes("evidence:unauthorized")
+    const challengeId = ethers.keccak256(ethers.toUtf8Bytes("unauth-challenge"))
+    const header = ethers.solidityPacked(["bytes32", "bytes32"], [challengeId, nodeId])
+    const rawEvidence = ethers.concat([header, ethers.toUtf8Bytes("evidence:unauthorized")])
     const evidenceHash = ethers.keccak256(rawEvidence)
 
     await expect(
@@ -658,7 +664,9 @@ describe("Security: PoSeManager", function () {
 
     // 5 slashes with reason 1 (20% each): 0.8^5 = 32.8% remaining
     for (let i = 0; i < 5; i++) {
-      const rawEvidence = ethers.toUtf8Bytes(`evidence:drain-${i}`)
+      const challengeId = ethers.keccak256(ethers.toUtf8Bytes(`drain-challenge-${i}`))
+      const header = ethers.solidityPacked(["bytes32", "bytes32"], [challengeId, nodeId])
+      const rawEvidence = ethers.concat([header, ethers.toUtf8Bytes(`evidence:drain-${i}`)])
       const evidenceHash = ethers.keccak256(rawEvidence)
       await pose.slash(nodeId, { nodeId, evidenceHash, reasonCode: 1, rawEvidence })
     }
@@ -684,7 +692,7 @@ describe("Security: PoSeManager", function () {
     const meta = ethers.keccak256(ethers.toUtf8Bytes("m"))
 
     await expect(
-      pose.connect(operator1).registerNode(ethers.ZeroHash, pubkey, 7, sc, ec, meta, "0x" + "00".repeat(65), {
+      pose.connect(operator1).registerNode(ethers.ZeroHash, pubkey, 7, sc, ec, meta, "0x" + "00".repeat(65), "0x", {
         value: ethers.parseEther("0.1"),
       })
     ).to.be.revertedWithCustomError(pose, "InvalidNodeId")

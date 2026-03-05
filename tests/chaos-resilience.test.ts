@@ -172,9 +172,10 @@ describe("Chaos: Network Partition", () => {
     assert.equal(sideA.state.phase, "prepare")
 
     // Side B: v3, v4 (200 < 267)
+    const blockB = makeBlock(1n, "v3")
     const sideB = new BftRound(1n, makeBftConfig("v3", validators))
-    sideB.handlePropose(block, "v3")
-    sideB.handlePrepare("v4", block.hash)
+    sideB.handlePropose(blockB, "v3")
+    sideB.handlePrepare("v4", blockB.hash)
     assert.equal(sideB.state.phase, "prepare")
   })
 

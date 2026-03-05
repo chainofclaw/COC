@@ -22,14 +22,28 @@ export interface BatchAggregatorV2Config {
 }
 
 // Hash an evidence leaf for Merkle inclusion:
-// keccak256(abi.encodePacked(challengeId, nodeId, responseAtMs, responseBodyHash, tipHash, tipHeight, witnessBitmap))
+// keccak256(
+//   abi.encodePacked(
+//     uint64 epoch,
+//     bytes32 nodeId,
+//     bytes16 nonce,
+//     bytes32 tipHash,
+//     uint64 tipHeight,
+//     uint32 latencyMs,
+//     uint8 resultCode,
+//     uint32 witnessBitmap
+//   )
+// )
 export function hashEvidenceLeafV2(receipt: VerifiedReceiptV2): Hex32 {
+  const nonceBuf = hexToBufferSized(receipt.evidenceLeaf.nonce, 16)
   const encoded = Buffer.concat([
-    hexToBuffer(receipt.challenge.challengeId),
-    hexToBuffer(receipt.receipt.nodeId),
-    u64Buffer(receipt.receipt.responseAtMs),
+    u64Buffer(receipt.evidenceLeaf.epoch),
+    hexToBuffer(receipt.evidenceLeaf.nodeId),
+    nonceBuf,
     hexToBuffer(receipt.evidenceLeaf.tipHash),
     u64Buffer(receipt.evidenceLeaf.tipHeight),
+    u32Buffer(receipt.evidenceLeaf.latencyMs),
+    u8Buffer(receipt.evidenceLeaf.resultCode),
     u32Buffer(receipt.evidenceLeaf.witnessBitmap),
   ])
   return `0x${keccak256Hex(encoded)}` as Hex32
@@ -132,4 +146,18 @@ function u32Buffer(value: number): Buffer {
   const b = Buffer.alloc(4)
   b.writeUInt32BE(value)
   return b
+}
+
+function u8Buffer(value: number): Buffer {
+  const b = Buffer.alloc(1)
+  b.writeUInt8(value)
+  return b
+}
+
+function hexToBufferSized(hex: `0x${string}`, size: number): Buffer {
+  const raw = hex.slice(2)
+  if (raw.length !== size * 2) {
+    throw new Error(`expected ${size}-byte hex, got ${raw.length / 2} bytes`)
+  }
+  return Buffer.from(raw, "hex")
 }

@@ -12,6 +12,9 @@ interface IPoSeManager {
     event NodeSlashed(bytes32 indexed nodeId, uint256 slashAmount, uint8 reasonCode);
     event UnbondRequested(bytes32 indexed nodeId, uint64 unlockEpoch);
     event Withdrawn(bytes32 indexed nodeId, address indexed operator, uint256 amount);
+    event RewardPoolDeposited(address indexed depositor, uint256 amount);
+    event RewardsDistributed(uint64 indexed epochId, uint256 totalDistributed);
+    event RewardClaimed(bytes32 indexed nodeId, address indexed operator, uint256 amount);
 
     function registerNode(
         bytes32 nodeId,
@@ -20,7 +23,8 @@ interface IPoSeManager {
         bytes32 serviceCommitment,
         bytes32 endpointCommitment,
         bytes32 metadataHash,
-        bytes calldata ownershipSig
+        bytes calldata ownershipSig,
+        bytes calldata endpointAttestation
     ) external payable;
 
     function updateCommitment(bytes32 nodeId, bytes32 newCommitment) external;
@@ -32,7 +36,7 @@ interface IPoSeManager {
         PoSeTypes.SampleProof[] calldata sampleProofs
     ) external returns (bytes32 batchId);
 
-    function challengeBatch(bytes32 batchId, bytes32 receiptLeaf, bytes32[] calldata merkleProof) external;
+    function challengeBatch(bytes32 batchId, bytes32 receiptLeaf, bytes32[] calldata merkleProof, bytes calldata invalidityEvidence) external;
 
     function finalizeEpoch(uint64 epochId) external;
 
@@ -41,4 +45,10 @@ interface IPoSeManager {
     function requestUnbond(bytes32 nodeId) external;
 
     function withdraw(bytes32 nodeId) external;
+
+    function depositRewardPool() external payable;
+
+    function distributeRewards(uint64 epochId, PoSeTypes.EpochReward[] calldata rewards) external;
+
+    function claimReward(bytes32 nodeId) external;
 }

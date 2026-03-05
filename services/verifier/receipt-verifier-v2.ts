@@ -87,7 +87,7 @@ export class ReceiptVerifierV2 {
       deadlineMs: BigInt(challenge.deadlineMs),
       challengerId: challenge.challengerId,
     }
-    const challengerAddr = challenge.challengerId.slice(0, 42)
+    const challengerAddr = `0x${challenge.challengerId.slice(-40)}`.toLowerCase()
     if (!this.deps.challengerEip712.verifyTypedData(
       CHALLENGE_TYPES,
       challengeData as unknown as Record<string, unknown>,
@@ -120,7 +120,7 @@ export class ReceiptVerifierV2 {
       tipHash: receipt.tipHash,
       tipHeight: receipt.tipHeight,
     }
-    const nodeAddr = receipt.nodeId.slice(0, 42)
+    const nodeAddr = `0x${receipt.nodeId.slice(-40)}`.toLowerCase()
     if (!this.deps.nodeEip712Verifier.verifyTypedData(
       RECEIPT_TYPES,
       receiptData as unknown as Record<string, unknown>,

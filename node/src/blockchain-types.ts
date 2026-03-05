@@ -22,6 +22,7 @@ export interface ChainBlock {
   finalized: boolean
   bftFinalized?: boolean
   signature?: Hex
+  stateRootSig?: Hex
   stateRoot?: Hex
   baseFee?: bigint
   gasUsed?: bigint

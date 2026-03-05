@@ -40,6 +40,8 @@ export interface ChainEngineConfig {
   maxTxPerBlock: number
   minGasPriceWei: bigint
   signatureEnforcement?: "off" | "monitor" | "enforce"
+  enableGovernance?: boolean
+  validatorStakes?: Array<{ id: string; address: string; stake: bigint }>
 }
 
 export class ChainEngine {
@@ -56,6 +58,7 @@ export class ChainEngine {
   private nodeSigner: NodeSigner | null = null
   private signatureVerifier: SignatureVerifier | null = null
   private applyingBlock = false
+  private validatorAddressMap: Map<string, string> = new Map()
 
   constructor(cfg: ChainEngineConfig, evm: EvmChain) {
     this.cfg = cfg
@@ -69,6 +72,16 @@ export class ChainEngine {
   setNodeSigner(signer: NodeSigner, verifier: SignatureVerifier): void {
     this.nodeSigner = signer
     this.signatureVerifier = verifier
+  }
+
+  /** Set validator address map for identity alignment (nodeId → address) */
+  setValidatorAddressMap(map: Map<string, string>): void {
+    this.validatorAddressMap = map
+  }
+
+  /** Resolve validator nodeId to address for signature verification */
+  private resolveValidatorAddress(nodeId: string): string {
+    return this.validatorAddressMap.get(nodeId) ?? nodeId
   }
 
   async init(): Promise<void> {
@@ -232,7 +245,8 @@ export class ChainEngine {
     if (!locallyProposed && this.signatureVerifier && sigMode !== "off") {
       if (block.signature) {
         const canonical = `block:${block.hash}`
-        if (!this.signatureVerifier.verifyNodeSig(canonical, block.signature, block.proposer)) {
+        const proposerAddr = this.resolveValidatorAddress(block.proposer)
+        if (!this.signatureVerifier.verifyNodeSig(canonical, block.signature, proposerAddr)) {
           throw new Error("block proposer signature invalid")
         }
       } else if (sigMode === "enforce") {
@@ -297,10 +311,29 @@ export class ChainEngine {
       throw new Error(`block gasUsed mismatch: claimed ${block.gasUsed}, computed ${totalGasUsed}`)
     }
 
+    // Post-execution stateRoot signature (proposer signs after EVM execution)
+    let stateRootSig = block.stateRootSig
+    if (locallyProposed && this.nodeSigner && block.stateRoot) {
+      const stateRootMsg = `stateRoot:${block.hash}:${block.stateRoot}`
+      stateRootSig = this.nodeSigner.sign(stateRootMsg) as Hex
+    } else if (!locallyProposed && block.stateRootSig && block.stateRoot && this.signatureVerifier) {
+      // Verify remote proposer's stateRoot signature
+      const stateRootMsg = `stateRoot:${block.hash}:${block.stateRoot}`
+      const sigMode = this.cfg.signatureEnforcement ?? "enforce"
+      const validatorAddr = this.resolveValidatorAddress(block.proposer)
+      if (!this.signatureVerifier.verifyNodeSig(stateRootMsg, block.stateRootSig, validatorAddr)) {
+        if (sigMode === "enforce") {
+          throw new Error("stateRoot signature invalid")
+        }
+        log.warn("stateRoot signature mismatch", { height: block.number.toString(), proposer: block.proposer })
+      }
+    }
+
     // Create a new block object to avoid mutating the caller's input
     const storedBlock = {
       ...block,
       gasUsed: totalGasUsed,
+      stateRootSig,
       // Never trust remote/non-hash metadata from gossip. Finality is local-state derived.
       finalized: false,
       bftFinalized: locallyProposed && block.bftFinalized === true,

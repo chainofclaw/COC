@@ -44,4 +44,9 @@ library PoSeTypes {
         uint8 reasonCode;
         bytes rawEvidence;
     }
+
+    struct EpochReward {
+        bytes32 nodeId;
+        uint256 amount;
+    }
 }
