@@ -41,6 +41,7 @@ describe("runtime-metrics", () => {
           roleMismatchV1: 5,
           roleMismatchV2: 6,
           tickOverlapSkipped: 0,
+          tickOverlapLogSuppressed: 0,
           metricsWriteFailed: 0,
           metricsPromWriteFailed: 0,
         },
@@ -73,6 +74,7 @@ describe("runtime-metrics", () => {
         roleMismatchV1: 5,
         roleMismatchV2: 6,
         tickOverlapSkipped: 9,
+        tickOverlapLogSuppressed: 10,
         metricsWriteFailed: 7,
         metricsPromWriteFailed: 8,
       },
@@ -84,6 +86,7 @@ describe("runtime-metrics", () => {
     assert.match(content, /coc_agent_metrics_write_failed_total 7/)
     assert.match(content, /coc_agent_metrics_prom_write_failed_total 8/)
     assert.match(content, /coc_agent_tick_overlap_skipped_total 9/)
+    assert.match(content, /coc_agent_tick_overlap_log_suppressed_total 10/)
   })
 
   it("writePrometheusMetrics writes prom text atomically", () => {
@@ -108,6 +111,7 @@ describe("runtime-metrics", () => {
           roleMismatchV1: 0,
           roleMismatchV2: 0,
           tickOverlapSkipped: 0,
+          tickOverlapLogSuppressed: 0,
           metricsWriteFailed: 0,
           metricsPromWriteFailed: 0,
         },

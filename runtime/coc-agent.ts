@@ -411,6 +411,10 @@ const agentMetricsIntervalMs = normalizeInt(
   process.env.COC_AGENT_METRICS_INTERVAL_MS || config.agentMetricsIntervalMs,
   10_000,
 );
+const tickOverlapLogIntervalMs = normalizeInt(
+  process.env.COC_TICK_OVERLAP_LOG_INTERVAL_MS || config.tickOverlapLogIntervalMs,
+  30_000,
+);
 const pending = new PendingReceiptStore<any>(pendingPath, "v1");
 const pendingV2 = new PendingReceiptStore<VerifiedReceiptV2>(pendingV2Path, "v2");
 const runtimeStats = {
@@ -421,11 +425,14 @@ const runtimeStats = {
   roleMismatchV1: 0,
   roleMismatchV2: 0,
   tickOverlapSkipped: 0,
+  tickOverlapLogSuppressed: 0,
   metricsWriteFailed: 0,
   metricsPromWriteFailed: 0,
 };
 let lastMetricsWriteAtMs = 0;
 let tickInProgress = false;
+let lastTickOverlapLogAtMs = 0;
+let tickOverlapSuppressedSinceLastLog = 0;
 let selfNodeRegistered = false;
 let currentEpoch = currentEpochId();
 log.info("endpoint fingerprint mode", { mode: endpointFingerprintMode });
@@ -605,9 +612,22 @@ function writeRuntimeMetrics(nowEpoch: number, nowMs: number): void {
 async function tick(): Promise<void> {
   if (tickInProgress) {
     runtimeStats.tickOverlapSkipped += 1;
-    log.warn("tick skipped: previous tick still in progress", {
-      tickOverlapSkipped: runtimeStats.tickOverlapSkipped,
-    });
+    const nowMs = Date.now();
+    const shouldLog =
+      lastTickOverlapLogAtMs === 0 ||
+      nowMs - lastTickOverlapLogAtMs >= tickOverlapLogIntervalMs;
+    if (shouldLog) {
+      log.warn("tick skipped: previous tick still in progress", {
+        tickOverlapSkipped: runtimeStats.tickOverlapSkipped,
+        suppressedSinceLast: tickOverlapSuppressedSinceLastLog,
+        throttleMs: tickOverlapLogIntervalMs,
+      });
+      lastTickOverlapLogAtMs = nowMs;
+      tickOverlapSuppressedSinceLastLog = 0;
+    } else {
+      tickOverlapSuppressedSinceLastLog += 1;
+      runtimeStats.tickOverlapLogSuppressed += 1;
+    }
     return;
   }
   tickInProgress = true;
@@ -757,6 +777,7 @@ async function tick(): Promise<void> {
       roleMismatchV1: runtimeStats.roleMismatchV1,
       roleMismatchV2: runtimeStats.roleMismatchV2,
       tickOverlapSkipped: runtimeStats.tickOverlapSkipped,
+      tickOverlapLogSuppressed: runtimeStats.tickOverlapLogSuppressed,
       metricsWriteFailed: runtimeStats.metricsWriteFailed,
       metricsPromWriteFailed: runtimeStats.metricsPromWriteFailed,
     });

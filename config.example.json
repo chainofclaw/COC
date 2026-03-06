@@ -19,6 +19,7 @@
   "agentMetricsBind": "127.0.0.1",
   "agentMetricsPort": 0,
   "agentMetricsIntervalMs": 10000,
+  "tickOverlapLogIntervalMs": 30000,
   "operatorPrivateKey": "0xYOUR_OPERATOR_PRIVATE_KEY",
   "nonceRegistryPath": "/var/lib/coc/nonce-registry.log",
   "nonceRegistryTtlMs": 604800000,

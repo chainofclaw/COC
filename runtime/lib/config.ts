@@ -27,6 +27,7 @@ export interface CocRuntimeConfig {
   agentMetricsBind?: string;
   agentMetricsPort?: number;
   agentMetricsIntervalMs?: number;
+  tickOverlapLogIntervalMs?: number;
   nonceRegistryPath?: string;
   nonceRegistryTtlMs?: number;
   nonceRegistryMaxEntries?: number;
