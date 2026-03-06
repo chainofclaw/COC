@@ -22,6 +22,9 @@ export interface CocRuntimeConfig {
   pendingRetentionEpochs?: number;
   pendingArchivePath?: string;
   pendingV2ArchivePath?: string;
+  agentMetricsPath?: string;
+  agentMetricsPromPath?: string;
+  agentMetricsIntervalMs?: number;
   nonceRegistryPath?: string;
   nonceRegistryTtlMs?: number;
   nonceRegistryMaxEntries?: number;

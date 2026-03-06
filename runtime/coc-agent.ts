@@ -30,6 +30,7 @@ import { buildSignedPosePayload } from "../node/src/pose-http.ts";
 import { collectBatchWitnessSignatures, collectWitnesses } from "./lib/witness-collector.ts";
 import { ContractReader } from "./lib/contract-reader.ts";
 import { extractPendingV1Epoch, extractPendingV2Epoch, pruneStoreByEpoch } from "./lib/pending-retention.ts";
+import { shouldWriteMetrics, writeMetricsSnapshot, writePrometheusMetrics } from "./lib/runtime-metrics.ts";
 
 const log = createLogger("coc-agent");
 
@@ -398,6 +399,12 @@ const pendingRetentionEpochs = normalizeNonNegativeInt(
 );
 const pendingArchivePath = process.env.COC_PENDING_ARCHIVE_PATH || config.pendingArchivePath || join(config.dataDir, "pending-receipts-archive.jsonl");
 const pendingV2ArchivePath = process.env.COC_PENDING_V2_ARCHIVE_PATH || config.pendingV2ArchivePath || join(config.dataDir, "pending-receipts-v2-archive.jsonl");
+const agentMetricsPath = process.env.COC_AGENT_METRICS_PATH || config.agentMetricsPath || join(config.dataDir, "agent-metrics.json");
+const agentMetricsPromPath = process.env.COC_AGENT_METRICS_PROM_PATH || config.agentMetricsPromPath || join(config.dataDir, "agent-metrics.prom");
+const agentMetricsIntervalMs = normalizeInt(
+  process.env.COC_AGENT_METRICS_INTERVAL_MS || config.agentMetricsIntervalMs,
+  10_000,
+);
 const pending = new PendingReceiptStore<any>(pendingPath, "v1");
 const pendingV2 = new PendingReceiptStore<VerifiedReceiptV2>(pendingV2Path, "v2");
 const runtimeStats = {
@@ -407,7 +414,10 @@ const runtimeStats = {
   pruneArchiveFailedV2: 0,
   roleMismatchV1: 0,
   roleMismatchV2: 0,
+  metricsWriteFailed: 0,
+  metricsPromWriteFailed: 0,
 };
+let lastMetricsWriteAtMs = 0;
 let currentEpoch = currentEpochId();
 log.info("endpoint fingerprint mode", { mode: endpointFingerprintMode });
 
@@ -524,11 +534,48 @@ function removePendingV2ByEpoch(epochId: number): number {
   return pendingV2.removeWhere((item) => extractPendingV2Epoch(item) === epochId);
 }
 
+function writeRuntimeMetrics(nowEpoch: number, nowMs: number): void {
+  if (!shouldWriteMetrics(nowMs, lastMetricsWriteAtMs, agentMetricsIntervalMs)) {
+    return;
+  }
+  const snapshot = {
+    generatedAtMs: nowMs,
+    protocolVersion: useV2 ? 2 : 1,
+    address: signer.address.toLowerCase(),
+    selfNodeRegistered,
+    currentEpoch: nowEpoch,
+    pendingV1: pending.length,
+    pendingV2: pendingV2.length,
+    counters: { ...runtimeStats },
+  } as const;
+
+  try {
+    writeMetricsSnapshot(agentMetricsPath, snapshot);
+  } catch (error) {
+    runtimeStats.metricsWriteFailed += 1;
+    log.error("runtime metrics write failed", {
+      path: agentMetricsPath,
+      error: String(error),
+    });
+  }
+  try {
+    writePrometheusMetrics(agentMetricsPromPath, snapshot);
+  } catch (error) {
+    runtimeStats.metricsPromWriteFailed += 1;
+    log.error("runtime metrics prometheus write failed", {
+      path: agentMetricsPromPath,
+      error: String(error),
+    });
+  }
+  lastMetricsWriteAtMs = nowMs;
+}
+
 async function tick(): Promise<void> {
   try {
     await refreshLatestBlock();
     await refreshSelfNodeStatus();
     const nowEpoch = currentEpochId();
+    const nowMs = Date.now();
     pruneStalePending(nowEpoch);
 
     if (useV2) {
@@ -659,6 +706,7 @@ async function tick(): Promise<void> {
       }
     }
 
+    writeRuntimeMetrics(currentEpoch, nowMs);
     log.info("tick ok", {
       pendingV1: pending.length,
       pendingV2: pendingV2.length,
@@ -668,6 +716,8 @@ async function tick(): Promise<void> {
       pruneArchiveFailedV2: runtimeStats.pruneArchiveFailedV2,
       roleMismatchV1: runtimeStats.roleMismatchV1,
       roleMismatchV2: runtimeStats.roleMismatchV2,
+      metricsWriteFailed: runtimeStats.metricsWriteFailed,
+      metricsPromWriteFailed: runtimeStats.metricsPromWriteFailed,
     });
   } catch (error) {
     log.error("tick failed", { error: String(error) });
