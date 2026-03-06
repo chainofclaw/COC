@@ -29,6 +29,7 @@ import { buildDomain, CHALLENGE_TYPES, RECEIPT_TYPES } from "../node/src/crypto/
 import { buildSignedPosePayload } from "../node/src/pose-http.ts";
 import { collectBatchWitnessSignatures, collectWitnesses } from "./lib/witness-collector.ts";
 import { ContractReader } from "./lib/contract-reader.ts";
+import { extractPendingV1Epoch, extractPendingV2Epoch, pruneStoreByEpoch } from "./lib/pending-retention.ts";
 
 const log = createLogger("coc-agent");
 
@@ -292,17 +293,6 @@ function deserializeWithBigInt<T>(line: string): T {
   }) as T;
 }
 
-function toEpochNumber(value: unknown): number | null {
-  if (typeof value === "bigint") {
-    if (value < 0n) return null;
-    const n = Number(value);
-    return Number.isFinite(n) ? Math.floor(n) : null;
-  }
-  const n = Number(value);
-  if (!Number.isFinite(n) || n < 0) return null;
-  return Math.floor(n);
-}
-
 // Persistent pending receipts store — survives crash/restart
 class PendingReceiptStore<T> {
   private items: T[] = [];
@@ -410,6 +400,14 @@ const pendingArchivePath = process.env.COC_PENDING_ARCHIVE_PATH || config.pendin
 const pendingV2ArchivePath = process.env.COC_PENDING_V2_ARCHIVE_PATH || config.pendingV2ArchivePath || join(config.dataDir, "pending-receipts-v2-archive.jsonl");
 const pending = new PendingReceiptStore<any>(pendingPath, "v1");
 const pendingV2 = new PendingReceiptStore<VerifiedReceiptV2>(pendingV2Path, "v2");
+const runtimeStats = {
+  pruneRemovedV1: 0,
+  pruneRemovedV2: 0,
+  pruneArchiveFailedV1: 0,
+  pruneArchiveFailedV2: 0,
+  roleMismatchV1: 0,
+  roleMismatchV2: 0,
+};
 let currentEpoch = currentEpochId();
 log.info("endpoint fingerprint mode", { mode: endpointFingerprintMode });
 
@@ -426,16 +424,6 @@ export const evidenceStore = new EvidenceStore(1000, evidencePath);
 const antiCheat = new AntiCheatPolicy();
 
 await ensureNodeRegistered();
-
-function extractPendingV1Epoch(item: unknown): number | null {
-  const epoch = (item as { challenge?: { epochId?: unknown } } | null | undefined)?.challenge?.epochId;
-  return toEpochNumber(epoch);
-}
-
-function extractPendingV2Epoch(item: unknown): number | null {
-  const epoch = (item as { evidenceLeaf?: { epoch?: unknown } } | null | undefined)?.evidenceLeaf?.epoch;
-  return toEpochNumber(epoch);
-}
 
 function appendPendingArchive(
   protocol: "v1" | "v2",
@@ -469,59 +457,55 @@ function appendPendingArchive(
 }
 
 function pruneStalePending(nowEpoch: number): void {
-  if (pendingRetentionEpochs <= 0) return;
-  const cutoffEpoch = nowEpoch - pendingRetentionEpochs;
-  if (cutoffEpoch <= 0) return;
-
-  const staleV1 = pending.listWhere((item) => {
-    const epoch = extractPendingV1Epoch(item);
-    return epoch !== null && epoch < cutoffEpoch;
+  const v1 = pruneStoreByEpoch({
+    nowEpoch,
+    retentionEpochs: pendingRetentionEpochs,
+    store: pending,
+    extractEpoch: extractPendingV1Epoch,
+    archive: (items, cutoffEpoch) => appendPendingArchive("v1", pendingArchivePath, cutoffEpoch, items),
   });
-  if (staleV1.length > 0) {
-    const archived = appendPendingArchive("v1", pendingArchivePath, cutoffEpoch, staleV1);
-    if (archived) {
-      const removed = pending.removeWhere((item) => {
-        const epoch = extractPendingV1Epoch(item);
-        return epoch !== null && epoch < cutoffEpoch;
-      });
+  if (v1.staleCount > 0 && v1.cutoffEpoch !== null) {
+    if (v1.archived) {
+      runtimeStats.pruneRemovedV1 += v1.removedCount;
       log.warn("pruned stale pending receipts", {
         protocol: "v1",
-        count: removed,
-        cutoffEpoch,
+        count: v1.removedCount,
+        cutoffEpoch: v1.cutoffEpoch,
         archivePath: pendingArchivePath,
       });
     } else {
+      runtimeStats.pruneArchiveFailedV1 += 1;
       log.error("pending prune skipped: archive write failed", {
         protocol: "v1",
-        count: staleV1.length,
-        cutoffEpoch,
+        count: v1.staleCount,
+        cutoffEpoch: v1.cutoffEpoch,
         archivePath: pendingArchivePath,
       });
     }
   }
 
-  const staleV2 = pendingV2.listWhere((item) => {
-    const epoch = extractPendingV2Epoch(item);
-    return epoch !== null && epoch < cutoffEpoch;
+  const v2 = pruneStoreByEpoch({
+    nowEpoch,
+    retentionEpochs: pendingRetentionEpochs,
+    store: pendingV2,
+    extractEpoch: extractPendingV2Epoch,
+    archive: (items, cutoffEpoch) => appendPendingArchive("v2", pendingV2ArchivePath, cutoffEpoch, items),
   });
-  if (staleV2.length > 0) {
-    const archived = appendPendingArchive("v2", pendingV2ArchivePath, cutoffEpoch, staleV2);
-    if (archived) {
-      const removed = pendingV2.removeWhere((item) => {
-        const epoch = extractPendingV2Epoch(item);
-        return epoch !== null && epoch < cutoffEpoch;
-      });
+  if (v2.staleCount > 0 && v2.cutoffEpoch !== null) {
+    if (v2.archived) {
+      runtimeStats.pruneRemovedV2 += v2.removedCount;
       log.warn("pruned stale pending receipts", {
         protocol: "v2",
-        count: removed,
-        cutoffEpoch,
+        count: v2.removedCount,
+        cutoffEpoch: v2.cutoffEpoch,
         archivePath: pendingV2ArchivePath,
       });
     } else {
+      runtimeStats.pruneArchiveFailedV2 += 1;
       log.error("pending prune skipped: archive write failed", {
         protocol: "v2",
-        count: staleV2.length,
-        cutoffEpoch,
+        count: v2.staleCount,
+        cutoffEpoch: v2.cutoffEpoch,
         archivePath: pendingV2ArchivePath,
       });
     }
@@ -577,6 +561,7 @@ async function tick(): Promise<void> {
       const canChallengeNow = canRunForEpochRole(currentEpoch);
       const canAggregateNow = canRunAggregatorRole(currentEpoch);
       if (poseV2Contract && canChallengeNow && !canAggregateNow) {
+        runtimeStats.roleMismatchV2 += 1;
         log.error("v2 role mismatch: challenger enabled but aggregator disabled, skip challenges to avoid unflushable receipts", {
           epochId: currentEpoch,
           address: signer.address.toLowerCase(),
@@ -639,6 +624,7 @@ async function tick(): Promise<void> {
       const canChallengeNow = canRunForEpochRole(currentEpoch);
       const canAggregateNow = canRunAggregatorRole(currentEpoch);
       if (poseContract && canChallengeNow && !canAggregateNow) {
+        runtimeStats.roleMismatchV1 += 1;
         log.error("v1 role mismatch: challenger enabled but aggregator disabled, skip challenges to avoid unflushable receipts", {
           epochId: currentEpoch,
           address: signer.address.toLowerCase(),
@@ -673,7 +659,16 @@ async function tick(): Promise<void> {
       }
     }
 
-    log.info("tick ok");
+    log.info("tick ok", {
+      pendingV1: pending.length,
+      pendingV2: pendingV2.length,
+      pruneRemovedV1: runtimeStats.pruneRemovedV1,
+      pruneRemovedV2: runtimeStats.pruneRemovedV2,
+      pruneArchiveFailedV1: runtimeStats.pruneArchiveFailedV1,
+      pruneArchiveFailedV2: runtimeStats.pruneArchiveFailedV2,
+      roleMismatchV1: runtimeStats.roleMismatchV1,
+      roleMismatchV2: runtimeStats.roleMismatchV2,
+    });
   } catch (error) {
     log.error("tick failed", { error: String(error) });
   }
