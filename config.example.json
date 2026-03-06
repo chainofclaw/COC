@@ -16,6 +16,8 @@
   "pendingV2ArchivePath": "/var/lib/coc/pending-receipts-v2-archive.jsonl",
   "agentMetricsPath": "/var/lib/coc/agent-metrics.json",
   "agentMetricsPromPath": "/var/lib/coc/agent-metrics.prom",
+  "agentMetricsBind": "127.0.0.1",
+  "agentMetricsPort": 0,
   "agentMetricsIntervalMs": 10000,
   "operatorPrivateKey": "0xYOUR_OPERATOR_PRIVATE_KEY",
   "nonceRegistryPath": "/var/lib/coc/nonce-registry.log",

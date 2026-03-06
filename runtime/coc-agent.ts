@@ -30,7 +30,8 @@ import { buildSignedPosePayload } from "../node/src/pose-http.ts";
 import { collectBatchWitnessSignatures, collectWitnesses } from "./lib/witness-collector.ts";
 import { ContractReader } from "./lib/contract-reader.ts";
 import { extractPendingV1Epoch, extractPendingV2Epoch, pruneStoreByEpoch } from "./lib/pending-retention.ts";
-import { shouldWriteMetrics, writeMetricsSnapshot, writePrometheusMetrics } from "./lib/runtime-metrics.ts";
+import { buildPrometheusMetrics, shouldWriteMetrics, writeMetricsSnapshot, writePrometheusMetrics, type RuntimeMetricsSnapshot } from "./lib/runtime-metrics.ts";
+import { startAgentMetricsServer } from "./lib/agent-metrics-server.ts";
 
 const log = createLogger("coc-agent");
 
@@ -401,6 +402,11 @@ const pendingArchivePath = process.env.COC_PENDING_ARCHIVE_PATH || config.pendin
 const pendingV2ArchivePath = process.env.COC_PENDING_V2_ARCHIVE_PATH || config.pendingV2ArchivePath || join(config.dataDir, "pending-receipts-v2-archive.jsonl");
 const agentMetricsPath = process.env.COC_AGENT_METRICS_PATH || config.agentMetricsPath || join(config.dataDir, "agent-metrics.json");
 const agentMetricsPromPath = process.env.COC_AGENT_METRICS_PROM_PATH || config.agentMetricsPromPath || join(config.dataDir, "agent-metrics.prom");
+const agentMetricsBind = process.env.COC_AGENT_METRICS_BIND || config.agentMetricsBind || "127.0.0.1";
+const agentMetricsPort = normalizeNonNegativeInt(
+  process.env.COC_AGENT_METRICS_PORT || config.agentMetricsPort,
+  0,
+);
 const agentMetricsIntervalMs = normalizeInt(
   process.env.COC_AGENT_METRICS_INTERVAL_MS || config.agentMetricsIntervalMs,
   10_000,
@@ -418,8 +424,25 @@ const runtimeStats = {
   metricsPromWriteFailed: 0,
 };
 let lastMetricsWriteAtMs = 0;
+let selfNodeRegistered = false;
 let currentEpoch = currentEpochId();
 log.info("endpoint fingerprint mode", { mode: endpointFingerprintMode });
+
+if (agentMetricsPort > 0) {
+  try {
+    await startAgentMetricsServer({
+      bind: agentMetricsBind,
+      port: agentMetricsPort,
+      getPrometheus: () => buildPrometheusMetrics(buildRuntimeMetricsSnapshot(currentEpoch, Date.now())),
+    });
+  } catch (error) {
+    log.error("agent metrics server failed to start", {
+      bind: agentMetricsBind,
+      port: agentMetricsPort,
+      error: String(error),
+    });
+  }
+}
 
 if (useV2 && trackedNodeIds.length > 1) {
   const missing = trackedNodeIds.filter((id) => !nodeEndpointMap.has(id.toLowerCase()));
@@ -534,11 +557,8 @@ function removePendingV2ByEpoch(epochId: number): number {
   return pendingV2.removeWhere((item) => extractPendingV2Epoch(item) === epochId);
 }
 
-function writeRuntimeMetrics(nowEpoch: number, nowMs: number): void {
-  if (!shouldWriteMetrics(nowMs, lastMetricsWriteAtMs, agentMetricsIntervalMs)) {
-    return;
-  }
-  const snapshot = {
+function buildRuntimeMetricsSnapshot(nowEpoch: number, nowMs: number): RuntimeMetricsSnapshot {
+  return {
     generatedAtMs: nowMs,
     protocolVersion: useV2 ? 2 : 1,
     address: signer.address.toLowerCase(),
@@ -547,10 +567,17 @@ function writeRuntimeMetrics(nowEpoch: number, nowMs: number): void {
     pendingV1: pending.length,
     pendingV2: pendingV2.length,
     counters: { ...runtimeStats },
-  } as const;
+  };
+}
 
+function writeRuntimeMetrics(nowEpoch: number, nowMs: number): void {
+  if (!shouldWriteMetrics(nowMs, lastMetricsWriteAtMs, agentMetricsIntervalMs)) {
+    return;
+  }
+  let hasSuccess = false;
   try {
-    writeMetricsSnapshot(agentMetricsPath, snapshot);
+    writeMetricsSnapshot(agentMetricsPath, buildRuntimeMetricsSnapshot(nowEpoch, nowMs));
+    hasSuccess = true;
   } catch (error) {
     runtimeStats.metricsWriteFailed += 1;
     log.error("runtime metrics write failed", {
@@ -559,7 +586,8 @@ function writeRuntimeMetrics(nowEpoch: number, nowMs: number): void {
     });
   }
   try {
-    writePrometheusMetrics(agentMetricsPromPath, snapshot);
+    writePrometheusMetrics(agentMetricsPromPath, buildRuntimeMetricsSnapshot(nowEpoch, nowMs));
+    hasSuccess = true;
   } catch (error) {
     runtimeStats.metricsPromWriteFailed += 1;
     log.error("runtime metrics prometheus write failed", {
@@ -567,7 +595,9 @@ function writeRuntimeMetrics(nowEpoch: number, nowMs: number): void {
       error: String(error),
     });
   }
-  lastMetricsWriteAtMs = nowMs;
+  if (hasSuccess) {
+    lastMetricsWriteAtMs = nowMs;
+  }
 }
 
 async function tick(): Promise<void> {
@@ -1350,9 +1380,6 @@ async function flushBatch(epochId: number, receipts: Array<any>): Promise<boolea
     return false;
   }
 }
-
-// Track whether our own node is registered onchain
-let selfNodeRegistered = false;
 
 async function refreshSelfNodeStatus(): Promise<void> {
   const statusContract = useV2 ? poseV2Contract : poseContract;
