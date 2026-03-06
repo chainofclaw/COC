@@ -16,11 +16,12 @@ import { BatchAggregator } from "../services/aggregator/batch-aggregator.ts";
 import { BatchAggregatorV2 } from "../services/aggregator/batch-aggregator-v2.ts";
 import { computeEpochRewards } from "../services/verifier/scoring.ts";
 import { buildRewardRoot } from "../services/common/reward-tree.ts";
-import { AntiCheatPolicy, EvidenceReason } from "../services/verifier/anti-cheat-policy.ts";
+import { AntiCheatPolicy, EvidenceReason, type SlashEvidence } from "../services/verifier/anti-cheat-policy.ts";
 import { keccak256Hex } from "../services/relayer/keccak256.ts";
 import { ChallengeType } from "../services/common/pose-types.ts";
 import type { ChallengeMessageV2, VerifiedReceiptV2 } from "../services/common/pose-types-v2.ts";
 import { ResultCode } from "../services/common/pose-types-v2.ts";
+import { buildMerkleProof } from "../services/common/merkle.ts";
 import { hashPair } from "../node/src/ipfs-merkle.ts";
 import type { UnixFsFileMeta, Hex } from "../node/src/ipfs-types.ts";
 import { createLogger } from "../node/src/logger.ts";
@@ -32,6 +33,8 @@ import { ContractReader } from "./lib/contract-reader.ts";
 import { extractPendingV1Epoch, extractPendingV2Epoch, pruneStoreByEpoch } from "./lib/pending-retention.ts";
 import { buildPrometheusMetrics, shouldWriteMetrics, writeMetricsSnapshot, writePrometheusMetrics, type RuntimeMetricsSnapshot } from "./lib/runtime-metrics.ts";
 import { startAgentMetricsServer } from "./lib/agent-metrics-server.ts";
+import { faultTypeForResultCode, serializeEvidenceLeaf } from "./lib/pose-v2-fault-proof.ts";
+import { stableStringifyForHash, writeRewardManifest, type RewardManifest } from "./lib/reward-manifest.ts";
 
 const log = createLogger("coc-agent");
 
@@ -41,6 +44,7 @@ const intervalMs = normalizeInt(process.env.COC_AGENT_INTERVAL_MS || config.agen
 const batchSize = normalizeInt(process.env.COC_AGENT_BATCH_SIZE || config.agentBatchSize, 5);
 const sampleSize = normalizeInt(process.env.COC_AGENT_SAMPLE_SIZE || config.agentSampleSize, 2);
 const storageDir = resolveStorageDir(config.dataDir, config.storageDir);
+const rewardManifestDir = config.rewardManifestDir ?? join(config.dataDir, "reward-manifests");
 const nonceRegistryPath = process.env.COC_NONCE_REGISTRY_PATH || config.nonceRegistryPath || join(config.dataDir, "nonce-registry.log");
 const nonceRegistryTtlMs = normalizeInt(
   process.env.COC_NONCE_REGISTRY_TTL_MS || config.nonceRegistryTtlMs,
@@ -138,7 +142,8 @@ const contractReader = useV2 ? new ContractReader({
 
 const v2WitnessNodes = config.witnessNodes ?? [];
 const v2RequiredWitnesses = config.requiredWitnesses ?? 0;
-const allowEmptyBatchWitnessSubmission = config.allowEmptyBatchWitnessSubmission ?? true;
+// Production default: strict (false). Set to true only for dev/test environments.
+const allowEmptyBatchWitnessSubmission = config.allowEmptyBatchWitnessSubmission ?? false;
 const v2TipTolerance = config.tipToleranceBlocks ?? 10;
 
 const poseV2Abi = [
@@ -428,6 +433,7 @@ const runtimeStats = {
   tickOverlapLogSuppressed: 0,
   metricsWriteFailed: 0,
   metricsPromWriteFailed: 0,
+  witnessFallbackCount: 0,
 };
 let lastMetricsWriteAtMs = 0;
 let tickInProgress = false;
@@ -809,7 +815,13 @@ async function tryChallengeV2(nodeId: string, kind: keyof typeof ChallengeType):
   let challengeNonce = 0n;
   try {
     challengeNonce = await contractReader.getChallengeNonce(BigInt(currentEpoch));
-  } catch { /* use 0 */ }
+  } catch {
+    // nonce fetch failed
+  }
+  if (challengeNonce === 0n && (config.epochNonceStrict ?? false)) {
+    log.warn("v2 challenge skipped: epoch nonce not initialized (strict mode)", { nodeId, epochId: currentEpoch });
+    return;
+  }
 
   const challenge = await factoryV2.issue({
     epochId: BigInt(currentEpoch),
@@ -1015,7 +1027,30 @@ async function flushBatchV2(epochId: number, receipts: VerifiedReceiptV2[]): Pro
     }));
     const rewardPool = BigInt(config.rewardPoolWei ?? "1000000000000000000");
     const scoringResult = computeEpochRewards(rewardPool, stats);
-    const { root: rewardRoot } = buildRewardRoot(BigInt(epochId), scoringResult);
+    const rewardResult = buildRewardRoot(BigInt(epochId), scoringResult);
+    const rewardRoot = rewardResult.root;
+    const totalReward = Object.values(scoringResult.rewards).reduce((a, b) => a + b, 0n);
+
+    // Persist reward manifest for relayer consumption
+    const manifest: RewardManifest = {
+      epochId,
+      rewardRoot,
+      totalReward: totalReward.toString(),
+      slashTotal: "0",
+      treasuryDelta: "0",
+      leaves: rewardResult.leaves.map((l) => ({ nodeId: l.nodeId, amount: l.amount.toString() })),
+      proofs: Object.fromEntries(
+        [...rewardResult.proofs.entries()].map(([k, v]) => [k, v as string[]]),
+      ),
+      scoringInputsHash: keccak256(toUtf8Bytes(stableStringifyForHash(stats))),
+      generatedAtMs: Date.now(),
+    };
+    try {
+      writeRewardManifest(rewardManifestDir, manifest);
+      log.info("reward manifest persisted", { epochId, rewardRoot, totalReward: totalReward.toString(), leaves: manifest.leaves.length });
+    } catch (manifestError) {
+      log.error("reward manifest write failed (non-fatal)", { epochId, error: String(manifestError) });
+    }
 
     if (!poseV2Contract) {
       log.info("batchV2(local)", {
@@ -1047,11 +1082,13 @@ async function flushBatchV2(epochId: number, receipts: VerifiedReceiptV2[]): Pro
         });
         return false;
       } else {
+        runtimeStats.witnessFallbackCount += 1;
         log.warn("batchV2 witness quorum not met, fallback to empty witness submission", {
           epochId,
           merkleRoot: batch.merkleRoot,
           signed: witnessResult.signedCount,
           required: witnessResult.requiredCount,
+          totalFallbacks: runtimeStats.witnessFallbackCount,
         });
       }
     } catch (witnessError) {
@@ -1063,10 +1100,12 @@ async function flushBatchV2(epochId: number, receipts: VerifiedReceiptV2[]): Pro
         });
         return false;
       }
+      runtimeStats.witnessFallbackCount += 1;
       log.warn("batchV2 witness collection failed, fallback to empty witness submission", {
         epochId,
         merkleRoot: batch.merkleRoot,
         error: String(witnessError),
+        totalFallbacks: runtimeStats.witnessFallbackCount,
       });
     }
 
@@ -1078,11 +1117,21 @@ async function flushBatchV2(epochId: number, receipts: VerifiedReceiptV2[]): Pro
       witnessBitmap,
       witnessSignatures,
     );
-    await tx.wait();
+    const txReceipt = await tx.wait();
+    const batchId = extractBatchIdV2(txReceipt?.logs ?? []);
+    if (batchId) {
+      const queuedFaults = persistV2FaultProofs(batchId, batch.leafHashes, receipts);
+      if (queuedFaults > 0) {
+        log.info("batchV2 fault proofs queued", { epochId, batchId, queuedFaults });
+      }
+    } else {
+      log.warn("batchV2 submitted but batchId event not found; v2 fault proofs not queued", { epochId, txHash: tx.hash });
+    }
 
     log.info("batchV2(onchain)", {
       epochId,
       txHash: tx.hash,
+      batchId,
       merkleRoot: batch.merkleRoot,
       rewardRoot,
       witnessBitmap,
@@ -1453,6 +1502,58 @@ function normalizeNodeIds(input: string[] | undefined): string[] {
     return ["0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"];
   }
   return input.map((x) => x.toLowerCase());
+}
+
+function extractBatchIdV2(logs: Array<{ topics?: string[]; data?: string }>): string | null {
+  if (!poseV2Contract) return null;
+  for (const entry of logs) {
+    try {
+      const parsed = poseV2Contract.interface.parseLog(entry);
+      if (parsed?.name === "BatchSubmittedV2") {
+        return String(parsed.args.batchId ?? parsed.args[1]);
+      }
+    } catch {
+      // ignore non-PoSe logs
+    }
+  }
+  return null;
+}
+
+function persistV2FaultProofs(
+  batchId: string,
+  leafHashes: `0x${string}`[],
+  receipts: VerifiedReceiptV2[],
+): number {
+  let queued = 0;
+  for (let i = 0; i < receipts.length; i += 1) {
+    const receipt = receipts[i];
+    const faultType = faultTypeForResultCode(receipt.evidenceLeaf.resultCode);
+    if (faultType === 0) continue;
+
+    const reasonCode =
+      receipt.evidenceLeaf.resultCode === ResultCode.InvalidSig
+        ? EvidenceReason.InvalidSignature
+        : receipt.evidenceLeaf.resultCode === ResultCode.Timeout
+          ? EvidenceReason.Timeout
+          : EvidenceReason.StorageProofInvalid;
+    const evidence: SlashEvidence = {
+      nodeId: receipt.evidenceLeaf.nodeId,
+      reasonCode,
+      evidenceHash: leafHashes[i],
+      rawEvidence: {
+        protocolVersion: 2,
+        batchId,
+        merkleProof: buildMerkleProof(leafHashes, i),
+        evidenceLeaf: serializeEvidenceLeaf(receipt.evidenceLeaf),
+        evidenceLeafHash: leafHashes[i],
+        challengeId: receipt.challenge.challengeId,
+        faultType,
+      },
+    };
+    evidenceStore.push(evidence);
+    queued += 1;
+  }
+  return queued;
 }
 
 function normalizeNodeEndpointMap(input: Record<string, string> | undefined): Map<string, string> {

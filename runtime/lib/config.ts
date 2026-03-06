@@ -49,6 +49,8 @@ export interface CocRuntimeConfig {
   challengeBondWei?: string;
   insuranceFundAddress?: string;
   poseManagerV2Address?: string;
+  rewardManifestDir?: string;
+  epochNonceStrict?: boolean;
 }
 
 export function resolveDataDir(): string {

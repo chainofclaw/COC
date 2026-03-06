@@ -74,9 +74,11 @@ Policy files are located at `nodeops/policies/*.yaml` and can be loaded and eval
 
 ## Test Strategy
 
-Uses Node.js built-in test framework (766+119+24 tests across 91 test files):
-- **Node layer tests**: `node/src/*.test.ts node/src/**/*.test.ts` (766 tests, 66 files) - chain engine, EVM, RPC, WebSocket, P2P, mempool, storage, IPFS, PoSe, BFT consensus, DHT, wire protocol, fork choice, state snapshot, wire server, DHT network, snap sync, consensus-BFT integration, consensus metrics, wire connection manager, wire tx relay, sync progress, gas histogram, governance stats, wire dedup/relay, security hardening, P2P auth, wire auth handshake, replay guard, nonce registry, PoSe auth, Prometheus metrics, BFT slashing, Phase 36 ops hardening, algorithm safety audit round 3
-- **Service layer tests**: `services/**/*.test.ts` + `nodeops/*.test.ts` + `tests/**/*.test.ts` (119 tests, 22 files)
+Uses Node.js built-in test framework (1111+ tests across 95+ test files):
+- **Node layer tests**: `node/src/*.test.ts node/src/**/*.test.ts` (801 tests, 66+ files) - chain engine, EVM, RPC, WebSocket, P2P, mempool, storage, IPFS, PoSe, BFT consensus, DHT, wire protocol, fork choice, state snapshot, wire server, DHT network, snap sync, consensus-BFT integration, consensus metrics, wire connection manager, wire tx relay, sync progress, gas histogram, governance stats, wire dedup/relay, security hardening, P2P auth, wire auth handshake, replay guard, nonce registry, PoSe auth, Prometheus metrics, BFT slashing, Phase 36 ops hardening, algorithm safety audit round 3
+- **Service layer tests**: `services/**/*.test.ts` + `nodeops/*.test.ts` + `tests/**/*.test.ts` (136 tests, 25 files) - PoSe v2 services, reward tree, witness collector, contract reader, scoring determinism, e2e
+- **Runtime lib tests**: `runtime/lib/*.test.ts` (23 tests, 4 files) - pending retention, runtime metrics, agent metrics server
+- **Contract tests**: `cd contracts && npm test` (151 tests) - PoSeManager v1, PoSeManagerV2, gas benchmarks, security audit, EIP-712 cross-check
 - **Extension tests**: `extensions/coc-nodeops/src/**/*.test.ts` (24 tests, 3 files) - node types, network presets, node manager
 - **Storage layer tests**: `node/src/storage/*.test.ts` (included in node layer)
 
@@ -87,6 +89,9 @@ cd node && node --experimental-strip-types --test --test-force-exit src/*.test.t
 
 # Service layer tests
 cd /path/to/COC && node --experimental-strip-types --test --test-force-exit services/**/*.test.ts nodeops/*.test.ts tests/**/*.test.ts
+
+# Runtime lib tests
+cd /path/to/COC && node --experimental-strip-types --test --test-force-exit runtime/lib/*.test.ts
 
 # Extension tests
 cd extensions/coc-nodeops && node --experimental-strip-types --test src/node-types.test.ts src/network-presets.test.ts src/runtime/node-manager.test.ts
@@ -144,9 +149,10 @@ cd contracts && npm test
 - `common/`: Shared types, Merkle tree, and role registry
 
 ### Runtime Services (runtime/)
-- `coc-node.ts`: PoSe challenge/receipt HTTP endpoints
-- `coc-agent.ts`: Challenge generation, batch submission, node registration
-- `coc-relayer.ts`: Epoch finalization and slash hooks
+- `coc-node.ts`: PoSe challenge/receipt HTTP endpoints, dual-version signing (v1 EIP-191 / v2 EIP-712), `/pose/witness` endpoint
+- `coc-agent.ts`: Challenge generation, batch submission, node registration, v2 witness collection, persistent pending store, runtime metrics (JSON + Prometheus + HTTP), tick reentrance guard
+- `coc-relayer.ts`: Epoch finalization (v1 + v2), fault proof submission, slash hooks, tick reentrance guard
+- `lib/`: Runtime utilities (pending-retention, runtime-metrics, agent-metrics-server, witness-collector, contract-reader, config, evidence-store)
 
 ### Node Operations (nodeops/)
 - `policy-engine.ts`: Policy evaluation engine
@@ -179,10 +185,11 @@ cd contracts && npm test
 - `src/lib/use-websocket.ts`: WebSocket hook (exponential backoff with jitter, reconnecting state)
 
 ### Smart Contracts (contracts/)
-- `settlement/PoSeManager.sol`: PoSe settlement contract
-  - Node registration and commitment updates
-  - Batch submission and challenges
-  - Epoch finalization and slashing
+- `settlement/PoSeManager.sol`: PoSe v1 settlement contract (node registration, batch submission, epoch finalization, slashing)
+- `settlement/PoSeManagerV2.sol`: PoSe v2 settlement contract (permissionless fault proofs, commit-reveal+bond, Merkle-claimable rewards, witness quorum, empty epoch finalization, EIP-712 signatures)
+- `settlement/PoSeTypesV2.sol`: v2 data structures (EvidenceLeafV2, FaultProof, ChallengeRecord, RewardClaim)
+- `settlement/IPoSeManagerV2.sol`: v2 interface and events
+- `settlement/MerkleProofLite.sol`: Merkle proof verification (calldata + memory variants)
 
 ### Performance Benchmarks (node/src/benchmarks/)
 - `evm-benchmark.test.ts`: EVM execution performance benchmarks

@@ -33,7 +33,7 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
     uint256 public challengeBondMin;
     uint256 public insuranceBalance;
     bytes32 public DOMAIN_SEPARATOR;
-    bool public allowEmptyWitnessSubmission = true;
+    bool public allowEmptyWitnessSubmission = false;
     uint256 private _challengeCounter;
 
     // Active node tracking for witness set selection

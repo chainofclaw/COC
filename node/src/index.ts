@@ -44,6 +44,7 @@ import type { StateSnapshot } from "./state-snapshot.ts"
 import type { IStateTrie } from "./storage/state-trie.ts"
 import { startMetricsServer } from "./metrics-server.ts"
 import { metrics } from "./metrics.ts"
+import { BftSlashingHandler } from "./bft-slashing.ts"
 
 const log = createLogger("node")
 
@@ -268,6 +269,11 @@ p2p.start()
 const bftEvidencePath = `${config.dataDir}/evidence-bft.jsonl`
 const bftEvidenceStore = new EvidenceStore(1000, bftEvidencePath)
 
+// BFT slashing handler — applies immediate governance penalties on equivocation
+const bftSlashingHandler = hasGovernance(chain)
+  ? new BftSlashingHandler(chain.governance, { slashPercent: 10, autoRemove: true })
+  : null
+
 // Initialize BFT coordinator after P2P is ready
 if (bftEnabled) {
   const validators = config.validators.map((id) => ({
@@ -290,6 +296,20 @@ if (bftEnabled) {
         hash1: evidence.blockHash1,
         hash2: evidence.blockHash2,
       })
+
+      // Apply immediate governance slash penalty
+      if (bftSlashingHandler) {
+        const slashEvent = bftSlashingHandler.handleEquivocation(evidence)
+        if (slashEvent) {
+          log.warn("BFT equivocation slash applied", {
+            validatorId: slashEvent.validatorId,
+            slashedAmount: slashEvent.slashedAmount.toString(),
+            remaining: slashEvent.remainingStake.toString(),
+            removed: slashEvent.removed,
+          })
+        }
+      }
+
       // Persist as SlashEvidence for relayer pickup
       const nodeIdHex = evidence.validatorId.startsWith("0x")
         ? evidence.validatorId.padEnd(66, "0")

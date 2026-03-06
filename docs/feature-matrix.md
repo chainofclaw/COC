@@ -2,6 +2,13 @@
 
 This matrix lists features by domain, with current status and primary code references.
 
+Status legend:
+- `Production-ready`: runtime-wired and hardened for sustained production use
+- `Runtime-wired`: present in code and connected to the runtime main path
+- `Implemented`: present in code and exercised in tests/devnet scripts
+- `Partial`: present but simplified, stubbed, or not yet hardened
+- `Missing`: not implemented
+
 ## Execution & RPC
 - **EVM execution engine** — Partial — `COC/node/src/evm.ts`
 - **RPC: basic chain info** — Implemented — `COC/node/src/rpc.ts`
@@ -76,21 +83,31 @@ This matrix lists features by domain, with current status and primary code refer
 - **Per-block baseFee integration** — Implemented (Audit) — `COC/node/src/chain-engine.ts`, `COC/node/src/chain-engine-persistent.ts`
 
 ## PoSe (Off‑chain)
-- **Challenge factory** — Implemented — `COC/services/challenger/*`
-- **Receipt verification** — Implemented — `COC/services/verifier/*`
-- **Batch aggregation** — Implemented — `COC/services/aggregator/*`
+- **Challenge factory (v1)** — Implemented — `COC/services/challenger/challenge-factory.ts`
+- **Challenge factory (v2 EIP-712)** — Implemented — `COC/services/challenger/challenge-factory-v2.ts`
+- **Receipt verification (v1)** — Implemented — `COC/services/verifier/receipt-verifier.ts`
+- **Receipt verification (v2, 9-layer)** — Implemented — `COC/services/verifier/receipt-verifier-v2.ts`
+- **Batch aggregation (v1 + v2)** — Implemented — `COC/services/aggregator/*`
 - **Reward scoring** — Implemented — `COC/services/verifier/scoring.ts`
+- **Reward tree (Merkle-claimable)** — Implemented — `COC/services/common/reward-tree.ts`
 - **Storage proofs** — Implemented (Merkle path) — `COC/runtime/coc-node.ts`
+- **Witness collector** — Implemented — `COC/runtime/lib/witness-collector.ts`
 
 ## PoSe (On‑chain)
-- **PoSeManager contract** — Implemented — `COC/contracts/settlement/PoSeManager.sol`
-- **Batch challenge + finalize** — Implemented — `COC/contracts/settlement/PoSeManager.sol`
-- **Slashing** — Implemented — `COC/contracts/settlement/PoSeManager.sol`
+- **PoSeManager (v1)** — Implemented — `COC/contracts/settlement/PoSeManager.sol`
+- **PoSeManagerV2 (v2)** — Implemented — `COC/contracts/settlement/PoSeManagerV2.sol`
+- **v2 Fault proofs (commit-reveal-settle)** — Implemented — `COC/contracts/settlement/PoSeManagerV2.sol`
+- **v2 Witness quorum validation** — Implemented (default strict) — `COC/contracts/settlement/PoSeManagerV2.sol`
+- **v2 Merkle-claimable rewards** — Implemented — `COC/contracts/settlement/PoSeManagerV2.sol`
+- **v2 EIP-712 signatures** — Implemented — `COC/contracts/settlement/PoSeTypesV2.sol`
+- **EIP-712 cross-check (TS ↔ Solidity)** — Implemented — `COC/contracts/test/eip712-crosscheck.test.cjs`
 
 ## Runtime Services
-- **coc-node HTTP endpoints** — Implemented — `COC/runtime/coc-node.ts`
-- **coc-agent automation** — Implemented — `COC/runtime/coc-agent.ts`
-- **coc-relayer automation** — Implemented — `COC/runtime/coc-relayer.ts`
+- **coc-node HTTP endpoints** — Runtime-wired — `COC/runtime/coc-node.ts` (dual-version signing, `/pose/witness`)
+- **coc-agent automation** — Runtime-wired — `COC/runtime/coc-agent.ts` (v2 challenges, witness collection, reward manifest, persistent pending, metrics)
+- **coc-relayer automation** — Runtime-wired — `COC/runtime/coc-relayer.ts` (v2 finalize with reward manifest, epoch nonce init, fault proof lifecycle)
+- **Runtime metrics** — Implemented — `COC/runtime/lib/runtime-metrics.ts`, `COC/runtime/lib/agent-metrics-server.ts`
+- **Pending retention** — Implemented — `COC/runtime/lib/pending-retention.ts`
 
 ## Tooling
 - **Wallet CLI** — Implemented — `COC/wallet/bin/coc-wallet.js`

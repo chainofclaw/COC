@@ -1,6 +1,15 @@
-import { Contract, JsonRpcProvider, Wallet, keccak256, randomBytes } from "ethers";
+import { join } from "node:path";
+import { Contract, JsonRpcProvider, Wallet, randomBytes } from "ethers";
 import { loadConfig } from "./lib/config.ts";
 import { EvidenceStore } from "./lib/evidence-store.ts";
+import { readRewardManifest } from "./lib/reward-manifest.ts";
+import {
+  computeCommitHash,
+  computeRevealDigest,
+  encodeEvidenceData,
+  extractV2FaultProofPayload,
+  faultTypeForResultCode,
+} from "./lib/pose-v2-fault-proof.ts";
 import type { SlashEvidence } from "../services/verifier/anti-cheat-policy.ts";
 import { createLogger } from "../node/src/logger.ts";
 import { ContractReader } from "./lib/contract-reader.ts";
@@ -46,6 +55,9 @@ const poseV2Abi = [
   "function epochFinalized(uint64 epochId) view returns (bool)",
   "function epochRewardRoots(uint64 epochId) view returns (bytes32)",
   "function rewardPoolBalance() view returns (uint256)",
+  "function initEpochNonce(uint64 epochId)",
+  "function challengeNonces(uint64 epochId) view returns (uint64)",
+  "function challenges(bytes32 challengeId) view returns (tuple(bytes32 commitHash, address challenger, uint256 bond, uint64 commitEpoch, uint64 revealDeadlineEpoch, bool revealed, bool settled, bytes32 targetNodeId, uint8 faultType))",
 ];
 
 const poseV2Contract = poseV2Address && signer ? new Contract(poseV2Address, poseV2Abi, signer) : null;
@@ -56,14 +68,27 @@ const contractReader = useV2 ? new ContractReader({
   poseManagerV2Address: poseV2Address,
 }) : null;
 
+const rewardManifestDir = config.rewardManifestDir ?? join(config.dataDir, "reward-manifests");
+
 // Shared evidence store — persistent across restarts
 const evidencePath = process.env.COC_EVIDENCE_PATH || (config.dataDir ? `${config.dataDir}/evidence-agent.jsonl` : undefined);
 export const evidenceStore = new EvidenceStore(1000, evidencePath);
 
+let tickInProgress = false;
+let tickOverlapSkipped = 0;
+
 async function tick(): Promise<void> {
+  if (tickInProgress) {
+    tickOverlapSkipped += 1;
+    log.warn("tick skipped: previous tick still in progress", { tickOverlapSkipped });
+    return;
+  }
+  tickInProgress = true;
   try {
     if (useV2) {
+      await tryInitEpochNonce();
       await tryFinalizeV2();
+      await tryDisputeV2();
     } else {
       await tryFinalize();
       await tryDispute();
@@ -71,6 +96,8 @@ async function tick(): Promise<void> {
     log.info("tick ok");
   } catch (error) {
     log.error("tick failed", { error: String(error) });
+  } finally {
+    tickInProgress = false;
   }
 }
 
@@ -206,6 +233,31 @@ async function submitSlash(evidence: SlashEvidence): Promise<void> {
   });
 }
 
+// --- v2 Epoch Nonce Initialization ---
+let lastNonceInitEpoch = 0;
+
+async function tryInitEpochNonce(): Promise<void> {
+  if (!poseV2Contract) return;
+
+  const currentEpoch = Math.floor(Date.now() / (60 * 60 * 1000));
+  if (currentEpoch <= lastNonceInitEpoch) return;
+
+  try {
+    const existing: bigint = await poseV2Contract.challengeNonces(BigInt(currentEpoch));
+    if (existing !== 0n) {
+      lastNonceInitEpoch = currentEpoch;
+      return;
+    }
+
+    const tx = await poseV2Contract.initEpochNonce(BigInt(currentEpoch));
+    await tx.wait();
+    lastNonceInitEpoch = currentEpoch;
+    log.info("epoch nonce initialized", { epochId: currentEpoch, txHash: tx.hash });
+  } catch (error) {
+    log.warn("initEpochNonce failed", { epochId: currentEpoch, error: String(error) });
+  }
+}
+
 // --- v2 Finalization ---
 async function tryFinalizeV2(): Promise<void> {
   if (!poseV2Contract) return;
@@ -223,20 +275,35 @@ async function tryFinalizeV2(): Promise<void> {
   } catch { /* proceed to try finalize */ }
 
   try {
-    // Fail-closed: never finalize non-empty epochs with a synthetic zero reward root.
     const batchIds: string[] = await poseV2Contract.getEpochBatchIds(BigInt(candidate));
-    if (batchIds.length > 0) {
-      log.warn("finalizeV2 skipped: epoch has batches but no authoritative reward root pipeline is wired", {
-        epochId: candidate,
-        batches: batchIds.length,
-      });
-      return;
-    }
 
-    const rewardRoot = "0x" + "0".repeat(64);
-    const totalReward = 0n;
-    const slashTotal = 0n;
-    const treasuryDelta = 0n;
+    let rewardRoot = "0x" + "0".repeat(64);
+    let totalReward = 0n;
+    let slashTotal = 0n;
+    let treasuryDelta = 0n;
+
+    if (batchIds.length > 0) {
+      // Read authoritative reward manifest produced by agent
+      const manifest = readRewardManifest(rewardManifestDir, candidate);
+      if (!manifest) {
+        log.warn("finalizeV2 skipped: non-empty epoch but reward manifest not found", {
+          epochId: candidate,
+          batches: batchIds.length,
+          manifestDir: rewardManifestDir,
+        });
+        return;
+      }
+      rewardRoot = manifest.rewardRoot;
+      totalReward = BigInt(manifest.totalReward);
+      slashTotal = BigInt(manifest.slashTotal);
+      treasuryDelta = BigInt(manifest.treasuryDelta);
+      log.info("reward manifest loaded", {
+        epochId: candidate,
+        rewardRoot,
+        totalReward: totalReward.toString(),
+        leaves: manifest.leaves.length,
+      });
+    }
 
     const tx = await poseV2Contract.finalizeEpochV2(
       BigInt(candidate),
@@ -253,10 +320,193 @@ async function tryFinalizeV2(): Promise<void> {
       txHash: tx.hash,
       status: receipt?.status,
       batches: batchIds.length,
+      totalReward: totalReward.toString(),
     });
   } catch (error) {
     log.error("finalizeV2 failed", { epochId: candidate, error: String(error) });
   }
+}
+
+// --- v2 Dispute Executor (commit-reveal-settle lifecycle) ---
+
+interface PendingChallenge {
+  challengeId: string
+  commitHash: string
+  salt: string
+  targetNodeId: string
+  faultType: number
+  evidenceLeafHash: string
+  evidenceData: string
+  challengerSig: string
+  state: "committed" | "revealed" | "settled"
+}
+
+const pendingChallenges: Map<string, PendingChallenge> = new Map();
+
+async function tryDisputeV2(): Promise<void> {
+  if (!poseV2Contract || !signer) return;
+
+  // Phase 1: Process pending challenges (reveal / settle)
+  for (const [id, pending] of pendingChallenges) {
+    try {
+      if (pending.state === "committed") {
+        await tryRevealChallenge(id, pending);
+      } else if (pending.state === "revealed") {
+        await trySettleChallenge(id, pending);
+      }
+    } catch (error) {
+      log.warn("dispute lifecycle step failed", { challengeId: id, state: pending.state, error: String(error) });
+    }
+  }
+
+  // Phase 2: Consume new evidence and open challenges
+  const evidenceBatch = evidenceStore.drain();
+  for (const evidence of evidenceBatch) {
+    try {
+      await openV2Challenge(evidence);
+    } catch (error) {
+      log.error("openV2Challenge failed", { nodeId: evidence.nodeId, error: String(error) });
+    }
+  }
+}
+
+async function openV2Challenge(evidence: SlashEvidence): Promise<void> {
+  if (!poseV2Contract || !signer) return;
+
+  const raw = evidence.rawEvidence;
+  if (!raw || typeof raw !== "object") {
+    log.warn("v2 challenge skipped: malformed raw evidence", { nodeId: evidence.nodeId });
+    return;
+  }
+  const payload = extractV2FaultProofPayload(raw);
+  if (!payload) {
+    log.warn("v2 challenge skipped: evidence missing v2 fault-proof payload", { nodeId: evidence.nodeId });
+    return;
+  }
+
+  const faultType = payload.faultType ?? faultTypeForResultCode(Number(payload.evidenceLeaf.resultCode));
+  if (faultType === 0) {
+    log.warn("v2 challenge skipped: unsupported fault type", {
+      nodeId: evidence.nodeId,
+      resultCode: payload.evidenceLeaf.resultCode,
+    });
+    return;
+  }
+
+  const evidenceData = encodeEvidenceData(payload.batchId, payload.merkleProof, payload.evidenceLeaf);
+  const salt = "0x" + randomBytes(32).toString("hex");
+  const targetNodeId = evidence.nodeId;
+  const evidenceLeafHash = payload.evidenceLeafHash ?? evidence.evidenceHash;
+  const commitHash = computeCommitHash(targetNodeId, faultType, evidenceLeafHash, salt);
+
+  const tx = await poseV2Contract.openChallenge(commitHash, { value: challengeBondWei });
+  const receipt = await tx.wait();
+
+  const challengeId = extractChallengeId(receipt?.logs ?? []);
+  if (!challengeId) {
+    throw new Error(`ChallengeOpened event not found for tx ${tx.hash}`);
+  }
+
+  const revealDigest = computeRevealDigest(
+    challengeId,
+    targetNodeId,
+    faultType,
+    evidenceLeafHash,
+    salt,
+    evidenceData,
+  );
+  const challengerSig = await signer.signMessage(Buffer.from(revealDigest.slice(2), "hex"));
+
+  pendingChallenges.set(challengeId, {
+    challengeId,
+    commitHash,
+    salt,
+    targetNodeId,
+    faultType,
+    evidenceLeafHash,
+    evidenceData,
+    challengerSig,
+    state: "committed",
+  });
+
+  log.info("v2 challenge opened", {
+    challengeId,
+    targetNodeId,
+    faultType,
+    bond: challengeBondWei.toString(),
+    txHash: tx.hash,
+  });
+}
+
+async function tryRevealChallenge(challengeId: string, pending: PendingChallenge): Promise<void> {
+  if (!poseV2Contract) return;
+  const record = await poseV2Contract.challenges(challengeId);
+  if (record?.settled) {
+    pendingChallenges.delete(challengeId);
+    return;
+  }
+  if (record?.revealed) {
+    pending.state = "revealed";
+    return;
+  }
+
+  const tx = await poseV2Contract.revealChallenge(
+    challengeId,
+    pending.targetNodeId,
+    pending.faultType,
+    pending.evidenceLeafHash,
+    pending.salt,
+    pending.evidenceData,
+    pending.challengerSig,
+  );
+  await tx.wait();
+  pending.state = "revealed";
+  log.info("v2 challenge revealed", { challengeId, txHash: tx.hash });
+}
+
+async function trySettleChallenge(challengeId: string, pending: PendingChallenge): Promise<void> {
+  if (!poseV2Contract) return;
+  const record = await poseV2Contract.challenges(challengeId);
+  if (record?.settled) {
+    pendingChallenges.delete(challengeId);
+    return;
+  }
+  if (!record?.revealed) {
+    return;
+  }
+
+  const currentEpoch = Math.floor(Date.now() / (60 * 60 * 1000));
+  const revealDeadlineEpoch = Number(record.revealDeadlineEpoch ?? 0n);
+  if (currentEpoch < revealDeadlineEpoch + 2) {
+    return;
+  }
+
+  try {
+    const tx = await poseV2Contract.settleChallenge(challengeId);
+    await tx.wait();
+    pending.state = "settled";
+    pendingChallenges.delete(challengeId);
+    log.info("v2 challenge settled", { challengeId, txHash: tx.hash });
+  } catch (error) {
+    const msg = String(error);
+    if (msg.includes("AdjudicationWindowNotElapsed")) return;
+    throw error;
+  }
+}
+
+function extractChallengeId(logs: Array<{ topics?: string[]; data?: string }>): string | null {
+  if (!poseV2Contract) return null;
+  for (const entry of logs) {
+    try {
+      const parsed = poseV2Contract.interface.parseLog(entry);
+      if (parsed?.name === "ChallengeOpened") {
+        return String(parsed.args.challengeId ?? parsed.args[0]);
+      }
+    } catch {
+      // ignore unrelated logs
+    }
+  }
+  return null;
 }
 
 setInterval(() => void tick(), intervalMs);

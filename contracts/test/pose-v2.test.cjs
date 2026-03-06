@@ -145,6 +145,9 @@ describe("PoSeManagerV2", function () {
     // Initialize with EIP-712 domain
     const chainId = (await ethers.provider.getNetwork()).chainId
     await manager.initialize(chainId, await manager.getAddress(), ethers.parseEther("0.01"))
+
+    // Enable empty witness for most tests (strict mode tested separately)
+    await manager.setAllowEmptyWitnessSubmission(true)
   })
 
   describe("Node registration", function () {

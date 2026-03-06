@@ -3,7 +3,9 @@
 This document maps the whitepaper scope to the current codebase and test coverage. It is intended as a concise engineering status report.
 
 ## Legend
-- **Implemented**: present in code and exercised in devnet scripts
+- **Production-ready**: runtime-wired and hardened for sustained production use
+- **Runtime-wired**: present in code and connected to the runtime main path
+- **Implemented**: present in code and exercised in tests/devnet scripts
 - **Partial**: present but simplified, stubbed, or not yet hardened
 - **Missing**: not implemented
 
@@ -196,21 +198,24 @@ Code:
 - `COC/node/src/mempool.ts`
 
 ## 6) PoSe Protocol (Off‑chain)
-**Status: Partial (Enhanced in Phase 19)**
+**Status: Runtime-wired (v1 + v2)**
 
 Implemented:
-- Challenge/Receipt types + nonce registry
-- Receipt verification (U/S/R hooks)
-- Batch aggregation (Merkle root + sample proofs)
-- Epoch scoring and reward calculation
+- Challenge/Receipt types + nonce registry (v1 + v2 EIP-712)
+- Receipt verification (U/S/R hooks; v2 adds 9-layer pipeline with witness quorum)
+- Batch aggregation (Merkle root + sample proofs; v2 adds reward tree)
+- Epoch scoring and reward calculation (`scoring.ts` + `reward-tree.ts`)
 - Storage proof generation from IPFS file metadata
 - **Phase 19**: Automated batch validation (DisputeMonitor)
 - **Phase 19**: Cumulative penalty tracking with suspend/eject (PenaltyTracker)
 - **Phase 19**: Dispute event logging and query API (DisputeLogger)
+- **PoSe v2**: EIP-712 challenge/receipt signing, witness collector, contract reader
+- **PoSe v2**: Reward manifest pipeline (agent → file → relayer → contract)
+- **PoSe v2**: Commit-reveal fault proof automation in relayer
 
-Missing/Partial:
-- Batch challenge on-chain automation (agent → contract integration)
-- Challenger reward mechanism
+Remaining:
+- Full integration with a production L1/L2 network (currently local/testnet)
+- Challenger reward mechanism (v1 only; v2 uses Merkle claim)
 
 Code:
 - `COC/services/challenger/*`
@@ -219,25 +224,34 @@ Code:
 - `COC/runtime/coc-node.ts`
 
 ## 7) PoSe Settlement (On‑chain)
-**Status: Implemented**
+**Status: Implemented (v1 + v2)**
 
 Implemented:
-- `PoSeManager` contract: register, update commitment, submit batch, challenge, finalize epoch, slash
+- `PoSeManager` (v1): register, update commitment, submit batch, challenge, finalize epoch, slash
+- `PoSeManagerV2` (v2): permissionless fault proofs (commit-reveal+bond), witness quorum validation, Merkle-claimable rewards, empty epoch finalization, EIP-712 signatures, slash distribution (50% burn / 30% challenger / 20% insurance)
+- `PoSeTypesV2`: EvidenceLeafV2, FaultProof, ChallengeRecord, RewardClaim
+- `MerkleProofLite`: calldata + memory proof verification
+- 159 contract tests (29 v2 + 8 EIP-712 cross-check)
 
 Code:
 - `COC/contracts/settlement/PoSeManager.sol`
+- `COC/contracts/settlement/PoSeManagerV2.sol`
+- `COC/contracts/settlement/PoSeTypesV2.sol`
+- `COC/contracts/settlement/IPoSeManagerV2.sol`
+- `COC/contracts/settlement/MerkleProofLite.sol`
 
 ## 8) Runtime Services
-**Status: Partial**
+**Status: Runtime-wired (v1 + v2)**
 
 Implemented:
-- `coc-node` HTTP endpoints for PoSe challenge/receipt
-- `coc-agent` for challenge generation, batch submission, node registration
-- `coc-relayer` for epoch finalization and slash hooks
+- `coc-node` HTTP endpoints for PoSe challenge/receipt (dual-version signing, `/pose/witness` endpoint)
+- `coc-agent` for challenge generation, batch submission, node registration (v2 witness collection, persistent pending store, runtime metrics, tick reentrance guard)
+- `coc-relayer` for epoch finalization, fault proof lifecycle, slash hooks (v2 finalize with reward manifest, epoch nonce init, commit-reveal-settle automation, tick reentrance guard)
+- Runtime lib: pending-retention, runtime-metrics (JSON + Prometheus + HTTP), agent-metrics-server, witness-collector, contract-reader, reward-manifest
 
-Missing/Partial:
-- Full integration with a real L1/L2 network
-- Secure key management and production‑grade retries
+Remaining:
+- Full integration with a production L1/L2 network
+- Secure key management and production-grade retries
 
 Code:
 - `COC/runtime/coc-node.ts`
