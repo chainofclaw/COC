@@ -269,6 +269,40 @@ const trackedNodeIds = normalizeNodeIds(config.nodeIds);
 const nodeEndpointMap = normalizeNodeEndpointMap(config.nodeEndpoints);
 const nodeScores = new Map<string, { uptimeOk: number; uptimeTotal: number; storageOk: number; storageTotal: number; relayOk: number; relayTotal: number; verifiedStorageBytes: number }>();
 
+function serializeWithBigInt(value: unknown): string {
+  return JSON.stringify(value, (_key, v) => {
+    if (typeof v === "bigint") {
+      return { __coc_bigint__: v.toString() };
+    }
+    return v;
+  });
+}
+
+function deserializeWithBigInt<T>(line: string): T {
+  return JSON.parse(line, (_key, v) => {
+    if (
+      v &&
+      typeof v === "object" &&
+      "__coc_bigint__" in v &&
+      typeof (v as { __coc_bigint__?: unknown }).__coc_bigint__ === "string"
+    ) {
+      return BigInt((v as { __coc_bigint__: string }).__coc_bigint__);
+    }
+    return v;
+  }) as T;
+}
+
+function toEpochNumber(value: unknown): number | null {
+  if (typeof value === "bigint") {
+    if (value < 0n) return null;
+    const n = Number(value);
+    return Number.isFinite(n) ? Math.floor(n) : null;
+  }
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return Math.floor(n);
+}
+
 // Persistent pending receipts store — survives crash/restart
 class PendingReceiptStore<T> {
   private items: T[] = [];
@@ -312,27 +346,31 @@ class PendingReceiptStore<T> {
     return count;
   }
 
-  removeWhere(predicate: (item: T) => boolean): number {
+  extractWhere(predicate: (item: T) => boolean): T[] {
     const kept: T[] = [];
-    let removed = 0;
+    const extracted: T[] = [];
     for (const item of this.items) {
       if (predicate(item)) {
-        removed += 1;
+        extracted.push(item);
       } else {
         kept.push(item);
       }
     }
-    if (removed > 0) {
+    if (extracted.length > 0) {
       this.items = kept;
       this.rewriteDisk();
     }
-    return removed;
+    return extracted;
+  }
+
+  removeWhere(predicate: (item: T) => boolean): number {
+    return this.extractWhere(predicate).length;
   }
 
   private appendToDisk(item: T): void {
     try {
       mkdirSync(dirname(this.path), { recursive: true });
-      appendFileSync(this.path, this.serialize(item) + "\n");
+      appendFileSync(this.path, serializeWithBigInt(item) + "\n");
     } catch { /* best-effort */ }
   }
 
@@ -343,32 +381,9 @@ class PendingReceiptStore<T> {
         writeFileSync(this.path, "");
         return;
       }
-      const content = this.items.map((item) => this.serialize(item)).join("\n") + "\n";
+      const content = this.items.map((item) => serializeWithBigInt(item)).join("\n") + "\n";
       writeFileSync(this.path, content);
     } catch { /* best-effort */ }
-  }
-
-  private serialize(value: unknown): string {
-    return JSON.stringify(value, (_key, v) => {
-      if (typeof v === "bigint") {
-        return { __coc_bigint__: v.toString() };
-      }
-      return v;
-    });
-  }
-
-  private deserialize(line: string): T {
-    return JSON.parse(line, (_key, v) => {
-      if (
-        v &&
-        typeof v === "object" &&
-        "__coc_bigint__" in v &&
-        typeof (v as { __coc_bigint__?: unknown }).__coc_bigint__ === "string"
-      ) {
-        return BigInt((v as { __coc_bigint__: string }).__coc_bigint__);
-      }
-      return v;
-    }) as T;
   }
 
   private loadFromDisk(): void {
@@ -376,7 +391,7 @@ class PendingReceiptStore<T> {
     try {
       const raw = readFileSync(this.path, "utf-8");
       for (const line of raw.split("\n").filter((l) => l.trim())) {
-        try { this.items.push(this.deserialize(line)); } catch { /* skip */ }
+        try { this.items.push(deserializeWithBigInt<T>(line)); } catch { /* skip */ }
       }
       if (this.items.length > 0) {
         log.info("restored pending receipts from disk", { label: this.label, count: this.items.length, path: this.path });
@@ -387,6 +402,12 @@ class PendingReceiptStore<T> {
 
 const pendingPath = process.env.COC_PENDING_PATH || config.pendingPath || join(config.dataDir, "pending-receipts.jsonl");
 const pendingV2Path = process.env.COC_PENDING_V2_PATH || config.pendingV2Path || join(config.dataDir, "pending-receipts-v2.jsonl");
+const pendingRetentionEpochs = normalizeNonNegativeInt(
+  process.env.COC_PENDING_RETENTION_EPOCHS || config.pendingRetentionEpochs,
+  72,
+);
+const pendingArchivePath = process.env.COC_PENDING_ARCHIVE_PATH || config.pendingArchivePath || join(config.dataDir, "pending-receipts-archive.jsonl");
+const pendingV2ArchivePath = process.env.COC_PENDING_V2_ARCHIVE_PATH || config.pendingV2ArchivePath || join(config.dataDir, "pending-receipts-v2-archive.jsonl");
 const pending = new PendingReceiptStore<any>(pendingPath, "v1");
 const pendingV2 = new PendingReceiptStore<VerifiedReceiptV2>(pendingV2Path, "v2");
 let currentEpoch = currentEpochId();
@@ -406,16 +427,117 @@ const antiCheat = new AntiCheatPolicy();
 
 await ensureNodeRegistered();
 
+function extractPendingV1Epoch(item: unknown): number | null {
+  const epoch = (item as { challenge?: { epochId?: unknown } } | null | undefined)?.challenge?.epochId;
+  return toEpochNumber(epoch);
+}
+
+function extractPendingV2Epoch(item: unknown): number | null {
+  const epoch = (item as { evidenceLeaf?: { epoch?: unknown } } | null | undefined)?.evidenceLeaf?.epoch;
+  return toEpochNumber(epoch);
+}
+
+function appendPendingArchive(
+  protocol: "v1" | "v2",
+  path: string,
+  cutoffEpoch: number,
+  items: unknown[],
+): boolean {
+  if (items.length === 0) return true;
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    const archivedAtMs = Date.now();
+    const content = items
+      .map((item) => serializeWithBigInt({
+        protocol,
+        archivedAtMs,
+        cutoffEpoch,
+        item,
+      }))
+      .join("\n") + "\n";
+    appendFileSync(path, content);
+    return true;
+  } catch (error) {
+    log.error("pending archive write failed", {
+      protocol,
+      path,
+      count: items.length,
+      error: String(error),
+    });
+    return false;
+  }
+}
+
+function pruneStalePending(nowEpoch: number): void {
+  if (pendingRetentionEpochs <= 0) return;
+  const cutoffEpoch = nowEpoch - pendingRetentionEpochs;
+  if (cutoffEpoch <= 0) return;
+
+  const staleV1 = pending.listWhere((item) => {
+    const epoch = extractPendingV1Epoch(item);
+    return epoch !== null && epoch < cutoffEpoch;
+  });
+  if (staleV1.length > 0) {
+    const archived = appendPendingArchive("v1", pendingArchivePath, cutoffEpoch, staleV1);
+    if (archived) {
+      const removed = pending.removeWhere((item) => {
+        const epoch = extractPendingV1Epoch(item);
+        return epoch !== null && epoch < cutoffEpoch;
+      });
+      log.warn("pruned stale pending receipts", {
+        protocol: "v1",
+        count: removed,
+        cutoffEpoch,
+        archivePath: pendingArchivePath,
+      });
+    } else {
+      log.error("pending prune skipped: archive write failed", {
+        protocol: "v1",
+        count: staleV1.length,
+        cutoffEpoch,
+        archivePath: pendingArchivePath,
+      });
+    }
+  }
+
+  const staleV2 = pendingV2.listWhere((item) => {
+    const epoch = extractPendingV2Epoch(item);
+    return epoch !== null && epoch < cutoffEpoch;
+  });
+  if (staleV2.length > 0) {
+    const archived = appendPendingArchive("v2", pendingV2ArchivePath, cutoffEpoch, staleV2);
+    if (archived) {
+      const removed = pendingV2.removeWhere((item) => {
+        const epoch = extractPendingV2Epoch(item);
+        return epoch !== null && epoch < cutoffEpoch;
+      });
+      log.warn("pruned stale pending receipts", {
+        protocol: "v2",
+        count: removed,
+        cutoffEpoch,
+        archivePath: pendingV2ArchivePath,
+      });
+    } else {
+      log.error("pending prune skipped: archive write failed", {
+        protocol: "v2",
+        count: staleV2.length,
+        cutoffEpoch,
+        archivePath: pendingV2ArchivePath,
+      });
+    }
+  }
+}
+
 function countPendingV2ByEpoch(epochId: number): number {
-  return pendingV2.countWhere((item) => Number(item.evidenceLeaf.epoch) === epochId);
+  return pendingV2.countWhere((item) => extractPendingV2Epoch(item) === epochId);
 }
 
 function listPendingV2ByEpoch(epochId: number): VerifiedReceiptV2[] {
-  return pendingV2.listWhere((item) => Number(item.evidenceLeaf.epoch) === epochId);
+  return pendingV2.listWhere((item) => extractPendingV2Epoch(item) === epochId);
 }
 
 function removePendingV2ByEpoch(epochId: number): number {
-  return pendingV2.removeWhere((item) => Number(item.evidenceLeaf.epoch) === epochId);
+  return pendingV2.removeWhere((item) => extractPendingV2Epoch(item) === epochId);
 }
 
 async function tick(): Promise<void> {
@@ -423,6 +545,7 @@ async function tick(): Promise<void> {
     await refreshLatestBlock();
     await refreshSelfNodeStatus();
     const nowEpoch = currentEpochId();
+    pruneStalePending(nowEpoch);
 
     if (useV2) {
       // v2 path
@@ -1255,6 +1378,14 @@ function currentEpochId(): number {
 function normalizeInt(raw: unknown, fallback: number): number {
   const value = Number(raw);
   if (!Number.isFinite(value) || value <= 0) {
+    return fallback;
+  }
+  return Math.floor(value);
+}
+
+function normalizeNonNegativeInt(raw: unknown, fallback: number): number {
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0) {
     return fallback;
   }
   return Math.floor(value);

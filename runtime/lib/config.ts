@@ -19,6 +19,9 @@ export interface CocRuntimeConfig {
   operatorPrivateKey?: string;
   pendingPath?: string;
   pendingV2Path?: string;
+  pendingRetentionEpochs?: number;
+  pendingArchivePath?: string;
+  pendingV2ArchivePath?: string;
   nonceRegistryPath?: string;
   nonceRegistryTtlMs?: number;
   nonceRegistryMaxEntries?: number;
