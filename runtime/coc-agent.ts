@@ -420,10 +420,12 @@ const runtimeStats = {
   pruneArchiveFailedV2: 0,
   roleMismatchV1: 0,
   roleMismatchV2: 0,
+  tickOverlapSkipped: 0,
   metricsWriteFailed: 0,
   metricsPromWriteFailed: 0,
 };
 let lastMetricsWriteAtMs = 0;
+let tickInProgress = false;
 let selfNodeRegistered = false;
 let currentEpoch = currentEpochId();
 log.info("endpoint fingerprint mode", { mode: endpointFingerprintMode });
@@ -601,6 +603,14 @@ function writeRuntimeMetrics(nowEpoch: number, nowMs: number): void {
 }
 
 async function tick(): Promise<void> {
+  if (tickInProgress) {
+    runtimeStats.tickOverlapSkipped += 1;
+    log.warn("tick skipped: previous tick still in progress", {
+      tickOverlapSkipped: runtimeStats.tickOverlapSkipped,
+    });
+    return;
+  }
+  tickInProgress = true;
   try {
     await refreshLatestBlock();
     await refreshSelfNodeStatus();
@@ -746,11 +756,14 @@ async function tick(): Promise<void> {
       pruneArchiveFailedV2: runtimeStats.pruneArchiveFailedV2,
       roleMismatchV1: runtimeStats.roleMismatchV1,
       roleMismatchV2: runtimeStats.roleMismatchV2,
+      tickOverlapSkipped: runtimeStats.tickOverlapSkipped,
       metricsWriteFailed: runtimeStats.metricsWriteFailed,
       metricsPromWriteFailed: runtimeStats.metricsPromWriteFailed,
     });
   } catch (error) {
     log.error("tick failed", { error: String(error) });
+  } finally {
+    tickInProgress = false;
   }
 }
 

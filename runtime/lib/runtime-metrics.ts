@@ -8,6 +8,8 @@ export interface RuntimeCounterMetrics {
   pruneArchiveFailedV2: number
   roleMismatchV1: number
   roleMismatchV2: number
+  tickOverlapSkipped: number
+  tickOverlapLogSuppressed: number
   metricsWriteFailed: number
   metricsPromWriteFailed: number
 }
@@ -77,6 +79,12 @@ export function buildPrometheusMetrics(snapshot: RuntimeMetricsSnapshot): string
     "# HELP coc_agent_role_mismatch_v2_total Total v2 role mismatch detections.",
     "# TYPE coc_agent_role_mismatch_v2_total counter",
     `coc_agent_role_mismatch_v2_total ${c.roleMismatchV2}`,
+    "# HELP coc_agent_tick_overlap_skipped_total Total tick executions skipped due to previous tick still running.",
+    "# TYPE coc_agent_tick_overlap_skipped_total counter",
+    `coc_agent_tick_overlap_skipped_total ${c.tickOverlapSkipped}`,
+    "# HELP coc_agent_tick_overlap_log_suppressed_total Total tick overlap warnings suppressed by log throttling.",
+    "# TYPE coc_agent_tick_overlap_log_suppressed_total counter",
+    `coc_agent_tick_overlap_log_suppressed_total ${c.tickOverlapLogSuppressed}`,
     "# HELP coc_agent_metrics_write_failed_total Total JSON metrics write failures.",
     "# TYPE coc_agent_metrics_write_failed_total counter",
     `coc_agent_metrics_write_failed_total ${c.metricsWriteFailed}`,
