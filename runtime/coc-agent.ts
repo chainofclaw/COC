@@ -431,20 +431,36 @@ async function tick(): Promise<void> {
         if (rolloverReceipts.length > 0) {
           const ok = await flushBatchV2(currentEpoch, rolloverReceipts);
           if (!ok) {
-            log.warn("v2 epoch rollover deferred: pending batch flush failed", {
+            if (poseV2Contract && canRunAggregatorRole(currentEpoch)) {
+              log.warn("v2 epoch rollover deferred: pending batch flush failed", {
+                epochId: currentEpoch,
+                pending: rolloverReceipts.length,
+              });
+              return;
+            }
+            log.error("v2 rollover batch not flushed: no aggregator permission for epoch, pending retained", {
               epochId: currentEpoch,
               pending: rolloverReceipts.length,
             });
-            return;
+          } else {
+            removePendingV2ByEpoch(currentEpoch);
           }
-          removePendingV2ByEpoch(currentEpoch);
         }
         emitEpochScores(currentEpoch);
         nodeScores.clear();
         currentEpoch = nowEpoch;
       }
 
-      if (!canRunForEpochRole(currentEpoch)) return;
+      const canChallengeNow = canRunForEpochRole(currentEpoch);
+      const canAggregateNow = canRunAggregatorRole(currentEpoch);
+      if (poseV2Contract && canChallengeNow && !canAggregateNow) {
+        log.error("v2 role mismatch: challenger enabled but aggregator disabled, skip challenges to avoid unflushable receipts", {
+          epochId: currentEpoch,
+          address: signer.address.toLowerCase(),
+        });
+        return;
+      }
+      if (!canChallengeNow) return;
 
       for (const nodeId of trackedNodeIds) {
         await tryChallengeV2(nodeId, "Uptime");
@@ -458,10 +474,17 @@ async function tick(): Promise<void> {
         if (ok) {
           removePendingV2ByEpoch(currentEpoch);
         } else {
-          log.warn("v2 batch flush failed; receipts retained for retry", {
-            epochId: currentEpoch,
-            pending: currentEpochReceipts.length,
-          });
+          if (poseV2Contract && canRunAggregatorRole(currentEpoch)) {
+            log.warn("v2 batch flush failed; receipts retained for retry", {
+              epochId: currentEpoch,
+              pending: currentEpochReceipts.length,
+            });
+          } else {
+            log.error("v2 batch not flushed: no aggregator permission for epoch, receipts retained", {
+              epochId: currentEpoch,
+              pending: currentEpochReceipts.length,
+            });
+          }
         }
       }
     } else {
@@ -472,11 +495,17 @@ async function tick(): Promise<void> {
           const ok = await flushBatch(currentEpoch, rolloverReceipts);
           if (!ok) {
             pending.extend(rolloverReceipts);
-            log.warn("v1 epoch rollover deferred: pending batch flush failed", {
+            if (poseContract && canRunAggregatorRole(currentEpoch)) {
+              log.warn("v1 epoch rollover deferred: pending batch flush failed", {
+                epochId: currentEpoch,
+                pending: rolloverReceipts.length,
+              });
+              return;
+            }
+            log.error("v1 rollover batch not flushed: no aggregator permission for epoch, pending retained", {
               epochId: currentEpoch,
               pending: rolloverReceipts.length,
             });
-            return;
           }
         }
         emitEpochScores(currentEpoch);
@@ -484,7 +513,16 @@ async function tick(): Promise<void> {
         currentEpoch = nowEpoch;
       }
 
-      if (!canRunForEpochRole(currentEpoch)) return;
+      const canChallengeNow = canRunForEpochRole(currentEpoch);
+      const canAggregateNow = canRunAggregatorRole(currentEpoch);
+      if (poseContract && canChallengeNow && !canAggregateNow) {
+        log.error("v1 role mismatch: challenger enabled but aggregator disabled, skip challenges to avoid unflushable receipts", {
+          epochId: currentEpoch,
+          address: signer.address.toLowerCase(),
+        });
+        return;
+      }
+      if (!canChallengeNow) return;
 
       for (const nodeId of trackedNodeIds) {
         await tryChallenge(nodeId, "Uptime");
@@ -497,10 +535,17 @@ async function tick(): Promise<void> {
         const ok = await flushBatch(currentEpoch, receipts);
         if (!ok) {
           pending.extend(receipts);
-          log.warn("v1 batch flush failed; receipts retained for retry", {
-            epochId: currentEpoch,
-            pending: receipts.length,
-          });
+          if (poseContract && canRunAggregatorRole(currentEpoch)) {
+            log.warn("v1 batch flush failed; receipts retained for retry", {
+              epochId: currentEpoch,
+              pending: receipts.length,
+            });
+          } else {
+            log.error("v1 batch not flushed: no aggregator permission for epoch, receipts retained", {
+              epochId: currentEpoch,
+              pending: receipts.length,
+            });
+          }
         }
       }
     }
@@ -740,7 +785,7 @@ async function flushBatchV2(epochId: number, receipts: VerifiedReceiptV2[]): Pro
     const scoringResult = computeEpochRewards(rewardPool, stats);
     const { root: rewardRoot } = buildRewardRoot(BigInt(epochId), scoringResult);
 
-    if (!poseV2Contract || !canRunAggregatorRole(epochId)) {
+    if (!poseV2Contract) {
       log.info("batchV2(local)", {
         epochId,
         merkleRoot: batch.merkleRoot,
@@ -748,6 +793,10 @@ async function flushBatchV2(epochId: number, receipts: VerifiedReceiptV2[]): Pro
         receipts: receipts.length,
       });
       return true;
+    }
+    if (!canRunAggregatorRole(epochId)) {
+      log.error("batchV2 skipped: no aggregator permission for epoch", { epochId, receipts: receipts.length });
+      return false;
     }
 
     let witnessBitmap = 0;
@@ -1094,7 +1143,7 @@ async function flushBatch(epochId: number, receipts: Array<any>): Promise<boolea
   try {
     const batch = aggregator.buildBatch(BigInt(epochId), receipts);
 
-    if (!poseContract || !canRunAggregatorRole(epochId)) {
+    if (!poseContract) {
       log.info("batch(local)", {
         epochId,
         merkleRoot: batch.merkleRoot,
@@ -1102,6 +1151,10 @@ async function flushBatch(epochId: number, receipts: Array<any>): Promise<boolea
         sampleProofs: batch.sampleProofs.length,
       });
       return true;
+    }
+    if (!canRunAggregatorRole(epochId)) {
+      log.error("batch skipped: no aggregator permission for epoch", { epochId, receipts: receipts.length });
+      return false;
     }
 
     const tx = await poseContract.submitBatch(BigInt(epochId), batch.merkleRoot, batch.summaryHash, batch.sampleProofs);
