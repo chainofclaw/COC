@@ -41,7 +41,7 @@ Layer 4: On-Chain Settlement (Merkle verification & settlement)
 **Core Principles**:
 - **IPFS CIDs serve as PoSe storage challenge inputs**, verifying node data availability (not a general-purpose on-chain content ownership registry)
 - **Validators prove data existence through PoSe challenges**
-- **Failures are automatically detected and punished by on-chain contracts**
+- **Off-chain runtime constructs objective fault evidence, and on-chain contracts verify and enforce penalties**
 - **No need for full storage, only random sampling for verification**
 - **Designed for the OpenClaw AI-agent ecosystem**: provides agent identity registration, node binding, and service proof infrastructure (collaborative scheduling and settlement attribution to be closed in future versions)
 
@@ -142,9 +142,10 @@ See detailed description below.
 **LevelDB as Foundation**:
 
 1. **BlockIndex** - Block and transaction indexing
-   - `blocks/{height}` → ChainBlock
-   - `txIndex/{txHash}` → {blockNumber, index, receipt}
-   - `accountTxs/{address}/{blockNumber}` → address history
+   - `b:{height}` → ChainBlock
+   - `t:{txHash}` → {blockNumber, index, receipt}
+   - `a:{address}:{paddedBlock}:{txHash}` → address history
+   - `h:{blockHash}` → block number mapping
 
 2. **StateTrie** - EVM state tree
    - Merkle Patricia Trie implementation
@@ -165,33 +166,31 @@ See detailed description below.
 **Subsystems**:
 
 1. **Blockstore** - Content-addressed storage
-   - Store blocks by CID (Qm... hashes)
-   - DAG and Raw block types
-   - Pin management (garbage collection)
+   - Store blocks by CIDv1 (base32-encoded content hashes)
+   - DAG-PB and Raw block types
+   - Pin management (pin/unpin/list; garbage collection not yet implemented)
 
-2. **UnixFS** - POSIX file layout
-   - File metadata (size, permissions, modification time)
-   - Directories (merkle tree + linked list)
-   - Symlinks and hard links
-   - DAG organization (file sharding)
+2. **UnixFS** - File layout
+   - File metadata (size)
+   - DAG organization (file sharding with 256KB chunks)
 
 3. **Mutable FileSystem (MFS)** - Mutable filesystem
    - Support mkdir, write, read, ls, rm, mv, cp, stat, flush
-   - Instant operations without CID recalculation
-   - Async background flush
+   - In-memory directory tree; write operations compute CID on commit
+   - Synchronous flush to blockstore
 
 4. **Pub/Sub** - Publish-subscribe messaging
    - Topic subscriptions
    - P2P relay forwarding
-   - Message deduplication (last 1000 messages)
-   - Ring buffer (prevents memory leaks)
+   - Message deduplication (BoundedSet of 50,000 entries)
+   - Per-topic ring buffer (default 1,000 recent messages per topic)
 
 5. **HTTP Gateway** - REST API
    - `/ipfs/<cid>` - fetch files
    - `/api/v0/add` - upload files
    - `/api/v0/get` - download + TAR format
-   - MFS routes: `/mfs/read`, `/mfs/write`, etc.
-   - Pubsub routes: `/pubsub/pub`, `/pubsub/sub`
+   - MFS routes: `/api/v0/files/read`, `/api/v0/files/write`, etc.
+   - Pubsub routes: `/api/v0/pubsub/pub`, `/api/v0/pubsub/sub`
 
 ---
 
@@ -263,14 +262,16 @@ interface ReceiptMessageV2 {
 }
 ```
 
-**Verification Steps**:
-1. Verify challenger's EIP-712 signature on challenge
-2. Validate challenge/receipt field match and time window (`issuedAt <= responseAt <= issuedAt+deadline`)
-3. Verify node's EIP-712 receipt signature (including `tipHash/tipHeight/responseBodyHash`)
-4. Tip binding: enforce `tipHeight` within tolerance window from current chain tip (default 10 blocks)
-5. Execute type-specific checks (Uptime/Storage/Relay)
-6. Verify witness signatures and quorum
-7. Record to `verifiedReceipts[]`
+**Verification Steps** (9-layer pipeline in `receipt-verifier-v2.ts`):
+1. Nonce replay check (reject duplicate challenge nonces)
+2. Verify challenger's EIP-712 signature on challenge
+3. Validate challenge/receipt field match (challengeId, nodeId)
+4. Time window check (`issuedAt <= responseAt <= issuedAt+deadline`)
+5. Verify node's EIP-712 receipt signature (including `tipHash/tipHeight/responseBodyHash`)
+6. Tip binding: enforce `tipHeight` within tolerance window from current chain tip (default 10 blocks)
+7. Execute type-specific checks (Uptime/Storage/Relay)
+8. Verify witness signatures and quorum
+9. Build `EvidenceLeafV2` with appropriate `resultCode`
 
 **Result Codes**:
 ```typescript
@@ -296,17 +297,17 @@ Challenges may experience network delays or temporary failures. We introduce a *
    - E.g., 100 active nodes → 10 witnesses
    - Small sample, low cost
 
-2. **Selection Method**: On-chain pseudo-random selection from `challengeNonces[epochId]`
-   - `idx = keccak256(nonce, i) % activeCount`, deduplicated until m slots
+2. **Selection Method**: On-chain pseudo-random selection from epoch nonce (`challengeNonces[epochId]`, set via `initEpochNonce` from `block.prevrandao`)
+   - `idx = keccak256(abi.encodePacked(epochNonce, i)) % activeCount`, deduplicated until m slots
    - Deterministic under same epoch nonce
 
 3. **Quorum Threshold**: `quorum = ceil(2m / 3)`
    - Requires 2/3+ witness agreement
    - BFT-style fault tolerance
 
-4. **Transition Switch**: contract supports `allowEmptyWitnessSubmission` (default true)
-   - Transition mode allows empty witness submissions
-   - Production should switch to strict mode (false) once witness set is stable
+4. **Transition Switch**: contract supports `allowEmptyWitnessSubmission` (default false — strict mode)
+   - Set to true during bootstrap to allow batches without witness signatures
+   - Production keeps the default (false) to enforce witness quorum
 
 5. **Witness Message**:
 ```typescript
@@ -390,10 +391,12 @@ enum FaultType {
 ```typescript
 function expectedProposer(nextHeight: bigint): string {
   const activeValidators = getActiveValidators()
-  const index = Number(nextHeight % BigInt(activeValidators.length))
+  const index = Number((nextHeight - 1n) % BigInt(activeValidators.length))
   return activeValidators[index].address
 }
 ```
+
+> When validator governance is enabled, stake-weighted proposer selection replaces simple rotation.
 
 **Advantages**:
 - Completely deterministic, no consensus messages needed
@@ -432,7 +435,7 @@ interface BftMessage {
 **PBFT-Style Flow**:
 1. **Prepare** - Collect 2/3+ votes, confirm block validity
 2. **Commit** - Collect 2/3+ commitments, finalize block
-3. **Timeout** - 10s no progress → skip proposer
+3. **Timeout** - configurable per-phase (default: prepare 5s + commit 5s = 10s total) → skip proposer
 
 **Safeguards**:
 - **Equivocation Detector**: Detects double voting, auto-slashes
@@ -481,7 +484,7 @@ interface StateSnapshot {
 
 1. **All EVM Opcodes** (PUSH, DUP, SWAP, arithmetic, etc.)
 2. **Smart Contracts** (Solidity, Vyper)
-3. **JSON-RPC Interface** (57+ methods)
+3. **JSON-RPC Interface** (77+ methods)
    - `eth_call` - stateless call
    - `eth_sendTransaction` - submit transaction
    - `eth_getBalance`, `eth_getCode` - queries
@@ -489,7 +492,7 @@ interface StateSnapshot {
    - `eth_subscribe` - WebSocket subscription
 
 4. **EIP-1559 Dynamic Fees**
-   - Base fee: `baseFee = prevBaseFee + (parentGasUsed - targetGas) / parentGasUsed * baseFee / 8`
+   - Base fee: `baseFee = prevBaseFee + (parentGasUsed - targetGas) / targetGas * baseFee / 8` (targetGas = gasLimit * 50%)
    - Priority fee: `maxPriorityFeePerGas`
    - Max fee: `maxFeePerGas`
 
@@ -932,8 +935,8 @@ Witness Quorum: ceil(2m/3), m=|witnessSet|, m<=32
 
 ```
 Blockstore/UnixFS latency depends on disk and load
-UnixFS Directory Traversal: O(log n) + linear directory read
-Pin Management: incremental maintenance (no fixed ms guarantee)
+MFS Directory Listing: O(n) in-memory map scan
+Pin Management: pin/unpin/list (GC not yet implemented)
 ```
 
 ---

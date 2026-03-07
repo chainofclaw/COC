@@ -74,11 +74,11 @@ Policy files are located at `nodeops/policies/*.yaml` and can be loaded and eval
 
 ## Test Strategy
 
-Uses Node.js built-in test framework (1111+ tests across 95+ test files):
-- **Node layer tests**: `node/src/*.test.ts node/src/**/*.test.ts` (801 tests, 66+ files) - chain engine, EVM, RPC, WebSocket, P2P, mempool, storage, IPFS, PoSe, BFT consensus, DHT, wire protocol, fork choice, state snapshot, wire server, DHT network, snap sync, consensus-BFT integration, consensus metrics, wire connection manager, wire tx relay, sync progress, gas histogram, governance stats, wire dedup/relay, security hardening, P2P auth, wire auth handshake, replay guard, nonce registry, PoSe auth, Prometheus metrics, BFT slashing, Phase 36 ops hardening, algorithm safety audit round 3
+Uses Node.js built-in test framework (1146+ tests across 97+ test files):
+- **Node layer tests**: `node/src/*.test.ts node/src/**/*.test.ts` (811 tests, 67+ files) - chain engine, EVM, RPC, WebSocket, P2P, mempool, storage, IPFS, PoSe, BFT consensus, DHT, wire protocol, fork choice, state snapshot, wire server, DHT network, snap sync, consensus-BFT integration, consensus metrics, wire connection manager, wire tx relay, sync progress, gas histogram, governance stats, wire dedup/relay, security hardening, P2P auth, wire auth handshake, replay guard, nonce registry, PoSe auth, Prometheus metrics, BFT slashing, Phase 36 ops hardening, algorithm safety audit round 3
 - **Service layer tests**: `services/**/*.test.ts` + `nodeops/*.test.ts` + `tests/**/*.test.ts` (136 tests, 25 files) - PoSe v2 services, reward tree, witness collector, contract reader, scoring determinism, e2e
-- **Runtime lib tests**: `runtime/lib/*.test.ts` (23 tests, 4 files) - pending retention, runtime metrics, agent metrics server
-- **Contract tests**: `cd contracts && npm test` (151 tests) - PoSeManager v1, PoSeManagerV2, gas benchmarks, security audit, EIP-712 cross-check
+- **Runtime lib tests**: `runtime/lib/*.test.ts` - pending retention, runtime metrics, agent metrics server, reward manifest, pose-v2 fault proof, relayer dispute recovery
+- **Contract tests**: `cd contracts && npm test` (167 tests) - PoSeManager v1, PoSeManagerV2, v2 E2E lifecycle, gas benchmarks, security audit, EIP-712 cross-check
 - **Extension tests**: `extensions/coc-nodeops/src/**/*.test.ts` (24 tests, 3 files) - node types, network presets, node manager
 - **Storage layer tests**: `node/src/storage/*.test.ts` (included in node layer)
 
@@ -87,11 +87,14 @@ Running tests:
 # Node layer tests (both root and subdirectory test files)
 cd node && node --experimental-strip-types --test --test-force-exit src/*.test.ts src/**/*.test.ts
 
-# Service layer tests
-cd /path/to/COC && node --experimental-strip-types --test --test-force-exit services/**/*.test.ts nodeops/*.test.ts tests/**/*.test.ts
-
 # Runtime lib tests
 cd /path/to/COC && node --experimental-strip-types --test --test-force-exit runtime/lib/*.test.ts
+
+# Service + ops + root tests
+cd /path/to/COC && node --experimental-strip-types --test --test-force-exit services/**/*.test.ts nodeops/*.test.ts tests/*.test.ts
+
+# Integration + E2E tests
+cd /path/to/COC && node --experimental-strip-types --test --test-force-exit tests/integration/*.test.ts tests/e2e/*.test.ts
 
 # Extension tests
 cd extensions/coc-nodeops && node --experimental-strip-types --test src/node-types.test.ts src/network-presets.test.ts src/runtime/node-manager.test.ts
@@ -107,7 +110,7 @@ cd contracts && npm test
 - `evm.ts`: EVM execution layer (based on @ethereumjs/vm)
 - `consensus.ts`: Consensus engine (deterministic rotation + degraded mode + auto-recovery + optional BFT coordinator + snap sync provider)
 - `p2p.ts`: HTTP gossip network (per-peer dedup, request body limits, broadcast concurrency control)
-- `rpc.ts`: JSON-RPC interface (57+ methods, parameter validation, structured error codes)
+- `rpc.ts`: JSON-RPC interface (77+ methods, parameter validation, structured error codes)
 - `websocket-rpc.ts`: WebSocket RPC (eth_subscribe, subscription validation and limits, idle timeout)
 - `config.ts`: Node configuration with validation (chainId, ports, validators, storage, enableBft, enableWireProtocol, enableDht, enableSnapSync, rpcAuthToken, enableAdminRpc, COC_*_BIND env vars)
 - `mempool.ts`: Transaction mempool (EIP-1559 effective gas price sorting)

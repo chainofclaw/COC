@@ -1,15 +1,10 @@
 import { join } from "node:path";
-import { Contract, JsonRpcProvider, Wallet, randomBytes } from "ethers";
+import { Contract, JsonRpcProvider, Wallet } from "ethers";
 import { loadConfig } from "./lib/config.ts";
 import { EvidenceStore } from "./lib/evidence-store.ts";
+import { PendingChallengeStore } from "./lib/pending-challenge-store.ts";
+import { PoseV2DisputeExecutor } from "./lib/pose-v2-dispute-executor.ts";
 import { readRewardManifest } from "./lib/reward-manifest.ts";
-import {
-  computeCommitHash,
-  computeRevealDigest,
-  encodeEvidenceData,
-  extractV2FaultProofPayload,
-  faultTypeForResultCode,
-} from "./lib/pose-v2-fault-proof.ts";
 import type { SlashEvidence } from "../services/verifier/anti-cheat-policy.ts";
 import { createLogger } from "../node/src/logger.ts";
 import { ContractReader } from "./lib/contract-reader.ts";
@@ -69,13 +64,34 @@ const contractReader = useV2 ? new ContractReader({
 }) : null;
 
 const rewardManifestDir = config.rewardManifestDir ?? join(config.dataDir, "reward-manifests");
+const pendingChallengesPath = process.env.COC_PENDING_CHALLENGES_PATH
+  || config.pendingChallengesPath
+  || join(config.dataDir, "pending-challenges-v2.json");
 
 // Shared evidence store — persistent across restarts
 const evidencePath = process.env.COC_EVIDENCE_PATH || (config.dataDir ? `${config.dataDir}/evidence-agent.jsonl` : undefined);
 export const evidenceStore = new EvidenceStore(1000, evidencePath);
+const pendingChallengeStore = new PendingChallengeStore(pendingChallengesPath);
+const disputeExecutor = poseV2Contract && signer
+  ? new PoseV2DisputeExecutor({
+      contract: poseV2Contract,
+      provider,
+      signer,
+      challengeBondWei,
+      store: pendingChallengeStore,
+      logger: log,
+    })
+  : null;
 
 let tickInProgress = false;
 let tickOverlapSkipped = 0;
+
+if (disputeExecutor && disputeExecutor.pendingCount > 0) {
+  log.info("restored pending v2 challenges from disk", {
+    count: disputeExecutor.pendingCount,
+    path: pendingChallengesPath,
+  });
+}
 
 async function tick(): Promise<void> {
   if (tickInProgress) {
@@ -327,186 +343,12 @@ async function tryFinalizeV2(): Promise<void> {
   }
 }
 
-// --- v2 Dispute Executor (commit-reveal-settle lifecycle) ---
-
-interface PendingChallenge {
-  challengeId: string
-  commitHash: string
-  salt: string
-  targetNodeId: string
-  faultType: number
-  evidenceLeafHash: string
-  evidenceData: string
-  challengerSig: string
-  state: "committed" | "revealed" | "settled"
-}
-
-const pendingChallenges: Map<string, PendingChallenge> = new Map();
-
 async function tryDisputeV2(): Promise<void> {
-  if (!poseV2Contract || !signer) return;
+  if (!disputeExecutor) return;
 
-  // Phase 1: Process pending challenges (reveal / settle)
-  for (const [id, pending] of pendingChallenges) {
-    try {
-      if (pending.state === "committed") {
-        await tryRevealChallenge(id, pending);
-      } else if (pending.state === "revealed") {
-        await trySettleChallenge(id, pending);
-      }
-    } catch (error) {
-      log.warn("dispute lifecycle step failed", { challengeId: id, state: pending.state, error: String(error) });
-    }
-  }
-
-  // Phase 2: Consume new evidence and open challenges
+  await disputeExecutor.processPending();
   const evidenceBatch = evidenceStore.drain();
-  for (const evidence of evidenceBatch) {
-    try {
-      await openV2Challenge(evidence);
-    } catch (error) {
-      log.error("openV2Challenge failed", { nodeId: evidence.nodeId, error: String(error) });
-    }
-  }
-}
-
-async function openV2Challenge(evidence: SlashEvidence): Promise<void> {
-  if (!poseV2Contract || !signer) return;
-
-  const raw = evidence.rawEvidence;
-  if (!raw || typeof raw !== "object") {
-    log.warn("v2 challenge skipped: malformed raw evidence", { nodeId: evidence.nodeId });
-    return;
-  }
-  const payload = extractV2FaultProofPayload(raw);
-  if (!payload) {
-    log.warn("v2 challenge skipped: evidence missing v2 fault-proof payload", { nodeId: evidence.nodeId });
-    return;
-  }
-
-  const faultType = payload.faultType ?? faultTypeForResultCode(Number(payload.evidenceLeaf.resultCode));
-  if (faultType === 0) {
-    log.warn("v2 challenge skipped: unsupported fault type", {
-      nodeId: evidence.nodeId,
-      resultCode: payload.evidenceLeaf.resultCode,
-    });
-    return;
-  }
-
-  const evidenceData = encodeEvidenceData(payload.batchId, payload.merkleProof, payload.evidenceLeaf);
-  const salt = "0x" + randomBytes(32).toString("hex");
-  const targetNodeId = evidence.nodeId;
-  const evidenceLeafHash = payload.evidenceLeafHash ?? evidence.evidenceHash;
-  const commitHash = computeCommitHash(targetNodeId, faultType, evidenceLeafHash, salt);
-
-  const tx = await poseV2Contract.openChallenge(commitHash, { value: challengeBondWei });
-  const receipt = await tx.wait();
-
-  const challengeId = extractChallengeId(receipt?.logs ?? []);
-  if (!challengeId) {
-    throw new Error(`ChallengeOpened event not found for tx ${tx.hash}`);
-  }
-
-  const revealDigest = computeRevealDigest(
-    challengeId,
-    targetNodeId,
-    faultType,
-    evidenceLeafHash,
-    salt,
-    evidenceData,
-  );
-  const challengerSig = await signer.signMessage(Buffer.from(revealDigest.slice(2), "hex"));
-
-  pendingChallenges.set(challengeId, {
-    challengeId,
-    commitHash,
-    salt,
-    targetNodeId,
-    faultType,
-    evidenceLeafHash,
-    evidenceData,
-    challengerSig,
-    state: "committed",
-  });
-
-  log.info("v2 challenge opened", {
-    challengeId,
-    targetNodeId,
-    faultType,
-    bond: challengeBondWei.toString(),
-    txHash: tx.hash,
-  });
-}
-
-async function tryRevealChallenge(challengeId: string, pending: PendingChallenge): Promise<void> {
-  if (!poseV2Contract) return;
-  const record = await poseV2Contract.challenges(challengeId);
-  if (record?.settled) {
-    pendingChallenges.delete(challengeId);
-    return;
-  }
-  if (record?.revealed) {
-    pending.state = "revealed";
-    return;
-  }
-
-  const tx = await poseV2Contract.revealChallenge(
-    challengeId,
-    pending.targetNodeId,
-    pending.faultType,
-    pending.evidenceLeafHash,
-    pending.salt,
-    pending.evidenceData,
-    pending.challengerSig,
-  );
-  await tx.wait();
-  pending.state = "revealed";
-  log.info("v2 challenge revealed", { challengeId, txHash: tx.hash });
-}
-
-async function trySettleChallenge(challengeId: string, pending: PendingChallenge): Promise<void> {
-  if (!poseV2Contract) return;
-  const record = await poseV2Contract.challenges(challengeId);
-  if (record?.settled) {
-    pendingChallenges.delete(challengeId);
-    return;
-  }
-  if (!record?.revealed) {
-    return;
-  }
-
-  const currentEpoch = Math.floor(Date.now() / (60 * 60 * 1000));
-  const revealDeadlineEpoch = Number(record.revealDeadlineEpoch ?? 0n);
-  if (currentEpoch < revealDeadlineEpoch + 2) {
-    return;
-  }
-
-  try {
-    const tx = await poseV2Contract.settleChallenge(challengeId);
-    await tx.wait();
-    pending.state = "settled";
-    pendingChallenges.delete(challengeId);
-    log.info("v2 challenge settled", { challengeId, txHash: tx.hash });
-  } catch (error) {
-    const msg = String(error);
-    if (msg.includes("AdjudicationWindowNotElapsed")) return;
-    throw error;
-  }
-}
-
-function extractChallengeId(logs: Array<{ topics?: string[]; data?: string }>): string | null {
-  if (!poseV2Contract) return null;
-  for (const entry of logs) {
-    try {
-      const parsed = poseV2Contract.interface.parseLog(entry);
-      if (parsed?.name === "ChallengeOpened") {
-        return String(parsed.args.challengeId ?? parsed.args[0]);
-      }
-    } catch {
-      // ignore unrelated logs
-    }
-  }
-  return null;
+  await disputeExecutor.processEvidenceBatch(evidenceBatch);
 }
 
 setInterval(() => void tick(), intervalMs);

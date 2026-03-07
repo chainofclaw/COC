@@ -716,6 +716,7 @@ export class P2PNode {
     // Slowloris protection: cap time for headers and full request
     server.headersTimeout = 10_000 // 10s to receive headers
     server.requestTimeout = 30_000 // 30s for entire request
+    server.keepAliveTimeout = 5_000 // 5s idle before closing keep-alive
     server.listen(this.cfg.port, this.cfg.bind, () => {
       log.info("listening", { bind: this.cfg.bind, port: this.cfg.port })
     })
