@@ -9,14 +9,11 @@
 import { EventEmitter } from "node:events"
 import type { ChainBlock, Hex, MempoolTx } from "./blockchain-types.ts"
 import type { IndexedLog } from "./storage/block-index.ts"
+import { buildBlockHeaderView, type ReceiptLike } from "./block-header.ts"
 
 export interface BlockEvent {
   block: ChainBlock
-  receipts: Array<{
-    transactionHash: Hex
-    status: string
-    gasUsed: string
-  }>
+  receipts: ReceiptLike[]
 }
 
 export interface PendingTxEvent {
@@ -88,26 +85,26 @@ export class ChainEventEmitter {
 /**
  * Format a block into the eth_subscription "newHeads" format
  */
-export function formatNewHeadsNotification(block: ChainBlock): Record<string, unknown> {
+export async function formatNewHeadsNotification(event: BlockEvent): Promise<Record<string, unknown>> {
+  const { block, receipts } = event
+  const headerView = await buildBlockHeaderView(block, receipts)
   return {
     number: `0x${block.number.toString(16)}`,
     hash: block.hash,
     parentHash: block.parentHash,
     nonce: "0x0000000000000000",
     sha3Uncles: "0x" + "0".repeat(64),
-    logsBloom: "0x" + "0".repeat(512),
-    transactionsRoot: "0x" + "0".repeat(64),
-    stateRoot: "0x" + "0".repeat(64),
-    receiptsRoot: "0x" + "0".repeat(64),
-    miner: "0x0000000000000000000000000000000000000000",
+    logsBloom: headerView.logsBloom,
+    transactionsRoot: headerView.transactionsRoot,
+    stateRoot: headerView.stateRoot,
+    receiptsRoot: headerView.receiptsRoot,
+    miner: block.proposer.startsWith("0x") ? block.proposer : "0x0000000000000000000000000000000000000000",
     difficulty: "0x0",
     extraData: `0x${Buffer.from(block.proposer, "utf-8").toString("hex")}`,
     gasLimit: "0x1c9c380",
-    gasUsed: block.gasUsed !== undefined
-      ? `0x${BigInt(block.gasUsed).toString(16)}`
-      : `0x${(block.txs.length * 21_000).toString(16)}`,
+    gasUsed: `0x${headerView.gasUsed.toString(16)}`,
     timestamp: `0x${Math.floor(block.timestampMs / 1000).toString(16)}`,
-    baseFeePerGas: "0x3b9aca00",
+    baseFeePerGas: `0x${headerView.baseFeePerGas.toString(16)}`,
   }
 }
 

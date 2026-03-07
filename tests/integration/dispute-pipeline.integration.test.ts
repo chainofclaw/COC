@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 import { EvidenceStore } from "../../runtime/lib/evidence-store.ts"
 import { AntiCheatPolicy, EvidenceReason } from "../../services/verifier/anti-cheat-policy.ts"
 import type { ChallengeMessage, ReceiptMessage } from "../../services/common/pose-types.ts"
+import { encodeSlashEvidencePayload, hashSlashEvidencePayload, resolveEvidencePaths } from "../../services/common/slash-evidence.ts"
 
 const challenge: ChallengeMessage = {
   challengeId: "0x1111111111111111111111111111111111111111111111111111111111111111",
@@ -107,6 +108,45 @@ test("evidence hash is deterministic", () => {
   const e2 = policy.buildEvidence(EvidenceReason.Timeout, challenge, receipt)
 
   assert.equal(e1.evidenceHash, e2.evidenceHash)
+})
+
+test("agent evidence hash matches relayer contract payload encoding", () => {
+  const policy = new AntiCheatPolicy()
+  const evidence = policy.buildEvidence(EvidenceReason.Timeout, challenge, receipt)
+  const encoded = encodeSlashEvidencePayload(evidence.nodeId, evidence.rawEvidence)
+
+  assert.equal(evidence.evidenceHash, hashSlashEvidencePayload(evidence.nodeId, evidence.rawEvidence))
+  assert.equal(Buffer.from(encoded.subarray(0, 32)).toString("hex"), challenge.challengeId.slice(2))
+  assert.equal(Buffer.from(encoded.subarray(32, 64)).toString("hex"), challenge.nodeId.slice(2))
+})
+
+test("evidence store drainFiltered preserves unmatched evidence for another pipeline", () => {
+  const store = new EvidenceStore()
+  const policy = new AntiCheatPolicy()
+  const v1 = policy.buildEvidence(EvidenceReason.Timeout, challenge, receipt)
+  const v2 = {
+    ...policy.buildEvidence(EvidenceReason.InvalidSignature, challenge, receipt),
+    rawEvidence: {
+      ...policy.buildEvidence(EvidenceReason.InvalidSignature, challenge, receipt).rawEvidence,
+      protocolVersion: 2,
+    },
+  }
+
+  store.push(v1)
+  store.push(v2)
+
+  const drainedV2 = store.drainFiltered((evidence) => evidence.rawEvidence.protocolVersion === 2)
+  assert.equal(drainedV2.length, 1)
+  assert.equal(drainedV2[0].rawEvidence.protocolVersion, 2)
+  assert.equal(store.size, 1)
+  assert.equal(store.peek()[0].reasonCode, EvidenceReason.Timeout)
+})
+
+test("resolveEvidencePaths keeps legacy reads for BFT compatibility", () => {
+  const paths = resolveEvidencePaths("/tmp/coc-evidence")
+  assert.equal(paths.readPaths.length, 3)
+  assert.ok(paths.readPaths[1].endsWith("evidence-agent.jsonl"))
+  assert.ok(paths.readPaths[2].endsWith("evidence-bft.jsonl"))
 })
 
 test("peek returns items without removing", () => {

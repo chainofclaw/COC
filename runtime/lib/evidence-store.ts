@@ -29,6 +29,22 @@ export class EvidenceStore {
     return items
   }
 
+  drainFiltered(predicate: (evidence: SlashEvidence) => boolean): SlashEvidence[] {
+    const matched: SlashEvidence[] = []
+    const retained: SlashEvidence[] = []
+    for (const evidence of this.queue) {
+      if (predicate(evidence)) {
+        matched.push(evidence)
+      } else {
+        retained.push(evidence)
+      }
+    }
+    this.queue.length = 0
+    this.queue.push(...retained)
+    this.syncToDisk()
+    return matched
+  }
+
   peek(): readonly SlashEvidence[] {
     return this.queue
   }

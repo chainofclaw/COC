@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs"
+import { readFileSync, watch, watchFile, unwatchFile, type FSWatcher } from "node:fs"
 import { resolve, join } from "node:path"
 import { readdirSync } from "node:fs"
 import type { NodeOpsPolicy, NodeOpsThresholds } from "./policy-types.ts"
@@ -68,6 +68,82 @@ export function loadAllPolicies(dir: string): Map<string, NodeOpsPolicy> {
 export function parsePolicyYaml(content: string): NodeOpsPolicy {
   const raw = parseSimpleYaml(content) as RawPolicyYaml
   return mapToPolicy(raw)
+}
+
+export function detectPolicyConflicts(policy: NodeOpsPolicy): string[] {
+  const conflicts: string[] = []
+  if (policy.rpcRateLimitRps <= 0) {
+    conflicts.push("rpcRateLimitRps must be positive")
+  }
+  if (policy.reconnectOnPeerDrop && policy.peerReconnectTarget < policy.thresholds.minPeerCount) {
+    conflicts.push("peerReconnectTarget is below minPeerCount threshold")
+  }
+  if (policy.restartOnProcessDown && policy.restartCooldownMs < policy.monitoringPollMs) {
+    conflicts.push("restartCooldownMs is shorter than monitoringPollMs and may cause restart thrash")
+  }
+  if (policy.switchTransportOnHighLatency && policy.latencySwitchThresholdMs <= 0) {
+    conflicts.push("latencySwitchThresholdMs must be positive when high-latency switching is enabled")
+  }
+  return conflicts
+}
+
+export interface PolicyHotReloadHandle {
+  close(): void
+}
+
+export function startPolicyHotReload(
+  filePath: string,
+  onReload: (policy: NodeOpsPolicy) => void,
+  onError?: (error: unknown) => void,
+  debounceMs = 250,
+): PolicyHotReloadHandle {
+  const absolutePath = resolve(filePath)
+  let timer: ReturnType<typeof setTimeout> | null = null
+  const scheduleReload = () => {
+    if (timer) clearTimeout(timer)
+    timer = setTimeout(() => {
+      timer = null
+      try {
+        onReload(loadPolicyFromFile(absolutePath))
+      } catch (error) {
+        onError?.(error)
+      }
+    }, debounceMs)
+  }
+
+  let watcher: FSWatcher | null = null
+  let usingWatchFile = false
+  try {
+    watcher = watch(absolutePath, scheduleReload)
+  } catch (error) {
+    if (!isWatchResourceError(error)) {
+      throw error
+    }
+    usingWatchFile = true
+    watchFile(absolutePath, { interval: Math.max(100, debounceMs) }, (curr, prev) => {
+      if (curr.mtimeMs !== prev.mtimeMs || curr.size !== prev.size) {
+        scheduleReload()
+      }
+    })
+  }
+
+  return {
+    close() {
+      if (timer) {
+        clearTimeout(timer)
+        timer = null
+      }
+      watcher?.close()
+      if (usingWatchFile) {
+        unwatchFile(absolutePath)
+      }
+    },
+  }
+}
+
+function isWatchResourceError(error: unknown): boolean {
+  const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : ""
+  return code === "EMFILE" || code === "ENOSPC"
 }
 
 function mapToPolicy(raw: RawPolicyYaml): NodeOpsPolicy {

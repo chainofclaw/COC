@@ -388,8 +388,14 @@ export class WsRpcServer {
       case "newHeads": {
         const handler = (event: BlockEvent) => {
           if (!this.clients.has(ws)) return
-          const notification = formatNewHeadsNotification(event.block)
-          this.sendSubscription(ws, subId, notification)
+          void formatNewHeadsNotification(event)
+            .then((notification) => {
+              if (!this.clients.has(ws)) return
+              this.sendSubscription(ws, subId, notification)
+            })
+            .catch((error) => {
+              log.warn("newHeads notification formatting failed", { error: String(error) })
+            })
         }
         this.events.onNewBlock(handler as (event: BlockEvent) => void)
         client.subscriptions.set(subId, { id: subId, type: "newHeads" })

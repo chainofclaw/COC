@@ -2,7 +2,9 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
-import { parsePolicyYaml, loadPolicyFromFile, loadAllPolicies } from "./policy-loader.ts"
+import { mkdtempSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { parsePolicyYaml, loadPolicyFromFile, loadAllPolicies, detectPolicyConflicts, startPolicyHotReload } from "./policy-loader.ts"
 import { DEFAULT_NODEOPS_POLICY } from "./policy-types.ts"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -167,4 +169,33 @@ monitoring:
 test("parsePolicyYaml handles empty input", () => {
   const policy = parsePolicyYaml("")
   assert.deepEqual(policy, DEFAULT_NODEOPS_POLICY)
+})
+
+test("detectPolicyConflicts flags reconnect and restart thrash risks", () => {
+  const conflicts = detectPolicyConflicts({
+    ...DEFAULT_NODEOPS_POLICY,
+    peerReconnectTarget: 2,
+    restartCooldownMs: 1_000,
+  })
+  assert.ok(conflicts.some((entry) => entry.includes("peerReconnectTarget")))
+  assert.ok(conflicts.some((entry) => entry.includes("restartCooldownMs")))
+})
+
+test("startPolicyHotReload reloads updated policy file", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "nodeops-policy-"))
+  const filePath = join(dir, "policy.yaml")
+  writeFileSync(filePath, "profile: one\nmonitoring:\n  poll_interval_ms: 1000\n")
+
+  const seen: string[] = []
+  const handle = startPolicyHotReload(filePath, (policy) => {
+    seen.push(policy.profile)
+  })
+
+  try {
+    writeFileSync(filePath, "profile: two\nmonitoring:\n  poll_interval_ms: 2000\n")
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    assert.equal(seen.includes("two"), true)
+  } finally {
+    handle.close()
+  }
 })

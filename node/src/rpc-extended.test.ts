@@ -1,5 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
+import type http from "node:http"
 import { ChainEngine } from "./chain-engine.ts"
 import { EvmChain } from "./evm.ts"
 import { startRpcServer } from "./rpc.ts"
@@ -51,7 +52,15 @@ test("RPC Extended Methods", async (t) => {
   } as P2PNode
   const port = 18790 + Math.floor(Math.random() * 100)
 
-  startRpcServer("127.0.0.1", port, chainId, evm, chain, p2p)
+  const server: http.Server = startRpcServer("127.0.0.1", port, chainId, evm, chain, p2p)
+  t.after(async () => {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) reject(error)
+        else resolve()
+      })
+    })
+  })
 
   // Wait for server startup
   await new Promise((resolve) => setTimeout(resolve, 100))
@@ -121,6 +130,19 @@ test("RPC Extended Methods", async (t) => {
     assert.ok(typeof txHash === "string")
     assert.ok(txHash.startsWith("0x"))
     assert.ok(txHash.length === 66) // 32 bytes * 2 + 0x
+  })
+
+  await t.test("eth_getBlockByNumber returns computed header roots", async () => {
+    const proposed = await chain.proposeNextBlock()
+    assert.ok(proposed)
+
+    const block = await rpcCall(port, "eth_getBlockByNumber", ["0x1", false])
+    assert.ok(typeof block === "object")
+    assert.match(block.transactionsRoot, /^0x[0-9a-f]{64}$/)
+    assert.match(block.receiptsRoot, /^0x[0-9a-f]{64}$/)
+    assert.notEqual(block.transactionsRoot, `0x${"0".repeat(64)}`)
+    assert.notEqual(block.receiptsRoot, `0x${"0".repeat(64)}`)
+    assert.match(block.logsBloom, /^0x[0-9a-f]{512}$/)
   })
 
   await t.test("eth_getBlockTransactionCountByNumber returns count", async () => {

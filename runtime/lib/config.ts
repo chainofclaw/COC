@@ -17,6 +17,7 @@ export interface CocRuntimeConfig {
   l2RpcUrl?: string;
   poseManagerAddress?: string;
   operatorPrivateKey?: string;
+  operatorPrivateKeyFile?: string;
   pendingPath?: string;
   pendingV2Path?: string;
   pendingRetentionEpochs?: number;
@@ -36,8 +37,16 @@ export interface CocRuntimeConfig {
   nodeIds?: string[];
   rewardPoolWei?: string;
   slasherPrivateKey?: string;
+  slasherPrivateKeyFile?: string;
   endpointFingerprintMode?: "strict" | "legacy";
   minBondWei?: string;
+  txRetryAttempts?: number;
+  txRetryBaseDelayMs?: number;
+  txRetryMaxDelayMs?: number;
+  nodeOpsPolicyPath?: string;
+  nodeOpsHotReload?: boolean;
+  nodeOpsAllowSelfRestart?: boolean;
+  nodeOpsActionDir?: string;
   // v2 protocol config
   protocolVersion?: 1 | 2;
   chainId?: number;

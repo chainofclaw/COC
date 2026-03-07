@@ -8,17 +8,37 @@ import {
 import type { BlockEvent, PendingTxEvent, LogEvent } from "./chain-events.ts"
 import type { ChainBlock, Hex } from "./blockchain-types.ts"
 import type { IndexedLog } from "./storage/block-index.ts"
+import { Wallet, Transaction } from "ethers"
+
+const CHAIN_ID = 18780
+const FUNDED_PK = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 
 function makeBlock(num: bigint): ChainBlock {
   return {
     number: num,
-    hash: "0xabcdef" as Hex,
-    parentHash: "0x000000" as Hex,
+    hash: `0x${"ab".repeat(32)}` as Hex,
+    parentHash: `0x${"00".repeat(32)}` as Hex,
     proposer: "validator-1",
     timestampMs: Date.now(),
     txs: [],
+    finalized: false,
     stateRoot: "0x" as Hex,
   }
+}
+
+function createSignedTx(nonce: number): Hex {
+  const wallet = new Wallet(FUNDED_PK)
+  const tx = Transaction.from({
+    to: "0x0000000000000000000000000000000000000001",
+    value: "0x1",
+    nonce,
+    gasLimit: "0x5208",
+    gasPrice: "0x3b9aca00",
+    chainId: CHAIN_ID,
+    data: "0x",
+  })
+  tx.signature = wallet.signingKey.sign(tx.unsignedHash)
+  return tx.serialized as Hex
 }
 
 function makeLog(): IndexedLog {
@@ -173,18 +193,39 @@ describe("ChainEventEmitter", () => {
 })
 
 describe("formatNewHeadsNotification", () => {
-  it("formats block into eth_subscription newHeads format", () => {
+  it("formats block into eth_subscription newHeads format", async () => {
     const block = makeBlock(42n)
     block.timestampMs = 1700000000000
-    block.txs = [{ hash: "0x1" } as any, { hash: "0x2" } as any]
+    const rawTx = createSignedTx(0)
+    const parsed = Transaction.from(rawTx)
+    block.txs = [rawTx]
+    block.stateRoot = `0x${"11".repeat(32)}` as Hex
+    block.baseFee = 1_000_000_000n
 
-    const result = formatNewHeadsNotification(block)
+    const result = await formatNewHeadsNotification({
+      block,
+      receipts: [{
+        transactionHash: parsed.hash,
+        status: "0x1",
+        gasUsed: "0x5208",
+        logs: [{
+          address: "0x0000000000000000000000000000000000000001",
+          topics: [`0x${"22".repeat(32)}`],
+          data: "0x",
+        }],
+      }],
+    })
     assert.equal(result.number, "0x2a")
-    assert.equal(result.hash, "0xabcdef")
-    assert.equal(result.parentHash, "0x000000")
+    assert.equal(result.hash, `0x${"ab".repeat(32)}`)
+    assert.equal(result.parentHash, `0x${"00".repeat(32)}`)
     assert.equal(result.timestamp, "0x6553f100")
-    assert.equal(result.gasUsed, "0xa410") // 2 txs * 21000 = 42000 = 0xa410
+    assert.equal(result.gasUsed, "0x5208")
     assert.equal(result.difficulty, "0x0")
+    assert.equal(result.stateRoot, `0x${"11".repeat(32)}`)
+    assert.equal(result.baseFeePerGas, "0x3b9aca00")
+    assert.match(result.transactionsRoot as string, /^0x[0-9a-f]{64}$/)
+    assert.match(result.receiptsRoot as string, /^0x[0-9a-f]{64}$/)
+    assert.match(result.logsBloom as string, /^0x[0-9a-f]{512}$/)
   })
 })
 

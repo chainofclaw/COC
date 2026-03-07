@@ -8,6 +8,9 @@ import { readRewardManifest } from "./lib/reward-manifest.ts";
 import type { SlashEvidence } from "../services/verifier/anti-cheat-policy.ts";
 import { createLogger } from "../node/src/logger.ts";
 import { ContractReader } from "./lib/contract-reader.ts";
+import { encodeSlashEvidencePayload, resolveEvidencePaths } from "../services/common/slash-evidence.ts";
+import { resolvePrivateKey } from "./lib/key-material.ts";
+import { retryAsync } from "./lib/retry.ts";
 
 const log = createLogger("coc-relayer");
 
@@ -15,12 +18,33 @@ const config = await loadConfig();
 const intervalMs = Number(process.env.COC_RELAYER_INTERVAL_MS || config.relayerIntervalMs || 60000);
 const l1Rpc = process.env.COC_L1_RPC_URL || config.l1RpcUrl || "http://127.0.0.1:8545";
 const poseManagerAddress = process.env.COC_POSE_MANAGER || config.poseManagerAddress;
-const slasherPk = process.env.COC_SLASHER_PK || config.slasherPrivateKey || config.operatorPrivateKey;
+const hasSlasherKeySource = Boolean(
+  process.env.COC_SLASHER_PK
+  || process.env.COC_SLASHER_PK_FILE
+  || config.slasherPrivateKey
+  || config.slasherPrivateKeyFile
+  || config.operatorPrivateKey
+  || config.operatorPrivateKeyFile,
+);
+const slasherPk = hasSlasherKeySource
+  ? resolvePrivateKey({
+      envValue: process.env.COC_SLASHER_PK,
+      envFilePath: process.env.COC_SLASHER_PK_FILE,
+      configValue: config.slasherPrivateKey ?? config.operatorPrivateKey,
+      configFilePath: config.slasherPrivateKeyFile ?? config.operatorPrivateKeyFile,
+      label: "slasher",
+    })
+  : undefined;
+const txRetryOptions = {
+  retries: Math.max(0, Number(process.env.COC_TX_RETRY_ATTEMPTS || config.txRetryAttempts ?? 2)),
+  baseDelayMs: Math.max(1, Number(process.env.COC_TX_RETRY_BASE_DELAY_MS || config.txRetryBaseDelayMs ?? 250)),
+  maxDelayMs: Math.max(1, Number(process.env.COC_TX_RETRY_MAX_DELAY_MS || config.txRetryMaxDelayMs ?? 5000)),
+  onRetry: (error: unknown, attempt: number, delayMs: number) => {
+    log.warn("retrying relayer tx operation", { attempt, delayMs, error: String(error) });
+  },
+};
 
 const provider = new JsonRpcProvider(l1Rpc);
-if (slasherPk && !/^(0x)?[0-9a-fA-F]{64}$/.test(slasherPk)) {
-  log.warn("COC_SLASHER_PK does not look like a valid 32-byte hex private key");
-}
 const signer = slasherPk ? new Wallet(slasherPk, provider) : null;
 
 const poseAbi = [
@@ -68,9 +92,9 @@ const pendingChallengesPath = process.env.COC_PENDING_CHALLENGES_PATH
   || config.pendingChallengesPath
   || join(config.dataDir, "pending-challenges-v2.json");
 
-// Shared evidence store — persistent across restarts
-const evidencePath = process.env.COC_EVIDENCE_PATH || (config.dataDir ? `${config.dataDir}/evidence-agent.jsonl` : undefined);
-export const evidenceStore = new EvidenceStore(1000, evidencePath);
+const evidenceStores = resolveEvidencePaths(config.dataDir, process.env.COC_EVIDENCE_PATH)
+  .readPaths
+  .map((path) => new EvidenceStore(1000, path));
 const pendingChallengeStore = new PendingChallengeStore(pendingChallengesPath);
 const disputeExecutor = poseV2Contract && signer
   ? new PoseV2DisputeExecutor({
@@ -80,6 +104,7 @@ const disputeExecutor = poseV2Contract && signer
       challengeBondWei,
       store: pendingChallengeStore,
       logger: log,
+      retryOptions: txRetryOptions,
     })
   : null;
 
@@ -104,6 +129,7 @@ async function tick(): Promise<void> {
     if (useV2) {
       await tryInitEpochNonce();
       await tryFinalizeV2();
+      await tryDispute();
       await tryDisputeV2();
     } else {
       await tryFinalize();
@@ -134,8 +160,8 @@ async function tryFinalize(): Promise<void> {
     return;
   }
 
-  const tx = await pose.finalizeEpoch(BigInt(candidate));
-  const receipt = await tx.wait();
+  const tx = await retryAsync(() => pose.finalizeEpoch(BigInt(candidate)), txRetryOptions);
+  const receipt = await retryAsync(() => tx.wait(), txRetryOptions);
   lastFinalizeEpoch = candidate;
 
   log.info("finalized", {
@@ -145,7 +171,7 @@ async function tryFinalize(): Promise<void> {
     batches: batchIds.length,
   });
 
-  // Distribute rewards after successful finalization (placeholder: equal split)
+  // Distribute rewards after successful finalization using the persisted scoring manifest.
   try {
     await tryDistributeRewards(candidate, batchIds);
   } catch (error) {
@@ -153,49 +179,44 @@ async function tryFinalize(): Promise<void> {
   }
 }
 
-async function tryDistributeRewards(epochId: number, batchIds: string[]): Promise<void> {
+async function tryDistributeRewards(epochId: number, _batchIds: string[]): Promise<void> {
   if (!pose) return;
 
-  const poolBalance: bigint = await pose.rewardPoolBalance();
+  const manifest = readRewardManifest(rewardManifestDir, epochId);
+  if (!manifest || manifest.leaves.length === 0) {
+    log.warn("v1 reward manifest not found or empty, skipping distribution", { epochId });
+    return;
+  }
+
+  const poolBalance: bigint = await retryAsync(() => pose.rewardPoolBalance() as Promise<bigint>, txRetryOptions);
   if (poolBalance === 0n) {
     log.info("reward pool empty, skipping distribution", { epochId });
     return;
   }
 
-  // Collect unique active aggregators from finalized batches
-  const nodeIds = new Set<string>();
-  for (const batchId of batchIds) {
-    try {
-      const batch = await pose.getBatch(batchId);
-      if (batch.finalized && !batch.disputed) {
-        // Use aggregator address as node identifier placeholder
-        const aggregator = batch.aggregator as string;
-        if (aggregator && aggregator !== "0x" + "0".repeat(40)) {
-          nodeIds.add(aggregator);
-        }
-      }
-    } catch {
-      // skip unreadable batches
-    }
-  }
+  const manifestTotal = BigInt(manifest.totalReward);
+  const effectivePool = poolBalance < manifestTotal ? poolBalance : manifestTotal;
 
-  if (nodeIds.size === 0) return;
+  const rewards = manifest.leaves.map((leaf) => {
+    const rawAmount = BigInt(leaf.amount);
+    const scaled = manifestTotal > 0n ? (rawAmount * effectivePool) / manifestTotal : 0n;
+    return {
+      nodeId: leaf.nodeId.length === 42
+        ? "0x" + leaf.nodeId.replace(/^0x/, "").padStart(64, "0")
+        : leaf.nodeId,
+      amount: scaled,
+    };
+  }).filter((r) => r.amount > 0n);
 
-  // Equal split among participating aggregators (placeholder for scoring.ts integration)
-  const perNode = poolBalance / BigInt(nodeIds.size);
-  if (perNode === 0n) return;
+  if (rewards.length === 0) return;
 
-  const rewards = [...nodeIds].map((addr) => ({
-    nodeId: "0x" + addr.replace(/^0x/, "").padStart(64, "0"),
-    amount: perNode,
-  }));
-
-  const rewardTx = await pose.distributeRewards(BigInt(epochId), rewards);
-  const rewardReceipt = await rewardTx.wait();
-  log.info("rewards distributed", {
+  const rewardTx = await retryAsync(() => pose.distributeRewards(BigInt(epochId), rewards), txRetryOptions);
+  const rewardReceipt = await retryAsync(() => rewardTx.wait(), txRetryOptions);
+  log.info("rewards distributed (scoring model)", {
     epochId,
     nodes: rewards.length,
-    perNode: perNode.toString(),
+    pool: poolBalance.toString(),
+    manifestTotal: manifestTotal.toString(),
     txHash: rewardTx.hash,
     status: rewardReceipt?.status,
   });
@@ -206,7 +227,7 @@ async function tryDispute(): Promise<void> {
     return;
   }
 
-  const evidenceBatch = evidenceStore.drain();
+  const evidenceBatch = drainEvidenceBatch((evidence) => !isV2Evidence(evidence));
   if (evidenceBatch.length === 0) {
     return;
   }
@@ -220,26 +241,23 @@ async function tryDispute(): Promise<void> {
   }
 }
 
+export function encodeSlashEvidenceForContract(evidence: SlashEvidence): Uint8Array {
+  return encodeSlashEvidencePayload(evidence.nodeId, evidence.rawEvidence);
+}
+
 async function submitSlash(evidence: SlashEvidence): Promise<void> {
   if (!pose) {
     return;
   }
 
-  // Encode structured header: challengeId (32 bytes) + nodeId (32 bytes) + JSON tail
-  const challengeId = typeof evidence.rawEvidence === "object" && evidence.rawEvidence !== null
-    ? String((evidence.rawEvidence as Record<string, unknown>).challengeId ?? "0x" + "0".repeat(64))
-    : "0x" + "0".repeat(64);
-  const challengeIdBytes = Buffer.from(challengeId.replace(/^0x/, "").padStart(64, "0"), "hex");
-  const nodeIdBytes = Buffer.from(evidence.nodeId.replace(/^0x/, "").padStart(64, "0"), "hex");
-  const jsonTail = Buffer.from(JSON.stringify(evidence.rawEvidence), "utf8");
-  const rawBytes = Buffer.concat([challengeIdBytes, nodeIdBytes, jsonTail]);
-  const tx = await pose.slash(evidence.nodeId, {
+  const rawBytes = encodeSlashEvidenceForContract(evidence);
+  const tx = await retryAsync(() => pose.slash(evidence.nodeId, {
     nodeId: evidence.nodeId,
     reasonCode: evidence.reasonCode,
     evidenceHash: evidence.evidenceHash,
     rawEvidence: rawBytes,
-  });
-  const receipt = await tx.wait();
+  }), txRetryOptions);
+  const receipt = await retryAsync(() => tx.wait(), txRetryOptions);
 
   log.info("slashed", {
     nodeId: evidence.nodeId,
@@ -259,14 +277,14 @@ async function tryInitEpochNonce(): Promise<void> {
   if (currentEpoch <= lastNonceInitEpoch) return;
 
   try {
-    const existing: bigint = await poseV2Contract.challengeNonces(BigInt(currentEpoch));
+    const existing: bigint = await retryAsync(() => poseV2Contract.challengeNonces(BigInt(currentEpoch)) as Promise<bigint>, txRetryOptions);
     if (existing !== 0n) {
       lastNonceInitEpoch = currentEpoch;
       return;
     }
 
-    const tx = await poseV2Contract.initEpochNonce(BigInt(currentEpoch));
-    await tx.wait();
+    const tx = await retryAsync(() => poseV2Contract.initEpochNonce(BigInt(currentEpoch)), txRetryOptions);
+    await retryAsync(() => tx.wait(), txRetryOptions);
     lastNonceInitEpoch = currentEpoch;
     log.info("epoch nonce initialized", { epochId: currentEpoch, txHash: tx.hash });
   } catch (error) {
@@ -321,14 +339,17 @@ async function tryFinalizeV2(): Promise<void> {
       });
     }
 
-    const tx = await poseV2Contract.finalizeEpochV2(
-      BigInt(candidate),
-      rewardRoot,
-      totalReward,
-      slashTotal,
-      treasuryDelta,
+    const tx = await retryAsync(
+      () => poseV2Contract.finalizeEpochV2(
+        BigInt(candidate),
+        rewardRoot,
+        totalReward,
+        slashTotal,
+        treasuryDelta,
+      ),
+      txRetryOptions,
     );
-    const receipt = await tx.wait();
+    const receipt = await retryAsync(() => tx.wait(), txRetryOptions);
     lastFinalizeEpoch = candidate;
 
     log.info("finalizedV2", {
@@ -347,8 +368,20 @@ async function tryDisputeV2(): Promise<void> {
   if (!disputeExecutor) return;
 
   await disputeExecutor.processPending();
-  const evidenceBatch = evidenceStore.drain();
+  const evidenceBatch = drainEvidenceBatch(isV2Evidence);
   await disputeExecutor.processEvidenceBatch(evidenceBatch);
+}
+
+function drainEvidenceBatch(predicate: (evidence: SlashEvidence) => boolean): SlashEvidence[] {
+  const batch: SlashEvidence[] = [];
+  for (const store of evidenceStores) {
+    batch.push(...store.drainFiltered(predicate));
+  }
+  return batch;
+}
+
+function isV2Evidence(evidence: SlashEvidence): boolean {
+  return evidence.rawEvidence?.protocolVersion === 2;
 }
 
 setInterval(() => void tick(), intervalMs);

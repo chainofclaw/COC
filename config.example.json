@@ -21,11 +21,20 @@
   "agentMetricsIntervalMs": 10000,
   "tickOverlapLogIntervalMs": 30000,
   "operatorPrivateKey": "0xYOUR_OPERATOR_PRIVATE_KEY",
+  "operatorPrivateKeyFile": "/var/lib/coc/operator.key",
   "nonceRegistryPath": "/var/lib/coc/nonce-registry.log",
   "nonceRegistryTtlMs": 604800000,
   "nonceRegistryMaxEntries": 500000,
   "endpointFingerprintMode": "strict",
+  "txRetryAttempts": 2,
+  "txRetryBaseDelayMs": 250,
+  "txRetryMaxDelayMs": 5000,
+  "nodeOpsPolicyPath": "/var/lib/coc/nodeops/default-policy.yaml",
+  "nodeOpsHotReload": true,
+  "nodeOpsAllowSelfRestart": false,
+  "nodeOpsActionDir": "/var/lib/coc/nodeops-actions",
   "relayerIntervalMs": 60000,
+  "slasherPrivateKeyFile": "/var/lib/coc/slasher.key",
   "protocolVersion": 2,
   "poseManagerV2Address": "0xYOUR_POSE_MANAGER_V2_ADDRESS",
   "verifyingContract": "0xYOUR_POSE_MANAGER_V2_ADDRESS",
@@ -38,5 +47,8 @@
   "nodeIds": [
     "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
   ],
-  "rewardPoolWei": "1000000000000000000"
+  "challengeBondWei": "100000000000000000",
+  "rewardPoolWei": "1000000000000000000",
+  "rewardManifestDir": "/var/lib/coc/reward-manifests",
+  "pendingChallengesPath": "/var/lib/coc/pending-challenges-v2.json"
 }

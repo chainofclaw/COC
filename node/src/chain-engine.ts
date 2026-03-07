@@ -373,11 +373,7 @@ export class ChainEngine {
     // Emit new block event (use storedBlock with computed gasUsed and finality flags)
     this.events.emitNewBlock({
       block: storedBlock,
-      receipts: receipts.map((r) => ({
-        transactionHash: (r.transactionHash ?? "0x") as Hex,
-        status: String(r.status ?? "0x1"),
-        gasUsed: String(r.gasUsed ?? "0x5208"),
-      })),
+      receipts: receipts,
     })
 
     // Emit log events with correct transaction and log indices
