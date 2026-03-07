@@ -35,6 +35,10 @@ import { buildPrometheusMetrics, shouldWriteMetrics, writeMetricsSnapshot, write
 import { startAgentMetricsServer } from "./lib/agent-metrics-server.ts";
 import { faultTypeForResultCode, serializeEvidenceLeaf } from "./lib/pose-v2-fault-proof.ts";
 import { stableStringifyForHash, writeRewardManifest, type RewardManifest } from "./lib/reward-manifest.ts";
+import { resolveEvidencePaths } from "../services/common/slash-evidence.ts";
+import { resolvePrivateKey } from "./lib/key-material.ts";
+import { retryAsync } from "./lib/retry.ts";
+import { RuntimeNodeOpsController } from "./lib/nodeops-runtime.ts";
 
 const log = createLogger("coc-agent");
 
@@ -60,13 +64,21 @@ const endpointFingerprintMode = resolveEndpointFingerprintMode(
 
 const l1RpcUrl = process.env.COC_L1_RPC_URL || config.l1RpcUrl || "http://127.0.0.1:8545";
 const poseManagerAddress = process.env.COC_POSE_MANAGER || config.poseManagerAddress;
-const operatorPrivateKey = process.env.COC_OPERATOR_PK || config.operatorPrivateKey;
-if (!operatorPrivateKey) {
-  throw new Error("missing operator private key: set COC_OPERATOR_PK or config.operatorPrivateKey");
-}
-if (!/^0x[0-9a-fA-F]{64}$/.test(operatorPrivateKey)) {
-  throw new Error("invalid operator private key format: expected 32-byte hex string with 0x prefix");
-}
+const operatorPrivateKey = resolvePrivateKey({
+  envValue: process.env.COC_OPERATOR_PK,
+  envFilePath: process.env.COC_OPERATOR_PK_FILE,
+  configValue: config.operatorPrivateKey,
+  configFilePath: config.operatorPrivateKeyFile,
+  label: "operator",
+});
+const txRetryOptions = {
+  retries: Math.max(0, Number(process.env.COC_TX_RETRY_ATTEMPTS || config.txRetryAttempts ?? 2)),
+  baseDelayMs: Math.max(1, Number(process.env.COC_TX_RETRY_BASE_DELAY_MS || config.txRetryBaseDelayMs ?? 250)),
+  maxDelayMs: Math.max(1, Number(process.env.COC_TX_RETRY_MAX_DELAY_MS || config.txRetryMaxDelayMs ?? 5000)),
+  onRetry: (error: unknown, attempt: number, delayMs: number) => {
+    log.warn("retrying runtime tx operation", { attempt, delayMs, error: String(error) });
+  },
+};
 
 const provider = new JsonRpcProvider(l1RpcUrl);
 const signer = new Wallet(operatorPrivateKey, provider);
@@ -467,9 +479,24 @@ if (useV2 && trackedNodeIds.length > 1) {
 }
 
 // Evidence pipeline: agent writes, relayer consumes
-const evidencePath = process.env.COC_EVIDENCE_PATH || join(config.dataDir, "evidence-agent.jsonl");
+const evidencePath = resolveEvidencePaths(config.dataDir, process.env.COC_EVIDENCE_PATH).writePath;
 export const evidenceStore = new EvidenceStore(1000, evidencePath);
 const antiCheat = new AntiCheatPolicy();
+const nodeOpsPolicyPath = process.env.COC_NODEOPS_POLICY_PATH || config.nodeOpsPolicyPath;
+const nodeOps = nodeOpsPolicyPath
+  ? new RuntimeNodeOpsController({
+      dataDir: config.dataDir,
+      nodeUrl,
+      policyPath: nodeOpsPolicyPath,
+      hotReload: config.nodeOpsHotReload ?? true,
+      allowSelfRestart: config.nodeOpsAllowSelfRestart ?? false,
+      actionDir: config.nodeOpsActionDir,
+    })
+  : null;
+
+if (nodeOps) {
+  await nodeOps.init();
+}
 
 await ensureNodeRegistered();
 
@@ -730,6 +757,7 @@ async function tick(): Promise<void> {
           }
         }
         emitEpochScores(currentEpoch);
+        persistRewardManifestForEpoch(currentEpoch);
         nodeScores.clear();
         currentEpoch = nowEpoch;
       }
@@ -773,6 +801,15 @@ async function tick(): Promise<void> {
     }
 
     writeRuntimeMetrics(currentEpoch, nowMs);
+    if (nodeOps) {
+      const actions = await nodeOps.tick(nowMs);
+      if (actions.length > 0) {
+        log.info("nodeops actions applied", {
+          count: actions.length,
+          actions: actions.map((action) => ({ type: action.type, reason: action.reason })),
+        });
+      }
+    }
     log.info("tick ok", {
       pendingV1: pending.length,
       pendingV2: pendingV2.length,
@@ -1017,40 +1054,9 @@ async function flushBatchV2(epochId: number, receipts: VerifiedReceiptV2[]): Pro
   try {
     const batch = aggregatorV2.buildBatch(BigInt(epochId), receipts);
 
-    // Compute reward root from epoch scores
-    const stats = [...nodeScores.entries()].map(([nodeId, item]) => ({
-      nodeId: nodeId as `0x${string}`,
-      uptimeBps: ratioBps(item.uptimeOk, item.uptimeTotal),
-      storageBps: ratioBps(item.storageOk, item.storageTotal),
-      relayBps: ratioBps(item.relayOk, item.relayTotal),
-      storageGb: bytesToGb(item.verifiedStorageBytes),
-    }));
-    const rewardPool = BigInt(config.rewardPoolWei ?? "1000000000000000000");
-    const scoringResult = computeEpochRewards(rewardPool, stats);
-    const rewardResult = buildRewardRoot(BigInt(epochId), scoringResult);
-    const rewardRoot = rewardResult.root;
-    const totalReward = Object.values(scoringResult.rewards).reduce((a, b) => a + b, 0n);
-
-    // Persist reward manifest for relayer consumption
-    const manifest: RewardManifest = {
-      epochId,
-      rewardRoot,
-      totalReward: totalReward.toString(),
-      slashTotal: "0",
-      treasuryDelta: "0",
-      leaves: rewardResult.leaves.map((l) => ({ nodeId: l.nodeId, amount: l.amount.toString() })),
-      proofs: Object.fromEntries(
-        [...rewardResult.proofs.entries()].map(([k, v]) => [k, v as string[]]),
-      ),
-      scoringInputsHash: keccak256(toUtf8Bytes(stableStringifyForHash(stats))),
-      generatedAtMs: Date.now(),
-    };
-    try {
-      writeRewardManifest(rewardManifestDir, manifest);
-      log.info("reward manifest persisted", { epochId, rewardRoot, totalReward: totalReward.toString(), leaves: manifest.leaves.length });
-    } catch (manifestError) {
-      log.error("reward manifest write failed (non-fatal)", { epochId, error: String(manifestError) });
-    }
+    const manifest = persistRewardManifestForEpoch(epochId);
+    const rewardRoot = manifest.rewardRoot;
+    const totalReward = BigInt(manifest.totalReward);
 
     if (!poseV2Contract) {
       log.info("batchV2(local)", {
@@ -1109,15 +1115,18 @@ async function flushBatchV2(epochId: number, receipts: VerifiedReceiptV2[]): Pro
       });
     }
 
-    const tx = await poseV2Contract.submitBatchV2(
-      BigInt(epochId),
-      batch.merkleRoot,
-      batch.summaryHash,
-      batch.sampleProofs,
-      witnessBitmap,
-      witnessSignatures,
+    const tx = await retryAsync(
+      () => poseV2Contract.submitBatchV2(
+        BigInt(epochId),
+        batch.merkleRoot,
+        batch.summaryHash,
+        batch.sampleProofs,
+        witnessBitmap,
+        witnessSignatures,
+      ),
+      txRetryOptions,
     );
-    const txReceipt = await tx.wait();
+    const txReceipt = await retryAsync(() => tx.wait(), txRetryOptions);
     const batchId = extractBatchIdV2(txReceipt?.logs ?? []);
     if (batchId) {
       const queuedFaults = persistV2FaultProofs(batchId, batch.leafHashes, receipts);
@@ -1152,14 +1161,14 @@ async function ensureNodeRegistered(): Promise<void> {
   try {
     const pubkey = signer.signingKey.publicKey;
     const nodeId = keccak256(pubkey);
-    const node = await registerContract.getNode(nodeId);
+    const node = await retryAsync(() => registerContract.getNode(nodeId), txRetryOptions);
     if (node?.active) {
       return;
     }
 
     // Query progressive bond requirement from contract (v2 uses the same MIN_BOND << operatorNodeCount rule).
-    const operatorCount = Number(await registerContract.operatorNodeCount(signer.address));
-    const bondRequired = useV2 ? (MIN_BOND_WEI << operatorCount) : await poseContract!.requiredBond(signer.address) as bigint;
+    const operatorCount = Number(await retryAsync(() => registerContract.operatorNodeCount(signer.address), txRetryOptions));
+    const bondRequired = useV2 ? (MIN_BOND_WEI << operatorCount) : await retryAsync(() => poseContract!.requiredBond(signer.address) as Promise<bigint>, txRetryOptions);
 
     const serviceCommitment = keccak256(toUtf8Bytes(`service:${signer.address.toLowerCase()}`));
     const fingerprint = computeMachineFingerprint(pubkey);
@@ -1185,18 +1194,21 @@ async function ensureNodeRegistered(): Promise<void> {
       Buffer.from(keccak256(toUtf8Bytes(endpointMsg)).slice(2), "hex"),
     );
 
-    const tx = await registerContract.registerNode(
-      nodeId,
-      pubkey,
-      0x07,
-      serviceCommitment,
-      endpointCommitment,
-      metadataHash,
-      ownershipSig,
-      endpointAttestation,
-      { value: bondRequired },
+    const tx = await retryAsync(
+      () => registerContract.registerNode(
+        nodeId,
+        pubkey,
+        0x07,
+        serviceCommitment,
+        endpointCommitment,
+        metadataHash,
+        ownershipSig,
+        endpointAttestation,
+        { value: bondRequired },
+      ),
+      txRetryOptions,
     );
-    await tx.wait();
+    await retryAsync(() => tx.wait(), txRetryOptions);
     log.info("registered node onchain", { nodeId, bond: bondRequired.toString(), protocolVersion: useV2 ? 2 : 1 });
   } catch (error) {
     log.error("register node failed", { error: String(error) });
@@ -1395,17 +1407,57 @@ function bytesToGb(bytes: number): bigint {
   return BigInt(gb > 0 ? gb : bytes > 0 ? 1 : 0);
 }
 
-function emitEpochScores(epochId: number): void {
-  const stats = [...nodeScores.entries()].map(([nodeId, item]) => ({
+function collectEpochStats() {
+  return [...nodeScores.entries()].map(([nodeId, item]) => ({
     nodeId: nodeId as `0x${string}`,
     uptimeBps: ratioBps(item.uptimeOk, item.uptimeTotal),
     storageBps: ratioBps(item.storageOk, item.storageTotal),
     relayBps: ratioBps(item.relayOk, item.relayTotal),
     storageGb: bytesToGb(item.verifiedStorageBytes),
   }));
+}
 
+function buildRewardManifestForEpoch(epochId: number): RewardManifest {
+  const stats = collectEpochStats();
   const rewardPool = BigInt(config.rewardPoolWei ?? "1000000000000000000");
-  const rewards = computeEpochRewards(rewardPool, stats);
+  const scoringResult = computeEpochRewards(rewardPool, stats);
+  const rewardResult = buildRewardRoot(BigInt(epochId), scoringResult);
+  const totalReward = Object.values(scoringResult.rewards).reduce((sum, amount) => sum + amount, 0n);
+
+  return {
+    epochId,
+    rewardRoot: rewardResult.root,
+    totalReward: totalReward.toString(),
+    slashTotal: "0",
+    treasuryDelta: scoringResult.treasuryOverflow.toString(),
+    leaves: rewardResult.leaves.map((leaf) => ({ nodeId: leaf.nodeId, amount: leaf.amount.toString() })),
+    proofs: Object.fromEntries(
+      [...rewardResult.proofs.entries()].map(([key, proof]) => [key, proof as string[]]),
+    ),
+    scoringInputsHash: keccak256(toUtf8Bytes(stableStringifyForHash(stats))),
+    generatedAtMs: Date.now(),
+  };
+}
+
+function persistRewardManifestForEpoch(epochId: number): RewardManifest {
+  const manifest = buildRewardManifestForEpoch(epochId);
+  try {
+    writeRewardManifest(rewardManifestDir, manifest);
+    log.info("reward manifest persisted", {
+      epochId,
+      rewardRoot: manifest.rewardRoot,
+      totalReward: manifest.totalReward,
+      leaves: manifest.leaves.length,
+    });
+  } catch (manifestError) {
+    log.error("reward manifest write failed (non-fatal)", { epochId, error: String(manifestError) });
+  }
+  return manifest;
+}
+
+function emitEpochScores(epochId: number): void {
+  const stats = collectEpochStats();
+  const rewards = computeEpochRewards(BigInt(config.rewardPoolWei ?? "1000000000000000000"), stats);
   log.info("epoch rewards", {
     epochId,
     rewards: rewards.rewards,
@@ -1423,6 +1475,7 @@ async function flushBatch(epochId: number, receipts: Array<any>): Promise<boolea
   if (receipts.length === 0) return true;
   try {
     const batch = aggregator.buildBatch(BigInt(epochId), receipts);
+    const manifest = persistRewardManifestForEpoch(epochId);
 
     if (!poseContract) {
       log.info("batch(local)", {
@@ -1430,6 +1483,7 @@ async function flushBatch(epochId: number, receipts: Array<any>): Promise<boolea
         merkleRoot: batch.merkleRoot,
         summaryHash: batch.summaryHash,
         sampleProofs: batch.sampleProofs.length,
+        rewardRoot: manifest.rewardRoot,
       });
       return true;
     }
@@ -1438,13 +1492,16 @@ async function flushBatch(epochId: number, receipts: Array<any>): Promise<boolea
       return false;
     }
 
-    const tx = await poseContract.submitBatch(BigInt(epochId), batch.merkleRoot, batch.summaryHash, batch.sampleProofs);
-    const receipt = await tx.wait();
+    const tx = await retryAsync(
+      () => poseContract.submitBatch(BigInt(epochId), batch.merkleRoot, batch.summaryHash, batch.sampleProofs),
+      txRetryOptions,
+    );
+    const receipt = await retryAsync(() => tx.wait(), txRetryOptions);
 
     try {
       const nodeId = keccak256(signer.signingKey.publicKey);
       const newCommitment = keccak256(toUtf8Bytes(`${nodeUrl}:${Date.now()}`));
-      await poseContract.updateCommitment(nodeId, newCommitment);
+      await retryAsync(() => poseContract.updateCommitment(nodeId, newCommitment), txRetryOptions);
     } catch {
       // ignore commitment update failures
     }
@@ -1456,6 +1513,7 @@ async function flushBatch(epochId: number, receipts: Array<any>): Promise<boolea
       merkleRoot: batch.merkleRoot,
       summaryHash: batch.summaryHash,
       sampleProofs: batch.sampleProofs.length,
+      rewardRoot: manifest.rewardRoot,
     });
     return true;
   } catch (error) {
@@ -1473,7 +1531,7 @@ async function refreshSelfNodeStatus(): Promise<void> {
   try {
     const pubkey = signer.signingKey.publicKey;
     const nodeId = keccak256(pubkey);
-    const node = await statusContract.getNode(nodeId);
+    const node = await retryAsync(() => statusContract.getNode(nodeId), txRetryOptions);
     selfNodeRegistered = Boolean(node?.active);
   } catch {
     // keep previous value on failure

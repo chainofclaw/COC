@@ -31,8 +31,8 @@ Implemented:
 - **Phase 26**: State survives node restart (no replay needed when state root exists)
 - **Phase 26**: Snapshot restore via setStateRoot
 
-Missing/Partial:
-- Proper block header fields (receiptsRoot, stateRoot from real state)
+- **M3**: Real block header view (transactionsRoot, receiptsRoot, logsBloom computed from Merkle tries, stateRoot from EVM state)
+- **M3**: Block header fields exposed in RPC formatBlock and WebSocket newHeads push
 
 Code:
 - `COC/node/src/evm.ts`
@@ -42,6 +42,7 @@ Code:
 - `COC/node/src/chain-engine-persistent.ts`
 - `COC/node/src/storage/state-trie.ts`
 - `COC/node/src/storage/persistent-state-manager.ts` (NEW - Phase 26)
+- `COC/node/src/block-header.ts` (NEW - M3)
 
 ## 2) Consensus & Block Production
 **Status: Partial (Enhanced in Phase 13.2 + 22 + 26 + 28 + 32)**
@@ -212,6 +213,8 @@ Implemented:
 - **PoSe v2**: EIP-712 challenge/receipt signing, witness collector, contract reader
 - **PoSe v2**: Reward manifest pipeline (agent → file → relayer → contract)
 - **PoSe v2**: Commit-reveal fault proof automation in relayer
+- **M0-M2**: Unified SlashEvidence encoding/hashing/bus (agent, BFT, relayer share same payload format and file paths; backward-compatible with legacy evidence files)
+- **M4**: Unified v1/v2 reward manifest pipeline (scoring-based distribution replaces v1 equal-split placeholder)
 
 Remaining:
 - Full integration with a production L1/L2 network (currently local/testnet)
@@ -241,17 +244,19 @@ Code:
 - `COC/contracts/settlement/MerkleProofLite.sol`
 
 ## 8) Runtime Services
-**Status: Runtime-wired (v1 + v2)**
+**Status: Runtime-wired (v1 + v2, Enhanced M0-M6)**
 
 Implemented:
 - `coc-node` HTTP endpoints for PoSe challenge/receipt (dual-version signing, `/pose/witness` endpoint)
 - `coc-agent` for challenge generation, batch submission, node registration (v2 witness collection, persistent pending store, runtime metrics, tick reentrance guard)
 - `coc-relayer` for epoch finalization, fault proof lifecycle, slash hooks (v2 finalize with reward manifest, epoch nonce init, commit-reveal-settle automation, persistent pending challenge recovery, tick reentrance guard)
 - Runtime lib: pending-retention, runtime-metrics (JSON + Prometheus + HTTP), agent-metrics-server, witness-collector, contract-reader, reward-manifest
+- **M4**: Unified reward manifest for v1/v2 (collectEpochStats → buildRewardManifestForEpoch → persistRewardManifestForEpoch shared pipeline); relayer distributes by scoring proportions, not equal split
+- **M5**: NodeOps runtime integration (RuntimeNodeOpsController with policy hot-reload, conflict detection, action persistence; integrated into agent tick loop)
+- **M6**: Secure key management via resolvePrivateKey (env/envFile/config/configFile priority), unified retryAsync with exponential backoff+jitter, all contract calls wrapped in retry
 
 Remaining:
 - Full integration with a production L1/L2 network
-- Secure key management and production-grade retries
 
 Code:
 - `COC/runtime/coc-node.ts`
@@ -343,7 +348,7 @@ Code:
 - `COC/explorer/src/components/ConnectionStatus.tsx` (live/reconnecting/offline indicator)
 
 ## 12) Node Operations & Policy Engine
-**Status: Implemented**
+**Status: Implemented (Enhanced M5)**
 
 Implemented:
 - YAML-based policy configuration system
@@ -351,10 +356,12 @@ Implemented:
 - Policy loader with validation and error handling
 - Agent lifecycle hooks (onChallengeIssued, onReceiptVerified, onBatchSubmitted)
 - Example policies: default, home-lab, alerts
+- **M5**: Policy conflict detection (4 types: rpcRateLimitRps, peerReconnectTarget, restartCooldown, latencySwitch)
+- **M5**: Real-time policy hot-reload via file watcher (RuntimeNodeOpsController)
+- **M5**: Action persistence (action log written to JSON file)
+- **M5**: Agent runtime integration (nodeOps.tick() called each agent tick)
 
 Missing/Partial:
-- Real-time policy hot-reload
-- Policy conflict detection
 - Advanced policy DSL features
 
 Code:
@@ -363,6 +370,7 @@ Code:
 - `COC/nodeops/agent-hooks.ts`
 - `COC/nodeops/policy-types.ts`
 - `COC/nodeops/policies/*.yaml`
+- `COC/runtime/lib/nodeops-runtime.ts` (NEW - M5)
 
 ## 13) Performance & Benchmarking
 **Status: Implemented (Enhanced in Phase 23)**
@@ -999,7 +1007,12 @@ Files:
 - Operations: Prometheus alerts (12 rules), on-call runbook, rollback runbook, testnet security configs (Phase 34).
 - Node Ops: OpenClaw coc-nodeops extension with 5 node type presets, network presets, interactive init wizard, multi-node instance management, full CLI (Phase 35).
 - Ops Hardening: SIGTERM/SIGINT dual shutdown, configurable bind addresses, LevelDB corruption recovery, RPC Bearer auth, admin RPC namespace (Phase 36).
-- Testing: 909 tests across 91 files covering all major modules including security hardening (Phase 33), Go/No-Go readiness (Phase 34), node ops extension (Phase 35), ops hardening (Phase 36), and algorithm safety audit rounds 1-27.
+- Slash Evidence: unified encoding/hashing/bus across agent, BFT, and relayer; backward-compatible with legacy evidence files (M0-M2).
+- Block Headers: real transactionsRoot/receiptsRoot/logsBloom/stateRoot computed from Merkle tries, exposed in RPC and newHeads push (M3).
+- Reward Pipeline: v1/v2 unified reward manifest with scoring-based distribution; v1 equal-split placeholder fully replaced (M4).
+- NodeOps Runtime: policy hot-reload, conflict detection, action persistence, agent tick integration (M5).
+- Key Management: resolvePrivateKey with env/envFile/config/configFile priority; unified retryAsync with exponential backoff+jitter across all contract calls (M6).
+- Testing: 1274 tests across 100+ files covering all major modules including security hardening (Phase 33), Go/No-Go readiness (Phase 34), node ops extension (Phase 35), ops hardening (Phase 36), algorithm safety audit rounds 1-27, and M0-M6 milestones.
 - Algorithm Safety Audit (Rounds 1-17): BFT commit blockHash binding, snap sync target validation, full state snapshot trie traversal (iterateAccounts/iterateStorage), EIP-1559 baseFee per-block integration, persistent engine timestamp validation, DHT iterative lookup distance sorting, K-bucket ping-evict replacement, configurable signature enforcement (off/monitor/enforce), handshake canonical format alignment, fetchSnapshots discovery dedup, gas histogram O(n), finality O(1) lookup.
 - Algorithm Safety Audit (Rounds 18-27): block normalization field preservation (gasUsed/stateRoot/signature/bftFinalized), state trie evictLru infinite loop guard (dirty entry skip + maxAttempts), P2P aborted chunk guard, MFS mv/cp circular recursion prevention, FrameDecoder exponential buffer growth O(n) amortized, peer-store defensive JSON validation, wire handshake nonce NaN fail-closed, BFT pending buffer height gap cap (≤10), snapshot validateSnapshot account/storage/code size limits (DoS prevention), FindNode response peer object validation, SnapSync fail-closed single-peer trust, validators hash cross-peer consensus, fetchStateSnapshot 30s timeout + 16MiB limit + cache, state-snapshot independent rate limiter, state snapshot export TTL cache.
 - Manual Security Audit: GET auth wiring (fetchStateSnapshot + fetchPeerList attach x-p2p-auth signed header), trySync/tryPropose reentrant lock (syncInFlight/proposeInFlight guards), PeerDiscovery IP diversity quota (MAX_PEERS_PER_IP=3 anti-Sybil), BFT coordinator↔governance runtime sync (updateValidators on finalize + restoreGovernance), chain-snapshot endpoint auth + rate limit.

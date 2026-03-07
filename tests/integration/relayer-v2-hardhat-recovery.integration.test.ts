@@ -349,11 +349,13 @@ test("relayer v2 recovery works against real Hardhat JSON-RPC + deployed PoSeMan
     assert.equal(persistedAfterReveal[0]?.state, "revealed")
     assert.ok(persistedAfterReveal[0]?.challengeId)
 
-    await provider.send("evm_increaseTime", [5 * 3600])
+    const preAdvanceBlock = await provider.getBlock("latest")
+    assert.ok(preAdvanceBlock)
+    const targetTs = Number(preAdvanceBlock!.timestamp) + 7 * 3600
+    await provider.send("evm_setNextBlockTimestamp", [targetTs])
     await provider.send("evm_mine", [])
-    const advancedBlock = await provider.getBlock("latest")
-    assert.ok(advancedBlock)
-    currentEpoch = Math.floor(Number(advancedBlock!.timestamp) / 3600)
+    const advancedRaw = await provider.send("eth_getBlockByNumber", ["latest", false]) as { timestamp: string }
+    currentEpoch = Math.floor(Number(advancedRaw.timestamp) / 3600)
 
     let remaining = new PendingChallengeStore(pendingPath).size
     for (let i = 0; i < 3; i += 1) {

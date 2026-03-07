@@ -523,11 +523,7 @@ export class PersistentChainEngine {
     // Emit events for subscribers (use storedBlock with computed fields)
     this.events.emitNewBlock({
       block: storedBlock,
-      receipts: txReceipts.map((r) => ({
-        transactionHash: r.transactionHash as Hex,
-        status: r.status,
-        gasUsed: r.gasUsed,
-      })),
+      receipts: txReceipts,
     })
 
     for (const log of blockLogs) {

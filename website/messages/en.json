@@ -285,7 +285,7 @@
         "rationale": "Square root function ensures diminishing returns on storage capacity, prevents whale monopoly"
       },
       "antiSybilTitle": "🛡️ Anti-Sybil Multi-Layer Defense",
-      "antiSybilItems": ["✓ Fixed bond (~50 USDT) + 7-day unlock", "✓ Single-node reward soft cap (5× median)", "✓ Storage capacity diminishing returns (√ function)", "✓ Sustained service challenges (unforgeable)", "✓ Per-epoch unique nonce prevents replay", "✓ Challenger diversity + random rotation", "✓ On-chain sampling + 2-epoch dispute period", "✓ Optional hardware attestation (bonus, not gate)"]
+      "antiSybilItems": ["✓ Fixed bond (~50 USDT) + 7-day unlock", "✓ Single-node reward soft cap (5× median)", "✓ Storage capacity diminishing returns (√ function)", "✓ Sustained service challenges (unforgeable)", "✓ Per-epoch unique nonce prevents replay", "✓ Challenger diversity + random rotation", "✓ On-chain sampling + 2-epoch dispute period", "✓ Optional hardware attestation (bonus, not gate)", "✓ PoSeManagerV2: EIP-712 fault proof (commit-reveal-settle)", "✓ Slash distribution: 50% burn / 30% challenger reward / 20% insurance fund", "✓ Per-epoch slash cap: 5% of total stake", "✓ Witness quorum arbitration: m=ceil(√n), quorum=ceil(2m/3)"]
     },
     "performance": {
       "title": "Performance Metrics",
@@ -313,8 +313,8 @@
     "techStack": {
       "title": "Technology Stack",
       "execution": { "title": "Execution Layer", "items": ["@ethereumjs/vm (EVM runtime)", "@ethereumjs/trie (Merkle Patricia Trie)", "LevelDB (state storage)", "ethers.js (client library)"] },
-      "consensus": { "title": "Consensus Layer", "items": ["Deterministic proposer rotation", "EIP-1559 dynamic gas fees", "Snapshot sync mechanism", "P2P gossip network (HTTP)"] },
-      "pose": { "title": "PoSe Layer", "items": ["VRF (Verifiable Random Function)", "Merkle Tree (receipt aggregation)", "Keccak256 (hash)", "ECDSA signatures (challenge + receipt)"] },
+      "consensus": { "title": "Consensus Layer", "items": ["Deterministic proposer rotation", "EIP-1559 dynamic gas fees", "Snapshot sync mechanism", "P2P gossip network (HTTP)", "BFT-lite coordinator (2/3 stake quorum, propose/prepare/commit)", "GHOST fork choice (BFT finality > chain length > weight)", "TCP Wire Protocol (Magic 0xC0C1, identity signing handshake)", "Kademlia DHT (K=20, iterative lookup, periodic refresh)", "EquivocationDetector (double-vote detection with per-validator FIFO cap)"] },
+      "pose": { "title": "PoSe Layer", "items": ["EIP-712 typed signatures (v1: EIP-191, v2: ChallengeMessageV2 + ReceiptMessageV2 domain separator)", "9-layer receipt verification pipeline", "Witness quorum sampling (m = ceil(sqrt(n)), quorum = ceil(2m/3), max m=32)", "Permissionless fault proof (commit-reveal-settle, 4 fault types)", "Merkle reward tree (rewardRoot + on-chain claimable leaves)", "Merkle Tree (receipt aggregation)", "Keccak256 (hash)"] },
       "storage": { "title": "Storage Layer", "items": ["IPFS-compatible HTTP API", "CID addressing", "Pin management", "Block/object storage"] }
     }
   },
@@ -427,9 +427,9 @@
       },
       "v0_2": {
         "version": "v0.2",
-        "title": "Off-chain Aggregation + On-chain Batch Submission + Dispute Window",
-        "status": "In Progress",
-        "items": ["Aggregator: receipt Merkle tree construction", "On-chain batch submission (merkle_root + summary_hash)", "2-epoch dispute window", "On-chain random sampling (k=32-128)"]
+        "title": "Off-chain Aggregation + On-chain Batch Submission + Permissionless Fault Proof",
+        "status": "Completed",
+        "items": ["Aggregator: receipt Merkle tree construction", "On-chain batch submission (merkle_root + summary_hash)", "2-epoch dispute window", "On-chain random sampling (k=32-128)", "PoSeManagerV2: permissionless fault proof + commit-reveal-settle lifecycle", "Witness quorum selection via on-chain challengeNonce (prevrandao)", "Merkle-claimable reward tree (rewardRoot, per-node leaves, on-chain claim)", "EIP-712 typed signatures (ChallengeMessageV2 / ReceiptMessageV2)"]
       },
       "v0_3": {
         "version": "v0.3",
@@ -721,14 +721,14 @@
     "implementationStatus": {
       "title": "Implementation Status",
       "chainEngine": { "label": "Chain Engine", "status": "Completed", "details": "Block production, mempool, snapshots, finality" },
-      "p2pNetwork": { "label": "P2P Network", "status": "Completed", "details": "HTTP gossip, snapshot sync" },
+      "p2pNetwork": { "label": "P2P Network", "status": "Completed", "details": "HTTP gossip + TCP Wire Protocol + Kademlia DHT, BFT dual transport, per-peer dedup" },
       "evmExecution": { "label": "EVM Execution", "status": "Completed", "details": "In-memory + persistent state, LevelDB" },
-      "jsonRpc": { "label": "JSON-RPC", "status": "Completed", "details": "40+ standard methods, BigInt serialization" },
+      "jsonRpc": { "label": "JSON-RPC", "status": "Completed", "details": "77+ standard methods, BigInt serialization, structured error codes" },
       "wsRpc": { "label": "WebSocket RPC", "status": "Completed", "details": "eth_subscribe, real-time events" },
-      "poseProtocol": { "label": "PoSe Protocol", "status": "In Progress", "details": "Off-chain challenges, on-chain contracts, batch aggregation" },
+      "poseProtocol": { "label": "PoSe Protocol", "status": "Completed (v1 + v2)", "details": "PoSeManagerV2, EIP-712 signatures, witness quorum, fault proof (commit-reveal-settle), Merkle reward tree, 9-layer receipt verification" },
       "storage": { "label": "Storage Layer", "status": "Completed", "details": "IPFS-compatible HTTP API" },
       "runtime": { "label": "Runtime Services", "status": "In Progress", "details": "coc-node, coc-agent, coc-relayer" },
-      "tests": { "label": "Test Coverage", "status": "Good", "details": "190 tests, 9 test suites" },
+      "tests": { "label": "Test Coverage", "status": "Good", "details": "1170+ tests, 97+ files (node / service / runtime / contract / extension layers)" },
       "detailsNote": "See project README for detailed implementation status",
       "viewGithub": "View GitHub Repository"
     },

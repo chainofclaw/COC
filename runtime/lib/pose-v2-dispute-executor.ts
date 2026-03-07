@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto"
 import type { SlashEvidence } from "../../services/verifier/anti-cheat-policy.ts"
 import { computeCommitHash, computeRevealDigest, encodeEvidenceData, extractV2FaultProofPayload, faultTypeForResultCode } from "./pose-v2-fault-proof.ts"
 import { PendingChallengeStore, type PendingChallengeRecord } from "./pending-challenge-store.ts"
+import { retryAsync, type RetryOptions } from "./retry.ts"
 
 export interface PoseV2LogLike {
   topics?: readonly string[]
@@ -63,6 +64,7 @@ export interface PoseV2DisputeExecutorOptions {
   store: PendingChallengeStore
   logger: PoseV2LoggerLike
   getCurrentEpoch?: () => number
+  retryOptions?: RetryOptions
 }
 
 export class PoseV2DisputeExecutor {
@@ -73,6 +75,7 @@ export class PoseV2DisputeExecutor {
   private readonly store: PendingChallengeStore
   private readonly logger: PoseV2LoggerLike
   private readonly getCurrentEpoch: () => number
+  private readonly retryOptions: RetryOptions
   private readonly pendingChallenges: Map<string, PendingChallengeRecord>
 
   constructor(options: PoseV2DisputeExecutorOptions) {
@@ -83,6 +86,7 @@ export class PoseV2DisputeExecutor {
     this.store = options.store
     this.logger = options.logger
     this.getCurrentEpoch = options.getCurrentEpoch ?? (() => Math.floor(Date.now() / (60 * 60 * 1000)))
+    this.retryOptions = options.retryOptions ?? {}
     this.pendingChallenges = new Map(this.store.list().map((record) => [record.commitHash, record]))
   }
 
@@ -156,7 +160,7 @@ export class PoseV2DisputeExecutor {
     const targetNodeId = evidence.nodeId
     const evidenceLeafHash = payload.evidenceLeafHash ?? evidence.evidenceHash
     const commitHash = computeCommitHash(targetNodeId, faultType, evidenceLeafHash, salt)
-    const tx = await this.contract.openChallenge(commitHash, { value: this.challengeBondWei })
+    const tx = await this.withRetry("openChallenge", () => this.contract.openChallenge(commitHash, { value: this.challengeBondWei }))
 
     const pending: PendingChallengeRecord = {
       commitHash,
@@ -172,7 +176,7 @@ export class PoseV2DisputeExecutor {
     }
     this.upsert(pending)
 
-    const receipt = await tx.wait()
+    const receipt = await this.withRetry("openChallenge.wait", () => tx.wait())
     const challengeId = this.extractChallengeId(receipt?.logs ?? [])
     if (!challengeId) {
       throw new Error(`ChallengeOpened event not found for tx ${tx.hash}`)
@@ -221,7 +225,7 @@ export class PoseV2DisputeExecutor {
       return false
     }
 
-    const receipt = await this.provider.getTransactionReceipt(pending.openTxHash)
+    const receipt = await this.withRetry("getTransactionReceipt", () => this.provider.getTransactionReceipt(pending.openTxHash))
     if (!receipt) return false
     if (receipt.status === 0) {
       this.remove(pending)
@@ -260,7 +264,7 @@ export class PoseV2DisputeExecutor {
 
   private async revealChallenge(pending: PendingChallengeRecord): Promise<void> {
     if (!pending.challengeId) return
-    const record = await this.contract.challenges(pending.challengeId)
+    const record = await this.withRetry("challenges", () => this.contract.challenges(pending.challengeId))
     if (record?.settled) {
       this.remove(pending)
       return
@@ -271,7 +275,7 @@ export class PoseV2DisputeExecutor {
       return
     }
 
-    const tx = await this.contract.revealChallenge(
+    const tx = await this.withRetry("revealChallenge", () => this.contract.revealChallenge(
       pending.challengeId,
       pending.targetNodeId,
       pending.faultType,
@@ -279,8 +283,8 @@ export class PoseV2DisputeExecutor {
       pending.salt,
       pending.evidenceData,
       pending.challengerSig,
-    )
-    await tx.wait()
+    ))
+    await this.withRetry("revealChallenge.wait", () => tx.wait())
     pending.state = "revealed"
     this.upsert(pending)
     this.logger.info("v2 challenge revealed", { challengeId: pending.challengeId, txHash: tx.hash })
@@ -288,7 +292,7 @@ export class PoseV2DisputeExecutor {
 
   private async settleChallenge(pending: PendingChallengeRecord): Promise<void> {
     if (!pending.challengeId) return
-    const record = await this.contract.challenges(pending.challengeId)
+    const record = await this.withRetry("challenges", () => this.contract.challenges(pending.challengeId))
     if (record?.settled) {
       this.remove(pending)
       return
@@ -299,8 +303,8 @@ export class PoseV2DisputeExecutor {
     if (this.getCurrentEpoch() < revealDeadlineEpoch + 2) return
 
     try {
-      const tx = await this.contract.settleChallenge(pending.challengeId)
-      await tx.wait()
+      const tx = await this.withRetry("settleChallenge", () => this.contract.settleChallenge(pending.challengeId))
+      await this.withRetry("settleChallenge.wait", () => tx.wait())
       this.remove(pending)
       this.logger.info("v2 challenge settled", { challengeId: pending.challengeId, txHash: tx.hash })
     } catch (error) {
@@ -324,5 +328,21 @@ export class PoseV2DisputeExecutor {
       }
     }
     return null
+  }
+
+  private async withRetry<T>(step: string, operation: () => Promise<T>): Promise<T> {
+    const { onRetry, ...retryOptions } = this.retryOptions
+    return retryAsync(operation, {
+      ...retryOptions,
+      onRetry: (error, attempt, delayMs) => {
+        this.logger.warn("retrying v2 dispute operation", {
+          step,
+          attempt,
+          delayMs,
+          error: String(error),
+        })
+        onRetry?.(error, attempt, delayMs)
+      },
+    })
   }
 }

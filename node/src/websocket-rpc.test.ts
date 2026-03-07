@@ -208,6 +208,9 @@ describe("WebSocket RPC", () => {
       assert.ok(result.number)
       assert.ok(result.hash)
       assert.ok(result.parentHash)
+      assert.match(result.transactionsRoot as string, /^0x[0-9a-f]{64}$/)
+      assert.match(result.receiptsRoot as string, /^0x[0-9a-f]{64}$/)
+      assert.match(result.logsBloom as string, /^0x[0-9a-f]{512}$/)
 
       // Unsubscribe
       const unsubResult = await sendRpc(ws, "eth_unsubscribe", [subId])

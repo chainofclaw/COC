@@ -445,7 +445,7 @@
         "rationale": "平方根函数确保存储容量收益递减,防止大户垄断"
       },
       "antiSybilTitle": "🛡️ 防Sybil机制组合拳",
-      "antiSybilItems": ["✓ 固定保证金 (~50 USDT) + 7天解锁", "✓ 单节点奖励软上限 (5× median)", "✓ 存储容量收益递减 (√函数)", "✓ 持续服务挑战 (无法伪造)", "✓ 每epoch唯一nonce防重放", "✓ 挑战者多样化 + 随机轮换", "✓ 链上采样 + 2 epoch争议期", "✓ 可选硬件认证(加分项,非门槛)"]
+      "antiSybilItems": ["✓ 固定保证金 (~50 USDT) + 7天解锁", "✓ 单节点奖励软上限 (5× median)", "✓ 存储容量收益递减 (√函数)", "✓ 持续服务挑战 (无法伪造)", "✓ 每epoch唯一nonce防重放", "✓ 挑战者多样化 + 随机轮换", "✓ 链上采样 + 2 epoch争议期", "✓ 可选硬件认证(加分项,非门槛)", "✓ PoSeManagerV2: EIP-712故障证明 (commit-reveal-settle)", "✓ Slash分配: 50%销毁 / 30%举报者奖励 / 20%保险基金", "✓ 每epoch Slash上限: 总权益的5%", "✓ 见证人淬选仲裁: m=ceil(√n), 法定人数=ceil(2m/3)"]
     },
     "performance": {
       "title": "性能指标",
@@ -473,8 +473,8 @@
     "techStack": {
       "title": "技术栈",
       "execution": { "title": "执行层", "items": ["@ethereumjs/vm (EVM运行时)", "@ethereumjs/trie (Merkle Patricia Trie)", "LevelDB (状态存储)", "ethers.js (客户端库)"] },
-      "consensus": { "title": "共识层", "items": ["确定性proposer轮换", "EIP-1559动态Gas费", "快照同步机制", "P2P gossip网络 (HTTP)"] },
-      "pose": { "title": "PoSe层", "items": ["VRF (可验证随机函数)", "Merkle Tree (收据聚合)", "Keccak256 (哈希)", "ECDSA签名 (挑战+收据)"] },
+      "consensus": { "title": "共识层", "items": ["确定性proposer轮换", "EIP-1559动态Gas费", "快照同步机制", "P2P gossip网络 (HTTP)", "BFT-lite协调器 (2/3权益法定人数、propose/prepare/commit)", "GHOST分叉选择 (BFT最终性>链长>权重)", "TCP Wire协议 (Magic 0xC0C1、身份签名握手)", "Kademlia DHT (K=20、迭代查询、定期刷新)", "EquivocationDetector (双投检测、按验证者FIFO上限)"] },
+      "pose": { "title": "PoSe层", "items": ["EIP-712类型签名 (v1: EIP-191, v2: ChallengeMessageV2 + ReceiptMessageV2域分离)", "9层收据验证流水线", "见证人淬选采样 (m = ceil(√n)、法定人数 = ceil(2m/3)、最大m=32)", "无许可故障证明 (commit-reveal-settle、4种故障类型)", "Merkle奖励树 (rewardRoot + 链上可认领叶子)", "Merkle树 (收据聚合)", "Keccak256 (哈希)"] },
       "storage": { "title": "存储层", "items": ["IPFS兼容HTTP API", "CID寻址", "Pin管理", "块/对象存储"] }
     }
   },
@@ -587,9 +587,9 @@
       },
       "v0_2": {
         "version": "v0.2",
-        "title": "链下聚合 + 链上批次提交 + 争议窗口",
-        "status": "进行中",
-        "items": ["Aggregator: 收据Merkle树构建", "链上批次提交 (merkle_root + summary_hash)", "2 epoch争议窗口", "链上随机采样 (k=32-128)"]
+        "title": "链下聚合 + 链上批次提交 + 无许可故障证明",
+        "status": "已完成",
+        "items": ["Aggregator: 收据Merkle树构建", "链上批次提交 (merkle_root + summary_hash)", "2 epoch争议窗口", "链上随机采样 (k=32-128)", "PoSeManagerV2: 无许可故障证明 + commit-reveal-settle生命周期", "通过链上challengeNonce (prevrandao)见证人淬选", "Merkle可认领奖励树 (rewardRoot、按节点叶子、链上认领)", "EIP-712类型签名 (ChallengeMessageV2 / ReceiptMessageV2)"]
       },
       "v0_3": {
         "version": "v0.3",
@@ -689,14 +689,14 @@
     "implementationStatus": {
       "title": "实现状态",
       "chainEngine": { "label": "链引擎", "status": "完成", "details": "区块生产、内存池、快照、最终性" },
-      "p2pNetwork": { "label": "P2P网络", "status": "完成", "details": "HTTP gossip、快照同步" },
+      "p2pNetwork": { "label": "P2P网络", "status": "完成", "details": "HTTP gossip + TCP Wire协议 + Kademlia DHT、BFT双传输、按对等点去重" },
       "evmExecution": { "label": "EVM执行", "status": "完成", "details": "内存+持久化状态、LevelDB" },
-      "jsonRpc": { "label": "JSON-RPC", "status": "完成", "details": "40+标准方法、BigInt序列化" },
+      "jsonRpc": { "label": "JSON-RPC", "status": "完成", "details": "77+标准方法、BigInt序列化、结构化错误码" },
       "wsRpc": { "label": "WebSocket RPC", "status": "完成", "details": "eth_subscribe、实时事件" },
-      "poseProtocol": { "label": "PoSe协议", "status": "进行中", "details": "链下挑战、链上合约、批次聚合" },
+      "poseProtocol": { "label": "PoSe协议", "status": "完成 (v1 + v2)", "details": "PoSeManagerV2、EIP-712签名、见证人淬选、故障证明(commit-reveal-settle)、Merkle奖励树、9层收据验证" },
       "storage": { "label": "存储层", "status": "完成", "details": "IPFS兼容HTTP API" },
       "runtime": { "label": "Runtime服务", "status": "进行中", "details": "coc-node、coc-agent、coc-relayer" },
-      "tests": { "label": "测试覆盖", "status": "良好", "details": "190个测试、9个测试套件" },
+      "tests": { "label": "测试覆盖", "status": "良好", "details": "1170+个测试、97+个文件(节点/服务/运行时/合约/扩展层)" },
       "detailsNote": "详细实现状态请参考项目README",
       "viewGithub": "查看GitHub仓库"
     },

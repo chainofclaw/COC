@@ -59,6 +59,7 @@ class FakePoseV2Contract {
   revealCalls = 0
   settleCalls = 0
   failFirstOpenWait = true
+  revealFailuresRemaining = 0
 
   async openChallenge(commitHash: string): Promise<{ hash: string; wait(): Promise<{ status: number; logs: Array<{ data: string }> }> }> {
     this.openCalls += 1
@@ -87,6 +88,10 @@ class FakePoseV2Contract {
 
   async revealChallenge(challengeId: string): Promise<{ hash: string; wait(): Promise<{ status: number }> }> {
     this.revealCalls += 1
+    if (this.revealFailuresRemaining > 0) {
+      this.revealFailuresRemaining -= 1
+      throw new Error("transient reveal failure")
+    }
     const record = this.challengesById.get(challengeId)
     if (!record) throw new Error("challenge not found")
     record.revealed = true
@@ -142,6 +147,9 @@ test("PoseV2DisputeExecutor recovers opening challenge after restart and complet
     store: new PendingChallengeStore(storePath),
     logger,
     getCurrentEpoch: () => 10,
+    retryOptions: {
+      retries: 0,
+    },
   })
 
   await assert.rejects(() => executor1.openFromEvidence(sampleEvidence()), /simulated crash after open tx broadcast/)
@@ -171,4 +179,61 @@ test("PoseV2DisputeExecutor recovers opening challenge after restart and complet
   await executor2.processPending()
   assert.equal(contract.settleCalls, 1)
   assert.equal(new PendingChallengeStore(storePath).size, 0)
+})
+
+test("PoseV2DisputeExecutor retries transient reveal failures", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "coc-dispute-executor-retry-"))
+  const store = new PendingChallengeStore(join(dir, "pending-challenges.json"))
+  const logger = createLogger()
+  const contract = new FakePoseV2Contract()
+  const challengeId = `0x${"12".repeat(32)}`
+  contract.challengesById.set(challengeId, {
+    revealed: false,
+    settled: false,
+    revealDeadlineEpoch: 1n,
+    commitHash: `0x${"34".repeat(32)}`,
+  })
+  contract.revealFailuresRemaining = 1
+
+  store.upsert({
+    commitHash: `0x${"34".repeat(32)}`,
+    salt: `0x${"56".repeat(32)}`,
+    targetNodeId: sampleEvidence().nodeId,
+    faultType: 4,
+    evidenceLeafHash: sampleEvidence().evidenceHash,
+    evidenceData: "0x1234",
+    challengerSig: `0x${"78".repeat(65)}`,
+    state: "committed",
+    createdAtMs: Date.now(),
+    challengeId,
+  })
+
+  const executor = new PoseV2DisputeExecutor({
+    contract,
+    provider: {
+      async getTransactionReceipt() {
+        return null
+      },
+    },
+    signer: {
+      async signMessage() {
+        return "0x"
+      },
+    },
+    challengeBondWei: 100000000000000000n,
+    store,
+    logger,
+    getCurrentEpoch: () => 10,
+    retryOptions: {
+      retries: 1,
+      baseDelayMs: 1,
+      maxDelayMs: 1,
+      jitterMs: 0,
+    },
+  })
+
+  await executor.processPending()
+  assert.equal(contract.revealCalls, 2)
+  assert.equal(store.list()[0]?.state, "revealed")
+  assert.ok(logger.warnCalls.some((entry) => entry.message === "retrying v2 dispute operation"))
 })

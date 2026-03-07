@@ -29,6 +29,10 @@ export class NodeOpsHooks {
     return actions
   }
 
+  getState(): NodeOpsEngineState {
+    return { ...this.state }
+  }
+
   private async apply(action: NodeOpsAction, nowMs: bigint): Promise<void> {
     switch (action.type) {
       case NodeOpsActionType.RestartProcess:

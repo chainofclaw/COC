@@ -15,6 +15,7 @@ import { traceTransaction, traceBlockByNumber, traceTransactionCalls } from "./d
 import type { BftCoordinator } from "./bft-coordinator.ts"
 import { RateLimiter } from "./rate-limiter.ts"
 import { createLogger } from "./logger.ts"
+import { buildBlockHeaderView } from "./block-header.ts"
 
 const log = createLogger("rpc")
 
@@ -311,6 +312,7 @@ export function startRpcServer(
   server.listen(port, bind, () => {
     log.info("listening", { bind, port })
   })
+  return server
 }
 
 async function handleOne(
@@ -338,21 +340,6 @@ async function handleOne(
     }
     return { jsonrpc: "2.0", id: payload.id ?? null, error: { code: -32603, message: error instanceof Error ? error.message : "internal error" } }
   }
-}
-
-/** Bitwise OR two 256-byte hex bloom filters (EIP-2718 logsBloom format). */
-function orBlooms(a: string, b: string): string {
-  // Both inputs should be "0x" + 512 hex chars (256 bytes)
-  const aHex = a.startsWith("0x") ? a.slice(2) : a
-  const bHex = b.startsWith("0x") ? b.slice(2) : b
-  if (aHex.length !== 512 || bHex.length !== 512) return b // fallback: use b
-  const result: string[] = []
-  for (let i = 0; i < 512; i += 2) {
-    const byteA = parseInt(aHex.slice(i, i + 2), 16)
-    const byteB = parseInt(bHex.slice(i, i + 2), 16)
-    result.push((byteA | byteB).toString(16).padStart(2, "0"))
-  }
-  return "0x" + result.join("")
 }
 
 function sendError(res: http.ServerResponse, id: string | number | null, message: string, code = -32603) {
@@ -1449,24 +1436,10 @@ function parseBlockTag(input: unknown, fallback: bigint): bigint {
 async function formatBlock(block: Awaited<ReturnType<IChainEngine["getBlockByNumber"]>>, includeTx: boolean, chain?: IChainEngine, evm?: EvmChain) {
   if (!block) return null
 
-  // Aggregate logsBloom and gasUsed from block receipts
-  let aggregatedBloom = "0x" + "0".repeat(512)
-  let totalGasUsed = BigInt(block.txs.length * 21_000) // fallback estimate
-  if (chain && evm) {
-    const receipts = await Promise.resolve(chain.getReceiptsByBlock(block.number))
-    if (receipts.length > 0) {
-      totalGasUsed = 0n
-      for (const receipt of receipts) {
-        try {
-          totalGasUsed += typeof receipt.gasUsed === "bigint" ? receipt.gasUsed : BigInt(receipt.gasUsed)
-        } catch { /* skip malformed gasUsed */ }
-        // OR-combine bloom filters to include logs from ALL transactions in the block
-        if (receipt.logsBloom && receipt.logsBloom !== "0x" + "0".repeat(512)) {
-          aggregatedBloom = orBlooms(aggregatedBloom, receipt.logsBloom)
-        }
-      }
-    }
-  }
+  const receipts = chain
+    ? await Promise.resolve(chain.getReceiptsByBlock(block.number))
+    : []
+  const headerView = await buildBlockHeaderView(block, receipts)
 
   // Parse raw txs directly instead of O(n*m) search through EVM receipts
   let transactions: unknown[]
@@ -1512,19 +1485,19 @@ async function formatBlock(block: Awaited<ReturnType<IChainEngine["getBlockByNum
     parentHash: block.parentHash,
     nonce: "0x0000000000000000",
     sha3Uncles: "0x" + "0".repeat(64),
-    logsBloom: aggregatedBloom,
-    transactionsRoot: "0x" + "0".repeat(64),
-    stateRoot: block.stateRoot ?? ("0x" + "0".repeat(64)),
-    receiptsRoot: "0x" + "0".repeat(64),
+    logsBloom: headerView.logsBloom,
+    transactionsRoot: headerView.transactionsRoot,
+    stateRoot: headerView.stateRoot,
+    receiptsRoot: headerView.receiptsRoot,
     miner: block.proposer.startsWith("0x") ? block.proposer : "0x0000000000000000000000000000000000000000",
     difficulty: "0x0",
     totalDifficulty: "0x0",
     extraData: `0x${Buffer.from(block.proposer, "utf-8").toString("hex")}`,
     size: `0x${(100 + block.txs.length * 200).toString(16)}`,
     gasLimit: "0x1c9c380",
-    gasUsed: `0x${totalGasUsed.toString(16)}`,
+    gasUsed: `0x${headerView.gasUsed.toString(16)}`,
     timestamp: `0x${Math.floor(block.timestampMs / 1000).toString(16)}`,
-    baseFeePerGas: `0x${(await computeBaseFeeForBlock(block.number, chain)).toString(16)}`,
+    baseFeePerGas: `0x${headerView.baseFeePerGas.toString(16)}`,
     finalized: block.finalized,
     transactions,
   }

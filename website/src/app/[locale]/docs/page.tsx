@@ -22,7 +22,7 @@ export default function DocsPage() {
             <div className="inline-block mb-6 fade-in">
               <div className="px-4 py-2 rounded-full border border-accent-cyan/30 bg-accent-cyan/5 backdrop-blur-sm">
                 <span className="font-display text-sm text-accent-cyan tracking-wider">
-                  &gt; DOCUMENTATION_v1.0
+                  &gt; DOCUMENTATION_v2.0
                 </span>
               </div>
             </div>

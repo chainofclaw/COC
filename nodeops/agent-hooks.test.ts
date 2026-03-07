@@ -42,4 +42,7 @@ test("hooks executes adapter actions", async () => {
   assert.equal(calls.some((c) => c.startsWith("rate:")), true)
   assert.equal(calls.includes("rotate"), true)
   assert.equal(calls.some((c) => c.startsWith("alert:")), true)
+  const state = hooks.getState()
+  assert.equal(state.lastRestartAtMs, 5_000_000n)
+  assert.equal(state.lastKeyRotationAtMs, 5_000_000n)
 })

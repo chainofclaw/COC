@@ -45,6 +45,8 @@ import type { IStateTrie } from "./storage/state-trie.ts"
 import { startMetricsServer } from "./metrics-server.ts"
 import { metrics } from "./metrics.ts"
 import { BftSlashingHandler } from "./bft-slashing.ts"
+import { EvidenceReason } from "../../services/verifier/anti-cheat-policy.ts"
+import { hashSlashEvidencePayload, resolveEvidencePaths } from "../../services/common/slash-evidence.ts"
 
 const log = createLogger("node")
 
@@ -266,8 +268,7 @@ const p2p = new P2PNode(
 p2p.start()
 
 // BFT equivocation evidence store — persists slash evidence for relayer consumption
-const bftEvidencePath = `${config.dataDir}/evidence-bft.jsonl`
-const bftEvidenceStore = new EvidenceStore(1000, bftEvidencePath)
+const bftEvidenceStore = new EvidenceStore(1000, resolveEvidencePaths(config.dataDir).writePath)
 
 // BFT slashing handler — applies immediate governance penalties on equivocation
 const bftSlashingHandler = hasGovernance(chain)
@@ -316,6 +317,7 @@ if (bftEnabled) {
         : `0x${evidence.validatorId.padStart(64, "0")}`
       const rawEvidence: Record<string, unknown> = {
         type: "bft-equivocation",
+        nodeId: nodeIdHex,
         validatorId: evidence.validatorId,
         height: evidence.height.toString(),
         phase: evidence.phase,
@@ -323,12 +325,10 @@ if (bftEnabled) {
         blockHash2: evidence.blockHash2,
         detectedAtMs: evidence.detectedAtMs,
       }
-      const evidenceJson = JSON.stringify(rawEvidence)
-      const evidenceHash = `0x${Buffer.from(evidenceJson).toString("hex").slice(0, 64).padEnd(64, "0")}` as `0x${string}`
       bftEvidenceStore.push({
         nodeId: nodeIdHex as `0x${string}`,
-        reasonCode: 6, // BFT equivocation (new reason code beyond existing 1-5)
-        evidenceHash,
+        reasonCode: EvidenceReason.BftEquivocation,
+        evidenceHash: hashSlashEvidencePayload(nodeIdHex as `0x${string}`, rawEvidence),
         rawEvidence,
       })
     },

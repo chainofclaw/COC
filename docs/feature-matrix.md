@@ -15,6 +15,7 @@ Status legend:
 - **RPC: block/tx queries** — Implemented — `COC/node/src/rpc.ts`
 - **RPC: logs + filters** — Implemented (minimal) — `COC/node/src/rpc.ts`
 - **RPC: web3_sha3** — Implemented — `COC/node/src/rpc.ts`
+- **RPC: real block header fields** — Implemented (M3) — `COC/node/src/block-header.ts`, `COC/node/src/rpc.ts`, `COC/node/src/chain-events.ts`
 - **RPC: full EVM parity** — Missing
 
 ## Consensus & Chain
@@ -89,6 +90,8 @@ Status legend:
 - **Receipt verification (v2, 9-layer)** — Implemented — `COC/services/verifier/receipt-verifier-v2.ts`
 - **Batch aggregation (v1 + v2)** — Implemented — `COC/services/aggregator/*`
 - **Reward scoring** — Implemented — `COC/services/verifier/scoring.ts`
+- **Unified SlashEvidence bus** — Implemented (M0-M2) — `COC/services/common/slash-evidence.ts`
+- **Unified reward manifest (v1/v2)** — Implemented (M4) — `COC/runtime/lib/reward-manifest.ts`, `COC/runtime/coc-agent.ts`
 - **Reward tree (Merkle-claimable)** — Implemented — `COC/services/common/reward-tree.ts`
 - **Storage proofs** — Implemented (Merkle path) — `COC/runtime/coc-node.ts`
 - **Witness collector** — Implemented — `COC/runtime/lib/witness-collector.ts`
@@ -104,10 +107,12 @@ Status legend:
 
 ## Runtime Services
 - **coc-node HTTP endpoints** — Runtime-wired — `COC/runtime/coc-node.ts` (dual-version signing, `/pose/witness`)
-- **coc-agent automation** — Runtime-wired — `COC/runtime/coc-agent.ts` (v2 challenges, witness collection, reward manifest, persistent pending, metrics)
-- **coc-relayer automation** — Runtime-wired — `COC/runtime/coc-relayer.ts` (v2 finalize with reward manifest, epoch nonce init, fault proof lifecycle, persistent pending recovery)
+- **coc-agent automation** — Runtime-wired — `COC/runtime/coc-agent.ts` (v2 challenges, witness collection, reward manifest, persistent pending, metrics, NodeOps tick)
+- **coc-relayer automation** — Runtime-wired — `COC/runtime/coc-relayer.ts` (v2 finalize with reward manifest, epoch nonce init, fault proof lifecycle, persistent pending recovery, scoring-based reward distribution)
 - **Runtime metrics** — Implemented — `COC/runtime/lib/runtime-metrics.ts`, `COC/runtime/lib/agent-metrics-server.ts`
 - **Pending retention** — Implemented — `COC/runtime/lib/pending-retention.ts`
+- **Unified retry (exponential backoff)** — Implemented (M6) — `COC/runtime/lib/retry.ts`
+- **Secure key resolution** — Implemented (M6) — `COC/runtime/lib/key-material.ts`
 
 ## Tooling
 - **Wallet CLI** — Implemented — `COC/wallet/bin/coc-wallet.js`
@@ -137,7 +142,9 @@ Status legend:
 - **Policy engine** — Implemented — `COC/nodeops/policy-engine.ts`
 - **Policy loader (YAML)** — Implemented — `COC/nodeops/policy-loader.ts`
 - **Agent hooks** — Implemented — `COC/nodeops/agent-hooks.ts`
-- **Policy hot-reload** — Missing
+- **Policy hot-reload** — Implemented (M5) — `COC/runtime/lib/nodeops-runtime.ts`
+- **Policy conflict detection** — Implemented (M5) — `COC/nodeops/policy-loader.ts`
+- **NodeOps agent runtime** — Implemented (M5) — `COC/runtime/lib/nodeops-runtime.ts`
 
 ## Networking (Advanced)
 - **Request body limits** — Implemented (2MB P2P, 1MB RPC) — `COC/node/src/p2p.ts`, `COC/node/src/rpc.ts`
