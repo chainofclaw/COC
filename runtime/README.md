@@ -38,3 +38,6 @@ Agent 启动前必须配置操作员私钥（二选一）:
 
 Nonce 防重放持久化:
 - `nonceRegistryPath` / `COC_NONCE_REGISTRY_PATH`（默认: `${dataDir}/nonce-registry.log`）
+
+Relayer 故障证明持久化:
+- `pendingChallengesPath` / `COC_PENDING_CHALLENGES_PATH`（默认: `${dataDir}/pending-challenges-v2.json`）

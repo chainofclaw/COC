@@ -51,6 +51,7 @@ export interface CocRuntimeConfig {
   poseManagerV2Address?: string;
   rewardManifestDir?: string;
   epochNonceStrict?: boolean;
+  pendingChallengesPath?: string;
 }
 
 export function resolveDataDir(): string {

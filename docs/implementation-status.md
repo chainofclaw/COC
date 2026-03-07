@@ -246,7 +246,7 @@ Code:
 Implemented:
 - `coc-node` HTTP endpoints for PoSe challenge/receipt (dual-version signing, `/pose/witness` endpoint)
 - `coc-agent` for challenge generation, batch submission, node registration (v2 witness collection, persistent pending store, runtime metrics, tick reentrance guard)
-- `coc-relayer` for epoch finalization, fault proof lifecycle, slash hooks (v2 finalize with reward manifest, epoch nonce init, commit-reveal-settle automation, tick reentrance guard)
+- `coc-relayer` for epoch finalization, fault proof lifecycle, slash hooks (v2 finalize with reward manifest, epoch nonce init, commit-reveal-settle automation, persistent pending challenge recovery, tick reentrance guard)
 - Runtime lib: pending-retention, runtime-metrics (JSON + Prometheus + HTTP), agent-metrics-server, witness-collector, contract-reader, reward-manifest
 
 Remaining:

@@ -105,7 +105,7 @@ Status legend:
 ## Runtime Services
 - **coc-node HTTP endpoints** — Runtime-wired — `COC/runtime/coc-node.ts` (dual-version signing, `/pose/witness`)
 - **coc-agent automation** — Runtime-wired — `COC/runtime/coc-agent.ts` (v2 challenges, witness collection, reward manifest, persistent pending, metrics)
-- **coc-relayer automation** — Runtime-wired — `COC/runtime/coc-relayer.ts` (v2 finalize with reward manifest, epoch nonce init, fault proof lifecycle)
+- **coc-relayer automation** — Runtime-wired — `COC/runtime/coc-relayer.ts` (v2 finalize with reward manifest, epoch nonce init, fault proof lifecycle, persistent pending recovery)
 - **Runtime metrics** — Implemented — `COC/runtime/lib/runtime-metrics.ts`, `COC/runtime/lib/agent-metrics-server.ts`
 - **Pending retention** — Implemented — `COC/runtime/lib/pending-retention.ts`
 
