@@ -1,5 +1,7 @@
 import { rpcCall } from '@/lib/rpc'
+import { RPC_URL } from '@/lib/provider'
 import Link from 'next/link'
+import ChainCharts from '@/components/ChainCharts'
 
 export const dynamic = 'force-dynamic'
 
@@ -193,6 +195,12 @@ export default async function StatsPage() {
           </div>
         </div>
       )}
+
+      {/* TPS and Gas Charts */}
+      <div className="mt-8">
+        <h2 className="text-xl font-bold mb-4">Chain Activity Charts</h2>
+        <ChainCharts rpcUrl={RPC_URL} />
+      </div>
     </div>
   )
 }

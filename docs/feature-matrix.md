@@ -30,6 +30,8 @@ Status legend:
 - **Validator governance** — Implemented (Phase 22 + 26) — `COC/node/src/validator-governance.ts`, `COC/node/src/chain-engine-persistent.ts`
 - **Stake-weighted proposer** — Implemented (Phase 26) — `COC/node/src/chain-engine-persistent.ts`
 - **Block signature/stateRoot** — Implemented (Phase 26) — `COC/node/src/blockchain-types.ts`
+- **StateRoot verification (post-EVM)** — Implemented (M7) — `COC/node/src/chain-engine.ts`
+- **RPC PoW stubs** — Implemented (M7) — `COC/node/src/rpc.ts`
 - **Governance RPC** — Implemented (Phase 26) — `COC/node/src/rpc.ts`
 
 ## Networking
@@ -57,6 +59,7 @@ Status legend:
 - **DHT wireClientByPeerId lookup** — Implemented (Phase 32) — `COC/node/src/dht-network.ts`
 - **Per-peer wire port config** — Implemented (Phase 32) — `COC/node/src/index.ts`
 - **broadcastFrame sender exclusion** — Implemented (Phase 32) — `COC/node/src/wire-server.ts`
+- **Wire frame priority queue** — Implemented (M7) — `COC/node/src/wire-protocol.ts`
 
 ## Storage
 - **Chain snapshot persistence** — Implemented — `COC/node/src/storage.ts`
@@ -75,6 +78,9 @@ Status legend:
 - **Snap sync provider** — Implemented (Phase 29) — `COC/node/src/consensus.ts`
 - **Log indexing** — Implemented (Phase 13.2) — `COC/node/src/storage/block-index.ts`
 - **Block/log pruning** — Implemented (Phase 21) — `COC/node/src/storage/pruner.ts`
+- **Tx-level pruning by age** — Implemented (M7) — `COC/node/src/storage/pruner.ts`
+- **State trie COW (fork/merge)** — Implemented (M7) — `COC/node/src/storage/state-trie.ts`
+- **Node mode (full/archive/light)** — Implemented (M7) — `COC/node/src/config.ts`
 
 ## Mempool
 - **Gas‑price ordering** — Implemented — `COC/node/src/mempool.ts`
@@ -104,6 +110,8 @@ Status legend:
 - **v2 Merkle-claimable rewards** — Implemented — `COC/contracts/settlement/PoSeManagerV2.sol`
 - **v2 EIP-712 signatures** — Implemented — `COC/contracts/settlement/PoSeTypesV2.sol`
 - **EIP-712 cross-check (TS ↔ Solidity)** — Implemented — `COC/contracts/test/eip712-crosscheck.test.cjs`
+- **L1/L2 deployment configs** — Implemented (M7) — `COC/contracts/deploy/l1-config.ts`, `COC/contracts/deploy/l2-config.ts`
+- **PoSe deploy script** — Implemented (M7) — `COC/contracts/deploy/deploy-pose.ts`
 
 ## Runtime Services
 - **coc-node HTTP endpoints** — Runtime-wired — `COC/runtime/coc-node.ts` (dual-version signing, `/pose/witness`)
@@ -113,9 +121,11 @@ Status legend:
 - **Pending retention** — Implemented — `COC/runtime/lib/pending-retention.ts`
 - **Unified retry (exponential backoff)** — Implemented (M6) — `COC/runtime/lib/retry.ts`
 - **Secure key resolution** — Implemented (M6) — `COC/runtime/lib/key-material.ts`
+- **BFT → PoSe slash bridge** — Implemented (M7) — `COC/runtime/coc-relayer.ts`
+- **V1 challenger rewards** — Implemented (M7) — `COC/services/relayer/epoch-finalizer.ts`
 
 ## Tooling
-- **Wallet CLI** — Implemented — `COC/wallet/bin/coc-wallet.js`
+- **Wallet CLI** — Implemented (M7) — `COC/wallet/coc-wallet.ts`
 - **Devnet scripts (3/5/7)** — Implemented — `COC/scripts/*.sh`
 - **Quality gate script** — Implemented — `COC/scripts/quality-gate.sh`
 
@@ -136,7 +146,9 @@ Status legend:
 - **Internal transactions trace** — Implemented (Phase 27) — `COC/explorer/src/app/tx/[hash]/page.tsx`
 - **WebSocket reconnection** — Implemented (exponential backoff) — `COC/explorer/src/lib/use-websocket.ts`
 - **Error boundaries** — Implemented (Phase 27) — `COC/explorer/src/app/`
-- **Contract verification** — Missing
+- **Contract verification** — Implemented (M7) — `COC/explorer/src/app/verify/page.tsx`, `COC/explorer/src/lib/solc-verify.ts`
+- **ABI method decoding** — Implemented (M7) — `COC/explorer/src/lib/abi-decoder.ts`
+- **TPS/Gas charts** — Implemented (M7) — `COC/explorer/src/components/ChainCharts.tsx`
 
 ## Node Operations
 - **Policy engine** — Implemented — `COC/nodeops/policy-engine.ts`
@@ -145,6 +157,7 @@ Status legend:
 - **Policy hot-reload** — Implemented (M5) — `COC/runtime/lib/nodeops-runtime.ts`
 - **Policy conflict detection** — Implemented (M5) — `COC/nodeops/policy-loader.ts`
 - **NodeOps agent runtime** — Implemented (M5) — `COC/runtime/lib/nodeops-runtime.ts`
+- **Advanced policy DSL** — Implemented (M7) — `COC/nodeops/expression-eval.ts`, `COC/nodeops/policy-types.ts`
 
 ## Networking (Advanced)
 - **Request body limits** — Implemented (2MB P2P, 1MB RPC) — `COC/node/src/p2p.ts`, `COC/node/src/rpc.ts`
@@ -208,3 +221,4 @@ Status legend:
 - **EVM benchmarks** — Implemented — `COC/node/src/benchmarks/evm-benchmark.test.ts`
 - **Load testing** — Implemented (Phase 23) — `COC/node/src/benchmarks/load-test.test.ts`
 - **formatBlock optimization** — Implemented (O(n) via Transaction.from) — `COC/node/src/rpc.ts`
+- **P2P benchmarks** — Implemented (M7) — `COC/node/src/benchmarks/p2p-benchmark.test.ts`

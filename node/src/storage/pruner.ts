@@ -26,6 +26,7 @@ export interface PrunerConfig {
   pruneIntervalMs: number      // How often to run pruning
   batchSize: number            // Max blocks to prune per run
   enableAutoPrune: boolean     // Auto-prune on interval
+  txRetentionMs?: number       // Independent tx retention by age (ms); undefined = no tx pruning
 }
 
 export interface PruneResult {
@@ -198,5 +199,53 @@ export class StoragePruner {
     }
 
     return { blockRemoved: true, txsRemoved: txCount, logsRemoved: true }
+  }
+
+  /**
+   * Prune individual transactions older than maxAgeMs.
+   * Uses getKeysWithPrefix to find tx entries, resolves block timestamp, deletes expired.
+   */
+  async pruneTxByAge(maxAgeMs?: number): Promise<{ txsRemoved: number }> {
+    const retention = maxAgeMs ?? this.config.txRetentionMs
+    if (retention === undefined) return { txsRemoved: 0 }
+
+    const cutoff = Date.now() - retention
+    let txsRemoved = 0
+    const ops: BatchOp[] = []
+
+    // Get all tx keys using the DB prefix scan
+    const txKeys = await this.db.getKeysWithPrefix(TX_BY_HASH_PREFIX)
+
+    for (const key of txKeys) {
+      try {
+        const value = await this.db.get(key)
+        if (!value) continue
+
+        const txData = JSON.parse(decoder.decode(value))
+        const blockNumber = txData.blockNumber != null ? BigInt(txData.blockNumber) : null
+        if (blockNumber === null) continue
+
+        const block = await this.blockIndex.getBlockByNumber(blockNumber)
+        if (!block) continue
+
+        const blockTimestamp = Number(block.timestamp ?? 0) * 1000
+        if (blockTimestamp > 0 && blockTimestamp < cutoff) {
+          ops.push({ type: "del", key })
+          txsRemoved++
+        }
+      } catch {
+        // Skip malformed entries
+      }
+    }
+
+    if (ops.length > 0) {
+      await this.db.batch(ops)
+    }
+
+    if (txsRemoved > 0) {
+      log.info("pruned transactions by age", { txsRemoved, cutoffMs: cutoff })
+    }
+
+    return { txsRemoved }
   }
 }

@@ -137,4 +137,25 @@ describe("StoragePruner", () => {
     const result = await pruner.prune()
     assert.ok(result.durationMs >= 0)
   })
+
+  it("pruneTxByAge returns 0 when no txRetentionMs configured", async () => {
+    pruner = new StoragePruner(db, blockIndex, { retentionBlocks: 10, batchSize: 100 })
+    await pruner.init()
+
+    const result = await pruner.pruneTxByAge()
+    assert.equal(result.txsRemoved, 0)
+  })
+
+  it("pruneTxByAge with explicit maxAgeMs returns result", async () => {
+    pruner = new StoragePruner(db, blockIndex, {
+      retentionBlocks: 10,
+      batchSize: 100,
+      txRetentionMs: 1000,
+    })
+    await pruner.init()
+
+    // No tx entries in the test DB → should succeed with 0 removed
+    const result = await pruner.pruneTxByAge(1000)
+    assert.equal(result.txsRemoved, 0)
+  })
 })

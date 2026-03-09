@@ -702,6 +702,48 @@ describe("PoSeManagerV2", function () {
       expect(await manager.getActiveNodeCount()).to.equal(2)
     })
 
+    it("getActiveNodeIds returns empty when offset >= length", async function () {
+      await registerNode(manager, deployer)
+      const result = await manager.getActiveNodeIds(100, 10)
+      expect(result.length).to.equal(0)
+    })
+
+    it("getActiveNodeIds returns all nodes", async function () {
+      const { nodeId: id1 } = await registerNode(manager, deployer)
+      const { nodeId: id2 } = await registerNode(manager, deployer)
+      const { nodeId: id3 } = await registerNode(manager, deployer)
+      const result = await manager.getActiveNodeIds(0, 200)
+      expect(result.length).to.equal(3)
+      const resultSet = new Set(result.map(x => x.toLowerCase()))
+      expect(resultSet.has(id1.toLowerCase())).to.equal(true)
+      expect(resultSet.has(id2.toLowerCase())).to.equal(true)
+      expect(resultSet.has(id3.toLowerCase())).to.equal(true)
+    })
+
+    it("getActiveNodeIds paginates with limit=1", async function () {
+      await registerNode(manager, deployer)
+      await registerNode(manager, deployer)
+      await registerNode(manager, deployer)
+      const page1 = await manager.getActiveNodeIds(0, 1)
+      expect(page1.length).to.equal(1)
+      const page2 = await manager.getActiveNodeIds(1, 1)
+      expect(page2.length).to.equal(1)
+      const page3 = await manager.getActiveNodeIds(2, 1)
+      expect(page3.length).to.equal(1)
+      const page4 = await manager.getActiveNodeIds(3, 1)
+      expect(page4.length).to.equal(0)
+      // All pages should return distinct nodes
+      const allIds = new Set([...page1, ...page2, ...page3].map(x => x.toLowerCase()))
+      expect(allIds.size).to.equal(3)
+    })
+
+    it("getActiveNodeIds clamps limit to 200", async function () {
+      await registerNode(manager, deployer)
+      // Requesting limit > 200 should still work (clamped)
+      const result = await manager.getActiveNodeIds(0, 500)
+      expect(result.length).to.equal(1)
+    })
+
     it("getWitnessSet returns empty for no active nodes", async function () {
       await manager.initEpochNonce(10)
       const witnesses = await manager.getWitnessSet(10)

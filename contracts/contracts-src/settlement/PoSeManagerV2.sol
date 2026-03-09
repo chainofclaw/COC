@@ -521,6 +521,21 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
         return _activeNodeIds.length;
     }
 
+    function getActiveNodeIds(uint256 offset, uint256 limit) external view returns (bytes32[] memory) {
+        uint256 total = _activeNodeIds.length;
+        if (offset >= total) return new bytes32[](0);
+        uint256 maxLimit = 200;
+        uint256 effectiveLimit = limit > maxLimit ? maxLimit : limit;
+        uint256 end = offset + effectiveLimit;
+        if (end > total) end = total;
+        uint256 count = end - offset;
+        bytes32[] memory result = new bytes32[](count);
+        for (uint256 i = 0; i < count; i++) {
+            result[i] = _activeNodeIds[offset + i];
+        }
+        return result;
+    }
+
     function getChallenge(bytes32 challengeId) external view returns (PoSeTypesV2.ChallengeRecord memory) {
         return challenges[challengeId];
     }

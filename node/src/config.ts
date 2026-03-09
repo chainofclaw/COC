@@ -88,6 +88,8 @@ export interface NodeConfig {
   rpcAuthToken?: string
   // Admin RPC methods enabled
   enableAdminRpc: boolean
+  // Node running mode: full (default pruning), archive (no pruning), light (aggressive pruning)
+  nodeMode: "full" | "archive" | "light"
   // Block signature enforcement: "off" = ignore, "monitor" = warn, "enforce" = reject
   signatureEnforcement: "off" | "monitor" | "enforce"
   // Governance module
@@ -284,6 +286,10 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     false,
   )
 
+  // Node running mode
+  const nodeModeRaw = process.env.COC_NODE_MODE ?? (user as Record<string, unknown>).nodeMode
+  const nodeMode = normalizeNodeMode(nodeModeRaw)
+
   // Block signature enforcement mode
   const sigEnforcementRaw = process.env.COC_SIGNATURE_ENFORCEMENT
     ?? (user as Record<string, unknown>).signatureEnforcement
@@ -424,6 +430,7 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     wireBind,
     rpcAuthToken,
     enableAdminRpc,
+    nodeMode,
     signatureEnforcement,
     nodePrivateKey,
     enableGovernance,
@@ -431,6 +438,13 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     validatorAddresses,
     storage: { ...storageDefaults, ...userStorage },
   }
+}
+
+function normalizeNodeMode(input: unknown): "full" | "archive" | "light" {
+  if (typeof input !== "string") return "full"
+  const v = input.trim().toLowerCase()
+  if (v === "archive" || v === "light") return v
+  return "full"
 }
 
 function normalizeSigEnforcement(input: unknown): "off" | "monitor" | "enforce" {
@@ -785,6 +799,12 @@ export function validateConfig(cfg: Partial<NodeConfig>): string[] {
   if (cfg.validatorAddresses !== undefined) {
     if (typeof cfg.validatorAddresses !== "object" || cfg.validatorAddresses === null || Array.isArray(cfg.validatorAddresses)) {
       errors.push("validatorAddresses must be a Record<string, string>")
+    }
+  }
+
+  if (cfg.nodeMode !== undefined) {
+    if (cfg.nodeMode !== "full" && cfg.nodeMode !== "archive" && cfg.nodeMode !== "light") {
+      errors.push("nodeMode must be one of: full, archive, light")
     }
   }
 

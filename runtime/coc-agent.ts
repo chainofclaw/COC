@@ -26,7 +26,7 @@ import { hashPair } from "../node/src/ipfs-merkle.ts";
 import type { UnixFsFileMeta, Hex } from "../node/src/ipfs-types.ts";
 import { createLogger } from "../node/src/logger.ts";
 import { createNodeSigner, createNodeSignerV2, buildReceiptSignMessage } from "../node/src/crypto/signer.ts";
-import { buildDomain, CHALLENGE_TYPES, RECEIPT_TYPES } from "../node/src/crypto/eip712-types.ts";
+import { buildDomain, CHALLENGE_TYPES, RECEIPT_TYPES, REWARD_MANIFEST_TYPES } from "../node/src/crypto/eip712-types.ts";
 import { buildSignedPosePayload } from "../node/src/pose-http.ts";
 import { collectBatchWitnessSignatures, collectWitnesses } from "./lib/witness-collector.ts";
 import { ContractReader } from "./lib/contract-reader.ts";
@@ -34,11 +34,18 @@ import { extractPendingV1Epoch, extractPendingV2Epoch, pruneStoreByEpoch } from 
 import { buildPrometheusMetrics, shouldWriteMetrics, writeMetricsSnapshot, writePrometheusMetrics, type RuntimeMetricsSnapshot } from "./lib/runtime-metrics.ts";
 import { startAgentMetricsServer } from "./lib/agent-metrics-server.ts";
 import { faultTypeForResultCode, serializeEvidenceLeaf } from "./lib/pose-v2-fault-proof.ts";
-import { stableStringifyForHash, writeRewardManifest, type RewardManifest } from "./lib/reward-manifest.ts";
+import {
+  stableStringifyForHash,
+  writeRewardManifest,
+  manifestSigningPayload,
+  type ChallengerRewardEntry,
+  type RewardManifest,
+} from "./lib/reward-manifest.ts";
 import { resolveEvidencePaths } from "../services/common/slash-evidence.ts";
 import { resolvePrivateKey } from "./lib/key-material.ts";
 import { retryAsync } from "./lib/retry.ts";
 import { RuntimeNodeOpsController } from "./lib/nodeops-runtime.ts";
+import { listActiveNodeIds } from "./lib/active-node-resolver.ts";
 
 const log = createLogger("coc-agent");
 
@@ -72,9 +79,9 @@ const operatorPrivateKey = resolvePrivateKey({
   label: "operator",
 });
 const txRetryOptions = {
-  retries: Math.max(0, Number(process.env.COC_TX_RETRY_ATTEMPTS || config.txRetryAttempts ?? 2)),
-  baseDelayMs: Math.max(1, Number(process.env.COC_TX_RETRY_BASE_DELAY_MS || config.txRetryBaseDelayMs ?? 250)),
-  maxDelayMs: Math.max(1, Number(process.env.COC_TX_RETRY_MAX_DELAY_MS || config.txRetryMaxDelayMs ?? 5000)),
+  retries: Math.max(0, Number(process.env.COC_TX_RETRY_ATTEMPTS || (config.txRetryAttempts ?? 2))),
+  baseDelayMs: Math.max(1, Number(process.env.COC_TX_RETRY_BASE_DELAY_MS || (config.txRetryBaseDelayMs ?? 250))),
+  maxDelayMs: Math.max(1, Number(process.env.COC_TX_RETRY_MAX_DELAY_MS || (config.txRetryMaxDelayMs ?? 5000))),
   onRetry: (error: unknown, attempt: number, delayMs: number) => {
     log.warn("retrying runtime tx operation", { attempt, delayMs, error: String(error) });
   },
@@ -83,6 +90,7 @@ const txRetryOptions = {
 const provider = new JsonRpcProvider(l1RpcUrl);
 const signer = new Wallet(operatorPrivateKey, provider);
 const agentSigner = createNodeSigner(operatorPrivateKey);
+const localAgentNodeId = keccak256(signer.signingKey.publicKey).toLowerCase() as `0x${string}`;
 const challengerSet = (config.challengerSet ?? []).map((x) => x.toLowerCase());
 const aggregatorSet = (config.aggregatorSet ?? []).map((x) => x.toLowerCase());
 
@@ -119,6 +127,7 @@ function hex32ToAddress(hex32: string): string {
 }
 
 const poseAbi = [
+  "event NodeRegistered(bytes32 indexed nodeId, address indexed operator, uint8 serviceFlags, uint256 bondAmount)",
   "function registerNode(bytes32 nodeId, bytes pubkeyNode, uint8 serviceFlags, bytes32 serviceCommitment, bytes32 endpointCommitment, bytes32 metadataHash, bytes ownershipSig, bytes endpointAttestation) payable",
   "function updateCommitment(bytes32 nodeId, bytes32 newCommitment)",
   "function getNode(bytes32 nodeId) view returns (tuple(bytes32 nodeId, bytes pubkeyNode, uint8 serviceFlags, bytes32 serviceCommitment, bytes32 endpointCommitment, uint256 bondAmount, bytes32 metadataHash, uint64 registeredAtEpoch, uint64 unlockEpoch, bool active))",
@@ -159,9 +168,11 @@ const allowEmptyBatchWitnessSubmission = config.allowEmptyBatchWitnessSubmission
 const v2TipTolerance = config.tipToleranceBlocks ?? 10;
 
 const poseV2Abi = [
+  "event NodeRegistered(bytes32 indexed nodeId, address indexed operator, uint8 serviceFlags, uint256 bondAmount)",
   "function initEpochNonce(uint64 epochId)",
   "function submitBatchV2(uint64 epochId, bytes32 merkleRoot, bytes32 summaryHash, tuple(bytes32 leaf, bytes32[] merkleProof, uint32 leafIndex)[] sampleProofs, uint32 witnessBitmap, bytes[] witnessSignatures) returns (bytes32 batchId)",
   "function getActiveNodeCount() view returns (uint256)",
+  "function getActiveNodeIds(uint256 offset, uint256 limit) view returns (bytes32[])",
   "function getWitnessSet(uint64 epochId) view returns (bytes32[])",
   "function challengeNonces(uint64 epochId) view returns (uint64)",
   "function registerNode(bytes32 nodeId, bytes pubkeyNode, uint8 serviceFlags, bytes32 serviceCommitment, bytes32 endpointCommitment, bytes32 metadataHash, bytes ownershipSig, bytes endpointAttestation) payable",
@@ -288,6 +299,55 @@ const aggregator = new BatchAggregator({
 const trackedNodeIds = normalizeNodeIds(config.nodeIds);
 const nodeEndpointMap = normalizeNodeEndpointMap(config.nodeEndpoints);
 const nodeScores = new Map<string, { uptimeOk: number; uptimeTotal: number; storageOk: number; storageTotal: number; relayOk: number; relayTotal: number; verifiedStorageBytes: number }>();
+interface RewardTargetSnapshot {
+  epochId: number;
+  nodeIds: string[];
+  challengeableNodeIds: string[];
+  missingEndpointNodeIds: string[];
+  source: "config" | "chain";
+}
+
+let rewardTargets: RewardTargetSnapshot = {
+  epochId: -1,
+  nodeIds: [...trackedNodeIds],
+  challengeableNodeIds: [],
+  missingEndpointNodeIds: [],
+  source: "config",
+};
+
+interface EpochChallengerStats {
+  challengerAddress: string;
+  nodeId: string;
+  challengeCount: number;
+  validReceiptCount: number;
+}
+
+const challengerRewardStats = new Map<number, EpochChallengerStats>();
+
+function recordValidChallengerReceipt(epochId: number): void {
+  const stats = challengerRewardStats.get(epochId) ?? {
+    challengerAddress: signer.address.toLowerCase(),
+    nodeId: localAgentNodeId,
+    challengeCount: 0,
+    validReceiptCount: 0,
+  };
+  stats.challengeCount += 1;
+  stats.validReceiptCount += 1;
+  challengerRewardStats.set(epochId, stats);
+}
+
+function buildChallengerRewardsForEpoch(epochId: number): ChallengerRewardEntry[] {
+  const stats = challengerRewardStats.get(epochId);
+  if (!stats || stats.validReceiptCount === 0) {
+    return [];
+  }
+  return [{
+    challengerAddress: stats.challengerAddress,
+    nodeId: stats.nodeId,
+    challengeCount: stats.challengeCount,
+    validReceiptCount: stats.validReceiptCount,
+  }];
+}
 
 function serializeWithBigInt(value: unknown): string {
   return JSON.stringify(value, (_key, v) => {
@@ -499,6 +559,7 @@ if (nodeOps) {
 }
 
 await ensureNodeRegistered();
+await refreshRewardTargets(currentEpoch);
 
 function appendPendingArchive(
   protocol: "v1" | "v2",
@@ -670,6 +731,7 @@ async function tick(): Promise<void> {
     const nowEpoch = currentEpochId();
     const nowMs = Date.now();
     pruneStalePending(nowEpoch);
+    await refreshRewardTargets(currentEpoch);
 
     if (useV2) {
       // v2 path
@@ -696,6 +758,7 @@ async function tick(): Promise<void> {
         emitEpochScores(currentEpoch);
         nodeScores.clear();
         currentEpoch = nowEpoch;
+        await refreshRewardTargets(currentEpoch);
       }
 
       const canChallengeNow = canRunForEpochRole(currentEpoch);
@@ -710,7 +773,7 @@ async function tick(): Promise<void> {
       }
       if (!canChallengeNow) return;
 
-      for (const nodeId of trackedNodeIds) {
+      for (const nodeId of rewardTargets.challengeableNodeIds) {
         await tryChallengeV2(nodeId, "Uptime");
         await tryChallengeV2(nodeId, "Storage");
         await tryChallengeV2(nodeId, "Relay");
@@ -757,9 +820,10 @@ async function tick(): Promise<void> {
           }
         }
         emitEpochScores(currentEpoch);
-        persistRewardManifestForEpoch(currentEpoch);
+        await persistRewardManifestForEpoch(currentEpoch);
         nodeScores.clear();
         currentEpoch = nowEpoch;
+        await refreshRewardTargets(currentEpoch);
       }
 
       const canChallengeNow = canRunForEpochRole(currentEpoch);
@@ -774,7 +838,7 @@ async function tick(): Promise<void> {
       }
       if (!canChallengeNow) return;
 
-      for (const nodeId of trackedNodeIds) {
+      for (const nodeId of rewardTargets.challengeableNodeIds) {
         await tryChallenge(nodeId, "Uptime");
         await tryChallenge(nodeId, "Storage");
         await tryChallenge(nodeId, "Relay");
@@ -1012,6 +1076,9 @@ async function tryChallengeV2(nodeId: string, kind: keyof typeof ChallengeType):
 
     pendingV2.push(verified);
     updateScore(nodeId, kind, witnessResult.quorumMet, storageTarget?.fileSize);
+    if (witnessResult.quorumMet) {
+      recordValidChallengerReceipt(currentEpoch);
+    }
   } catch (error) {
     updateScore(nodeId, kind, false);
     log.warn("v2 verification failed", { nodeId, kind, error: String(error) });
@@ -1054,7 +1121,7 @@ async function flushBatchV2(epochId: number, receipts: VerifiedReceiptV2[]): Pro
   try {
     const batch = aggregatorV2.buildBatch(BigInt(epochId), receipts);
 
-    const manifest = persistRewardManifestForEpoch(epochId);
+    const manifest = await persistRewardManifestForEpoch(epochId);
     const rewardRoot = manifest.rewardRoot;
     const totalReward = BigInt(manifest.totalReward);
 
@@ -1273,6 +1340,7 @@ async function tryChallenge(nodeId: string, kind: keyof typeof ChallengeType): P
     const verified = verifier.toVerifiedReceipt(challenge, receiptPayload, BigInt(Date.now()));
     pending.push(verified);
     updateScore(nodeId, kind, true, storageTarget?.fileSize);
+    recordValidChallengerReceipt(currentEpoch);
   } catch (error) {
     updateScore(nodeId, kind, false);
     const reason = String(error);
@@ -1407,18 +1475,32 @@ function bytesToGb(bytes: number): bigint {
   return BigInt(gb > 0 ? gb : bytes > 0 ? 1 : 0);
 }
 
-function collectEpochStats() {
-  return [...nodeScores.entries()].map(([nodeId, item]) => ({
-    nodeId: nodeId as `0x${string}`,
-    uptimeBps: ratioBps(item.uptimeOk, item.uptimeTotal),
-    storageBps: ratioBps(item.storageOk, item.storageTotal),
-    relayBps: ratioBps(item.relayOk, item.relayTotal),
-    storageGb: bytesToGb(item.verifiedStorageBytes),
-  }));
+function collectEpochStats(nodeIds: readonly string[]) {
+  return nodeIds.map((nodeId) => {
+    const item = nodeScores.get(nodeId) ?? {
+      uptimeOk: 0,
+      uptimeTotal: 0,
+      storageOk: 0,
+      storageTotal: 0,
+      relayOk: 0,
+      relayTotal: 0,
+      verifiedStorageBytes: 0,
+    };
+    return {
+      nodeId: nodeId as `0x${string}`,
+      uptimeBps: ratioBps(item.uptimeOk, item.uptimeTotal),
+      storageBps: ratioBps(item.storageOk, item.storageTotal),
+      relayBps: ratioBps(item.relayOk, item.relayTotal),
+      storageGb: bytesToGb(item.verifiedStorageBytes),
+      uptimeSamples: item.uptimeTotal,
+      storageSamples: item.storageTotal,
+      relaySamples: item.relayTotal,
+    };
+  });
 }
 
 function buildRewardManifestForEpoch(epochId: number): RewardManifest {
-  const stats = collectEpochStats();
+  const stats = collectEpochStats(rewardTargets.nodeIds);
   const rewardPool = BigInt(config.rewardPoolWei ?? "1000000000000000000");
   const scoringResult = computeEpochRewards(rewardPool, stats);
   const rewardResult = buildRewardRoot(BigInt(epochId), scoringResult);
@@ -1436,11 +1518,24 @@ function buildRewardManifestForEpoch(epochId: number): RewardManifest {
     ),
     scoringInputsHash: keccak256(toUtf8Bytes(stableStringifyForHash(stats))),
     generatedAtMs: Date.now(),
+    challengerRewards: buildChallengerRewardsForEpoch(epochId),
+    sourceNodeCount: rewardTargets.nodeIds.length,
+    scoredNodeCount: stats.filter((stat) => stat.uptimeBps > 0 || stat.storageBps > 0 || stat.relayBps > 0).length,
+    missingNodeIds: [...rewardTargets.missingEndpointNodeIds],
   };
 }
 
-function persistRewardManifestForEpoch(epochId: number): RewardManifest {
+async function persistRewardManifestForEpoch(epochId: number): Promise<RewardManifest> {
   const manifest = buildRewardManifestForEpoch(epochId);
+  if (agentSignerV2) {
+    try {
+      const payload = manifestSigningPayload(manifest);
+      manifest.generatorSignature = await agentSignerV2.eip712.signTypedData(REWARD_MANIFEST_TYPES, payload);
+      manifest.generatorAddress = signer.address.toLowerCase();
+    } catch (sigError) {
+      log.warn("manifest signing failed (non-fatal)", { epochId, error: String(sigError) });
+    }
+  }
   try {
     writeRewardManifest(rewardManifestDir, manifest);
     log.info("reward manifest persisted", {
@@ -1448,6 +1543,9 @@ function persistRewardManifestForEpoch(epochId: number): RewardManifest {
       rewardRoot: manifest.rewardRoot,
       totalReward: manifest.totalReward,
       leaves: manifest.leaves.length,
+      sourceNodeCount: manifest.sourceNodeCount,
+      missingNodeIds: manifest.missingNodeIds,
+      signed: Boolean(manifest.generatorSignature),
     });
   } catch (manifestError) {
     log.error("reward manifest write failed (non-fatal)", { epochId, error: String(manifestError) });
@@ -1456,13 +1554,15 @@ function persistRewardManifestForEpoch(epochId: number): RewardManifest {
 }
 
 function emitEpochScores(epochId: number): void {
-  const stats = collectEpochStats();
+  const stats = collectEpochStats(rewardTargets.nodeIds);
   const rewards = computeEpochRewards(BigInt(config.rewardPoolWei ?? "1000000000000000000"), stats);
   log.info("epoch rewards", {
     epochId,
     rewards: rewards.rewards,
     overflow: rewards.treasuryOverflow.toString(),
     capped: rewards.cappedNodes,
+    sourceNodeCount: rewardTargets.nodeIds.length,
+    missingNodeIds: rewardTargets.missingEndpointNodeIds,
   });
 }
 
@@ -1475,7 +1575,7 @@ async function flushBatch(epochId: number, receipts: Array<any>): Promise<boolea
   if (receipts.length === 0) return true;
   try {
     const batch = aggregator.buildBatch(BigInt(epochId), receipts);
-    const manifest = persistRewardManifestForEpoch(epochId);
+    const manifest = await persistRewardManifestForEpoch(epochId);
 
     if (!poseContract) {
       log.info("batch(local)", {
@@ -1535,6 +1635,64 @@ async function refreshSelfNodeStatus(): Promise<void> {
     selfNodeRegistered = Boolean(node?.active);
   } catch {
     // keep previous value on failure
+  }
+}
+
+async function refreshRewardTargets(epochId: number): Promise<void> {
+  if (rewardTargets.epochId === epochId) {
+    return;
+  }
+
+  const registerContract = useV2 ? poseV2Contract : poseContract;
+  let nodeIds = [...trackedNodeIds];
+  let source: RewardTargetSnapshot["source"] = "config";
+
+  if (registerContract && typeof (registerContract as { queryFilter?: unknown }).queryFilter === "function") {
+    try {
+      const resolved = await retryAsync(
+        () => listActiveNodeIds(registerContract as Parameters<typeof listActiveNodeIds>[0]),
+        txRetryOptions,
+      );
+      nodeIds = resolved.map((nodeId) => nodeId.toLowerCase());
+      source = "chain";
+    } catch (error) {
+      log.warn("reward target discovery from chain failed, fallback to configured nodeIds", {
+        epochId,
+        error: String(error),
+      });
+    }
+  }
+
+  const missingEndpointNodeIds: string[] = [];
+  const challengeableNodeIds: string[] = [];
+  for (const nodeId of nodeIds) {
+    if (resolveNodeEndpoint(nodeId, nodeIds.length)) {
+      challengeableNodeIds.push(nodeId);
+    } else {
+      missingEndpointNodeIds.push(nodeId);
+    }
+  }
+
+  rewardTargets = {
+    epochId,
+    nodeIds,
+    challengeableNodeIds,
+    missingEndpointNodeIds,
+    source,
+  };
+
+  log.info("reward targets refreshed", {
+    epochId,
+    source,
+    total: nodeIds.length,
+    challengeable: challengeableNodeIds.length,
+    missingEndpoints: missingEndpointNodeIds.length,
+  });
+  if (missingEndpointNodeIds.length > 0) {
+    log.warn("reward targets missing endpoint mapping; reward settlement will be marked incomplete", {
+      epochId,
+      missing: missingEndpointNodeIds,
+    });
   }
 }
 
@@ -1624,10 +1782,10 @@ function normalizeNodeEndpointMap(input: Record<string, string> | undefined): Ma
   return map;
 }
 
-function resolveNodeEndpoint(nodeId: string): string | null {
+function resolveNodeEndpoint(nodeId: string, totalNodeCount = rewardTargets.nodeIds.length || trackedNodeIds.length): string | null {
   const mapped = nodeEndpointMap.get(nodeId.toLowerCase());
   if (mapped) return mapped;
-  if (trackedNodeIds.length === 1) return nodeUrl;
+  if (totalNodeCount === 1) return nodeUrl;
   return null;
 }
 

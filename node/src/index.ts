@@ -1,4 +1,5 @@
 import { parseEther, Wallet } from "ethers"
+import { join } from "node:path"
 import { loadNodeConfig } from "./config.ts"
 import { startRpcServer } from "./rpc.ts"
 import { EvmChain } from "./evm.ts"
@@ -106,6 +107,18 @@ if (usePersistent) {
   )
   await persistentEngine.init()
   chain = persistentEngine
+
+  // Configure pruner based on nodeMode
+  if (persistentEngine.blockIndex) {
+    const retentionBlocks = config.nodeMode === "archive" ? Infinity
+      : config.nodeMode === "light" ? 128 : 10_000
+    const prunerCfg = {
+      retentionBlocks,
+      enableAutoPrune: config.nodeMode !== "archive" && config.storage.enablePruning,
+    }
+    log.info("pruner config", { nodeMode: config.nodeMode, retentionBlocks: prunerCfg.retentionBlocks })
+  }
+
   log.info("using persistent storage backend (LevelDB) with EVM state persistence")
 } else {
   evm = await EvmChain.create(config.chainId)
@@ -555,6 +568,10 @@ startRpcServer(
     getP2PStats: () => p2p.getStats(),
     getWireStats: () => wireServer?.getStats(),
     getDhtStats: () => dhtNetwork?.getStats(),
+    rewardManifestDir: join(config.dataDir, "reward-manifests"),
+    getBftEquivocations: (sinceMs: number) => bftEvidenceStore.peek().filter(
+      (e) => (e.rawEvidence?.detectedAtMs ?? 0) > sinceMs
+    ),
   },
   {
     authToken: config.rpcAuthToken,

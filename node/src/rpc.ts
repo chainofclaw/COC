@@ -16,6 +16,7 @@ import type { BftCoordinator } from "./bft-coordinator.ts"
 import { RateLimiter } from "./rate-limiter.ts"
 import { createLogger } from "./logger.ts"
 import { buildBlockHeaderView } from "./block-header.ts"
+import { lookupRewardClaim, readBestRewardManifest } from "../../runtime/lib/reward-manifest.ts"
 
 const log = createLogger("rpc")
 
@@ -169,6 +170,8 @@ interface RpcRuntimeOptions {
   getP2PStats?: () => unknown
   getWireStats?: () => unknown
   getDhtStats?: () => unknown
+  rewardManifestDir?: string
+  getBftEquivocations?: (sinceMs: number) => Array<{ rawEvidence?: Record<string, unknown>; [key: string]: unknown }>
 }
 
 export function startRpcServer(
@@ -279,6 +282,12 @@ export function startRpcServer(
         const dhtStats = runtimeOptions?.getDhtStats?.()
         if (dhtStats) {
           rpcOpts.dhtStats = dhtStats
+        }
+        if (runtimeOptions?.rewardManifestDir) {
+          rpcOpts.rewardManifestDir = runtimeOptions.rewardManifestDir
+        }
+        if (runtimeOptions?.getBftEquivocations) {
+          rpcOpts.getBftEquivocations = runtimeOptions.getBftEquivocations
         }
         const scopedOpts = Object.keys(rpcOpts).length > 0 ? rpcOpts : undefined
         const MAX_BATCH_SIZE = 100
@@ -788,6 +797,13 @@ async function handleRpc(
     case "eth_getUncleByBlockNumberAndIndex":
       // COC uses PoSe consensus with no uncle blocks
       return payload.method.includes("Count") ? "0x0" : null
+    case "eth_getWork":
+      // PoW stub — COC uses PoSe consensus, no mining
+      return ["0x" + "0".repeat(64), "0x" + "0".repeat(64), "0x" + "0".repeat(64)]
+    case "eth_submitWork":
+    case "eth_submitHashrate":
+      // PoW stub — always returns false (no mining support)
+      return false
     case "eth_protocolVersion":
       return "0x41" // 65
     case "eth_feeHistory": {
@@ -1257,6 +1273,42 @@ async function handleRpc(
         },
       }
     }
+    case "coc_getRewardManifest": {
+      const rewardManifestDir = typeof opts?.rewardManifestDir === "string" ? opts.rewardManifestDir : ""
+      if (!rewardManifestDir) return null
+      const epochId = Number((payload.params ?? [])[0] ?? -1)
+      if (!Number.isInteger(epochId) || epochId < 0) {
+        throw { code: -32602, message: "invalid epochId" }
+      }
+      const manifest = readBestRewardManifest(rewardManifestDir, epochId)
+      if (!manifest) return null
+      return {
+        epochId: manifest.epochId,
+        rewardRoot: manifest.rewardRoot,
+        totalReward: manifest.totalReward,
+        sourceNodeCount: manifest.sourceNodeCount ?? manifest.leaves.length,
+        scoredNodeCount: manifest.scoredNodeCount ?? manifest.leaves.length,
+        missingNodeIds: manifest.missingNodeIds ?? [],
+        settled: manifest.settled === true,
+        settledAtMs: manifest.settledAtMs ?? null,
+        leaves: manifest.leaves.length,
+      }
+    }
+    case "coc_getRewardClaim": {
+      const rewardManifestDir = typeof opts?.rewardManifestDir === "string" ? opts.rewardManifestDir : ""
+      if (!rewardManifestDir) return null
+      const epochId = Number((payload.params ?? [])[0] ?? -1)
+      const nodeId = String((payload.params ?? [])[1] ?? "")
+      if (!Number.isInteger(epochId) || epochId < 0) {
+        throw { code: -32602, message: "invalid epochId" }
+      }
+      if (!/^0x[0-9a-fA-F]+$/.test(nodeId)) {
+        throw { code: -32602, message: "invalid nodeId" }
+      }
+      const manifest = readBestRewardManifest(rewardManifestDir, epochId)
+      if (!manifest) return null
+      return lookupRewardClaim(manifest, nodeId)
+    }
     case "coc_chainStats": {
       const height = await Promise.resolve(chain.getHeight())
       const now = Date.now()
@@ -1340,6 +1392,26 @@ async function handleRpc(
         }
       }
       return null
+    }
+    case "coc_getEquivocations": {
+      const sinceMs = Number((payload.params ?? [])[0] ?? 0)
+      const getter = (opts as RpcRuntimeOptions | undefined)?.getBftEquivocations
+      if (!getter) return []
+      const evidence = getter(sinceMs)
+      return evidence.map((e) => {
+        const raw = (e.rawEvidence ?? {}) as Record<string, unknown>
+        const round = raw.round
+        return {
+          validatorId: raw.validatorId ?? raw.nodeId ?? "",
+          height: raw.height ?? "0",
+          ...(typeof round === "number" && Number.isFinite(round) ? { round } : {}),
+          vote1Hash: raw.blockHash1 ?? "",
+          vote2Hash: raw.blockHash2 ?? "",
+          timestamp: raw.detectedAtMs ?? 0,
+          phase: raw.phase ?? "",
+          type: raw.type ?? "bft-equivocation",
+        }
+      })
     }
     // --- Admin RPC namespace ---
     case "admin_nodeInfo": {

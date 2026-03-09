@@ -45,6 +45,41 @@ export interface FindNodeResponsePayload {
 
 export type MessageType = (typeof MessageType)[keyof typeof MessageType]
 
+/**
+ * Frame priority levels for send-queue ordering.
+ * Higher priority frames are sent first when the queue is congested.
+ */
+export const FramePriority = {
+  LOW: 0,
+  NORMAL: 1,
+  HIGH: 2,
+  CRITICAL: 3, // BFT consensus messages
+} as const
+
+export type FramePriority = (typeof FramePriority)[keyof typeof FramePriority]
+
+/** Map message types to default priorities */
+const DEFAULT_PRIORITIES: Partial<Record<number, FramePriority>> = {
+  [MessageType.BftPrepare]: FramePriority.CRITICAL,
+  [MessageType.BftCommit]: FramePriority.CRITICAL,
+  [MessageType.Block]: FramePriority.HIGH,
+  [MessageType.Transaction]: FramePriority.NORMAL,
+  [MessageType.FindNode]: FramePriority.LOW,
+  [MessageType.FindNodeResponse]: FramePriority.LOW,
+  [MessageType.Ping]: FramePriority.LOW,
+  [MessageType.Pong]: FramePriority.LOW,
+}
+
+/** Get the default priority for a message type */
+export function getFramePriority(type: MessageType): FramePriority {
+  return DEFAULT_PRIORITIES[type] ?? FramePriority.NORMAL
+}
+
+/** Sort frames by priority (highest first). Stable within same priority. */
+export function sortByPriority<T extends { type: MessageType }>(frames: T[]): T[] {
+  return [...frames].sort((a, b) => getFramePriority(b.type) - getFramePriority(a.type))
+}
+
 // Pre-computed valid message types set — avoids allocation on every decodeFrame call
 const VALID_MESSAGE_TYPES = new Set(Object.values(MessageType))
 

@@ -6,6 +6,9 @@ export interface EpochNodeStats {
   storageBps: number
   relayBps: number
   storageGb: bigint
+  uptimeSamples?: number
+  storageSamples?: number
+  relaySamples?: number
 }
 
 export interface ScoringConfig {
@@ -17,6 +20,7 @@ export interface ScoringConfig {
   relayThresholdBps: number
   storageCapGb: bigint
   softCapMultiplier: bigint
+  minSamples: number
 }
 
 export interface EpochRewardResult {
@@ -41,6 +45,7 @@ export const DEFAULT_SCORING_CONFIG: ScoringConfig = {
   relayThresholdBps: 5000,
   storageCapGb: 500n,
   softCapMultiplier: 5n,
+  minSamples: 5,
 }
 
 export function computeEpochRewards(
@@ -131,6 +136,7 @@ function allocateBucket(
 }
 
 function uptimeWeight(stat: EpochNodeStats, cfg: ScoringConfig): bigint {
+  if ((stat.uptimeSamples ?? Infinity) < cfg.minSamples) return 0n
   if (stat.uptimeBps < cfg.uptimeThresholdBps) {
     return 0n
   }
@@ -138,6 +144,7 @@ function uptimeWeight(stat: EpochNodeStats, cfg: ScoringConfig): bigint {
 }
 
 function storageWeight(stat: EpochNodeStats, cfg: ScoringConfig): bigint {
+  if ((stat.storageSamples ?? Infinity) < cfg.minSamples) return 0n
   if (stat.storageBps < cfg.storageThresholdBps) {
     return 0n
   }
@@ -151,6 +158,7 @@ function storageWeight(stat: EpochNodeStats, cfg: ScoringConfig): bigint {
 }
 
 function relayWeight(stat: EpochNodeStats, cfg: ScoringConfig): bigint {
+  if ((stat.relaySamples ?? Infinity) < cfg.minSamples) return 0n
   if (stat.relayBps < cfg.relayThresholdBps) {
     return 0n
   }

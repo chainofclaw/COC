@@ -11,6 +11,9 @@ import {
   WIRE_MAGIC,
   HEADER_SIZE,
   MAX_PAYLOAD_SIZE,
+  FramePriority,
+  getFramePriority,
+  sortByPriority,
 } from "./wire-protocol.ts"
 
 describe("encodeFrame / decodeFrame", () => {
@@ -229,5 +232,42 @@ describe("JSON payload helpers", () => {
       assert.ok(result)
       assert.equal(result.frame.type, type)
     }
+  })
+
+  it("BFT messages have CRITICAL priority", () => {
+    assert.equal(getFramePriority(MessageType.BftPrepare), FramePriority.CRITICAL)
+    assert.equal(getFramePriority(MessageType.BftCommit), FramePriority.CRITICAL)
+  })
+
+  it("Block messages have HIGH priority", () => {
+    assert.equal(getFramePriority(MessageType.Block), FramePriority.HIGH)
+  })
+
+  it("Transaction messages have NORMAL priority", () => {
+    assert.equal(getFramePriority(MessageType.Transaction), FramePriority.NORMAL)
+  })
+
+  it("sortByPriority orders CRITICAL before NORMAL before LOW", () => {
+    const frames = [
+      { type: MessageType.FindNode, payload: new Uint8Array(0) },
+      { type: MessageType.BftPrepare, payload: new Uint8Array(0) },
+      { type: MessageType.Transaction, payload: new Uint8Array(0) },
+      { type: MessageType.Block, payload: new Uint8Array(0) },
+    ]
+    const sorted = sortByPriority(frames)
+    assert.equal(sorted[0].type, MessageType.BftPrepare) // CRITICAL
+    assert.equal(sorted[1].type, MessageType.Block)       // HIGH
+    assert.equal(sorted[2].type, MessageType.Transaction) // NORMAL
+    assert.equal(sorted[3].type, MessageType.FindNode)    // LOW
+  })
+
+  it("sortByPriority does not mutate original array", () => {
+    const frames = [
+      { type: MessageType.FindNode, payload: new Uint8Array(0) },
+      { type: MessageType.BftPrepare, payload: new Uint8Array(0) },
+    ]
+    const sorted = sortByPriority(frames)
+    assert.equal(frames[0].type, MessageType.FindNode) // unchanged
+    assert.notEqual(frames, sorted)
   })
 })

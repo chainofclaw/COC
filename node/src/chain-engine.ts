@@ -288,27 +288,68 @@ export class ChainEngine {
       throw new Error("invalid block hash")
     }
 
+    // Speculative execution: checkpoint EVM state before executing remote blocks.
+    // On success we commit; on failure we revert so parent state is untouched.
+    // This uses the VM's native stateManager checkpoint/revert which operates
+    // on the actual state the EVM writes to (unlike trie-level fork which
+    // doesn't redirect EVM writes).
+    const useSpeculativeExec = !locallyProposed
+    if (useSpeculativeExec) {
+      await this.evm.checkpointState()
+    }
+
     const receipts: TxReceipt[] = []
     let totalGasUsed = 0n
-    for (let i = 0; i < block.txs.length; i++) {
-      const raw = block.txs[i]
-      const result = await this.evm.executeRawTx(raw, block.number, i, block.hash, block.baseFee ?? 0n)
-      const receipt = this.evm.getReceipt(result.txHash)
-      if (receipt) {
-        receipts.push(receipt)
-        totalGasUsed += typeof receipt.gasUsed === "bigint" ? receipt.gasUsed : BigInt(receipt.gasUsed)
+    try {
+      for (let i = 0; i < block.txs.length; i++) {
+        const raw = block.txs[i]
+        const result = await this.evm.executeRawTx(raw, block.number, i, block.hash, block.baseFee ?? 0n)
+        const receipt = this.evm.getReceipt(result.txHash)
+        if (receipt) {
+          receipts.push(receipt)
+          totalGasUsed += typeof receipt.gasUsed === "bigint" ? receipt.gasUsed : BigInt(receipt.gasUsed)
+        }
+        this.txHashSet.add(result.txHash as Hex)
       }
-      this.txHashSet.add(result.txHash as Hex)
-    }
 
-    // Enforce block gas limit
-    if (totalGasUsed > BLOCK_GAS_LIMIT) {
-      throw new Error(`block gas used ${totalGasUsed} exceeds limit ${BLOCK_GAS_LIMIT}`)
-    }
+      // Enforce block gas limit
+      if (totalGasUsed > BLOCK_GAS_LIMIT) {
+        throw new Error(`block gas used ${totalGasUsed} exceeds limit ${BLOCK_GAS_LIMIT}`)
+      }
 
-    // Verify gasUsed matches claimed value (post-execution integrity check)
-    if (!locallyProposed && block.gasUsed !== undefined && block.gasUsed !== totalGasUsed) {
-      throw new Error(`block gasUsed mismatch: claimed ${block.gasUsed}, computed ${totalGasUsed}`)
+      // Verify gasUsed matches claimed value (post-execution integrity check)
+      if (!locallyProposed && block.gasUsed !== undefined && block.gasUsed !== totalGasUsed) {
+        throw new Error(`block gasUsed mismatch: claimed ${block.gasUsed}, computed ${totalGasUsed}`)
+      }
+
+      // Verify computed stateRoot matches block header (when stateTrie available)
+      if (!locallyProposed && block.stateRoot && this.cfg.stateTrie) {
+        try {
+          const computedRoot = await this.cfg.stateTrie.commit()
+          if (computedRoot !== block.stateRoot) {
+            log.warn("stateRoot mismatch — rejecting block", {
+              height: block.number.toString(),
+              expected: block.stateRoot,
+              computed: computedRoot,
+            })
+            throw new Error(`stateRoot mismatch: expected ${block.stateRoot}, computed ${computedRoot}`)
+          }
+        } catch (err) {
+          if (err instanceof Error && err.message.startsWith("stateRoot mismatch")) throw err
+          log.warn("stateRoot verification failed", { error: String(err) })
+        }
+      }
+
+      // Commit speculative state — execution and validation succeeded
+      if (useSpeculativeExec) {
+        await this.evm.commitState()
+      }
+    } catch (err) {
+      // Revert EVM state on any execution or validation failure
+      if (useSpeculativeExec) {
+        await this.evm.revertState()
+      }
+      throw err
     }
 
     // Post-execution stateRoot signature (proposer signs after EVM execution)

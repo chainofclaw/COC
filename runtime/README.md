@@ -22,6 +22,7 @@ openclaw coc logs relayer
 node --experimental-strip-types COC/runtime/coc-node.ts
 node --experimental-strip-types COC/runtime/coc-agent.ts
 node --experimental-strip-types COC/runtime/coc-relayer.ts
+node --experimental-strip-types COC/runtime/coc-reward-claim.ts --epoch 123 --node-id 0x...
 ```
 
 ## Config
@@ -53,6 +54,11 @@ Reward manifest 与 v2 争议恢复:
 - `rewardManifestDir`（默认: `${dataDir}/reward-manifests`）
 - `pendingChallengesPath` / `COC_PENDING_CHALLENGES_PATH`（默认: `${dataDir}/pending-challenges-v2.json`）
 - `challengeBondWei`
+
+Reward proof 查询与领取:
+- HTTP RPC: `coc_getRewardManifest(epochId)`、`coc_getRewardClaim(epochId, nodeId)`
+- 本地 claim 脚本: `runtime/coc-reward-claim.ts`
+- v2 claim 默认优先读取 `reward-epoch-<epoch>.settled.json`，无 settled manifest 时回退到原始 manifest
 
 NodeOps 运行时接入:
 - `nodeOpsPolicyPath` / `COC_NODEOPS_POLICY_PATH`

@@ -1,4 +1,5 @@
-import type { NodeHealthSnapshot, NodeOpsPolicy } from "./policy-types.ts"
+import type { NodeHealthSnapshot, NodeOpsPolicy, NodeOpsPolicyV2, PolicyRule } from "./policy-types.ts"
+import { evaluateCondition } from "./expression-eval.ts"
 
 export const NodeOpsActionType = {
   RestartProcess: "RESTART_PROCESS",
@@ -76,7 +77,39 @@ export class NodeOpsPolicyEngine {
       actions.push({ type: NodeOpsActionType.ScheduleKeyRotation, reason: "rotation window reached" })
     }
 
+    // Evaluate DSL rules (V2 policy extension)
+    const v2Policy = this.policy as NodeOpsPolicyV2
+    if (v2Policy.rules && v2Policy.rules.length > 0) {
+      const vars: Record<string, number> = {
+        cpuPct: snapshot.cpuPct,
+        memPct: snapshot.memPct,
+        diskPct: snapshot.diskPct,
+        p95LatencyMs: snapshot.p95LatencyMs,
+        peerCount: snapshot.peerCount,
+      }
+      for (const rule of v2Policy.rules) {
+        try {
+          if (evaluateCondition(rule.condition, vars)) {
+            const actionType = mapRuleAction(rule.action)
+            actions.push({ type: actionType, reason: `rule:${rule.name}`, params: { cooldownMs: rule.cooldownMs } })
+          }
+        } catch {
+          // Skip rules with invalid expressions
+        }
+      }
+    }
+
     return actions
+  }
+}
+
+function mapRuleAction(action: PolicyRule["action"]): NodeOpsActionType {
+  switch (action) {
+    case "restart": return NodeOpsActionType.RestartProcess
+    case "alert": return NodeOpsActionType.RaiseAlert
+    case "reconnect": return NodeOpsActionType.ReconnectPeers
+    case "switchTransport": return NodeOpsActionType.SwitchTransport
+    case "custom": return NodeOpsActionType.RaiseAlert
   }
 }
 

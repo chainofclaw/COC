@@ -180,4 +180,11 @@ describe("validateConfig", () => {
     })
     assert.ok(errors.length >= 4)
   })
+
+  it("validates nodeMode", () => {
+    assert.equal(validateConfig({ nodeMode: "full" }).length, 0)
+    assert.equal(validateConfig({ nodeMode: "archive" }).length, 0)
+    assert.equal(validateConfig({ nodeMode: "light" }).length, 0)
+    assert.ok(validateConfig({ nodeMode: "invalid" as "full" }).length > 0)
+  })
 })
