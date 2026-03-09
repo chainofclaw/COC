@@ -37,6 +37,50 @@ test("storage diminishing prevents linear domination", () => {
   assert.equal(b < a * 2n, true)
 })
 
+test("minSamples gates weight to zero when insufficient", () => {
+  const stats: EpochNodeStats[] = [
+    { nodeId: A, uptimeBps: 9000, storageBps: 8000, relayBps: 6000, storageGb: 100n, uptimeSamples: 2, storageSamples: 2, relaySamples: 2 },
+    { nodeId: B, uptimeBps: 8500, storageBps: 8000, relayBps: 6000, storageGb: 100n, uptimeSamples: 10, storageSamples: 10, relaySamples: 10 },
+  ]
+
+  const cfg = { ...DEFAULT_SCORING_CONFIG, minSamples: 5 }
+  const result = computeEpochRewards(1_000_000n, stats, cfg)
+
+  // A has insufficient samples, should get 0
+  assert.equal(result.rewards[A], 0n)
+  // B should get all rewards
+  assert.equal(result.rewards[B], 1_000_000n)
+})
+
+test("minSamples allows scoring when samples are sufficient", () => {
+  const stats: EpochNodeStats[] = [
+    { nodeId: A, uptimeBps: 9000, storageBps: 8000, relayBps: 6000, storageGb: 100n, uptimeSamples: 10, storageSamples: 10, relaySamples: 10 },
+    { nodeId: B, uptimeBps: 8500, storageBps: 8000, relayBps: 6000, storageGb: 100n, uptimeSamples: 10, storageSamples: 10, relaySamples: 10 },
+  ]
+
+  const cfg = { ...DEFAULT_SCORING_CONFIG, minSamples: 5 }
+  const result = computeEpochRewards(1_000_000n, stats, cfg)
+
+  // Both nodes should get rewards
+  assert.equal(result.rewards[A] > 0n, true)
+  assert.equal(result.rewards[B] > 0n, true)
+  assert.equal(sumRewards(result.rewards) + result.treasuryOverflow, 1_000_000n)
+})
+
+test("minSamples backward compatible when samples not provided", () => {
+  const stats: EpochNodeStats[] = [
+    { nodeId: A, uptimeBps: 9000, storageBps: 8000, relayBps: 6000, storageGb: 100n },
+    { nodeId: B, uptimeBps: 8500, storageBps: 8000, relayBps: 6000, storageGb: 100n },
+  ]
+
+  const cfg = { ...DEFAULT_SCORING_CONFIG, minSamples: 5 }
+  const result = computeEpochRewards(1_000_000n, stats, cfg)
+
+  // Without sample counts, should default to Infinity (pass check)
+  assert.equal(result.rewards[A] > 0n, true)
+  assert.equal(result.rewards[B] > 0n, true)
+})
+
 test("soft cap trims whale and redistributes", () => {
   const stats: EpochNodeStats[] = [
     { nodeId: A, uptimeBps: 10000, storageBps: 10000, relayBps: 10000, storageGb: 500n },

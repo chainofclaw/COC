@@ -2,9 +2,9 @@
   "name": "coc-wallet",
   "version": "0.1.0",
   "private": true,
-  "type": "commonjs",
+  "type": "module",
   "bin": {
-    "coc-wallet": "bin/coc-wallet.js"
+    "coc-wallet": "coc-wallet.ts"
   },
   "dependencies": {
     "ethers": "^6.13.5"

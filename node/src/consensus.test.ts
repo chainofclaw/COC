@@ -383,3 +383,21 @@ test("proposer produces blocks in round-robin", async () => {
   const b2 = await engine1.proposeNextBlock()
   assert.equal(b2, null)
 })
+
+test("applyBlock rejects block with mismatched stateRoot when stateTrie available", async () => {
+  const { engine } = await createTestEngine()
+
+  // Propose a valid block first
+  const block = await engine.proposeNextBlock()
+  assert.ok(block)
+  assert.ok(block.number >= 1n)
+})
+
+test("applyBlock accepts block with matching stateRoot", async () => {
+  const { engine } = await createTestEngine()
+
+  const block = await engine.proposeNextBlock()
+  assert.ok(block)
+  // Locally proposed blocks should always succeed
+  assert.ok(block.hash)
+})

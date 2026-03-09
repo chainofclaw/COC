@@ -77,4 +77,8 @@ interface IPoSeManagerV2 {
     function depositRewardPool() external payable;
 
     function getWitnessSet(uint64 epochId) external view returns (bytes32[] memory);
+
+    function getActiveNodeIds(uint256 offset, uint256 limit) external view returns (bytes32[] memory);
+
+    function getActiveNodeCount() external view returns (uint256);
 }

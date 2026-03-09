@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { provider, formatAddress, formatEther } from '@/lib/provider'
 import { rpcCall } from '@/lib/rpc'
 import { decodeMethodSelector, decodeTransferLog, formatTokenAmount } from '@/lib/decoder'
+import { decodeMethodName, decodeEventTopic } from '@/lib/abi-decoder'
 import { notFound } from 'next/navigation'
 
 export const dynamic = 'force-dynamic'
@@ -145,6 +146,13 @@ export default async function TxPage({ params }: TxPageProps) {
           {tx.data && tx.data !== '0x' && (
             <div>
               <dt className="text-sm font-medium text-gray-500">Input Data</dt>
+              {decodeMethodName(tx.data) && (
+                <dd className="mt-1 text-sm">
+                  <span className="bg-blue-100 text-blue-800 px-2 py-0.5 rounded text-xs font-medium">
+                    {decodeMethodName(tx.data)}
+                  </span>
+                </dd>
+              )}
               <dd className="mt-1 text-xs font-mono bg-gray-50 p-3 rounded break-all">{tx.data}</dd>
             </div>
           )}

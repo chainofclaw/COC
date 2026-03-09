@@ -30,6 +30,19 @@ export interface NodeHealthSnapshot {
   peerCount: number
 }
 
+/** Rule-based policy extension with expression DSL */
+export interface PolicyRule {
+  name: string
+  condition: string // e.g. "cpuPct > 90 && memPct > 80"
+  action: "restart" | "alert" | "reconnect" | "switchTransport" | "custom"
+  cooldownMs: number
+}
+
+/** Extended policy with optional rule-based DSL */
+export interface NodeOpsPolicyV2 extends NodeOpsPolicy {
+  rules?: PolicyRule[]
+}
+
 export const DEFAULT_NODEOPS_POLICY: NodeOpsPolicy = {
   profile: "default",
   monitoringPollMs: 15000,

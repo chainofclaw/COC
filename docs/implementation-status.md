@@ -75,8 +75,10 @@ Implemented:
 - **Phase 34**: BFT slashing handler: equivocation → stake slash → treasury deposit → auto-remove
 - **Phase 34**: ValidatorGovernance slashing API (applySlash, deactivateValidator, getMinStake)
 
-Missing/Partial:
-- On-chain slashing via PoSeManager contract integration
+- **M7**: BFT → PoSe slash bridge in coc-relayer (equivocation evidence → PoSe v2 fault proof pipeline)
+- **M7**: Wire protocol priority frames (CRITICAL for BFT, HIGH for blocks, NORMAL/LOW for tx/DHT)
+- **M7**: Post-execution stateRoot verification (reject blocks with mismatched computed stateRoot)
+- **M7**: Node running mode (full/archive/light) — controls pruning retention policy
 
 Code:
 - `COC/node/src/chain-engine.ts`
@@ -162,8 +164,7 @@ Implemented:
 - **Phase 28**: IPFS tar archive for `/api/v0/get` (POSIX USTAR format)
 - **Phase 28**: EVM state snapshot export/import for fast sync
 
-Missing/Partial:
-- Full incremental compaction (tx-level pruning)
+- **M7**: Tx-level pruning by age (`StoragePruner.pruneTxByAge()` with configurable `txRetentionMs`)
 
 Code:
 - `COC/node/src/storage.ts` (legacy)
@@ -216,14 +217,18 @@ Implemented:
 - **M0-M2**: Unified SlashEvidence encoding/hashing/bus (agent, BFT, relayer share same payload format and file paths; backward-compatible with legacy evidence files)
 - **M4**: Unified v1/v2 reward manifest pipeline (scoring-based distribution replaces v1 equal-split placeholder)
 
-Remaining:
-- Full integration with a production L1/L2 network (currently local/testnet)
-- Challenger reward mechanism (v1 only; v2 uses Merkle claim)
+- **M7**: V1 challenger reward allocation (`allocateChallengerRewards` — proportional by challenge count)
+- **M7**: L1/L2 deployment configuration (mainnet, sepolia, COC, arbitrum, optimism presets)
+- **M7**: Unified deploy script with parameter validation (`contracts/deploy/deploy-pose.ts`)
 
 Code:
 - `COC/services/challenger/*`
 - `COC/services/verifier/*`
 - `COC/services/aggregator/*`
+- `COC/services/relayer/epoch-finalizer.ts` (NEW - M7)
+- `COC/contracts/deploy/l1-config.ts` (NEW - M7)
+- `COC/contracts/deploy/l2-config.ts` (NEW - M7)
+- `COC/contracts/deploy/deploy-pose.ts` (NEW - M7)
 - `COC/runtime/coc-node.ts`
 
 ## 7) PoSe Settlement (On‑chain)
@@ -264,15 +269,20 @@ Code:
 - `COC/runtime/coc-relayer.ts`
 
 ## 9) Wallet CLI
-**Status: Implemented (Minimal)**
+**Status: Implemented**
 
 Implemented:
-- Create address
-- Transfer
-- Query balance
+- Create wallet (generate random + mnemonic)
+- Import wallet (private key or mnemonic phrase)
+- Query balance (eth_getBalance)
+- Send ETH (eth_sendRawTransaction)
+- Query transaction receipt
+- Query nonce
+- Encrypted JSON keystore (~/.coc/keystore/)
+- RPC endpoint via --rpc flag or COC_RPC_URL env var
 
 Code:
-- `COC/wallet/bin/coc-wallet.js`
+- `COC/wallet/coc-wallet.ts`
 
 ## 10) Devnet & Tests
 **Status: Implemented**
@@ -281,7 +291,7 @@ Implemented:
 - 3/5/7 node devnet scripts
 - End‑to‑end verify script: block production + tx propagation
 - Quality gate script for automated testing (unit + integration + e2e)
-- Comprehensive test coverage (91 test files, 924 tests across all modules)
+- Comprehensive test coverage (140 test files, 1409 tests across all modules)
 
 Code:
 - `COC/scripts/start-devnet.sh`
@@ -328,15 +338,21 @@ Implemented:
 - **Phase 27**: Homepage optimization using `coc_chainStats`
 - **Phase 27**: RPC error handling (HTTP status checks, network error catch)
 
-Missing/Partial:
-- Contract ABI verification and decoding
-- Historical analytics and charts
+- **M7**: Contract verification page (source upload, solc compile, bytecode comparison)
+- **M7**: ABI decoder (50+ built-in method selectors, event topics, 4-byte matching)
+- **M7**: Method name display on tx detail page (decoded from calldata)
+- **M7**: TPS trend and gas usage charts (client-side, last 100 blocks)
+- **M7**: ChainCharts component integrated into stats page
 
 Code:
 - `COC/explorer/src/app/page.tsx` (home with latest blocks)
 - `COC/explorer/src/app/block/[id]/page.tsx` (block details with proposer/stateRoot)
-- `COC/explorer/src/app/tx/[hash]/page.tsx` (transaction details with internal traces)
+- `COC/explorer/src/app/tx/[hash]/page.tsx` (transaction details with ABI decoding)
 - `COC/explorer/src/app/address/[address]/page.tsx` (address explorer with tx type classification)
+- `COC/explorer/src/app/verify/page.tsx` (NEW - M7)
+- `COC/explorer/src/lib/abi-decoder.ts` (NEW - M7)
+- `COC/explorer/src/lib/solc-verify.ts` (NEW - M7)
+- `COC/explorer/src/components/ChainCharts.tsx` (NEW - M7)
 - `COC/explorer/src/app/contracts/page.tsx` (indexed contract listing with pagination)
 - `COC/explorer/src/lib/provider.ts` (ethers.js provider)
 - `COC/explorer/src/lib/rpc.ts` (custom RPC calls with error handling)
@@ -361,14 +377,18 @@ Implemented:
 - **M5**: Action persistence (action log written to JSON file)
 - **M5**: Agent runtime integration (nodeOps.tick() called each agent tick)
 
-Missing/Partial:
-- Advanced policy DSL features
+- **M7**: Advanced policy DSL — safe recursive-descent expression evaluator (no eval), supports comparisons, logic operators, variable references
+- **M7**: `PolicyRule` type with condition string, action, cooldownMs
+- **M7**: `NodeOpsPolicyV2` extends NodeOpsPolicy with optional `rules[]`
+- **M7**: Policy engine evaluates DSL rules against runtime snapshots
 
 Code:
 - `COC/nodeops/policy-engine.ts`
 - `COC/nodeops/policy-loader.ts`
 - `COC/nodeops/agent-hooks.ts`
 - `COC/nodeops/policy-types.ts`
+- `COC/nodeops/expression-eval.ts` (NEW - M7)
+- `COC/nodeops/expression-eval.test.ts` (NEW - M7)
 - `COC/nodeops/policies/*.yaml`
 - `COC/runtime/lib/nodeops-runtime.ts` (NEW - M5)
 
@@ -384,11 +404,11 @@ Implemented:
 - **Phase 23**: Storage I/O performance tests (sub-ms)
 - **Phase 23**: Concurrent EVM operations benchmarks
 
-Missing/Partial:
-- P2P network throughput benchmarks (requires live network)
+- **M7**: P2P benchmarks — wire frame encode/decode throughput, JSON payload roundtrip, DHT routing table latency, variable payload sizes, message type parity
 
 Code:
 - `COC/node/src/benchmarks/evm-benchmark.test.ts`
+- `COC/node/src/benchmarks/p2p-benchmark.test.ts` (NEW - M7)
 
 ## 14) Phase 13.1: Persistent Storage Layer
 **Status: Implemented (2026-02-15)**
@@ -404,16 +424,18 @@ Implemented:
 - Batch operations for atomic writes
 - Comprehensive test coverage across storage test files
 
-Missing/Partial:
-- State trie checkpoint/revert optimization
-- Cross-instance state root verification
-- Pruning and archival node modes
+- **M7**: State trie COW (Copy-on-Write) — fork/merge/discard for speculative execution
+- **M7**: StateRoot verification after EVM execution in applyBlock()
+- **M7**: Node mode config (`full`/`archive`/`light`) with pruner integration
+- **M7**: Tx-level pruning by age (`pruneTxByAge`)
+- **M7**: RPC PoW stubs (eth_getWork, eth_submitWork, eth_submitHashrate)
 
 Code:
 - `COC/node/src/storage/db.ts` + tests
 - `COC/node/src/storage/block-index.ts` + tests
 - `COC/node/src/storage/nonce-store.ts` + tests
 - `COC/node/src/storage/state-trie.ts` + tests
+- `COC/node/src/storage/pruner.ts` (UPDATED - M7)
 
 Documentation:
 - `COC/docs/phase-13.1-plan.en.md`
@@ -1012,7 +1034,7 @@ Files:
 - Reward Pipeline: v1/v2 unified reward manifest with scoring-based distribution; v1 equal-split placeholder fully replaced (M4).
 - NodeOps Runtime: policy hot-reload, conflict detection, action persistence, agent tick integration (M5).
 - Key Management: resolvePrivateKey with env/envFile/config/configFile priority; unified retryAsync with exponential backoff+jitter across all contract calls (M6).
-- Testing: 1274 tests across 100+ files covering all major modules including security hardening (Phase 33), Go/No-Go readiness (Phase 34), node ops extension (Phase 35), ops hardening (Phase 36), algorithm safety audit rounds 1-27, and M0-M6 milestones.
+- Testing: 1409 tests across 140 files covering all major modules including security hardening (Phase 33), Go/No-Go readiness (Phase 34), node ops extension (Phase 35), ops hardening (Phase 36), algorithm safety audit rounds 1-27, M0-M6 milestones, and M7 doc audit gap remediation.
 - Algorithm Safety Audit (Rounds 1-17): BFT commit blockHash binding, snap sync target validation, full state snapshot trie traversal (iterateAccounts/iterateStorage), EIP-1559 baseFee per-block integration, persistent engine timestamp validation, DHT iterative lookup distance sorting, K-bucket ping-evict replacement, configurable signature enforcement (off/monitor/enforce), handshake canonical format alignment, fetchSnapshots discovery dedup, gas histogram O(n), finality O(1) lookup.
 - Algorithm Safety Audit (Rounds 18-27): block normalization field preservation (gasUsed/stateRoot/signature/bftFinalized), state trie evictLru infinite loop guard (dirty entry skip + maxAttempts), P2P aborted chunk guard, MFS mv/cp circular recursion prevention, FrameDecoder exponential buffer growth O(n) amortized, peer-store defensive JSON validation, wire handshake nonce NaN fail-closed, BFT pending buffer height gap cap (≤10), snapshot validateSnapshot account/storage/code size limits (DoS prevention), FindNode response peer object validation, SnapSync fail-closed single-peer trust, validators hash cross-peer consensus, fetchStateSnapshot 30s timeout + 16MiB limit + cache, state-snapshot independent rate limiter, state snapshot export TTL cache.
 - Manual Security Audit: GET auth wiring (fetchStateSnapshot + fetchPeerList attach x-p2p-auth signed header), trySync/tryPropose reentrant lock (syncInFlight/proposeInFlight guards), PeerDiscovery IP diversity quota (MAX_PEERS_PER_IP=3 anti-Sybil), BFT coordinator↔governance runtime sync (updateValidators on finalize + restoreGovernance), chain-snapshot endpoint auth + rate limit.

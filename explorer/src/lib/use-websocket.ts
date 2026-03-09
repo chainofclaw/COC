@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useCallback, useState } from 'react'
-import { WS_URL } from './provider'
+import { WS_URL } from './provider.ts'
 
 interface WsRpcResponse {
   jsonrpc: string

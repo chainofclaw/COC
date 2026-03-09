@@ -1,4 +1,4 @@
-import { RPC_URL } from './provider'
+import { RPC_URL } from './provider.ts'
 
 let rpcId = 1
 

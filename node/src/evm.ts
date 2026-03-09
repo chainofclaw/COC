@@ -202,6 +202,28 @@ export class EvmChain {
     this.blockNumber = 0n
   }
 
+  /**
+   * Checkpoint the VM state manager for speculative execution.
+   * Call commitState() on success or revertState() on failure.
+   */
+  async checkpointState(): Promise<void> {
+    await this.vm.stateManager.checkpoint()
+  }
+
+  /**
+   * Commit a previously checkpointed state (speculative execution succeeded).
+   */
+  async commitState(): Promise<void> {
+    await this.vm.stateManager.commit()
+  }
+
+  /**
+   * Revert to a previously checkpointed state (speculative execution failed).
+   */
+  async revertState(): Promise<void> {
+    await this.vm.stateManager.revert()
+  }
+
   getReceipt(txHash: string): TxReceipt | null {
     return this.receipts.get(txHash) ?? null
   }

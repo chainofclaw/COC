@@ -88,3 +88,12 @@ export const REWARD_LEAF_TYPES = {
     { name: "amount", type: "uint256" },
   ],
 } as const
+
+export const REWARD_MANIFEST_TYPES = {
+  RewardManifest: [
+    { name: "epochId", type: "uint64" },
+    { name: "rewardRoot", type: "bytes32" },
+    { name: "totalReward", type: "uint256" },
+    { name: "scoringInputsHash", type: "bytes32" },
+  ],
+} as const

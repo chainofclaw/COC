@@ -1,10 +1,12 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import type http from "node:http"
+import { join } from "node:path"
 import { ChainEngine } from "./chain-engine.ts"
 import { EvmChain } from "./evm.ts"
 import { startRpcServer } from "./rpc.ts"
 import { P2PNode } from "./p2p.ts"
+import { writeSettledRewardManifest, type RewardManifest } from "../../runtime/lib/reward-manifest.ts"
 
 async function rpcCall(port: number, method: string, params?: unknown[]) {
   const response = await fetch(`http://127.0.0.1:${port}`, {
@@ -21,13 +23,15 @@ test("RPC Extended Methods", async (t) => {
   const prevDevAccounts = process.env.COC_DEV_ACCOUNTS
   process.env.COC_DEV_ACCOUNTS = "1"
   const chainId = 18780
+  const dataDir = "/tmp/coc-rpc-ext-test-" + Date.now()
+  const rewardManifestDir = join(dataDir, "reward-manifests")
   const evm = await EvmChain.create(chainId)
   await evm.prefund([
     { address: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", balanceWei: "10000000000000000000000" },
   ])
   const chain = new ChainEngine(
     {
-      dataDir: "/tmp/coc-rpc-ext-test-" + Date.now(),
+      dataDir,
       nodeId: "node-1",
       validators: ["node-1"],
       finalityDepth: 3,
@@ -52,7 +56,22 @@ test("RPC Extended Methods", async (t) => {
   } as P2PNode
   const port = 18790 + Math.floor(Math.random() * 100)
 
-  const server: http.Server = startRpcServer("127.0.0.1", port, chainId, evm, chain, p2p)
+  const server: http.Server = startRpcServer("127.0.0.1", port, chainId, evm, chain, p2p, undefined, undefined, undefined, undefined, {
+    rewardManifestDir,
+    getBftEquivocations: () => [
+      {
+        rawEvidence: {
+          type: "bft-equivocation",
+          validatorId: "node-7",
+          height: "12",
+          phase: "prepare",
+          blockHash1: `0x${"aa".repeat(32)}`,
+          blockHash2: `0x${"bb".repeat(32)}`,
+          detectedAtMs: 1700000000000,
+        },
+      },
+    ],
+  })
   t.after(async () => {
     await new Promise<void>((resolve, reject) => {
       server.close((error) => {
@@ -64,6 +83,25 @@ test("RPC Extended Methods", async (t) => {
 
   // Wait for server startup
   await new Promise((resolve) => setTimeout(resolve, 100))
+
+  const settledManifest: RewardManifest = {
+    epochId: 7,
+    rewardRoot: `0x${"11".repeat(32)}`,
+    totalReward: "100",
+    slashTotal: "0",
+    treasuryDelta: "0",
+    leaves: [
+      { nodeId: `0x${"22".repeat(32)}`, amount: "100" },
+    ],
+    proofs: {
+      [`7:0x${"22".repeat(32)}`]: [`0x${"33".repeat(32)}`],
+    },
+    scoringInputsHash: `0x${"44".repeat(32)}`,
+    generatedAtMs: Date.now(),
+    settled: true,
+    settledAtMs: Date.now(),
+  }
+  writeSettledRewardManifest(rewardManifestDir, settledManifest)
 
   await t.test("eth_accounts returns test accounts", async () => {
     const accounts = await rpcCall(port, "eth_accounts")
@@ -276,6 +314,25 @@ test("RPC Extended Methods", async (t) => {
     assert.equal(stats.bft.enabled, false)
   })
 
+  await t.test("coc_getRewardManifest returns settled reward summary", async () => {
+    const manifest = await rpcCall(port, "coc_getRewardManifest", [7])
+    assert.ok(typeof manifest === "object")
+    assert.equal(manifest.epochId, 7)
+    assert.equal(manifest.rewardRoot, `0x${"11".repeat(32)}`)
+    assert.equal(manifest.totalReward, "100")
+    assert.equal(manifest.settled, true)
+    assert.equal(manifest.leaves, 1)
+  })
+
+  await t.test("coc_getRewardClaim returns proof payload", async () => {
+    const claim = await rpcCall(port, "coc_getRewardClaim", [7, `0x${"22".repeat(32)}`])
+    assert.ok(typeof claim === "object")
+    assert.equal(claim.epochId, 7)
+    assert.equal(claim.amount, "100")
+    assert.deepEqual(claim.proof, [`0x${"33".repeat(32)}`])
+    assert.equal(claim.settled, true)
+  })
+
   await t.test("coc_getBftStatus returns disabled status", async () => {
     const status = await rpcCall(port, "coc_getBftStatus")
     assert.ok(typeof status === "object")
@@ -301,6 +358,42 @@ test("RPC Extended Methods", async (t) => {
       () => rpcCall(port, "eth_nonExistentMethod"),
       (err: Error) => err.message.includes("not supported"),
     )
+  })
+
+  // PoW stub methods — COC uses PoSe consensus, no mining
+  await t.test("eth_getWork returns 3 zero hashes", async () => {
+    const result = await rpcCall(port, "eth_getWork")
+    assert.ok(Array.isArray(result))
+    assert.equal(result.length, 3)
+    for (const hash of result) {
+      assert.equal(hash, "0x" + "0".repeat(64))
+    }
+  })
+
+  await t.test("eth_submitWork returns false", async () => {
+    const result = await rpcCall(port, "eth_submitWork", ["0x1", "0x" + "0".repeat(64), "0x" + "0".repeat(64)])
+    assert.equal(result, false)
+  })
+
+  await t.test("eth_submitHashrate returns false", async () => {
+    const result = await rpcCall(port, "eth_submitHashrate", ["0x1", "0x" + "0".repeat(64)])
+    assert.equal(result, false)
+  })
+
+  await t.test("coc_getEquivocations maps persisted BFT evidence fields", async () => {
+    const result = await rpcCall(port, "coc_getEquivocations", [0])
+    assert.ok(Array.isArray(result))
+    assert.deepEqual(result, [
+      {
+        validatorId: "node-7",
+        height: "12",
+        vote1Hash: `0x${"aa".repeat(32)}`,
+        vote2Hash: `0x${"bb".repeat(32)}`,
+        timestamp: 1700000000000,
+        phase: "prepare",
+        type: "bft-equivocation",
+      },
+    ])
   })
 
   if (prevDevAccounts === undefined) {

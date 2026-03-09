@@ -45,6 +45,12 @@ export interface IStateTrie {
   iterateAccounts(): AsyncIterable<{ address: string; state: AccountState }>
   /** Iterate all storage slots for an address */
   iterateStorage(address: string): AsyncIterable<{ slot: string; value: string }>
+  /** Create a copy-on-write branch sharing the underlying data */
+  fork(): Promise<IStateTrie>
+  /** Merge branch differences back into this trie */
+  merge(branch: IStateTrie): Promise<void>
+  /** Discard a forked branch and release resources */
+  discard(): void
 }
 
 /**
@@ -510,6 +516,35 @@ export class PersistentStateTrie implements IStateTrie {
       evicted++
     }
   }
+
+  /** Create a COW branch: snapshot current state root, create independent instance */
+  async fork(): Promise<IStateTrie> {
+    const root = await this.commit()
+    const forked = new PersistentStateTrie(this.db, {
+      maxCachedTries: this.maxCachedTries,
+      maxAccountCache: this.maxAccountCache,
+    })
+    await forked.setStateRoot(root)
+    return forked
+  }
+
+  /** Merge all accounts from branch into this trie */
+  async merge(branch: IStateTrie): Promise<void> {
+    for await (const { address, state } of branch.iterateAccounts()) {
+      await this.put(address, state)
+      for await (const { slot, value } of branch.iterateStorage(address)) {
+        await this.putStorageAt(address, slot, value)
+      }
+    }
+    await this.commit()
+  }
+
+  /** Discard fork: clear caches and dirty tracking */
+  discard(): void {
+    this.accountCache.clear()
+    this.storageTries.clear()
+    this.dirtyAddresses.clear()
+  }
 }
 
 /**
@@ -626,5 +661,45 @@ export class InMemoryStateTrie implements IStateTrie {
 
   async close(): Promise<void> {
     // No-op for in-memory
+  }
+
+  /** COW fork: deep-copy all maps into a new InMemoryStateTrie */
+  async fork(): Promise<IStateTrie> {
+    const forked = new InMemoryStateTrie()
+    for (const [addr, state] of this.accounts) {
+      forked.accounts.set(addr, { ...state })
+    }
+    for (const [addr, slots] of this.storage) {
+      forked.storage.set(addr, new Map(slots))
+    }
+    for (const [hash, data] of this.code) {
+      forked.code.set(hash, new Uint8Array(data))
+    }
+    forked.lastRoot = this.lastRoot
+    return forked
+  }
+
+  /** Merge branch state into this trie (branch wins on conflict) */
+  async merge(branch: IStateTrie): Promise<void> {
+    for await (const { address, state } of branch.iterateAccounts()) {
+      this.accounts.set(address, { ...state })
+      for await (const { slot, value } of branch.iterateStorage(address)) {
+        let slots = this.storage.get(address)
+        if (!slots) {
+          slots = new Map()
+          this.storage.set(address, slots)
+        }
+        slots.set(slot, value)
+      }
+    }
+  }
+
+  /** Discard all state in this fork */
+  discard(): void {
+    this.accounts.clear()
+    this.storage.clear()
+    this.code.clear()
+    this.checkpoints.length = 0
+    this.lastRoot = null
   }
 }
