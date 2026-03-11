@@ -160,7 +160,7 @@ A more accurate characterization:
 
 ### 4.1 Available JSON-RPC Methods
 
-`node/src/rpc.ts` currently implements 86 JSON-RPC methods inside `handleRpcMethod()`, grouped by namespace:
+`node/src/rpc.ts` currently implements 95 JSON-RPC methods inside `handleRpcMethod()`, grouped by namespace:
 
 **eth_ — Standard Ethereum Methods**
 
@@ -189,8 +189,10 @@ A more accurate characterization:
 - Mining (stubs, COC does not do PoW)
   - `eth_mining`, `eth_hashrate`, `eth_coinbase`
   - `eth_getWork`, `eth_submitWork`, `eth_submitHashrate`
-- Compilation (stubs, returns not supported)
-  - `eth_compileSolidity`, `eth_compileLLL`, `eth_compileSerpent`, `eth_getCompilers`
+- Compilation (partial)
+  - `eth_getCompilers`
+  - `eth_compileSolidity` (compiled via lazily loaded workspace `solc`)
+  - `eth_compileLLL` and `eth_compileSerpent` remain unsupported
 
 **web3_ — Client Information**
 
@@ -203,8 +205,9 @@ A more accurate characterization:
 
 **debug_ / trace_ — Debugging (requires `COC_DEBUG_RPC=1`)**
 
-- `debug_traceTransaction`, `debug_traceBlockByNumber`
-- `trace_transaction`
+- `debug_traceTransaction`, `debug_traceBlockByNumber`, `debug_traceCall`
+- `trace_transaction`, `trace_call`, `trace_replayTransaction`, `trace_replayBlockTransactions`
+- `trace_rawTransaction`, `trace_block`, `trace_filter`, `trace_get`, `trace_callMany`
 
 **txpool_ — Transaction Pool**
 
@@ -297,8 +300,8 @@ The following methods are currently missing, simplified, or stubbed:
 |---|---|---|
 | `RPC: full EVM parity` | Missing | Repository explicitly marks as Missing |
 | `eth_createAccessList` | Available but still limited | Returns access-list entries and `gasUsed` from real execution, but edge-case parity with Geth is not guaranteed |
-| `debug_trace*` | Partial | Produces opcode-level `structLogs` from actual replayed execution, but method coverage and tracer ecosystem are still far behind Geth |
-| `eth_compile*` / `eth_getCompilers` | Unsupported | Returns not supported |
+| `debug_trace*` / `trace_*` | Partial | Supports `debug_traceCall`, `trace_call`, `trace_callMany`, `trace_replayTransaction`, `trace_replayBlockTransactions`, `trace_rawTransaction`, `trace_block`, `trace_filter`, and `trace_get`, producing replay-backed traces from real execution; `trace_transaction`, `trace_block`, `trace_filter`, and `trace_get` now consistently return localized OpenEthereum-style traces; `debug_traceCall`, `debug_traceTransaction`, and `debug_traceBlockByNumber` now also support the built-in `callTracer` and `prestateTracer`, with `callTracer.onlyTopCall`, `callTracer.withLog`, and best-effort ABI `revertReason` decoding for `Error(string)` / `Panic(uint256)`; unknown custom errors fall back to `CustomError(0x<selector>)`; plus `prestateTracer.diffMode`, `disableCode`, and `disableStorage`; `trace_filter` now supports `fromBlock/toBlock`, `fromAddress/toAddress`, and `after/count`, `trace_get` can resolve a single localized trace by `traceAddress`, and `trace_callMany` applies each simulated call on top of the previous call's resulting state; `vmTrace` now exports best-effort `code` and a depth-collapsed `sub` tree, while `stateDiff` combines access-list targets with storage observed in `structLogs`, and now covers created-contract `code/storage` changes as well, but it still falls short of full OpenEthereum semantics |
+| `eth_compile*` / `eth_getCompilers` | Partial | `eth_getCompilers` and `eth_compileSolidity` are now supported; `eth_compileSolidity` compiles source via lazily loaded `solc`, while `eth_compileLLL` / `eth_compileSerpent` still return unsupported |
 | `eth_mining` / `eth_hashrate` / `eth_coinbase` | Stubs | Returns fixed values (`false` / `"0x0"` / zero address) |
 | `eth_getWork` / `eth_submitWork` / `eth_submitHashrate` | Stubs | COC does not do PoW mining |
 | Uncle-related methods | Stubs | Returns `0x0` or `null` |
@@ -456,8 +459,10 @@ export PROWL_RPC_URL="http://127.0.0.1:18780"
 export PROWL_CHAIN_ID="18780"
 export DEPLOYER_PRIVATE_KEY="0xyour_private_key"
 
-npx hardhat run scripts/deploy-governance.js --network prowl
+npx hardhat run scripts/deploy-governance.js --network coc
 ```
+
+`contracts/hardhat.config.cjs` keeps `prowl` as a legacy alias, but `coc` is the preferred network name for new usage.
 
 This will deploy and wire up:
 

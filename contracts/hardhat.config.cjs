@@ -4,6 +4,14 @@ require("hardhat-gas-reporter")
 require("solidity-coverage")
 
 /** @type import('hardhat/config').HardhatUserConfig */
+const cocNetwork = {
+  url: process.env.COC_RPC_URL || process.env.PROWL_RPC_URL || "http://127.0.0.1:18780",
+  chainId: parseInt(process.env.COC_CHAIN_ID || process.env.PROWL_CHAIN_ID || "18780"),
+  accounts: process.env.DEPLOYER_PRIVATE_KEY
+    ? [process.env.DEPLOYER_PRIVATE_KEY]
+    : [],
+}
+
 module.exports = {
   solidity: {
     version: "0.8.24",
@@ -22,13 +30,8 @@ module.exports = {
     artifacts: "artifacts"
   },
   networks: {
-    prowl: {
-      url: process.env.PROWL_RPC_URL || "http://127.0.0.1:18780",
-      chainId: parseInt(process.env.PROWL_CHAIN_ID || "18780"),
-      accounts: process.env.DEPLOYER_PRIVATE_KEY
-        ? [process.env.DEPLOYER_PRIVATE_KEY]
-        : [],
-    },
+    coc: cocNetwork,
+    prowl: cocNetwork,
   },
   gasReporter: {
     enabled: process.env.REPORT_GAS === "true",

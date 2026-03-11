@@ -53,5 +53,11 @@ tmp/
 temp/
 *.tmp
 
+# Playwright MCP screenshots
+.playwright-mcp/
+
+# Codex plan files
+.codex/
+
 CLAUDE.zh.md
 docs/*.zh.md

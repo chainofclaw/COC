@@ -19,6 +19,8 @@ Status legend:
 - **RPC: tx/receipt schema parity** — Implemented (P1) — `COC/node/src/rpc.ts`, `COC/node/src/chain-engine-persistent.ts`
 - **RPC: eth_createAccessList** — Implemented (P2) — `COC/node/src/rpc.ts`, `COC/node/src/evm.ts`
 - **RPC: eth_getProof** — Implemented (P4) — `COC/node/src/rpc.ts`, `COC/node/src/storage/state-trie.ts`
+- **RPC: eth_getCompilers** — Implemented (post-P6, Solidity only) — `COC/node/src/rpc.ts`
+- **RPC: eth_compileSolidity** — Implemented (post-P6, lazy `solc`) — `COC/node/src/rpc.ts`
 - **RPC: real block header fields** — Implemented (M3) — `COC/node/src/block-header.ts`, `COC/node/src/rpc.ts`, `COC/node/src/chain-events.ts`
 - **RPC: full EVM parity** — Missing
 - **EVM hardfork configurability** — Implemented (P3) — `COC/node/src/config.ts`, `COC/node/src/evm.ts`
@@ -192,10 +194,24 @@ Status legend:
 ## Debug & Trace
 - **debug_traceTransaction** — Implemented (P2: replay-backed opcode-level) — `COC/node/src/debug-trace.ts`
 - **debug_traceBlockByNumber** — Implemented (P2: replay-backed opcode-level) — `COC/node/src/debug-trace.ts`
+- **debug_traceCall** — Implemented (post-P6 trace parity) — `COC/node/src/rpc.ts`, `COC/node/src/evm.ts`
 - **trace_transaction** — Implemented (P2: replay-backed, OpenEthereum format) — `COC/node/src/debug-trace.ts`
+- **trace_call** — Implemented (post-P6 trace parity) — `COC/node/src/rpc.ts`
+- **trace_replayTransaction** — Implemented (post-P6 trace parity) — `COC/node/src/rpc.ts`, `COC/node/src/debug-trace.ts`
+- **trace_replayBlockTransactions** — Implemented (post-P6 trace parity) — `COC/node/src/rpc.ts`, `COC/node/src/debug-trace.ts`
+- **trace_rawTransaction** — Implemented (post-P6 trace parity) — `COC/node/src/rpc.ts`, `COC/node/src/evm.ts`
+- **trace_block** — Implemented (post-P6 trace parity) — `COC/node/src/rpc.ts`, `COC/node/src/debug-trace.ts`
+- **trace_filter** — Implemented (post-P6 trace parity) — `COC/node/src/rpc.ts`, `COC/node/src/debug-trace.ts`
+- **trace_get** — Implemented (post-P6 trace parity) — `COC/node/src/rpc.ts`
+- **trace_callMany** — Implemented (post-P6 trace parity) — `COC/node/src/rpc.ts`, `COC/node/src/evm.ts`
+- **Built-in callTracer / prestateTracer** — Implemented (post-P6 trace parity) — `COC/node/src/rpc.ts`, `COC/node/src/evm.ts`
+- **Best-effort vmTrace / stateDiff** — Implemented (post-P6 trace parity) — `COC/node/src/rpc.ts`, `COC/node/src/evm.ts`
 
 ## EVM Compatibility Regression (P6)
 - **P0-P5 regression baseline** — Implemented (P6) — `COC/node/src/rpc-debug-compatibility.test.ts`, `COC/node/src/rpc-persistent.test.ts`
+- **Node workspace quality gate** — Implemented (`859` tests / `124` suites passing) — `COC/node/src/**/*.test.ts`
+- **Root tests workspace quality gate** — Implemented (`173` tests / `34` suites passing) — `COC/tests/**/*.test.ts`
+- **Repository-wide quality gate** — Implemented (`1558` tests / `144` files across repo workspaces, excluding vendored `node_modules` tests) — `COC/scripts/quality-gate.sh`
 
 ## Input Validation & Error Handling
 - **RPC parameter validation** — Implemented (Phase 27) — `COC/node/src/rpc.ts`

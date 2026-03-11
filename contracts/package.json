@@ -10,9 +10,9 @@
     "deploy:pose": "node --experimental-strip-types deploy/cli-deploy-pose.ts",
     "deploy:pose:coc": "node --experimental-strip-types deploy/cli-deploy-pose.ts --target l2-coc",
     "deploy:local": "npm run deploy:pose:coc",
+    "deploy:governance:coc": "hardhat run scripts/deploy-governance.js --network coc",
     "deploy:governance": "hardhat run scripts/deploy-governance.js --network prowl",
-    "deploy:governance:local": "hardhat run scripts/deploy-governance.js --network hardhat",
-    "verify:pose": "hardhat run scripts/verify-pose.js --network localhost"
+    "deploy:governance:local": "hardhat run scripts/deploy-governance.js --network hardhat"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-chai-matchers": "^2.0.8",

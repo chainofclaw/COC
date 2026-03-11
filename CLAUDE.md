@@ -43,7 +43,9 @@ npm test                 # Hardhat tests
 npm run coverage         # Coverage check
 npm run coverage:check   # Verify coverage thresholds
 npm run deploy:local     # Deploy to local network
-npm run verify:pose      # Verify PoSe contract
+npm run deploy:governance:coc   # Deploy governance contracts to the default COC network alias
+# Contract verification is exposed through explorer /verify,
+# not a Hardhat verify:pose script
 ```
 
 ### Run Devnet
@@ -66,7 +68,7 @@ npm start      # Production mode
 
 ### Quality Gate
 ```bash
-bash scripts/quality-gate.sh  # Run all unit, integration, and e2e tests
+bash scripts/quality-gate.sh  # Run repository-wide quality gate (node/runtime/services/tests/extensions/wallet/explorer/faucet/contracts)
 ```
 
 ### Node Operations Policies
@@ -74,35 +76,49 @@ Policy files are located at `nodeops/policies/*.yaml` and can be loaded and eval
 
 ## Test Strategy
 
-Uses Node.js built-in test framework (1409 tests across 140 test files):
-- **Node layer tests**: `node/src/*.test.ts node/src/**/*.test.ts` (839 tests) - chain engine, EVM, RPC, WebSocket, P2P, mempool, storage, IPFS, PoSe, BFT consensus, DHT, wire protocol, fork choice, state snapshot, wire server, DHT network, snap sync, consensus-BFT integration, consensus metrics, wire connection manager, wire tx relay, sync progress, gas histogram, governance stats, wire dedup/relay, security hardening, P2P auth, wire auth handshake, replay guard, nonce registry, PoSe auth, Prometheus metrics, BFT slashing, Phase 36 ops hardening, algorithm safety audit round 3, P2P benchmarks, wire priority frames, stateRoot verification, speculative execution, coc_getEquivocations
-- **Service layer tests**: `services/**/*.test.ts` + `nodeops/*.test.ts` + `tests/**/*.test.ts` (296 tests) - PoSe v2 services, reward tree, witness collector, contract reader, scoring determinism, e2e, expression evaluator, challenger rewards, deploy configs
-- **Runtime + wallet tests**: `runtime/lib/*.test.ts` + `runtime/*.test.ts` + `wallet/coc-wallet.test.ts` (79 tests) - pending retention, runtime metrics, agent metrics server, reward manifest, pose-v2 fault proof, relayer dispute recovery, BFT slash bridge, wallet CLI
-- **Contract tests**: `cd contracts && npm test` (171 tests) - PoSeManager v1, PoSeManagerV2, v2 E2E lifecycle, gas benchmarks, security audit, EIP-712 cross-check
-- **Extension tests**: `extensions/coc-nodeops/src/**/*.test.ts` (24 tests, 3 files) - node types, network presets, node manager
+Uses Node.js built-in test framework and Hardhat test runner (`1558` tests across `144` test files, excluding vendored `node_modules` tests):
+- **Node layer tests**: `node/src/*.test.ts node/src/**/*.test.ts` (`859` tests, `70` files) - chain engine, EVM, RPC, WebSocket, P2P, mempool, storage, IPFS, PoSe, BFT consensus, DHT, wire protocol, fork choice, state snapshot, wire server, DHT network, snap sync, consensus-BFT integration, consensus metrics, wire connection manager, wire tx relay, sync progress, gas histogram, governance stats, wire dedup/relay, security hardening, P2P auth, wire auth handshake, replay guard, nonce registry, PoSe auth, Prometheus metrics, BFT slashing, Phase 36 ops hardening, algorithm safety audit round 3, P2P benchmarks, wire priority frames, stateRoot verification, speculative execution, coc_getEquivocations
+- **Services + NodeOps tests**: `services/**/*.test.ts` + `nodeops/*.test.ts` (`164` tests, `25` files) - PoSe v2 services, reward tree, scoring determinism, challenger rewards, policy DSL, policy hot reload
+- **Runtime tests**: `runtime/lib/*.test.ts` + `runtime/coc-relayer.test.ts` (`72` tests, `16` files) - pending retention, runtime metrics, agent metrics server, reward manifest, pose-v2 fault proof, relayer dispute recovery, BFT slash bridge
+- **Tests workspace**: `tests/**/*.test.ts` (`173` tests, `13` files) - integration, e2e, stress, chaos, governance scripts, infra validation, v1 reward scoring
+- **Wallet tests**: `wallet/coc-wallet.test.ts` (`8` tests, `1` file) - wallet CLI, keystore, import/export, formatting
+- **Explorer tests**: `explorer/src/lib/*.test.ts` (`43` tests, `3` files) - ABI decoding, provider helpers, Solidity compiler version resolution
+- **Faucet tests**: `faucet/src/*.test.ts` (`26` tests, `3` files) - drip flow, web UI, server wiring, cooldown logic
+- **Contract deploy tests**: `contracts/deploy/*.test.ts` (`18` tests, `2` files) - deploy config resolution, CLI wrapper, PoSe deploy helper validation
+- **Contract tests**: `cd contracts && npm test` (`171` tests, `8` files) - PoSeManager v1, PoSeManagerV2, v2 E2E lifecycle, gas benchmarks, security audit, EIP-712 cross-check
+- **Extension tests**: `extensions/coc-nodeops/src/**/*.test.ts` (`24` tests, `3` files) - node types, network presets, node manager
 - **Storage layer tests**: `node/src/storage/*.test.ts` (included in node layer)
 
 Running tests:
 ```bash
-# Node layer tests (both root and subdirectory test files)
-cd node && node --experimental-strip-types --test --test-force-exit src/*.test.ts src/**/*.test.ts
+# Node layer tests
+cd /path/to/COC && node --experimental-strip-types --test $(find node/src -name '*.test.ts' -type f | sort)
 
-# Runtime lib tests
-cd /path/to/COC && node --experimental-strip-types --test --test-force-exit runtime/lib/*.test.ts
+# Runtime tests
+cd /path/to/COC && node --experimental-strip-types --test $(find runtime/lib -name '*.test.ts' -type f | sort) runtime/coc-relayer.test.ts
 
-# Service + ops + root tests
-cd /path/to/COC && node --experimental-strip-types --test --test-force-exit services/**/*.test.ts nodeops/*.test.ts tests/*.test.ts
+# Service + ops tests
+cd /path/to/COC && node --experimental-strip-types --test services/**/*.test.ts nodeops/*.test.ts
 
-# Integration + E2E tests
-cd /path/to/COC && node --experimental-strip-types --test --test-force-exit tests/integration/*.test.ts tests/e2e/*.test.ts
+# Tests workspace
+cd /path/to/COC && node --experimental-strip-types --test tests/**/*.test.ts
 
 # Wallet tests
-cd /path/to/COC && node --experimental-strip-types --test --test-force-exit wallet/coc-wallet.test.ts
+cd /path/to/COC && node --experimental-strip-types --test wallet/coc-wallet.test.ts
+
+# Explorer tests
+cd /path/to/COC && node --experimental-default-type=module --experimental-strip-types --test explorer/src/lib/*.test.ts
+
+# Faucet tests
+cd /path/to/COC && node --experimental-strip-types --test faucet/src/*.test.ts
 
 # Extension tests
 cd extensions/coc-nodeops && node --experimental-strip-types --test src/node-types.test.ts src/network-presets.test.ts src/runtime/node-manager.test.ts
 
-# Contract tests (including deploy config tests)
+# Contract deploy config tests
+cd /path/to/COC && node --experimental-default-type=module --experimental-strip-types --test contracts/deploy/*.test.ts
+
+# Contract tests
 cd contracts && npm test
 ```
 

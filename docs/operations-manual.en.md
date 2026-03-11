@@ -408,8 +408,8 @@ npm run deploy:local
 # Local PoSe deployment via the packaged Hardhat script
 npm run deploy:local
 
-# Governance deployment against the "prowl" network configured in Hardhat
-npm run deploy:governance
+# Governance deployment against the default COC Hardhat network alias
+npm run deploy:governance:coc
 ```
 
 `contracts/deploy/deploy-pose.ts` is a programmatic deployment helper, not a standalone Hardhat task in this repository. It provides validated preset targets for automation/tests:
@@ -423,14 +423,21 @@ npm run deploy:governance
 ### Governance Contract
 
 ```bash
-npx hardhat run scripts/deploy-governance.js --network prowl
+npx hardhat run scripts/deploy-governance.js --network coc
 ```
 
 ### Verify PoSe Contract
 
-```bash
-npm run verify:pose
-```
+COC does not currently ship a Hardhat `verify:pose` entrypoint or an Etherscan/Sourcify publication flow for `PoSeManagerV2`.
+
+Use the Explorer verification workflow instead:
+
+1. Open the Explorer `/verify` page
+2. Paste the deployed contract source
+3. Select the Solidity compiler version and optimization settings
+4. Submit the form so Explorer recompiles locally and compares against `eth_getCode`
+
+This is a local bytecode verification flow, not a public contract registry publication step.
 
 ### Hardhat Configuration
 
@@ -439,9 +446,13 @@ Solidity: 0.8.24
 Hardhat script networks:
   hardhat   -> in-memory local chain
   localhost -> local JSON-RPC endpoint
+  coc       -> COC_RPC_URL || PROWL_RPC_URL || http://127.0.0.1:18780
+               COC_CHAIN_ID || PROWL_CHAIN_ID || 18780
   prowl     -> PROWL_RPC_URL || http://127.0.0.1:18780
-               PROWL_CHAIN_ID || 20241224
+               PROWL_CHAIN_ID || 18780
 ```
+
+`prowl` remains available as a legacy alias, but `coc` is the preferred network name for new scripts and documentation.
 
 ---
 
