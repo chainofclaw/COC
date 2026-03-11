@@ -10,7 +10,7 @@ This document maps the whitepaper scope to the current codebase and test coverag
 - **Missing**: not implemented
 
 ## 1) Execution Layer (EVM)
-**Status: Partial (Enhanced in Phase 13.1 + 13.2 + 14 + 17 + 26)**
+**Status: Partial (Enhanced in Phase 13.1 + 13.2 + 14 + 17 + 26 + M3 + P0-P5)**
 
 Implemented:
 - In-memory EVM execution using `@ethereumjs/vm`
@@ -33,6 +33,13 @@ Implemented:
 
 - **M3**: Real block header view (transactionsRoot, receiptsRoot, logsBloom computed from Merkle tries, stateRoot from EVM state)
 - **M3**: Block header fields exposed in RPC formatBlock and WebSocket newHeads push
+- **P0**: Historical state-aware RPC reads (`eth_getBalance`, `eth_getTransactionCount`, `eth_getCode`, `eth_getStorageAt`, `eth_call`) via block tag / historical `stateRoot`
+- **P1**: Transaction / receipt schema parity improvements (`transactionIndex`, `contractAddress`, `effectiveGasPrice`, `chainId`, signature fields, contract creation metadata)
+- **P2**: Execution-derived access lists and replay-backed opcode-level debug trace (`eth_createAccessList`, `debug_trace*`, `trace_transaction`)
+- **P3**: Configurable EVM hardfork with Shanghai default (`COC_EVM_HARDFORK` / config file support)
+- **P4**: `eth_getProof` with current / historical `stateRoot` selection (EIP-1186-style response shape, COC account payload encoding)
+- **P5**: Formal PoSe deployment CLI, default `chainId` convergence to `18780`, EVM compatibility documentation sync
+- **P6**: Regression test baseline covering P0-P5 capabilities (historical state, tx/receipt schema, access list, debug trace, proof, hardfork, deploy CLI)
 
 Code:
 - `COC/node/src/evm.ts`
@@ -220,6 +227,7 @@ Implemented:
 - **M7**: V1 challenger reward allocation (`allocateChallengerRewards` — proportional by challenge count)
 - **M7**: L1/L2 deployment configuration (mainnet, sepolia, COC, arbitrum, optimism presets)
 - **M7**: Unified deploy script with parameter validation (`contracts/deploy/deploy-pose.ts`)
+- **P5**: Formal PoSe deployment CLI (`contracts/deploy/cli-deploy-pose.ts`) plus normalized default COC `chainId = 18780` across deployment examples and Hardhat defaults
 
 Code:
 - `COC/services/challenger/*`
@@ -229,6 +237,7 @@ Code:
 - `COC/contracts/deploy/l1-config.ts` (NEW - M7)
 - `COC/contracts/deploy/l2-config.ts` (NEW - M7)
 - `COC/contracts/deploy/deploy-pose.ts` (NEW - M7)
+- `COC/contracts/deploy/cli-deploy-pose.ts` (NEW - P5)
 - `COC/runtime/coc-node.ts`
 
 ## 7) PoSe Settlement (On‑chain)

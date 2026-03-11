@@ -15,8 +15,13 @@ Status legend:
 - **RPC: block/tx queries** — Implemented — `COC/node/src/rpc.ts`
 - **RPC: logs + filters** — Implemented (minimal) — `COC/node/src/rpc.ts`
 - **RPC: web3_sha3** — Implemented — `COC/node/src/rpc.ts`
+- **RPC: historical block-tag state reads** — Implemented (P0) — `COC/node/src/rpc.ts`, `COC/node/src/evm.ts`, `COC/node/src/storage/persistent-state-manager.ts`
+- **RPC: tx/receipt schema parity** — Implemented (P1) — `COC/node/src/rpc.ts`, `COC/node/src/chain-engine-persistent.ts`
+- **RPC: eth_createAccessList** — Implemented (P2) — `COC/node/src/rpc.ts`, `COC/node/src/evm.ts`
+- **RPC: eth_getProof** — Implemented (P4) — `COC/node/src/rpc.ts`, `COC/node/src/storage/state-trie.ts`
 - **RPC: real block header fields** — Implemented (M3) — `COC/node/src/block-header.ts`, `COC/node/src/rpc.ts`, `COC/node/src/chain-events.ts`
 - **RPC: full EVM parity** — Missing
+- **EVM hardfork configurability** — Implemented (P3) — `COC/node/src/config.ts`, `COC/node/src/evm.ts`
 
 ## Consensus & Chain
 - **Proposer rotation** — Implemented — `COC/node/src/chain-engine.ts`
@@ -112,6 +117,7 @@ Status legend:
 - **EIP-712 cross-check (TS ↔ Solidity)** — Implemented — `COC/contracts/test/eip712-crosscheck.test.cjs`
 - **L1/L2 deployment configs** — Implemented (M7) — `COC/contracts/deploy/l1-config.ts`, `COC/contracts/deploy/l2-config.ts`
 - **PoSe deploy script** — Implemented (M7) — `COC/contracts/deploy/deploy-pose.ts`
+- **PoSe deploy CLI** — Implemented (P5) — `COC/contracts/deploy/cli-deploy-pose.ts`
 
 ## Runtime Services
 - **coc-node HTTP endpoints** — Runtime-wired — `COC/runtime/coc-node.ts` (dual-version signing, `/pose/witness`)
@@ -184,9 +190,12 @@ Status legend:
 - **Health checker** — Implemented (memory/WS/storage diagnostics) — `COC/node/src/health.ts`
 
 ## Debug & Trace
-- **debug_traceTransaction** — Implemented — `COC/node/src/debug-trace.ts`
-- **debug_traceBlockByNumber** — Implemented — `COC/node/src/debug-trace.ts`
-- **trace_transaction** — Implemented (OpenEthereum format) — `COC/node/src/debug-trace.ts`
+- **debug_traceTransaction** — Implemented (P2: replay-backed opcode-level) — `COC/node/src/debug-trace.ts`
+- **debug_traceBlockByNumber** — Implemented (P2: replay-backed opcode-level) — `COC/node/src/debug-trace.ts`
+- **trace_transaction** — Implemented (P2: replay-backed, OpenEthereum format) — `COC/node/src/debug-trace.ts`
+
+## EVM Compatibility Regression (P6)
+- **P0-P5 regression baseline** — Implemented (P6) — `COC/node/src/rpc-debug-compatibility.test.ts`, `COC/node/src/rpc-persistent.test.ts`
 
 ## Input Validation & Error Handling
 - **RPC parameter validation** — Implemented (Phase 27) — `COC/node/src/rpc.ts`
