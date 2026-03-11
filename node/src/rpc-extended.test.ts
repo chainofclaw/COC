@@ -214,6 +214,40 @@ test("RPC Extended Methods", async (t) => {
     assert.ok(fee.startsWith("0x"))
   })
 
+  await t.test("eth_getCompilers returns available compiler list", async () => {
+    const compilers = await rpcCall(port, "eth_getCompilers")
+    assert.deepEqual(compilers, ["solidity"])
+  })
+
+  await t.test("eth_compileSolidity compiles source and returns ABI plus bytecode", async () => {
+    const result = await rpcCall(port, "eth_compileSolidity", [
+      "pragma solidity ^0.8.0; contract Sample { function value() external pure returns (uint256) { return 42; } }",
+    ]) as Record<string, {
+      code: string
+      runtimeCode: string
+      info: {
+        source: string
+        compilerVersion: string
+        abiDefinition: Array<{ name?: string; type?: string }>
+      }
+    }>
+
+    assert.ok(result.Sample)
+    assert.ok(result.Sample.code.startsWith("0x"))
+    assert.ok(result.Sample.code.length > 2)
+    assert.ok(result.Sample.runtimeCode.startsWith("0x"))
+    assert.equal(result.Sample.info.source.includes("contract Sample"), true)
+    assert.ok(result.Sample.info.compilerVersion.length > 0)
+    assert.ok(result.Sample.info.abiDefinition.some((entry) => entry.type === "function" && entry.name === "value"))
+  })
+
+  await t.test("eth_compileSolidity rejects invalid source", async () => {
+    await assert.rejects(
+      () => rpcCall(port, "eth_compileSolidity", ["pragma solidity ^0.8.0; contract Broken {"]),
+      /ParserError|compilation/i,
+    )
+  })
+
   await t.test("eth_newBlockFilter returns filter id", async () => {
     const id = await rpcCall(port, "eth_newBlockFilter")
     assert.ok(typeof id === "string")

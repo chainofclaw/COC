@@ -11,13 +11,14 @@ import { registerPoseRoutes, handlePoseRequest } from "./pose-http.ts"
 import type { PoseInboundAuthOptions } from "./pose-http.ts"
 import { keccak256Hex } from "../../services/relayer/keccak256.ts"
 import { calculateBaseFee, genesisBaseFee } from "./base-fee.ts"
-import { traceTransaction, traceBlockByNumber, traceTransactionCalls } from "./debug-trace.ts"
+import { traceBlockTransactions, traceTransactionResult } from "./debug-trace.ts"
 import type { BftCoordinator } from "./bft-coordinator.ts"
 import { RateLimiter } from "./rate-limiter.ts"
 import { createLogger } from "./logger.ts"
 import { buildBlockHeaderView } from "./block-header.ts"
 import { aggregateBlockLogsBloom } from "./block-header.ts"
 import { lookupRewardClaim, readBestRewardManifest } from "../../runtime/lib/reward-manifest.ts"
+import type { CallTrace, CallTraceResult, TxTraceResult } from "./trace-types.ts"
 
 const log = createLogger("rpc")
 
@@ -29,6 +30,7 @@ const FILTER_TTL_MS = 5 * 60 * 1000 // 5 minutes
 const CHAIN_STATS_CACHE_TTL_MS = 5_000
 let chainStatsCache: { result: unknown; height: bigint; cachedAtMs: number } | null = null
 let chainStatsComputing: Promise<unknown> | null = null
+let solcLoaderPromise: Promise<{ compile(input: string): string; version(): string }> | null = null
 
 const FILTER_CLEANUP_THROTTLE_MS = 30_000 // run cleanup at most once per 30s
 let lastFilterCleanupMs = 0
@@ -703,16 +705,36 @@ async function handleRpc(
         gasUsed: `0x${result.gasUsed.toString(16)}`,
       }
     }
+    case "debug_traceCall": {
+      if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
+      const callParams = ((payload.params ?? [])[0] ?? {}) as Record<string, string>
+      const stateRoot = await resolveHistoricalStateRoot((payload.params ?? [])[1], chain)
+      const traceOpts = ((payload.params ?? [])[2] ?? {}) as Record<string, unknown>
+      const result = await evm.traceCall({
+        from: callParams.from,
+        to: callParams.to ?? "",
+        data: callParams.data,
+        value: callParams.value,
+        gas: callParams.gas,
+      }, {
+        disableStorage: Boolean(traceOpts.disableStorage),
+        disableMemory: Boolean(traceOpts.disableMemory),
+        disableStack: Boolean(traceOpts.disableStack),
+        tracer: traceOpts.tracer ? String(traceOpts.tracer) : undefined,
+      }, stateRoot)
+      return formatDebugTraceResult(result, traceOpts)
+    }
     case "debug_traceTransaction": {
       if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
       const txHash = String((payload.params ?? [])[0] ?? "") as Hex
       const traceOpts = ((payload.params ?? [])[1] ?? {}) as Record<string, unknown>
-      return await traceTransaction(txHash, chain, evm, {
+      const traceResult = await traceTransactionResult(txHash, chain, evm, {
         disableStorage: Boolean(traceOpts.disableStorage),
         disableMemory: Boolean(traceOpts.disableMemory),
         disableStack: Boolean(traceOpts.disableStack),
         tracer: traceOpts.tracer ? String(traceOpts.tracer) : undefined,
       })
+      return formatDebugTraceResult(traceResult, traceOpts)
     }
     case "debug_traceBlockByNumber": {
       if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
@@ -720,16 +742,115 @@ async function handleRpc(
       const traceHeight = await Promise.resolve(chain.getHeight())
       const traceBlockNum = blockTag === "latest" ? traceHeight : safeBigInt(blockTag)
       const traceOpts2 = ((payload.params ?? [])[1] ?? {}) as Record<string, unknown>
-      return await traceBlockByNumber(traceBlockNum, chain, evm, {
+      const traced = await traceBlockTransactions(traceBlockNum, chain, evm, {
         disableStorage: Boolean(traceOpts2.disableStorage),
         disableMemory: Boolean(traceOpts2.disableMemory),
         disableStack: Boolean(traceOpts2.disableStack),
+        tracer: traceOpts2.tracer ? String(traceOpts2.tracer) : undefined,
       })
+      return traced.map((entry) => ({
+        txHash: entry.txHash,
+        result: formatDebugTraceResult(entry, traceOpts2),
+      }))
     }
     case "trace_transaction": {
       if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
       const txHash = String((payload.params ?? [])[0] ?? "") as Hex
-      return await traceTransactionCalls(txHash, chain, evm)
+      const txContext = await locateTraceTransactionContext(chain, txHash)
+      if (!txContext) {
+        throw new Error(`transaction not found: ${txHash}`)
+      }
+      const result = await traceTransactionResult(txHash, chain, evm)
+      return formatLocalizedOpenEthereumCallTraces(result.callTraces, txContext)
+    }
+    case "trace_call": {
+      if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
+      const callParams = ((payload.params ?? [])[0] ?? {}) as Record<string, string>
+      const traceTypes = normalizeReplayTraceTypes((payload.params ?? [])[1])
+      const stateRoot = await resolveHistoricalStateRoot((payload.params ?? [])[2], chain)
+      const result = await evm.traceCall({
+        from: callParams.from,
+        to: callParams.to ?? "",
+        data: callParams.data,
+        value: callParams.value,
+        gas: callParams.gas,
+      }, {}, stateRoot)
+      return formatTraceReplayResult(result, traceTypes)
+    }
+    case "trace_callMany": {
+      if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
+      const callRequests = normalizeTraceCallManyRequests((payload.params ?? [])[0])
+      const stateRoot = await resolveHistoricalStateRoot((payload.params ?? [])[1], chain)
+      const results = await evm.traceCallMany(
+        callRequests.map((request) => request.call),
+        {},
+        stateRoot,
+      )
+      return results.map((result, index) => formatTraceReplayResult(result, callRequests[index].traceTypes))
+    }
+    case "trace_replayTransaction": {
+      if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
+      const txHash = String((payload.params ?? [])[0] ?? "") as Hex
+      const traceTypes = normalizeReplayTraceTypes((payload.params ?? [])[1])
+      const result = await traceTransactionResult(txHash, chain, evm)
+      return formatTraceReplayResult(result, traceTypes)
+    }
+    case "trace_replayBlockTransactions": {
+      if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
+      const blockTag = String((payload.params ?? [])[0] ?? "latest")
+      const traceTypes = normalizeReplayTraceTypes((payload.params ?? [])[1])
+      const traceHeight = await Promise.resolve(chain.getHeight())
+      const blockNumber = blockTag === "latest" ? traceHeight : safeBigInt(blockTag)
+      const results = await traceBlockTransactions(blockNumber, chain, evm)
+      return results.map((result) => formatTraceReplayResult(result, traceTypes))
+    }
+    case "trace_rawTransaction": {
+      if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
+      const rawTx = String((payload.params ?? [])[0] ?? "")
+      const traceTypes = normalizeReplayTraceTypes((payload.params ?? [])[1])
+      const result = await evm.traceRawTxOnState(rawTx)
+      return formatTraceReplayResult(result, traceTypes)
+    }
+    case "trace_block": {
+      if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
+      const blockTag = String((payload.params ?? [])[0] ?? "latest")
+      const traceHeight = await Promise.resolve(chain.getHeight())
+      const blockNumber = blockTag === "latest" ? traceHeight : safeBigInt(blockTag)
+      const block = await Promise.resolve(chain.getBlockByNumber(blockNumber))
+      if (!block) {
+        throw new Error(`block not found: ${blockTag}`)
+      }
+      const traces = await traceBlockTransactions(blockNumber, chain, evm)
+      return traces.flatMap((traceResult, txIndex) =>
+        formatLocalizedOpenEthereumCallTraces(traceResult.callTraces, {
+          blockHash: block.hash,
+          blockNumber,
+          transactionHash: traceResult.txHash,
+          transactionPosition: txIndex,
+        }),
+      )
+    }
+    case "trace_filter": {
+      if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
+      const query = ((payload.params ?? [])[0] ?? {}) as Record<string, unknown>
+      return await queryTraceFilter(chain, evm, query)
+    }
+    case "trace_get": {
+      if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
+      const txHash = String((payload.params ?? [])[0] ?? "") as Hex
+      const traceAddress = normalizeTraceAddressPath((payload.params ?? [])[1])
+      const txContext = await locateTraceTransactionContext(chain, txHash)
+      if (!txContext) {
+        throw new Error(`transaction not found: ${txHash}`)
+      }
+      const result = await traceTransactionResult(txHash, chain, evm)
+      const matched = result.callTraces.find((callTrace) =>
+        traceAddressEquals(callTrace.traceAddress ?? [], traceAddress)
+      )
+      if (!matched) {
+        return null
+      }
+      return formatLocalizedOpenEthereumCallTraces([matched], txContext)[0] ?? null
     }
     case "eth_getBlockTransactionCountByHash": {
       const hash = String((payload.params ?? [])[0] ?? "") as Hex
@@ -871,11 +992,18 @@ async function handleRpc(
       return "0x0"
     case "eth_coinbase":
       return "0x0000000000000000000000000000000000000000"
-    case "eth_compileSolidity":
+    case "eth_getCompilers":
+      return ["solidity"]
+    case "eth_compileSolidity": {
+      const source = String((payload.params ?? [])[0] ?? "")
+      if (source.trim().length === 0) {
+        throw { code: -32602, message: "invalid Solidity source: expected non-empty source string" }
+      }
+      return await compileSoliditySource(source)
+    }
     case "eth_compileLLL":
     case "eth_compileSerpent":
-    case "eth_getCompilers":
-      throw new Error("compilation methods are not supported")
+      throw new Error(`${payload.method} is not supported`)
     case "eth_getBlockReceipts": {
       const tag = String((payload.params ?? [])[0] ?? "latest")
       const height = await Promise.resolve(chain.getHeight())
@@ -1519,6 +1647,536 @@ async function resolveHistoricalStateRoot(input: unknown, chain: IChainEngine): 
   return block.stateRoot
 }
 
+type ReplayTraceType = "trace" | "vmTrace" | "stateDiff"
+
+function formatDebugTraceResult(
+  result:
+    | Pick<CallTraceResult, "callTraces" | "trace" | "prestate" | "poststate">
+    | Pick<TxTraceResult, "callTraces" | "trace" | "prestate" | "poststate">,
+  traceOpts: Record<string, unknown>,
+): unknown {
+  const tracer = traceOpts.tracer ? String(traceOpts.tracer) : undefined
+  if (!tracer) {
+    return result.trace
+  }
+  if (tracer === "callTracer") {
+    return formatGethCallTracer(result.callTraces, (traceOpts.tracerConfig ?? {}) as Record<string, unknown>)
+  }
+  if (tracer === "prestateTracer") {
+    return formatGethPrestateTracer(
+      result.prestate ?? {},
+      result.poststate ?? {},
+      (traceOpts.tracerConfig ?? {}) as Record<string, unknown>,
+    )
+  }
+  throw { code: -32602, message: `unsupported tracer: ${tracer}` }
+}
+
+function normalizeReplayTraceTypes(input: unknown): ReplayTraceType[] {
+  if (input === undefined || input === null) return ["trace"]
+  if (!Array.isArray(input) || input.length === 0) return ["trace"]
+  const normalized: ReplayTraceType[] = []
+  for (const rawType of input) {
+    if (rawType !== "trace" && rawType !== "vmTrace" && rawType !== "stateDiff") {
+      throw { code: -32602, message: `invalid trace type: ${String(rawType)}` }
+    }
+    normalized.push(rawType)
+  }
+  return normalized
+}
+
+function normalizeTraceCallManyRequests(input: unknown): Array<{
+  call: { from?: string; to: string; data?: string; value?: string; gas?: string }
+  traceTypes: ReplayTraceType[]
+}> {
+  if (!Array.isArray(input)) {
+    throw { code: -32602, message: "invalid trace_callMany payload: expected array" }
+  }
+  return input.map((entry, index) => {
+    if (!Array.isArray(entry) || entry.length < 2) {
+      throw { code: -32602, message: `invalid trace_callMany entry at index ${index}` }
+    }
+    const [call, traceTypes] = entry
+    const callParams = (call ?? {}) as Record<string, string>
+    if (typeof callParams !== "object" || callParams === null) {
+      throw { code: -32602, message: `invalid trace_callMany call at index ${index}` }
+    }
+    return {
+      call: {
+        from: callParams.from,
+        to: callParams.to ?? "",
+        data: callParams.data,
+        value: callParams.value,
+        gas: callParams.gas,
+      },
+      traceTypes: normalizeReplayTraceTypes(traceTypes),
+    }
+  })
+}
+
+function formatTraceReplayResult(
+  result: Pick<CallTraceResult, "returnValue" | "callTraces" | "trace" | "stateDiff" | "poststate"> | Pick<TxTraceResult, "returnValue" | "callTraces" | "trace" | "stateDiff" | "poststate">,
+  traceTypes: ReplayTraceType[],
+): Record<string, unknown> {
+  const response: Record<string, unknown> = {
+    output: result.returnValue,
+  }
+  if (traceTypes.includes("trace")) {
+    response.trace = formatOpenEthereumCallTraces(result.callTraces)
+  }
+  if (traceTypes.includes("vmTrace")) {
+    response.vmTrace = formatVmTrace(result.trace, result.callTraces, result.poststate)
+  }
+  if (traceTypes.includes("stateDiff")) {
+    response.stateDiff = result.stateDiff ?? {}
+  }
+  return response
+}
+
+function formatOpenEthereumCallTraces(callTraces: CallTrace[]): unknown[] {
+  return callTraces.map((callTrace) => {
+    const traceAddress = callTrace.traceAddress ?? []
+    const subtraces = callTrace.subtraces ?? 0
+    const type = callTrace.type.toLowerCase()
+
+    if (type === "create") {
+      const createTrace: Record<string, unknown> = {
+        action: {
+          from: callTrace.from,
+          gas: callTrace.gas,
+          init: callTrace.input,
+          value: callTrace.value,
+        },
+        subtraces,
+        traceAddress,
+        type: "create",
+      }
+      if (callTrace.error) {
+        createTrace.error = callTrace.error
+      } else {
+        createTrace.result = {
+          address: callTrace.to,
+          code: callTrace.output,
+          gasUsed: callTrace.gasUsed,
+        }
+      }
+      return createTrace
+    }
+
+    const callEntry: Record<string, unknown> = {
+      action: {
+        callType: type,
+        from: callTrace.from,
+        to: callTrace.to,
+        gas: callTrace.gas,
+        input: callTrace.input,
+        value: callTrace.value,
+      },
+      subtraces,
+      traceAddress,
+      type: "call",
+    }
+    if (callTrace.error) {
+      callEntry.error = callTrace.error
+    } else {
+      callEntry.result = {
+        gasUsed: callTrace.gasUsed,
+        output: callTrace.output,
+      }
+    }
+    return callEntry
+  })
+}
+
+function formatLocalizedOpenEthereumCallTraces(
+  callTraces: CallTrace[],
+  context: { blockHash: string; blockNumber: bigint; transactionHash: string; transactionPosition: number },
+): unknown[] {
+  return formatOpenEthereumCallTraces(callTraces).map((trace) => ({
+    ...trace as Record<string, unknown>,
+    blockHash: context.blockHash,
+    blockNumber: toRpcQuantity(context.blockNumber),
+    transactionHash: context.transactionHash,
+    transactionPosition: toRpcQuantity(context.transactionPosition),
+  }))
+}
+
+function formatVmTrace(
+  trace: { structLogs: Array<{ pc: number; op: string; gas: string; gasCost: string; depth?: number; memory: string[]; stack: string[]; storage: Record<string, string> }> },
+  callTraces: CallTrace[],
+  poststate?: Record<string, unknown>,
+): Record<string, unknown> {
+  if (trace.structLogs.length === 0) {
+    return { code: resolveVmTraceCode(callTraces[0], poststate), ops: [] }
+  }
+
+  const sortedCallTraces = [...callTraces].sort((left, right) => compareTraceAddress(left.traceAddress ?? [], right.traceAddress ?? []))
+  const rootDepth = trace.structLogs[0]?.depth ?? 0
+  const built = buildVmTraceFrame(trace.structLogs, 0, rootDepth, sortedCallTraces, 0, poststate)
+  return built.trace
+}
+
+function buildVmTraceFrame(
+  structLogs: Array<{ pc: number; op: string; gas: string; gasCost: string; depth?: number; memory: string[]; stack: string[]; storage: Record<string, string> }>,
+  startIndex: number,
+  depth: number,
+  callTraces: CallTrace[],
+  callIndex: number,
+  poststate?: Record<string, unknown>,
+): { trace: Record<string, unknown>; nextStepIndex: number; nextCallIndex: number } {
+  const currentCall = callTraces[callIndex]
+  const ops: Array<Record<string, unknown>> = []
+  let stepIndex = startIndex
+  let nextCallIndex = currentCall ? callIndex + 1 : callIndex
+
+  while (stepIndex < structLogs.length) {
+    const step = structLogs[stepIndex]
+    const stepDepth = step.depth ?? depth
+    if (stepDepth < depth) {
+      break
+    }
+    if (stepDepth > depth) {
+      const nested = buildVmTraceFrame(structLogs, stepIndex, stepDepth, callTraces, nextCallIndex, poststate)
+      stepIndex = nested.nextStepIndex
+      nextCallIndex = nested.nextCallIndex
+      if (ops.length > 0) {
+        ops[ops.length - 1].sub = nested.trace
+      }
+      continue
+    }
+
+    const opNode: Record<string, unknown> = {
+      idx: stepIndex,
+      pc: step.pc,
+      op: step.op,
+      cost: step.gasCost,
+      ex: {
+        used: step.gas,
+        push: step.stack.length > 0 ? step.stack[step.stack.length - 1] : null,
+        mem: step.memory.length > 0 ? step.memory : undefined,
+        store: Object.keys(step.storage).length > 0 ? step.storage : undefined,
+      },
+      sub: null,
+    }
+    ops.push(opNode)
+    stepIndex += 1
+  }
+
+  return {
+    trace: {
+      code: resolveVmTraceCode(currentCall, poststate),
+      ops,
+    },
+    nextStepIndex: stepIndex,
+    nextCallIndex,
+  }
+}
+
+function resolveVmTraceCode(callTrace: CallTrace | undefined, poststate?: Record<string, unknown>): string | null {
+  if (!callTrace) {
+    return null
+  }
+  if (callTrace.type.toLowerCase() === "create") {
+    return callTrace.input !== "0x" ? callTrace.input : null
+  }
+  const address = callTrace.to.toLowerCase()
+  const entry = (poststate?.[address] ?? null) as { code?: unknown } | null
+  return typeof entry?.code === "string" ? entry.code : null
+}
+
+function compareTraceAddress(left: number[], right: number[]): number {
+  const length = Math.min(left.length, right.length)
+  for (let index = 0; index < length; index++) {
+    if (left[index] !== right[index]) {
+      return left[index] - right[index]
+    }
+  }
+  return left.length - right.length
+}
+
+function formatGethCallTracer(callTraces: CallTrace[], tracerConfig: Record<string, unknown>): Record<string, unknown> {
+  if (callTraces.length === 0) {
+    return {}
+  }
+
+  const onlyTopCall = tracerConfig.onlyTopCall === true
+  const nodes = new Map<string, Record<string, unknown>>()
+  let root: Record<string, unknown> | null = null
+
+  for (const callTrace of callTraces) {
+    const traceAddress = callTrace.traceAddress ?? []
+    const key = traceAddress.join("/")
+    const node = applyCallTracerConfig(
+      formatGethCallTracerNode(callTrace),
+      callTrace,
+      tracerConfig,
+    )
+    nodes.set(key, node)
+
+    if (traceAddress.length === 0) {
+      root = node
+      continue
+    }
+
+    if (onlyTopCall) {
+      continue
+    }
+
+    const parent = nodes.get(traceAddress.slice(0, -1).join("/"))
+    if (!parent) {
+      continue
+    }
+    const existingCalls = (parent.calls as Record<string, unknown>[] | undefined) ?? []
+    existingCalls.push(node)
+    parent.calls = existingCalls
+  }
+  return root ?? applyCallTracerConfig(formatGethCallTracerNode(callTraces[0]), callTraces[0], tracerConfig)
+}
+
+function formatGethCallTracerNode(callTrace: CallTrace): Record<string, unknown> {
+  const type = callTrace.type.toUpperCase()
+  const node: Record<string, unknown> = {
+    type,
+    from: callTrace.from,
+    to: callTrace.to,
+    value: callTrace.value,
+    gas: callTrace.gas,
+    gasUsed: callTrace.gasUsed,
+    input: callTrace.input,
+    output: callTrace.output,
+  }
+
+  if (type === "CREATE") {
+    node.input = callTrace.input
+    node.output = callTrace.output
+  }
+  if (callTrace.error) {
+    node.error = callTrace.error
+  }
+  if (callTrace.revertReason) {
+    node.revertReason = callTrace.revertReason
+  }
+  return node
+}
+
+function applyCallTracerConfig(
+  node: Record<string, unknown>,
+  callTrace: CallTrace,
+  tracerConfig: Record<string, unknown>,
+): Record<string, unknown> {
+  if (tracerConfig.withLog === true && Array.isArray(callTrace.logs) && callTrace.logs.length > 0) {
+    node.logs = callTrace.logs.map((log) => ({
+      address: log.address,
+      topics: log.topics,
+      data: log.data,
+    }))
+  }
+  return node
+}
+
+function formatGethPrestateTracer(
+  prestate: Record<string, unknown>,
+  poststate: Record<string, unknown>,
+  tracerConfig: Record<string, unknown>,
+): Record<string, unknown> {
+  if (tracerConfig.diffMode === true) {
+    return applyPrestateTracerConfigToDiff(buildGethPrestateDiff(prestate, poststate), tracerConfig)
+  }
+  return applyPrestateTracerConfigToEntries(prestate, tracerConfig)
+}
+
+function applyPrestateTracerConfigToEntries(
+  entries: Record<string, unknown>,
+  tracerConfig: Record<string, unknown>,
+): Record<string, unknown> {
+  const disableCode = tracerConfig.disableCode === true
+  const disableStorage = tracerConfig.disableStorage === true
+  if (!disableCode && !disableStorage) {
+    return entries
+  }
+
+  const filtered: Record<string, unknown> = {}
+  for (const [address, rawEntry] of Object.entries(entries)) {
+    const entry = { ...(rawEntry as Record<string, unknown>) }
+    if (disableCode) {
+      delete entry.code
+    }
+    if (disableStorage) {
+      delete entry.storage
+    }
+    filtered[address] = entry
+  }
+  return filtered
+}
+
+function applyPrestateTracerConfigToDiff(
+  diff: Record<string, unknown>,
+  tracerConfig: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    pre: applyPrestateTracerConfigToEntries((diff.pre ?? {}) as Record<string, unknown>, tracerConfig),
+    post: applyPrestateTracerConfigToEntries((diff.post ?? {}) as Record<string, unknown>, tracerConfig),
+  }
+}
+
+function buildGethPrestateDiff(
+  prestate: Record<string, unknown>,
+  poststate: Record<string, unknown>,
+): Record<string, unknown> {
+  const pre: Record<string, unknown> = {}
+  const post: Record<string, unknown> = {}
+  const addresses = new Set([...Object.keys(prestate), ...Object.keys(poststate)])
+
+  for (const address of addresses) {
+    const before = (prestate[address] ?? {}) as Record<string, unknown>
+    const after = (poststate[address] ?? {}) as Record<string, unknown>
+    const preEntry: Record<string, unknown> = {}
+    const postEntry: Record<string, unknown> = {}
+
+    collectPrestateFieldDiff("balance", before, after, preEntry, postEntry)
+    collectPrestateFieldDiff("nonce", before, after, preEntry, postEntry)
+    collectPrestateFieldDiff("code", before, after, preEntry, postEntry)
+
+    const preStorage = (before.storage ?? {}) as Record<string, unknown>
+    const postStorage = (after.storage ?? {}) as Record<string, unknown>
+    const storageKeys = new Set([...Object.keys(preStorage), ...Object.keys(postStorage)])
+    const preStorageDiff: Record<string, unknown> = {}
+    const postStorageDiff: Record<string, unknown> = {}
+    for (const key of storageKeys) {
+      if (preStorage[key] === postStorage[key]) continue
+      if (preStorage[key] !== undefined) preStorageDiff[key] = preStorage[key]
+      if (postStorage[key] !== undefined) postStorageDiff[key] = postStorage[key]
+    }
+    if (Object.keys(preStorageDiff).length > 0) {
+      preEntry.storage = preStorageDiff
+    }
+    if (Object.keys(postStorageDiff).length > 0) {
+      postEntry.storage = postStorageDiff
+    }
+
+    if (Object.keys(preEntry).length > 0) {
+      pre[address] = preEntry
+    }
+    if (Object.keys(postEntry).length > 0) {
+      post[address] = postEntry
+    }
+  }
+
+  return { pre, post }
+}
+
+function collectPrestateFieldDiff(
+  field: "balance" | "nonce" | "code",
+  before: Record<string, unknown>,
+  after: Record<string, unknown>,
+  preEntry: Record<string, unknown>,
+  postEntry: Record<string, unknown>,
+): void {
+  if (before[field] === after[field]) {
+    return
+  }
+  if (before[field] !== undefined) {
+    preEntry[field] = before[field]
+  }
+  if (after[field] !== undefined) {
+    postEntry[field] = after[field]
+  }
+}
+
+async function loadSolcCompiler(): Promise<{ compile(input: string): string; version(): string }> {
+  if (!solcLoaderPromise) {
+    solcLoaderPromise = import("solc")
+      .then((module) => {
+        const solc = (module.default ?? module) as { compile?: (input: string) => string; version?: () => string }
+        if (typeof solc.compile !== "function" || typeof solc.version !== "function") {
+          throw new Error("solc module does not expose compile/version")
+        }
+        return {
+          compile: solc.compile.bind(solc),
+          version: solc.version.bind(solc),
+        }
+      })
+      .catch((error) => {
+        solcLoaderPromise = null
+        throw new Error(`Solidity compiler is unavailable: ${error instanceof Error ? error.message : String(error)}`)
+      })
+  }
+  return solcLoaderPromise
+}
+
+async function compileSoliditySource(source: string): Promise<Record<string, unknown>> {
+  const solc = await loadSolcCompiler()
+  const input = {
+    language: "Solidity",
+    sources: {
+      "input.sol": { content: source },
+    },
+    settings: {
+      optimizer: { enabled: false, runs: 200 },
+      outputSelection: {
+        "*": {
+          "*": [
+            "abi",
+            "metadata",
+            "evm.bytecode.object",
+            "evm.deployedBytecode.object",
+            "evm.bytecode.sourceMap",
+            "evm.deployedBytecode.sourceMap",
+            "evm.methodIdentifiers",
+            "devdoc",
+            "userdoc",
+          ],
+        },
+      },
+    },
+  }
+  const output = JSON.parse(solc.compile(JSON.stringify(input))) as {
+    contracts?: Record<string, Record<string, any>>
+    errors?: Array<{ formattedMessage?: string; message?: string; severity?: string }>
+  }
+
+  const fatalErrors = (output.errors ?? []).filter((entry) => entry.severity === "error")
+  if (fatalErrors.length > 0) {
+    throw {
+      code: -32000,
+      message: fatalErrors.map((entry) => entry.formattedMessage ?? entry.message ?? "solc compilation error").join("\n"),
+    }
+  }
+
+  const contracts = output.contracts?.["input.sol"] ?? {}
+  const compilerVersion = solc.version()
+  const compiled: Record<string, unknown> = {}
+  for (const [contractName, artifact] of Object.entries(contracts)) {
+    const bytecode = normalizeCompiledBytecode(artifact.evm?.bytecode?.object)
+    const runtimeCode = normalizeCompiledBytecode(artifact.evm?.deployedBytecode?.object)
+    compiled[contractName] = {
+      code: bytecode,
+      runtimeCode,
+      info: {
+        source,
+        language: "Solidity",
+        languageVersion: "Solidity",
+        compilerVersion,
+        abiDefinition: artifact.abi ?? [],
+        userDoc: artifact.userdoc ?? {},
+        developerDoc: artifact.devdoc ?? {},
+        metadata: artifact.metadata ?? "",
+        hashes: artifact.evm?.methodIdentifiers ?? {},
+        srcMap: artifact.evm?.bytecode?.sourceMap ?? "",
+        srcMapRuntime: artifact.evm?.deployedBytecode?.sourceMap ?? "",
+      },
+    }
+  }
+  return compiled
+}
+
+function normalizeCompiledBytecode(value: unknown): string {
+  if (typeof value !== "string" || value.length === 0) {
+    return "0x"
+  }
+  return value.startsWith("0x") ? value : `0x${value}`
+}
+
 function toRpcQuantity(value: bigint | number): string {
   return `0x${BigInt(value).toString(16)}`
 }
@@ -1720,6 +2378,8 @@ async function formatBlock(block: Awaited<ReturnType<IChainEngine["getBlockByNum
 
 const MAX_LOG_BLOCK_RANGE = 10_000n
 const MAX_LOG_RESULTS = 10_000
+const MAX_TRACE_BLOCK_RANGE = 1_024n
+const MAX_TRACE_RESULTS = 1_000
 
 async function queryLogs(chain: IChainEngine, query: Record<string, unknown>, resolvedHeight?: bigint): Promise<unknown[]> {
   const height = resolvedHeight ?? await Promise.resolve(chain.getHeight())
@@ -1777,6 +2437,207 @@ async function queryLogs(chain: IChainEngine, query: Record<string, unknown>, re
     topics,
     lastCursor: fromBlock,
   })
+}
+
+async function queryTraceFilter(chain: IChainEngine, evm: EvmChain, query: Record<string, unknown>): Promise<unknown[]> {
+  const height = await Promise.resolve(chain.getHeight())
+  const fromBlock = parseBlockTag(query.fromBlock ?? "earliest", height)
+  const toBlock = parseBlockTag(query.toBlock ?? "latest", height)
+  if (fromBlock > toBlock) {
+    throw new Error(`invalid block range: fromBlock ${fromBlock} > toBlock ${toBlock}`)
+  }
+  if (toBlock - fromBlock > MAX_TRACE_BLOCK_RANGE) {
+    throw new Error(`trace block range too large: max ${MAX_TRACE_BLOCK_RANGE} blocks, got ${toBlock - fromBlock}`)
+  }
+
+  const fromAddresses = normalizeTraceAddressFilter(query.fromAddress)
+  const toAddresses = normalizeTraceAddressFilter(query.toAddress)
+  const after = parseTracePaginationValue(query.after, 0)
+  const count = Math.min(parseTracePaginationValue(query.count, MAX_TRACE_RESULTS), MAX_TRACE_RESULTS)
+  if (count === 0) {
+    return []
+  }
+
+  const replay = await evm.createReplayChain()
+  await replayTraceBlocksBefore(replay, chain, fromBlock)
+
+  const traces: unknown[] = []
+  let skipped = 0
+  for (let blockNumber = fromBlock; blockNumber <= toBlock; blockNumber += 1n) {
+    const block = await Promise.resolve(chain.getBlockByNumber(blockNumber))
+    if (!block) continue
+    for (let txIndex = 0; txIndex < block.txs.length; txIndex++) {
+      const traced = await replay.traceRawTx(block.txs[txIndex], {}, {
+        blockNumber: block.number,
+        txIndex,
+        blockHash: block.hash,
+        baseFeePerGas: block.baseFee ?? 0n,
+      })
+      const filteredCalls = traced.callTraces.filter((callTrace) =>
+        matchesTraceAddressFilter(callTrace, fromAddresses, toAddresses)
+      )
+      if (filteredCalls.length === 0) {
+        continue
+      }
+      const localized = formatLocalizedOpenEthereumCallTraces(filteredCalls, {
+        blockHash: block.hash,
+        blockNumber: block.number,
+        transactionHash: traced.txHash,
+        transactionPosition: txIndex,
+      })
+      for (const trace of localized) {
+        if (skipped < after) {
+          skipped += 1
+          continue
+        }
+        traces.push(trace)
+        if (traces.length >= count) {
+          return traces
+        }
+      }
+    }
+  }
+
+  return traces
+}
+
+function normalizeTraceAddressPath(input: unknown): number[] {
+  if (input === undefined || input === null) {
+    return []
+  }
+  if (!Array.isArray(input)) {
+    throw { code: -32602, message: "invalid traceAddress path: expected array" }
+  }
+  return input.map((value, index) => {
+    let normalized: number
+    if (typeof value === "number") {
+      normalized = value
+    } else if (typeof value === "string") {
+      normalized = value.startsWith("0x") ? Number(BigInt(value)) : Number(value)
+    } else {
+      throw { code: -32602, message: `invalid traceAddress[${index}]: expected integer` }
+    }
+    if (!Number.isSafeInteger(normalized) || normalized < 0) {
+      throw { code: -32602, message: `invalid traceAddress[${index}]: expected non-negative integer` }
+    }
+    return normalized
+  })
+}
+
+function traceAddressEquals(left: number[], right: number[]): boolean {
+  if (left.length !== right.length) {
+    return false
+  }
+  for (let i = 0; i < left.length; i++) {
+    if (left[i] !== right[i]) {
+      return false
+    }
+  }
+  return true
+}
+
+async function locateTraceTransactionContext(
+  chain: IChainEngine,
+  txHash: Hex,
+): Promise<{ blockHash: string; blockNumber: bigint; transactionHash: string; transactionPosition: number } | null> {
+  if (typeof chain.getTransactionByHash === "function") {
+    const stored = await chain.getTransactionByHash(txHash)
+    if (stored?.receipt) {
+      const block = await Promise.resolve(chain.getBlockByHash(stored.receipt.blockHash))
+        ?? await Promise.resolve(chain.getBlockByNumber(stored.receipt.blockNumber))
+      if (!block) {
+        throw new Error(`block not found: ${stored.receipt.blockNumber}`)
+      }
+      const transactionPosition = findTransactionIndex(block.txs, stored.receipt.transactionHash)
+      if (transactionPosition === null) {
+        throw new Error(`transaction not found in block: ${stored.receipt.transactionHash}`)
+      }
+      return {
+        blockHash: block.hash,
+        blockNumber: block.number,
+        transactionHash: stored.receipt.transactionHash,
+        transactionPosition,
+      }
+    }
+  }
+
+  const height = await Promise.resolve(chain.getHeight())
+  for (let blockNumber = 1n; blockNumber <= height; blockNumber += 1n) {
+    const block = await Promise.resolve(chain.getBlockByNumber(blockNumber))
+    if (!block) continue
+    const transactionPosition = findTransactionIndex(block.txs, txHash)
+    if (transactionPosition === null) {
+      continue
+    }
+    return {
+      blockHash: block.hash,
+      blockNumber: block.number,
+      transactionHash: txHash,
+      transactionPosition,
+    }
+  }
+
+  return null
+}
+
+async function replayTraceBlocksBefore(replay: EvmChain, chain: IChainEngine, targetBlockNumber: bigint): Promise<void> {
+  for (let blockNumber = 1n; blockNumber < targetBlockNumber; blockNumber += 1n) {
+    const block = await Promise.resolve(chain.getBlockByNumber(blockNumber))
+    if (!block) {
+      throw new Error(`block not found: ${blockNumber}`)
+    }
+    for (let txIndex = 0; txIndex < block.txs.length; txIndex++) {
+      await replay.executeRawTx(block.txs[txIndex], block.number, txIndex, block.hash, block.baseFee ?? 0n)
+    }
+  }
+}
+
+function normalizeTraceAddressFilter(input: unknown): string[] | undefined {
+  if (input === undefined || input === null) {
+    return undefined
+  }
+  const values = Array.isArray(input) ? input : [input]
+  const normalized = values.map((value) => String(value).toLowerCase())
+  for (const address of normalized) {
+    if (!/^0x[0-9a-f]{40}$/.test(address)) {
+      throw { code: -32602, message: `invalid trace address filter: ${address}` }
+    }
+  }
+  return normalized
+}
+
+function parseTracePaginationValue(input: unknown, fallback: number): number {
+  if (input === undefined || input === null) {
+    return fallback
+  }
+  if (typeof input === "number") {
+    if (!Number.isFinite(input) || input < 0) {
+      throw { code: -32602, message: "invalid trace pagination value" }
+    }
+    return Math.floor(input)
+  }
+  if (typeof input === "string") {
+    const value = safeBigInt(input)
+    if (value < 0n || value > BigInt(Number.MAX_SAFE_INTEGER)) {
+      throw { code: -32602, message: `invalid trace pagination value: ${input}` }
+    }
+    return Number(value)
+  }
+  throw { code: -32602, message: "invalid trace pagination value" }
+}
+
+function matchesTraceAddressFilter(
+  callTrace: CallTrace,
+  fromAddresses?: string[],
+  toAddresses?: string[],
+): boolean {
+  if (fromAddresses && !fromAddresses.includes(callTrace.from.toLowerCase())) {
+    return false
+  }
+  if (toAddresses && !toAddresses.includes(callTrace.to.toLowerCase())) {
+    return false
+  }
+  return true
 }
 
 async function collectLogs(

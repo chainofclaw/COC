@@ -369,20 +369,75 @@ export class EvmChain {
   ): Promise<CallTraceResult> {
     const stateManager = stateRoot ? await this.resolveStateManager(stateRoot) : this.vm.stateManager
     const vm = await this.createVm(stateManager)
+    return this.traceCallOnVm(vm, params, options)
+  }
+
+  async traceCallMany(
+    calls: Array<{ from?: string; to: string; data?: string; value?: string; gas?: string }>,
+    options: TraceOptions = {},
+    stateRoot?: string,
+  ): Promise<CallTraceResult[]> {
+    const stateManager = stateRoot ? await this.resolveStateManager(stateRoot) : this.vm.stateManager
+    const vm = await this.createVm(stateManager)
+    const results: CallTraceResult[] = []
+    await vm.stateManager.checkpoint()
+    try {
+      for (const params of calls) {
+        results.push(await this.traceCallOnVm(vm, params, options, { persistAfter: true }))
+      }
+      return results
+    } finally {
+      await vm.stateManager.revert()
+    }
+  }
+
+  private async traceCallOnVm(
+    vm: VM,
+    params: { from?: string; to: string; data?: string; value?: string; gas?: string },
+    options: TraceOptions = {},
+    opts: { persistAfter?: boolean } = {},
+  ): Promise<CallTraceResult> {
     const collector = createTraceCollector(vm, options)
+    let needsRevert = false
     await vm.evm.journal.cleanup()
     vm.evm.journal.startReportingAccessList()
     try {
-      const result = await this.runCall(vm, params)
+      const result = await this.runCall(vm, params, { revertAfter: false })
+      needsRevert = true
       const accessList = normalizeAccessList(vm.evm.journal.accessList)
-      return collector.finish({
+      const traced = collector.finish({
         returnValue: result.returnValue,
         gasUsed: result.gasUsed,
         failed: result.failed,
         accessList,
       })
+      const targets = collectTraceTargets(traced.callTraces, accessList, traced.trace)
+      const afterState = await captureStateSnapshots(vm.stateManager, targets)
+      await vm.stateManager.revert()
+      needsRevert = false
+      const beforeState = await captureStateSnapshots(vm.stateManager, targets)
+      if (opts.persistAfter) {
+        await vm.evm.journal.cleanup()
+        await this.runCall(vm, params, { revertAfter: false })
+        needsRevert = true
+        await vm.stateManager.commit()
+        needsRevert = false
+      }
+      if (params.from) {
+        suppressCallEnvelopeNoise(beforeState, afterState, params.from)
+      }
+      const stateDiff = buildStateDiff(beforeState, afterState)
+      return {
+        ...traced,
+        stateDiff,
+        prestate: formatPrestateSnapshot(beforeState),
+        poststate: formatPrestateSnapshot(afterState),
+      }
     } finally {
       collector.dispose()
+      if (needsRevert) {
+        await vm.stateManager.revert()
+      }
       await vm.evm.journal.cleanup()
     }
   }
@@ -395,6 +450,8 @@ export class EvmChain {
     const tx = createTxFromRLP(hexToBytes(rawTx), { common: this.common })
     const block = createBlock({ header: { baseFeePerGas: context?.baseFeePerGas ?? 0n } }, { common: this.common })
     const collector = createTraceCollector(this.vm, options)
+    let needsRevert = true
+    await this.vm.stateManager.checkpoint()
     try {
       const result = await runTx(this.vm, {
         tx,
@@ -403,7 +460,7 @@ export class EvmChain {
         reportAccessList: true,
       })
       const txHash = bytesToHex(tx.hash())
-      return collector.finish({
+      const traced = collector.finish({
         txHash,
         gasUsed: result.totalGasSpent,
         success: result.execResult.exceptionError === undefined,
@@ -414,14 +471,85 @@ export class EvmChain {
           storageKeys: [...item.storageKeys],
         })) ?? [],
       })
+      const targets = collectTraceTargets(traced.callTraces, traced.accessList, traced.trace)
+      const afterState = await captureStateSnapshots(this.vm.stateManager, targets)
+      await this.vm.stateManager.revert()
+      needsRevert = false
+      const beforeState = await captureStateSnapshots(this.vm.stateManager, targets)
+      await runTx(this.vm, {
+        tx,
+        block,
+        skipHardForkValidation: true,
+      })
+      return {
+        ...traced,
+        stateDiff: buildStateDiff(beforeState, afterState),
+        prestate: formatPrestateSnapshot(beforeState),
+        poststate: formatPrestateSnapshot(afterState),
+      }
     } finally {
       collector.dispose()
+      if (needsRevert) {
+        await this.vm.stateManager.revert()
+      }
+    }
+  }
+
+  async traceRawTxOnState(
+    rawTx: string,
+    options: TraceOptions = {},
+    context?: { blockNumber?: bigint; txIndex?: number; blockHash?: string; baseFeePerGas?: bigint },
+    stateRoot?: string,
+  ): Promise<TxTraceResult> {
+    const tx = createTxFromRLP(hexToBytes(rawTx), { common: this.common })
+    const block = createBlock({ header: { baseFeePerGas: context?.baseFeePerGas ?? 0n } }, { common: this.common })
+    const stateManager = stateRoot ? await this.resolveStateManager(stateRoot) : this.vm.stateManager
+    const vm = stateRoot ? await this.createVm(stateManager) : this.vm
+    const collector = createTraceCollector(vm, options)
+    let needsRevert = true
+    await vm.stateManager.checkpoint()
+    try {
+      const result = await runTx(vm, {
+        tx,
+        block,
+        skipHardForkValidation: true,
+        reportAccessList: true,
+      })
+      const txHash = bytesToHex(tx.hash())
+      const traced = collector.finish({
+        txHash,
+        gasUsed: result.totalGasSpent,
+        success: result.execResult.exceptionError === undefined,
+        failed: result.execResult.exceptionError !== undefined,
+        returnValue: result.execResult.returnValue.length > 0 ? bytesToHex(result.execResult.returnValue) : "0x",
+        accessList: result.accessList?.map((item) => ({
+          address: item.address,
+          storageKeys: [...item.storageKeys],
+        })) ?? [],
+      })
+      const targets = collectTraceTargets(traced.callTraces, traced.accessList, traced.trace)
+      const afterState = await captureStateSnapshots(vm.stateManager, targets)
+      await vm.stateManager.revert()
+      needsRevert = false
+      const beforeState = await captureStateSnapshots(vm.stateManager, targets)
+      return {
+        ...traced,
+        stateDiff: buildStateDiff(beforeState, afterState),
+        prestate: formatPrestateSnapshot(beforeState),
+        poststate: formatPrestateSnapshot(afterState),
+      }
+    } finally {
+      collector.dispose()
+      if (needsRevert) {
+        await vm.stateManager.revert()
+      }
     }
   }
 
   private async runCall(
     vm: VM,
     params: { from?: string; to: string; data?: string; value?: string; gas?: string },
+    opts: { revertAfter?: boolean } = {},
   ): Promise<{ returnValue: string; gasUsed: bigint; failed: boolean }> {
     const caller = params.from ? Address.fromString(params.from) : Address.zero()
     const to = params.to ? Address.fromString(params.to) : Address.zero()
@@ -453,7 +581,9 @@ export class EvmChain {
         failed: result.execResult.exceptionError !== undefined,
       }
     } finally {
-      await vm.stateManager.revert()
+      if (opts.revertAfter !== false) {
+        await vm.stateManager.revert()
+      }
     }
   }
 
@@ -480,13 +610,30 @@ interface TraceCollector {
   ): T & { trace: TransactionTrace; callTraces: CallTrace[] }
 }
 
+interface AccountStateSnapshot {
+  balance: string
+  nonce: string
+  code: string
+  storage: Record<string, string>
+}
+
+interface PendingCallFrame extends CallTrace {
+  order: number
+  traceAddress: number[]
+  childCount: number
+}
+
 function createTraceCollector(vm: VM, options: TraceOptions): TraceCollector {
   const structLogs: TraceStep[] = []
-  const completedCalls: Array<CallTrace & { order: number }> = []
-  const pendingCalls: Array<CallTrace & { order: number }> = []
+  const completedCalls: PendingCallFrame[] = []
+  const pendingCalls: PendingCallFrame[] = []
   let nextOrder = 0
 
   const onBeforeMessage = (message: any) => {
+    const parent = pendingCalls[pendingCalls.length - 1]
+    const traceAddress = parent
+      ? [...parent.traceAddress, parent.childCount++]
+      : []
     pendingCalls.push({
       order: nextOrder++,
       type: classifyMessageType(message),
@@ -497,6 +644,8 @@ function createTraceCollector(vm: VM, options: TraceOptions): TraceCollector {
       gasUsed: "0x0",
       input: message.data && message.data.length > 0 ? bytesToHex(message.data) : "0x",
       output: "0x",
+      traceAddress,
+      childCount: 0,
     })
   }
 
@@ -510,7 +659,19 @@ function createTraceCollector(vm: VM, options: TraceOptions): TraceCollector {
     }
     if (result.execResult.exceptionError) {
       frame.error = result.execResult.exceptionError.error
+      frame.revertReason = decodeRevertReason(frame.output)
     }
+    if (Array.isArray(result.execResult.logs) && result.execResult.logs.length > 0) {
+      frame.logs = result.execResult.logs.map((entry: unknown) => {
+        const [addressBytes, topicBytes, dataBytes] = entry as [Uint8Array, Uint8Array[], Uint8Array]
+        return {
+          address: bytesToHex(addressBytes),
+          topics: topicBytes.map((topic) => bytesToHex(topic)),
+          data: bytesToHex(dataBytes),
+        }
+      })
+    }
+    frame.subtraces = frame.childCount
     completedCalls.push(frame)
   }
 
@@ -552,7 +713,7 @@ function createTraceCollector(vm: VM, options: TraceOptions): TraceCollector {
       }
       const callTraces = completedCalls
         .sort((a, b) => a.order - b.order)
-        .map(({ order: _order, ...callTrace }) => callTrace)
+        .map(({ order: _order, childCount: _childCount, ...callTrace }) => callTrace)
       return { ...result, trace, callTraces }
     },
   }
@@ -564,6 +725,230 @@ function normalizeAccessList(accessList?: Map<string, Set<string>>): RpcAccessLi
     address: `0x${address}`,
     storageKeys: Array.from(slots).map((slot) => `0x${slot.padStart(64, "0")}`),
   }))
+}
+
+function collectTraceTargets(
+  callTraces: CallTrace[],
+  accessList: RpcAccessListItem[],
+  trace?: TransactionTrace,
+): Map<string, Set<string>> {
+  const targets = new Map<string, Set<string>>()
+
+  const ensureAddress = (rawAddress?: string): Set<string> | null => {
+    if (!rawAddress || !/^0x[0-9a-fA-F]{40}$/.test(rawAddress)) return null
+    const address = rawAddress.toLowerCase()
+    const existing = targets.get(address)
+    if (existing) return existing
+    const slots = new Set<string>()
+    targets.set(address, slots)
+    return slots
+  }
+
+  for (const callTrace of callTraces) {
+    ensureAddress(callTrace.from)
+    ensureAddress(callTrace.to)
+  }
+
+  for (const item of accessList) {
+    const slots = ensureAddress(item.address)
+    if (!slots) continue
+    for (const slot of item.storageKeys) {
+      slots.add(normalizeStateSlot(slot))
+    }
+  }
+
+  if (trace) {
+    augmentTargetsWithTraceStorage(callTraces, trace, targets)
+  }
+
+  return targets
+}
+
+function augmentTargetsWithTraceStorage(
+  callTraces: CallTrace[],
+  trace: TransactionTrace,
+  targets: Map<string, Set<string>>,
+): void {
+  if (callTraces.length === 0 || trace.structLogs.length === 0) {
+    return
+  }
+
+  const orderedCalls = [...callTraces].sort((left, right) =>
+    compareTraceAddress(left.traceAddress ?? [], right.traceAddress ?? [])
+  )
+  const rootDepth = trace.structLogs[0].depth
+  const callStack: Array<{ depth: number; address: string | null }> = []
+  let nextCallIndex = 0
+
+  const pushCallForDepth = (depth: number) => {
+    const callTrace = orderedCalls[nextCallIndex++]
+    if (!callTrace) {
+      return
+    }
+    callStack.push({
+      depth,
+      address: /^0x[0-9a-fA-F]{40}$/.test(callTrace.to) ? callTrace.to.toLowerCase() : null,
+    })
+  }
+
+  pushCallForDepth(rootDepth)
+
+  for (const step of trace.structLogs) {
+    while (callStack.length > 0 && step.depth < callStack[callStack.length - 1].depth) {
+      callStack.pop()
+    }
+    while ((callStack.length === 0 || step.depth > callStack[callStack.length - 1].depth) && nextCallIndex < orderedCalls.length) {
+      pushCallForDepth(step.depth)
+    }
+
+    const current = callStack[callStack.length - 1]
+    if (!current?.address) {
+      continue
+    }
+
+    let slots = targets.get(current.address)
+    if (!slots) {
+      slots = new Set<string>()
+      targets.set(current.address, slots)
+    }
+    for (const slot of Object.keys(step.storage)) {
+      slots.add(normalizeStateSlot(slot))
+    }
+  }
+}
+
+function compareTraceAddress(left: number[], right: number[]): number {
+  const length = Math.min(left.length, right.length)
+  for (let index = 0; index < length; index++) {
+    if (left[index] !== right[index]) {
+      return left[index] - right[index]
+    }
+  }
+  return left.length - right.length
+}
+
+async function captureStateSnapshots(
+  stateManager: any,
+  targets: Map<string, Set<string>>,
+): Promise<Map<string, AccountStateSnapshot>> {
+  const snapshots = new Map<string, AccountStateSnapshot>()
+
+  for (const [address, slots] of targets) {
+    const accountAddress = Address.fromString(address)
+    const account = await stateManager.getAccount(accountAddress)
+    const code = await stateManager.getCode(accountAddress)
+    const storage: Record<string, string> = {}
+
+    for (const slot of slots) {
+      const value = await stateManager.getStorage(accountAddress, hexToBytes(slot))
+      storage[slot] = normalizeStateQuantity(bytesToHex(value))
+    }
+
+    snapshots.set(address, {
+      balance: account ? bigIntToHex(account.balance) : "0x0",
+      nonce: account ? bigIntToHex(account.nonce) : "0x0",
+      code: code.length > 0 ? bytesToHex(code) : "0x",
+      storage,
+    })
+  }
+
+  return snapshots
+}
+
+function buildStateDiff(
+  beforeState: Map<string, AccountStateSnapshot>,
+  afterState: Map<string, AccountStateSnapshot>,
+): Record<string, unknown> {
+  const diff: Record<string, unknown> = {}
+  const addresses = new Set([...beforeState.keys(), ...afterState.keys()])
+
+  for (const address of addresses) {
+    const before = beforeState.get(address) ?? emptyAccountStateSnapshot()
+    const after = afterState.get(address) ?? emptyAccountStateSnapshot()
+    const addressDiff: Record<string, unknown> = {}
+
+    const balanceDiff = buildScalarDiff(before.balance, after.balance, "0x0")
+    if (balanceDiff) addressDiff.balance = balanceDiff
+
+    const nonceDiff = buildScalarDiff(before.nonce, after.nonce, "0x0")
+    if (nonceDiff) addressDiff.nonce = nonceDiff
+
+    const codeDiff = buildScalarDiff(before.code, after.code, "0x")
+    if (codeDiff) addressDiff.code = codeDiff
+
+    const storageDiff: Record<string, unknown> = {}
+    const slots = new Set([...Object.keys(before.storage), ...Object.keys(after.storage)])
+    for (const slot of slots) {
+      const slotDiff = buildScalarDiff(before.storage[slot] ?? "0x0", after.storage[slot] ?? "0x0", "0x0")
+      if (slotDiff) storageDiff[slot] = slotDiff
+    }
+    if (Object.keys(storageDiff).length > 0) {
+      addressDiff.storage = storageDiff
+    }
+
+    if (Object.keys(addressDiff).length > 0) {
+      diff[address] = addressDiff
+    }
+  }
+
+  return diff
+}
+
+function formatPrestateSnapshot(state: Map<string, AccountStateSnapshot>): Record<string, unknown> {
+  const formatted: Record<string, unknown> = {}
+
+  for (const [address, snapshot] of state) {
+    const entry: Record<string, unknown> = {
+      balance: snapshot.balance,
+      nonce: snapshot.nonce,
+    }
+    if (snapshot.code !== "0x") {
+      entry.code = snapshot.code
+    }
+    if (Object.keys(snapshot.storage).length > 0) {
+      entry.storage = { ...snapshot.storage }
+    }
+    formatted[address] = entry
+  }
+
+  return formatted
+}
+
+function suppressCallEnvelopeNoise(
+  beforeState: Map<string, AccountStateSnapshot>,
+  afterState: Map<string, AccountStateSnapshot>,
+  callerAddress: string,
+): void {
+  const address = callerAddress.toLowerCase()
+  const before = beforeState.get(address)
+  const after = afterState.get(address)
+  if (!before || !after) return
+  after.nonce = before.nonce
+}
+
+function buildScalarDiff(from: string, to: string, emptyValue: string): Record<string, unknown> | undefined {
+  if (from === to) return undefined
+  if (from === emptyValue) return { "+": to }
+  if (to === emptyValue) return { "-": from }
+  return { "*": { from, to } }
+}
+
+function emptyAccountStateSnapshot(): AccountStateSnapshot {
+  return {
+    balance: "0x0",
+    nonce: "0x0",
+    code: "0x",
+    storage: {},
+  }
+}
+
+function normalizeStateSlot(slot: string): string {
+  return slot.length === 66 ? slot.toLowerCase() : `0x${slot.replace(/^0x/, "").padStart(64, "0").toLowerCase()}`
+}
+
+function normalizeStateQuantity(value: string): string {
+  const stripped = value.replace(/^0x/, "").replace(/^0+/, "")
+  return stripped.length > 0 ? `0x${stripped}` : "0x0"
 }
 
 function classifyMessageType(message: { to?: Address; delegatecall?: boolean; isStatic?: boolean }): string {
@@ -593,6 +978,62 @@ function formatTraceWord(value: unknown): string {
     return value.startsWith("0x") ? value : `0x${value}`
   }
   return "0x0"
+}
+
+function decodeRevertReason(data: string): string | undefined {
+  if (!data || data === "0x" || !data.startsWith("0x")) {
+    return undefined
+  }
+  const hex = data.slice(2).toLowerCase()
+  if (hex.length < 8) {
+    return undefined
+  }
+  const selector = hex.slice(0, 8)
+  if (selector === "08c379a0") {
+    return decodeAbiString(hex.slice(8))
+  }
+  if (selector === "4e487b71") {
+    const panicCode = decodeAbiUint256(hex.slice(8))
+    return panicCode !== undefined ? `Panic(${panicCode})` : undefined
+  }
+  return `CustomError(0x${selector})`
+}
+
+function decodeAbiString(payloadHex: string): string | undefined {
+  const offset = decodeAbiUint256(payloadHex.slice(0, 64))
+  if (offset === undefined) {
+    return undefined
+  }
+  const lengthOffset = Number(offset * 2n)
+  if (lengthOffset + 64 > payloadHex.length) {
+    return undefined
+  }
+  const stringLength = decodeAbiUint256(payloadHex.slice(lengthOffset, lengthOffset + 64))
+  if (stringLength === undefined) {
+    return undefined
+  }
+  const dataOffset = lengthOffset + 64
+  const byteLength = Number(stringLength)
+  const stringHex = payloadHex.slice(dataOffset, dataOffset + byteLength * 2)
+  if (stringHex.length !== byteLength * 2) {
+    return undefined
+  }
+  try {
+    return Buffer.from(stringHex, "hex").toString("utf8")
+  } catch {
+    return undefined
+  }
+}
+
+function decodeAbiUint256(hexWord: string): bigint | undefined {
+  if (hexWord.length < 64) {
+    return undefined
+  }
+  try {
+    return BigInt(`0x${hexWord.slice(0, 64)}`)
+  } catch {
+    return undefined
+  }
 }
 
 async function captureTraceStorage(step: any): Promise<Record<string, string>> {

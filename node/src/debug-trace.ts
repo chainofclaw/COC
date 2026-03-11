@@ -23,8 +23,17 @@ export async function traceTransaction(
   evm: EvmChain,
   options: TraceOptions = {},
 ): Promise<TransactionTrace> {
-  const result = await traceTransactionInternal(txHash, chain, evm, options)
+  const result = await traceTransactionResult(txHash, chain, evm, options)
   return result.trace
+}
+
+export async function traceTransactionResult(
+  txHash: Hex,
+  chain: IChainEngine,
+  evm: EvmChain,
+  options: TraceOptions = {},
+): Promise<TxTraceResult> {
+  return traceTransactionInternal(txHash, chain, evm, options)
 }
 
 export async function traceBlockByNumber(
@@ -33,6 +42,16 @@ export async function traceBlockByNumber(
   evm: EvmChain,
   options: TraceOptions = {},
 ): Promise<Array<{ txHash: string; result: TransactionTrace }>> {
+  const results = await traceBlockTransactions(blockNumber, chain, evm, options)
+  return results.map((traced) => ({ txHash: traced.txHash, result: traced.trace }))
+}
+
+export async function traceBlockTransactions(
+  blockNumber: bigint,
+  chain: IChainEngine,
+  evm: EvmChain,
+  options: TraceOptions = {},
+): Promise<TxTraceResult[]> {
   const block = await Promise.resolve(chain.getBlockByNumber(blockNumber))
   if (!block) {
     throw new Error(`block not found: ${blockNumber}`)
@@ -41,7 +60,7 @@ export async function traceBlockByNumber(
   const replay = await evm.createReplayChain()
   await replayBlocksBefore(replay, chain, block.number)
 
-  const results: Array<{ txHash: string; result: TransactionTrace }> = []
+  const results: TxTraceResult[] = []
   for (let txIndex = 0; txIndex < block.txs.length; txIndex++) {
     const rawTx = block.txs[txIndex]
     const traced = await replay.traceRawTx(rawTx, options, {
@@ -50,7 +69,7 @@ export async function traceBlockByNumber(
       blockHash: block.hash,
       baseFeePerGas: block.baseFee ?? 0n,
     })
-    results.push({ txHash: traced.txHash, result: traced.trace })
+    results.push(traced)
   }
 
   return results
@@ -62,7 +81,7 @@ export async function traceTransactionCalls(
   evm: EvmChain,
   options: TraceOptions = {},
 ): Promise<CallTrace[]> {
-  const result = await traceTransactionInternal(txHash, chain, evm, options)
+  const result = await traceTransactionResult(txHash, chain, evm, options)
   return result.callTraces
 }
 
