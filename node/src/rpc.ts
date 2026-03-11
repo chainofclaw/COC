@@ -671,20 +671,17 @@ async function handleRpc(
     }
     case "eth_createAccessList": {
       const callParams = ((payload.params ?? [])[0] ?? {}) as Record<string, string>
-
-      // 执行调用以追踪访问的存储槽
-      await evm.callRaw({
+      const stateRoot = await resolveHistoricalStateRoot((payload.params ?? [])[1], chain)
+      const result = await evm.traceCall({
         from: callParams.from,
         to: callParams.to ?? "",
         data: callParams.data,
         value: callParams.value,
         gas: callParams.gas,
-      })
-
-      // 简化实现：返回空访问列表（真实实现需要 EVM 追踪）
+      }, {}, stateRoot)
       return {
-        accessList: [],
-        gasUsed: "0x0"
+        accessList: result.accessList,
+        gasUsed: `0x${result.gasUsed.toString(16)}`,
       }
     }
     case "debug_traceTransaction": {

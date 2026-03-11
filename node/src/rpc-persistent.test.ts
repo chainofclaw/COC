@@ -531,6 +531,20 @@ test("RPC+Persistent: historical state queries and transaction schema parity", a
     assert.strictEqual(callAtBlock1, "0x")
     assert.strictEqual(callAtBlock2, `0x${"0".repeat(62)}2a`)
 
+    const accessListView = await handleRpcMethod(
+      "eth_createAccessList",
+      [{ from: wallet.address, to: contractAddress, data: "0x" }, "0x2"],
+      CHAIN_ID,
+      evm,
+      engine,
+      p2p,
+    ) as { accessList: Array<{ address: string; storageKeys: string[] }>; gasUsed: string }
+    assert.ok(accessListView.accessList.length > 0)
+    const contractAccess = accessListView.accessList.find((entry) => entry.address.toLowerCase() === contractAddress.toLowerCase())
+    assert.ok(contractAccess)
+    assert.ok(contractAccess!.storageKeys.includes(`0x${"0".repeat(64)}`))
+    assert.match(accessListView.gasUsed, /^0x[0-9a-f]+$/)
+
     const txView = await handleRpcMethod("eth_getTransactionByHash", [deployTxHash], CHAIN_ID, evm, engine, p2p) as Record<string, unknown>
     assert.strictEqual(txView.hash, deployTxHash)
     assert.strictEqual(txView.blockNumber, "0x2")

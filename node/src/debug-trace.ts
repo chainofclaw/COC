@@ -1,246 +1,150 @@
 /**
  * Debug/Trace APIs
  *
- * Provides transaction tracing and debugging capabilities:
- * - debug_traceTransaction: step-by-step EVM execution trace
- * - debug_traceBlockByNumber: trace all txs in a block
- * - debug_getBlockRlp: raw RLP of a block (simplified)
- * - trace_transaction: OpenEthereum-compatible trace format
- *
- * Traces are collected by re-executing transactions against the current
- * state with instrumentation hooks.
+ * Uses transaction replay against a temporary EVM chain so traces reflect
+ * actual opcode execution instead of receipt-derived approximations.
  */
 
 import { Transaction } from "ethers"
-import type { EvmChain, TxReceipt } from "./evm.ts"
+import type { EvmChain } from "./evm.ts"
 import type { IChainEngine } from "./chain-engine-types.ts"
-import type { Hex } from "./blockchain-types.ts"
+import type { ChainBlock, Hex } from "./blockchain-types.ts"
+import type { CallTrace, TraceOptions, TransactionTrace, TxTraceResult } from "./trace-types.ts"
 
-export interface TraceStep {
-  pc: number
-  op: string
-  gas: string
-  gasCost: string
-  depth: number
-  stack: string[]
-  memory: string[]
-  storage: Record<string, string>
+interface LocatedTransaction {
+  rawTx: Hex
+  block: ChainBlock
+  txIndex: number
 }
 
-export interface TransactionTrace {
-  gas: number
-  failed: boolean
-  returnValue: string
-  structLogs: TraceStep[]
-}
-
-export interface TraceOptions {
-  disableStorage?: boolean
-  disableMemory?: boolean
-  disableStack?: boolean
-  tracer?: string
-}
-
-export interface CallTrace {
-  type: string
-  from: string
-  to: string
-  value: string
-  gas: string
-  gasUsed: string
-  input: string
-  output: string
-  error?: string
-}
-
-/**
- * Generate a simplified execution trace for a transaction.
- * Since we can't hook into the EVM step-by-step without VM modification,
- * we provide a call-level trace based on stored receipt data.
- */
 export async function traceTransaction(
   txHash: Hex,
   chain: IChainEngine,
   evm: EvmChain,
-  _options?: TraceOptions,
+  options: TraceOptions = {},
 ): Promise<TransactionTrace> {
-  // Try persistent storage first
-  let receipt: TxReceipt | null = null
-  if (typeof chain.getTransactionByHash === "function") {
-    const txData = await chain.getTransactionByHash(txHash)
-    if (txData?.receipt) {
-      receipt = {
-        transactionHash: txData.receipt.transactionHash as string,
-        blockNumber: `0x${txData.receipt.blockNumber.toString(16)}`,
-        blockHash: txData.receipt.blockHash as string,
-        transactionIndex: "0x0",
-        cumulativeGasUsed: `0x${txData.receipt.gasUsed.toString(16)}`,
-        gasUsed: `0x${txData.receipt.gasUsed.toString(16)}`,
-        status: txData.receipt.status === 1n ? "0x1" : "0x0",
-        logsBloom: "0x" + "0".repeat(512),
-        logs: txData.receipt.logs ?? [],
-        effectiveGasPrice: "0x0",
-      }
-    }
-  }
-
-  // Fall back to EVM memory
-  if (!receipt) {
-    receipt = evm.getReceipt(txHash)
-  }
-
-  if (!receipt) {
-    throw new Error(`transaction not found: ${txHash}`)
-  }
-
-  const gasUsedRaw = parseInt(receipt.gasUsed, 16)
-  const gasUsed = Number.isFinite(gasUsedRaw) ? gasUsedRaw : 0
-  const failed = receipt.status === "0x0"
-
-  // Build trace from receipt data with log events as synthetic steps
-  const structLogs: TraceStep[] = []
-  const logs = Array.isArray(receipt.logs) ? receipt.logs : []
-
-  // Add LOG entries derived from receipt logs
-  for (let i = 0; i < logs.length; i++) {
-    const logEntry = logs[i] as Record<string, unknown>
-    const topics = Array.isArray(logEntry.topics) ? logEntry.topics as string[] : []
-    structLogs.push({
-      pc: i,
-      op: `LOG${topics.length}`,
-      gas: `0x${gasUsed.toString(16)}`,
-      gasCost: `0x${(375 + 375 * topics.length).toString(16)}`,
-      depth: 1,
-      stack: _options?.disableStack ? [] : topics,
-      memory: _options?.disableMemory ? [] : (logEntry.data ? [String(logEntry.data)] : []),
-      storage: {},
-    })
-  }
-
-  // Final STOP or REVERT
-  structLogs.push({
-    pc: logs.length,
-    op: failed ? "REVERT" : "STOP",
-    gas: "0x0",
-    gasCost: "0x0",
-    depth: 1,
-    stack: [],
-    memory: [],
-    storage: {},
-  })
-
-  return {
-    gas: gasUsed,
-    failed,
-    returnValue: failed ? "0x" : "0x0000000000000000000000000000000000000000000000000000000000000001",
-    structLogs,
-  }
+  const result = await traceTransactionInternal(txHash, chain, evm, options)
+  return result.trace
 }
 
-/**
- * Trace all transactions in a block
- */
 export async function traceBlockByNumber(
   blockNumber: bigint,
   chain: IChainEngine,
   evm: EvmChain,
-  options?: TraceOptions,
+  options: TraceOptions = {},
 ): Promise<Array<{ txHash: string; result: TransactionTrace }>> {
   const block = await Promise.resolve(chain.getBlockByNumber(blockNumber))
   if (!block) {
     throw new Error(`block not found: ${blockNumber}`)
   }
 
-  const results: Array<{ txHash: string; result: TransactionTrace }> = []
-  const receipts = await Promise.resolve(chain.getReceiptsByBlock(blockNumber))
+  const replay = await evm.createReplayChain()
+  await replayBlocksBefore(replay, chain, block.number)
 
-  for (const receipt of receipts) {
-    const txHash = receipt.transactionHash as Hex
-    try {
-      const trace = await traceTransaction(txHash, chain, evm, options)
-      results.push({ txHash, result: trace })
-    } catch {
-      // Skip txs that can't be traced
-    }
+  const results: Array<{ txHash: string; result: TransactionTrace }> = []
+  for (let txIndex = 0; txIndex < block.txs.length; txIndex++) {
+    const rawTx = block.txs[txIndex]
+    const traced = await replay.traceRawTx(rawTx, options, {
+      blockNumber: block.number,
+      txIndex,
+      blockHash: block.hash,
+      baseFeePerGas: block.baseFee ?? 0n,
+    })
+    results.push({ txHash: traced.txHash, result: traced.trace })
   }
 
   return results
 }
 
-/**
- * Get call-level trace for a transaction (OpenEthereum trace format)
- */
 export async function traceTransactionCalls(
   txHash: Hex,
   chain: IChainEngine,
   evm: EvmChain,
+  options: TraceOptions = {},
 ): Promise<CallTrace[]> {
-  let receipt: TxReceipt | null = null
-  let txInfo = evm.getTransaction(txHash)
+  const result = await traceTransactionInternal(txHash, chain, evm, options)
+  return result.callTraces
+}
 
-  if (typeof chain.getTransactionByHash === "function") {
-    const txData = await chain.getTransactionByHash(txHash)
-    if (txData?.receipt) {
-      receipt = {
-        transactionHash: txData.receipt.transactionHash as string,
-        blockNumber: `0x${txData.receipt.blockNumber.toString(16)}`,
-        blockHash: txData.receipt.blockHash as string,
-        transactionIndex: "0x0",
-        cumulativeGasUsed: `0x${txData.receipt.gasUsed.toString(16)}`,
-        gasUsed: `0x${txData.receipt.gasUsed.toString(16)}`,
-        status: txData.receipt.status === 1n ? "0x1" : "0x0",
-        logsBloom: "0x" + "0".repeat(512),
-        logs: txData.receipt.logs ?? [],
-        effectiveGasPrice: "0x0",
-      }
-
-      if (!txInfo) {
-        txInfo = {
-          hash: txData.receipt.transactionHash as string,
-          from: txData.receipt.from as string,
-          to: (txData.receipt.to as string) ?? null,
-          nonce: "0x0",
-          gas: `0x${txData.receipt.gasUsed.toString(16)}`,
-          gasPrice: "0x0",
-          value: "0x0",
-          blockNumber: `0x${txData.receipt.blockNumber.toString(16)}`,
-        }
-      }
-    }
-  }
-
-  if (!receipt) receipt = evm.getReceipt(txHash)
-  if (!receipt || !txInfo) {
+async function traceTransactionInternal(
+  txHash: Hex,
+  chain: IChainEngine,
+  evm: EvmChain,
+  options: TraceOptions,
+): Promise<TxTraceResult> {
+  const located = await locateTransaction(txHash, chain)
+  if (!located) {
     throw new Error(`transaction not found: ${txHash}`)
   }
 
-  const failed = receipt.status === "0x0"
+  const replay = await evm.createReplayChain()
+  await replayBlocksBefore(replay, chain, located.block.number)
+  await replayBlockTransactions(replay, located.block, located.txIndex)
 
-  // Extract input data from raw tx if available
-  let inputData = "0x"
-  let txValue = txInfo.value ?? "0x0"
+  return replay.traceRawTx(located.rawTx, options, {
+    blockNumber: located.block.number,
+    txIndex: located.txIndex,
+    blockHash: located.block.hash,
+    baseFeePerGas: located.block.baseFee ?? 0n,
+  })
+}
+
+async function replayBlocksBefore(replay: EvmChain, chain: IChainEngine, targetBlockNumber: bigint): Promise<void> {
+  for (let blockNumber = 1n; blockNumber < targetBlockNumber; blockNumber++) {
+    const block = await Promise.resolve(chain.getBlockByNumber(blockNumber))
+    if (!block) {
+      throw new Error(`block not found: ${blockNumber}`)
+    }
+    await replayBlockTransactions(replay, block)
+  }
+}
+
+async function replayBlockTransactions(replay: EvmChain, block: ChainBlock, stopBeforeTxIndex?: number): Promise<void> {
+  const end = stopBeforeTxIndex ?? block.txs.length
+  for (let txIndex = 0; txIndex < end; txIndex++) {
+    await replay.executeRawTx(block.txs[txIndex], block.number, txIndex, block.hash, block.baseFee ?? 0n)
+  }
+}
+
+async function locateTransaction(txHash: Hex, chain: IChainEngine): Promise<LocatedTransaction | null> {
   if (typeof chain.getTransactionByHash === "function") {
     const stored = await chain.getTransactionByHash(txHash)
-    if (stored?.rawTx) {
-      try {
-        const parsed = Transaction.from(stored.rawTx)
-        inputData = parsed.data ?? "0x"
-        txValue = `0x${(parsed.value ?? 0n).toString(16)}`
-      } catch { /* use defaults */ }
+    if (stored?.receipt) {
+      const block = await Promise.resolve(chain.getBlockByNumber(stored.receipt.blockNumber))
+      if (!block) {
+        throw new Error(`block not found: ${stored.receipt.blockNumber}`)
+      }
+      const txIndex = block.txs.findIndex((rawTx) => matchesTransactionHash(rawTx, txHash))
+      if (txIndex === -1) {
+        throw new Error(`transaction not found in block: ${txHash}`)
+      }
+      return {
+        rawTx: stored.rawTx,
+        block,
+        txIndex,
+      }
     }
   }
 
-  const traces: CallTrace[] = [{
-    type: txInfo.to ? "call" : "create",
-    from: txInfo.from,
-    to: txInfo.to ?? "0x0000000000000000000000000000000000000000",
-    value: txValue,
-    gas: txInfo.gas,
-    gasUsed: receipt.gasUsed,
-    input: inputData,
-    output: failed ? "0x" : "0x",
-    error: failed ? "execution reverted" : undefined,
-  }]
+  const height = await Promise.resolve(chain.getHeight())
+  for (let blockNumber = 1n; blockNumber <= height; blockNumber++) {
+    const block = await Promise.resolve(chain.getBlockByNumber(blockNumber))
+    if (!block) continue
+    for (let txIndex = 0; txIndex < block.txs.length; txIndex++) {
+      const rawTx = block.txs[txIndex]
+      if (matchesTransactionHash(rawTx, txHash)) {
+        return { rawTx, block, txIndex }
+      }
+    }
+  }
 
-  return traces
+  return null
+}
+
+function matchesTransactionHash(rawTx: Hex, txHash: Hex): boolean {
+  try {
+    return (Transaction.from(rawTx).hash as Hex).toLowerCase() === txHash.toLowerCase()
+  } catch {
+    return false
+  }
 }

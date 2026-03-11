@@ -5,6 +5,7 @@ import { createTxFromRLP } from "@ethereumjs/tx"
 import { createBlock } from "@ethereumjs/block"
 import type { PrefundAccount } from "./types.ts"
 import { PersistentStateManager } from "./storage/persistent-state-manager.ts"
+import type { CallTrace, CallTraceResult, RpcAccessListItem, TraceOptions, TraceStep, TransactionTrace, TxTraceResult } from "./trace-types.ts"
 
 export interface ExecutionResult {
   txHash: string
@@ -313,7 +314,79 @@ export class EvmChain {
     return new Map(this.receipts)
   }
 
-  private async runCall(vm: VM, params: { from?: string; to: string; data?: string; value?: string; gas?: string }): Promise<{ returnValue: string; gasUsed: bigint }> {
+  getChainId(): number {
+    return Number(this.common.chainId())
+  }
+
+  async createReplayChain(): Promise<EvmChain> {
+    const replay = await EvmChain.create(this.getChainId())
+    if (this.prefundAccounts.length > 0) {
+      await replay.prefund(this.prefundAccounts)
+    }
+    return replay
+  }
+
+  async traceCall(
+    params: { from?: string; to: string; data?: string; value?: string; gas?: string },
+    options: TraceOptions = {},
+    stateRoot?: string,
+  ): Promise<CallTraceResult> {
+    const stateManager = stateRoot ? await this.resolveStateManager(stateRoot) : this.vm.stateManager
+    const vm = await this.createVm(stateManager)
+    const collector = createTraceCollector(vm, options)
+    await vm.evm.journal.cleanup()
+    vm.evm.journal.startReportingAccessList()
+    try {
+      const result = await this.runCall(vm, params)
+      const accessList = normalizeAccessList(vm.evm.journal.accessList)
+      return collector.finish({
+        returnValue: result.returnValue,
+        gasUsed: result.gasUsed,
+        failed: result.failed,
+        accessList,
+      })
+    } finally {
+      collector.dispose()
+      await vm.evm.journal.cleanup()
+    }
+  }
+
+  async traceRawTx(
+    rawTx: string,
+    options: TraceOptions = {},
+    context?: { blockNumber?: bigint; txIndex?: number; blockHash?: string; baseFeePerGas?: bigint },
+  ): Promise<TxTraceResult> {
+    const tx = createTxFromRLP(hexToBytes(rawTx), { common: this.common })
+    const block = createBlock({ header: { baseFeePerGas: context?.baseFeePerGas ?? 0n } }, { common: this.common })
+    const collector = createTraceCollector(this.vm, options)
+    try {
+      const result = await runTx(this.vm, {
+        tx,
+        block,
+        skipHardForkValidation: true,
+        reportAccessList: true,
+      })
+      const txHash = bytesToHex(tx.hash())
+      return collector.finish({
+        txHash,
+        gasUsed: result.totalGasSpent,
+        success: result.execResult.exceptionError === undefined,
+        failed: result.execResult.exceptionError !== undefined,
+        returnValue: result.execResult.returnValue.length > 0 ? bytesToHex(result.execResult.returnValue) : "0x",
+        accessList: result.accessList?.map((item) => ({
+          address: item.address,
+          storageKeys: [...item.storageKeys],
+        })) ?? [],
+      })
+    } finally {
+      collector.dispose()
+    }
+  }
+
+  private async runCall(
+    vm: VM,
+    params: { from?: string; to: string; data?: string; value?: string; gas?: string },
+  ): Promise<{ returnValue: string; gasUsed: bigint; failed: boolean }> {
     const caller = params.from ? Address.fromString(params.from) : Address.zero()
     const to = params.to ? Address.fromString(params.to) : Address.zero()
     const data = params.data ? hexToBytes(params.data) : new Uint8Array()
@@ -341,6 +414,7 @@ export class EvmChain {
       return {
         returnValue,
         gasUsed: result.execResult.executionGasUsed,
+        failed: result.execResult.exceptionError !== undefined,
       }
     } finally {
       await vm.stateManager.revert()
@@ -360,5 +434,144 @@ export class EvmChain {
   private async createVm(stateManager: unknown): Promise<VM> {
     const opts: Record<string, unknown> = { common: this.common, stateManager }
     return createVM(opts as Parameters<typeof createVM>[0])
+  }
+}
+
+interface TraceCollector {
+  dispose(): void
+  finish<T extends { returnValue: string; gasUsed: bigint; failed: boolean; accessList: RpcAccessListItem[] }>(
+    result: T,
+  ): T & { trace: TransactionTrace; callTraces: CallTrace[] }
+}
+
+function createTraceCollector(vm: VM, options: TraceOptions): TraceCollector {
+  const structLogs: TraceStep[] = []
+  const completedCalls: Array<CallTrace & { order: number }> = []
+  const pendingCalls: Array<CallTrace & { order: number }> = []
+  let nextOrder = 0
+
+  const onBeforeMessage = (message: any) => {
+    pendingCalls.push({
+      order: nextOrder++,
+      type: classifyMessageType(message),
+      from: message.caller.toString(),
+      to: message.to?.toString() ?? "0x0000000000000000000000000000000000000000",
+      value: bigIntToHex(message.value ?? 0n),
+      gas: bigIntToHex(message.gasLimit ?? 0n),
+      gasUsed: "0x0",
+      input: message.data && message.data.length > 0 ? bytesToHex(message.data) : "0x",
+      output: "0x",
+    })
+  }
+
+  const onAfterMessage = (result: any) => {
+    const frame = pendingCalls.pop()
+    if (!frame) return
+    frame.gasUsed = bigIntToHex(result.execResult.executionGasUsed ?? 0n)
+    frame.output = result.execResult.returnValue?.length ? bytesToHex(result.execResult.returnValue) : "0x"
+    if (result.createdAddress) {
+      frame.to = result.createdAddress.toString()
+    }
+    if (result.execResult.exceptionError) {
+      frame.error = result.execResult.exceptionError.error
+    }
+    completedCalls.push(frame)
+  }
+
+  const onStep = async (step: any, resolve: () => void) => {
+    try {
+      structLogs.push({
+        pc: step.pc,
+        op: step.opcode.name,
+        gas: bigIntToHex(step.gasLeft ?? 0n),
+        gasCost: bigIntToHex(step.opcode.dynamicFee ?? step.opcode.fee ?? 0n),
+        depth: step.depth,
+        stack: options.disableStack ? [] : step.stack.map((item: unknown) => formatTraceWord(item)),
+        memory: options.disableMemory ? [] : formatTraceMemory(step.memory),
+        storage: options.disableStorage ? {} : await captureTraceStorage(step),
+      })
+    } finally {
+      resolve()
+    }
+  }
+
+  vm.evm.events?.on("beforeMessage", onBeforeMessage)
+  vm.evm.events?.on("afterMessage", onAfterMessage)
+  vm.evm.events?.on("step", onStep)
+
+  return {
+    dispose(): void {
+      vm.evm.events?.off("beforeMessage", onBeforeMessage)
+      vm.evm.events?.off("afterMessage", onAfterMessage)
+      vm.evm.events?.off("step", onStep)
+    },
+    finish<T extends { returnValue: string; gasUsed: bigint; failed: boolean; accessList: RpcAccessListItem[] }>(
+      result: T,
+    ): T & { trace: TransactionTrace; callTraces: CallTrace[] } {
+      const trace: TransactionTrace = {
+        gas: Number(result.gasUsed),
+        failed: result.failed,
+        returnValue: result.returnValue,
+        structLogs,
+      }
+      const callTraces = completedCalls
+        .sort((a, b) => a.order - b.order)
+        .map(({ order: _order, ...callTrace }) => callTrace)
+      return { ...result, trace, callTraces }
+    },
+  }
+}
+
+function normalizeAccessList(accessList?: Map<string, Set<string>>): RpcAccessListItem[] {
+  if (!accessList) return []
+  return Array.from(accessList.entries()).map(([address, slots]) => ({
+    address: `0x${address}`,
+    storageKeys: Array.from(slots).map((slot) => `0x${slot.padStart(64, "0")}`),
+  }))
+}
+
+function classifyMessageType(message: { to?: Address; delegatecall?: boolean; isStatic?: boolean }): string {
+  if (!message.to) return "create"
+  if (message.delegatecall) return "delegatecall"
+  if (message.isStatic) return "staticcall"
+  return "call"
+}
+
+function formatTraceMemory(memory: Uint8Array): string[] {
+  if (!memory || memory.length === 0) return []
+  const words: string[] = []
+  for (let offset = 0; offset < memory.length; offset += 32) {
+    const chunk = memory.subarray(offset, Math.min(offset + 32, memory.length))
+    words.push(`0x${Buffer.from(chunk).toString("hex").padEnd(64, "0")}`)
+  }
+  return words
+}
+
+function formatTraceWord(value: unknown): string {
+  if (typeof value === "bigint") return bigIntToHex(value)
+  if (typeof value === "number") return bigIntToHex(BigInt(value))
+  if (value instanceof Uint8Array) {
+    return `0x${Buffer.from(value).toString("hex")}`
+  }
+  if (typeof value === "string") {
+    return value.startsWith("0x") ? value : `0x${value}`
+  }
+  return "0x0"
+}
+
+async function captureTraceStorage(step: any): Promise<Record<string, string>> {
+  if (step.opcode.name !== "SLOAD" && step.opcode.name !== "SSTORE") {
+    return {}
+  }
+  const stack = Array.isArray(step.stack) ? step.stack : []
+  const rawSlot = stack.at(-1)
+  if (rawSlot === undefined) return {}
+  const slot = formatTraceWord(rawSlot).replace(/^0x/, "").padStart(64, "0")
+  const value = await step.stateManager.getStorage(step.address, hexToBytes(`0x${slot}`))
+  const normalizedValue = value && value.length > 0
+    ? `0x${Buffer.from(value).toString("hex").padStart(64, "0")}`
+    : `0x${"0".repeat(64)}`
+  return {
+    [`0x${slot}`]: normalizedValue,
   }
 }
