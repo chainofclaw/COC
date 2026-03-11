@@ -8,7 +8,7 @@
  * Refs: #23
  */
 
-import { describe, it, before } from "node:test"
+import { describe, it, before, after } from "node:test"
 import assert from "node:assert/strict"
 import http from "node:http"
 import { EvmChain } from "../node/src/evm.ts"
@@ -96,6 +96,7 @@ async function postBatchRpc(
 
 // Shared server for all tests (avoids global rate limiter exhaustion)
 let PORT = 29950 + Math.floor(Math.random() * 50)
+let rpcServer: http.Server | null = null
 
 describe("RPC Stress Tests", () => {
   before(async () => {
@@ -114,7 +115,7 @@ describe("RPC Stress Tests", () => {
       evm,
     )
 
-    startRpcServer("127.0.0.1", PORT, CHAIN_ID, evm, engine, createMockP2P())
+    rpcServer = startRpcServer("127.0.0.1", PORT, CHAIN_ID, evm, engine, createMockP2P())
 
     // Wait for server readiness
     for (let i = 0; i < 20; i++) {
@@ -129,6 +130,19 @@ describe("RPC Stress Tests", () => {
         await new Promise<void>((r) => setTimeout(r, 50))
       }
     }
+  })
+
+  after(async () => {
+    if (!rpcServer) return
+    const server = rpcServer
+    rpcServer = null
+    server.closeAllConnections?.()
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) reject(error)
+        else resolve()
+      })
+    })
   })
 
   // ── Throughput Baselines (run first to avoid rate limit) ──

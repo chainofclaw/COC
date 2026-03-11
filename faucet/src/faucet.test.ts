@@ -2,7 +2,7 @@
  * Tests for Faucet core logic
  */
 
-import { describe, it, beforeEach } from "node:test"
+import { describe, it, beforeEach, afterEach } from "node:test"
 import assert from "node:assert/strict"
 import { Faucet, FaucetError } from "./faucet.ts"
 
@@ -26,6 +26,10 @@ describe("Faucet", () => {
       dailyGlobalLimitEth: "10000",
       perAddressCooldownMs: 86_400_000,
     })
+  })
+
+  afterEach(() => {
+    faucet.close()
   })
 
   it("has correct faucet address", () => {
@@ -135,6 +139,7 @@ describe("Faucet cooldown logic", () => {
       dailyGlobalLimitEth: "10000",
       perAddressCooldownMs: 60_000, // 1 minute
     })
+    fastFaucet.close()
 
     // First request will fail at network, but sets the cooldown record internally
     // We can't easily test this without mocking the provider, so we verify

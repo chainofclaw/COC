@@ -3,6 +3,7 @@ import { request as httpRequest } from "node:http"
 import crypto from "node:crypto"
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname } from "node:path"
+import type net from "node:net"
 import type { ChainBlock, ChainSnapshot, Hex, NodePeer } from "./blockchain-types.ts"
 import { PeerScoring } from "./peer-scoring.ts"
 import { PeerDiscovery } from "./peer-discovery.ts"
@@ -361,6 +362,8 @@ export class P2PNode {
   readonly scoring: PeerScoring
   readonly discovery: PeerDiscovery
   private pubsubHandler: ((topic: string, message: unknown) => void) | null = null
+  private server: http.Server | null = null
+  private readonly sockets = new Set<net.Socket>()
 
   constructor(cfg: P2PConfig, handlers: P2PHandlers) {
     this.cfg = cfg
@@ -406,6 +409,7 @@ export class P2PNode {
   }
 
   start(): void {
+    if (this.server) return
     this.startedAtMs = Date.now()
     const server = http.createServer(async (req, res) => {
       if (req.method === "GET" && req.url === "/health") {
@@ -717,15 +721,43 @@ export class P2PNode {
     server.headersTimeout = 10_000 // 10s to receive headers
     server.requestTimeout = 30_000 // 30s for entire request
     server.keepAliveTimeout = 5_000 // 5s idle before closing keep-alive
+    server.on("connection", (socket) => {
+      this.sockets.add(socket)
+      socket.on("close", () => {
+        this.sockets.delete(socket)
+      })
+    })
     server.listen(this.cfg.port, this.cfg.bind, () => {
       log.info("listening", { bind: this.cfg.bind, port: this.cfg.port })
     })
+    this.server = server
 
     // Start peer discovery and scoring if enabled
     if (this.cfg.enableDiscovery !== false) {
       this.discovery.start()
       this.scoring.startDecay()
     }
+  }
+
+  async stop(): Promise<void> {
+    this.discovery.stop()
+    this.scoring.stopDecay()
+    const server = this.server
+    if (!server) return
+    this.server = null
+    for (const socket of this.sockets) {
+      socket.destroy()
+    }
+    this.sockets.clear()
+    await new Promise<void>((resolve, reject) => {
+      server.close((err) => {
+        if (err) {
+          reject(err)
+          return
+        }
+        resolve()
+      })
+    })
   }
 
   async receiveTx(rawTx: Hex): Promise<void> {

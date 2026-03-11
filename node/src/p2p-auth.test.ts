@@ -1,4 +1,4 @@
-import { describe, it } from "node:test"
+import { afterEach, describe, it } from "node:test"
 import assert from "node:assert/strict"
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
@@ -14,6 +14,11 @@ import {
 } from "./p2p.ts"
 
 const TEST_KEY = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
+const startedNodes: P2PNode[] = []
+
+afterEach(async () => {
+  await Promise.all(startedNodes.splice(0).map((node) => node.stop()))
+})
 
 describe("P2P auth envelope", () => {
   it("accepts valid signed payload", () => {
@@ -75,6 +80,7 @@ describe("P2P auth envelope", () => {
         onSnapshotRequest: () => ({ blocks: [], updatedAtMs: Date.now() }),
       },
     )
+    startedNodes.push(p2p)
     assert.equal(p2p.getStats().inboundAuthMode, "enforce")
   })
 
@@ -93,6 +99,7 @@ describe("P2P auth envelope", () => {
         onSnapshotRequest: () => ({ blocks: [], updatedAtMs: Date.now() }),
       },
     )
+    startedNodes.push(p2p)
     assert.equal(p2p.getStats().inboundAuthMode, "monitor")
   })
 
@@ -163,6 +170,7 @@ describe("P2P auth envelope", () => {
         onSnapshotRequest: () => ({ blocks: [], updatedAtMs: Date.now() }),
       },
     )
+    startedNodes.push(p2p)
 
     const peer = {
       id: "0x" + "11".repeat(32),
@@ -187,6 +195,7 @@ describe("P2P auth envelope", () => {
         onSnapshotRequest: () => ({ blocks: [], updatedAtMs: Date.now() }),
       },
     )
+    startedNodes.push(p2p)
     const ipPeerId = (p2p as any).inboundIpPeerId("::ffff:127.0.0.1")
     const senderPeerId = (p2p as any).inboundSenderPeerId("0xabc")
     p2p.scoring.addPeer(ipPeerId, "inbound://127.0.0.1")

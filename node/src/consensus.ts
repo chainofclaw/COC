@@ -166,6 +166,9 @@ export class ConsensusEngine {
     this.syncTimer = setInterval(() => void this.trySync(), this.cfg.syncIntervalMs)
     // Independent degraded timeout check (not gated by tryPropose)
     this.degradedCheckTimer = setInterval(() => this.checkDegradedTimeout(), 10_000)
+    this.proposeTimer.unref()
+    this.syncTimer.unref()
+    this.degradedCheckTimer.unref()
     void this.trySync()
   }
 

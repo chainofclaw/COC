@@ -1,4 +1,5 @@
 import http from "node:http"
+import type net from "node:net"
 import { parse as parseUrl } from "node:url"
 import { mkdir, readFile, writeFile, rename } from "node:fs/promises"
 import { join } from "node:path"
@@ -28,6 +29,8 @@ export class IpfsHttpServer {
   private readonly unixfs: UnixFsBuilder
   private mfs: IpfsMfs | null = null
   private pubsub: IpfsPubsub | null = null
+  private server: http.Server | null = null
+  private readonly sockets = new Set<net.Socket>()
 
   constructor(cfg: IpfsServerConfig, store: IpfsBlockstore, unixfs: UnixFsBuilder) {
     this.cfg = cfg
@@ -44,6 +47,7 @@ export class IpfsHttpServer {
   }
 
   start(): void {
+    if (this.server) return
     const server = http.createServer(async (req, res) => {
       try {
       // Rate limiting
@@ -150,9 +154,35 @@ export class IpfsHttpServer {
         try { res.end(JSON.stringify({ error: "internal error" })) } catch { /* connection already closed */ }
       }
     })
+    server.on("connection", (socket) => {
+      this.sockets.add(socket)
+      socket.on("close", () => {
+        this.sockets.delete(socket)
+      })
+    })
 
     server.listen(this.cfg.port, this.cfg.bind, () => {
       log.info("listening", { bind: this.cfg.bind, port: this.cfg.port })
+    })
+    this.server = server
+  }
+
+  async stop(): Promise<void> {
+    const server = this.server
+    if (!server) return
+    this.server = null
+    for (const socket of this.sockets) {
+      socket.destroy()
+    }
+    this.sockets.clear()
+    await new Promise<void>((resolve, reject) => {
+      server.close((err) => {
+        if (err) {
+          reject(err)
+          return
+        }
+        resolve()
+      })
     })
   }
 

@@ -79,6 +79,7 @@ export class StoragePruner {
   start(): void {
     if (this.timer || !this.config.enableAutoPrune) return
     this.timer = setInterval(() => void this.prune(), this.config.pruneIntervalMs)
+    this.timer.unref()
   }
 
   /**

@@ -110,6 +110,8 @@ export class PeerDiscovery {
         log.error("health check failed", { error: String(err) })
       })
     }, this.cfg.healthCheckIntervalMs)
+    this.discoveryTimer.unref()
+    this.healthTimer.unref()
 
     // Start auto-save for peer persistence
     if (this.peerStore) {

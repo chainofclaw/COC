@@ -1,8 +1,14 @@
-import test, { describe, it } from "node:test"
+import test, { afterEach, describe, it } from "node:test"
 import assert from "node:assert/strict"
 import { BoundedSet, P2PNode, buildP2PIdentityChallengeMessage, buildSignedP2PPayload } from "./p2p.ts"
 import type { Hex, ChainBlock, ChainSnapshot } from "./blockchain-types.ts"
 import { createNodeSigner } from "./crypto/signer.ts"
+
+const startedNodes: P2PNode[] = []
+
+afterEach(async () => {
+  await Promise.all(startedNodes.splice(0).map((node) => node.stop()))
+})
 
 test("BoundedSet add and has", () => {
   const set = new BoundedSet<string>(5)
@@ -96,6 +102,7 @@ describe("P2P node-info endpoint", () => {
         getHeight: () => 123n,
       },
     )
+    startedNodes.push(p2p)
     p2p.start()
     await new Promise((r) => setTimeout(r, 100))
 
@@ -130,6 +137,7 @@ describe("P2P node-info endpoint", () => {
         onSnapshotRequest: () => ({ height: 0, latestHash: "0x0" as Hex, blocks: [] }) as unknown as ChainSnapshot,
       },
     )
+    startedNodes.push(p2p)
     p2p.start()
     await new Promise((r) => setTimeout(r, 100))
 
@@ -163,6 +171,7 @@ describe("P2P inbound rate limit", () => {
         onSnapshotRequest: () => ({ height: 0, latestHash: "0x0" as Hex, blocks: [] }) as unknown as ChainSnapshot,
       },
     )
+    startedNodes.push(p2p)
     p2p.start()
     await new Promise((r) => setTimeout(r, 100))
 
@@ -199,6 +208,7 @@ describe("P2P inbound security scoring", () => {
         onSnapshotRequest: () => ({ height: 0, latestHash: "0x0" as Hex, blocks: [] }) as unknown as ChainSnapshot,
       },
     )
+    startedNodes.push(p2p)
     p2p.start()
     await new Promise((r) => setTimeout(r, 100))
 
