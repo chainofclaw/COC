@@ -19,7 +19,7 @@ const FUNDED_ADDRESS = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
 const GAS_PRICE = 1_000_000_000n
 const INIT_CODE = "0x602a600055600b6011600039600b6000f360005460005260206000f3"
 
-async function deployStorageContract(engine: PersistentChainEngine): Promise<{ txHash: Hex; contractAddress: string }> {
+async function deployStorageContract(engine: PersistentChainEngine): Promise<string> {
   const wallet = new Wallet(FUNDED_PK)
   const deployTx = await wallet.signTransaction({
     data: INIT_CODE,
@@ -30,10 +30,7 @@ async function deployStorageContract(engine: PersistentChainEngine): Promise<{ t
   })
   await engine.addRawTx(deployTx as Hex)
   await engine.proposeNextBlock()
-  return {
-    txHash: Transaction.from(deployTx).hash as Hex,
-    contractAddress: getCreateAddress({ from: wallet.address, nonce: 0 }),
-  }
+  return getCreateAddress({ from: wallet.address, nonce: 0 })
 }
 
 async function callStorageContract(engine: PersistentChainEngine, contractAddress: string): Promise<Hex> {
@@ -83,8 +80,8 @@ describe("Debug/Trace APIs", () => {
   })
 
   it("traceTransaction returns trace for confirmed tx", async () => {
-    await deployStorageContract(engine)
-    const callTxHash = await callStorageContract(engine, getCreateAddress({ from: FUNDED_ADDRESS, nonce: 0 }))
+    const contractAddress = await deployStorageContract(engine)
+    const callTxHash = await callStorageContract(engine, contractAddress)
     const trace = await traceTransaction(callTxHash, engine, evm)
 
     assert.ok(trace)
@@ -103,7 +100,7 @@ describe("Debug/Trace APIs", () => {
   })
 
   it("traceBlockByNumber traces all txs in a block", async () => {
-    const { contractAddress } = await deployStorageContract(engine)
+    const contractAddress = await deployStorageContract(engine)
     const callTxHash = await callStorageContract(engine, contractAddress)
 
     const traces = await traceBlockByNumber(2n, engine, evm)
@@ -121,7 +118,7 @@ describe("Debug/Trace APIs", () => {
   })
 
   it("traceTransactionCalls returns call trace", async () => {
-    const { contractAddress } = await deployStorageContract(engine)
+    const contractAddress = await deployStorageContract(engine)
     const callTxHash = await callStorageContract(engine, contractAddress)
     const calls = await traceTransactionCalls(callTxHash, engine, evm)
 

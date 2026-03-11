@@ -2,6 +2,7 @@ import { readFile, writeFile, mkdir } from "node:fs/promises"
 import { join } from "node:path"
 import { homedir } from "node:os"
 import crypto from "node:crypto"
+import { Hardfork } from "@ethereumjs/common"
 
 export interface StorageConfig {
   backend: "memory" | "leveldb"
@@ -15,6 +16,7 @@ export interface NodeConfig {
   dataDir: string
   nodeId: string
   chainId: number
+  hardfork: Hardfork
   rpcBind: string
   rpcPort: number
   wsBind: string
@@ -289,6 +291,10 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
   // Node running mode
   const nodeModeRaw = process.env.COC_NODE_MODE ?? (user as Record<string, unknown>).nodeMode
   const nodeMode = normalizeNodeMode(nodeModeRaw)
+  const hardfork = normalizeHardfork(
+    process.env.COC_EVM_HARDFORK ?? (user as Record<string, unknown>).hardfork,
+    Hardfork.Shanghai,
+  )
 
   // Block signature enforcement mode
   const sigEnforcementRaw = process.env.COC_SIGNATURE_ENFORCEMENT
@@ -328,6 +334,7 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     dataDir,
     nodeId: "node-1",
     chainId: 18780,
+    hardfork: Hardfork.Shanghai,
     rpcBind,
     rpcPort: 18780,
     wsBind,
@@ -431,6 +438,7 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     rpcAuthToken,
     enableAdminRpc,
     nodeMode,
+    hardfork,
     signatureEnforcement,
     nodePrivateKey,
     enableGovernance,
@@ -445,6 +453,13 @@ function normalizeNodeMode(input: unknown): "full" | "archive" | "light" {
   const v = input.trim().toLowerCase()
   if (v === "archive" || v === "light") return v
   return "full"
+}
+
+function normalizeHardfork(input: unknown, fallback: Hardfork): Hardfork {
+  if (typeof input !== "string") return fallback
+  const normalized = input.trim()
+  const supported = new Set(Object.values(Hardfork))
+  return supported.has(normalized as Hardfork) ? (normalized as Hardfork) : fallback
 }
 
 function normalizeSigEnforcement(input: unknown): "off" | "monitor" | "enforce" {
@@ -526,6 +541,13 @@ export function validateConfig(cfg: Partial<NodeConfig>): string[] {
   if (cfg.chainId !== undefined) {
     if (!Number.isInteger(cfg.chainId) || cfg.chainId < 1) {
       errors.push("chainId must be a positive integer")
+    }
+  }
+
+  if (cfg.hardfork !== undefined) {
+    const supported = new Set(Object.values(Hardfork))
+    if (typeof cfg.hardfork !== "string" || !supported.has(cfg.hardfork)) {
+      errors.push("hardfork must be a valid @ethereumjs/common hardfork name")
     }
   }
 

@@ -1,6 +1,10 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { validateConfig } from "./config.ts"
+import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { Hardfork } from "@ethereumjs/common"
+import { loadNodeConfig, validateConfig } from "./config.ts"
 
 describe("validateConfig", () => {
   it("returns no errors for valid partial config", () => {
@@ -186,5 +190,45 @@ describe("validateConfig", () => {
     assert.equal(validateConfig({ nodeMode: "archive" }).length, 0)
     assert.equal(validateConfig({ nodeMode: "light" }).length, 0)
     assert.ok(validateConfig({ nodeMode: "invalid" as "full" }).length > 0)
+  })
+
+  it("validates hardfork", () => {
+    assert.equal(validateConfig({ hardfork: Hardfork.Shanghai }).length, 0)
+    assert.equal(validateConfig({ hardfork: Hardfork.London }).length, 0)
+    assert.ok(validateConfig({ hardfork: "invalid-fork" as Hardfork }).length > 0)
+  })
+})
+
+describe("loadNodeConfig", () => {
+  it("loads hardfork from config file and lets env override it", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "coc-config-hardfork-"))
+    const configPath = join(tempDir, "node-config.json")
+    const previousEnv = {
+      COC_DATA_DIR: process.env.COC_DATA_DIR,
+      COC_NODE_CONFIG: process.env.COC_NODE_CONFIG,
+      COC_EVM_HARDFORK: process.env.COC_EVM_HARDFORK,
+    }
+
+    try {
+      await writeFile(configPath, JSON.stringify({ hardfork: Hardfork.London }), "utf-8")
+      process.env.COC_DATA_DIR = tempDir
+      process.env.COC_NODE_CONFIG = configPath
+      delete process.env.COC_EVM_HARDFORK
+
+      const fromFile = await loadNodeConfig()
+      assert.equal(fromFile.hardfork, Hardfork.London)
+
+      process.env.COC_EVM_HARDFORK = Hardfork.Cancun
+      const fromEnv = await loadNodeConfig()
+      assert.equal(fromEnv.hardfork, Hardfork.Cancun)
+    } finally {
+      if (previousEnv.COC_DATA_DIR === undefined) delete process.env.COC_DATA_DIR
+      else process.env.COC_DATA_DIR = previousEnv.COC_DATA_DIR
+      if (previousEnv.COC_NODE_CONFIG === undefined) delete process.env.COC_NODE_CONFIG
+      else process.env.COC_NODE_CONFIG = previousEnv.COC_NODE_CONFIG
+      if (previousEnv.COC_EVM_HARDFORK === undefined) delete process.env.COC_EVM_HARDFORK
+      else process.env.COC_EVM_HARDFORK = previousEnv.COC_EVM_HARDFORK
+      await rm(tempDir, { recursive: true, force: true })
+    }
   })
 })

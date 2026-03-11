@@ -68,6 +68,7 @@ const MAX_TX_CACHE = 50_000
 export class EvmChain {
   private vm: VM
   private readonly common: ReturnType<typeof createCustomCommon>
+  private readonly hardfork: Hardfork
   private blockNumber = 0n
   private readonly receipts = new Map<string, TxReceipt>()
   private readonly txs = new Map<string, TxInfo>()
@@ -75,24 +76,36 @@ export class EvmChain {
 
   private externalStateManager: unknown | null = null
 
-  private constructor(chainId: number, vm: VM, common: ReturnType<typeof createCustomCommon>, externalStateManager?: unknown) {
+  private constructor(
+    chainId: number,
+    vm: VM,
+    common: ReturnType<typeof createCustomCommon>,
+    hardfork: Hardfork,
+    externalStateManager?: unknown,
+  ) {
     this.vm = vm
     this.common = common
+    this.hardfork = hardfork
     this.externalStateManager = externalStateManager ?? null
   }
 
-  static async create(chainId: number, stateManager?: unknown): Promise<EvmChain> {
+  static async create(
+    chainId: number,
+    stateManager?: unknown,
+    opts?: { hardfork?: Hardfork },
+  ): Promise<EvmChain> {
     const base = getPresetChainConfig("mainnet")
+    const hardfork = opts?.hardfork ?? Hardfork.Shanghai
     const common = createCustomCommon({ chainId, networkId: chainId, name: "COC" }, base, {
-      hardfork: Hardfork.Shanghai
+      hardfork,
     })
-    const opts: Record<string, unknown> = { common }
+    const vmOpts: Record<string, unknown> = { common }
     if (stateManager) {
-      opts.stateManager = stateManager
+      vmOpts.stateManager = stateManager
     }
     // VMOpts type not directly importable in strip-types mode
-    const vm = await createVM(opts as Parameters<typeof createVM>[0])
-    return new EvmChain(chainId, vm, common, stateManager)
+    const vm = await createVM(vmOpts as Parameters<typeof createVM>[0])
+    return new EvmChain(chainId, vm, common, hardfork, stateManager)
   }
 
   async prefund(accounts: PrefundAccount[]): Promise<void> {
@@ -318,8 +331,12 @@ export class EvmChain {
     return Number(this.common.chainId())
   }
 
+  getHardfork(): Hardfork {
+    return this.hardfork
+  }
+
   async createReplayChain(): Promise<EvmChain> {
-    const replay = await EvmChain.create(this.getChainId())
+    const replay = await EvmChain.create(this.getChainId(), undefined, { hardfork: this.hardfork })
     if (this.prefundAccounts.length > 0) {
       await replay.prefund(this.prefundAccounts)
     }
