@@ -137,8 +137,12 @@ function createMockRpcServer(opts: MockRpcOptions = {}): Promise<{ server: Serve
 }
 
 let activeServer: Server | null = null
+const activeFaucets: Faucet[] = []
 
 afterEach(() => {
+  for (const faucet of activeFaucets.splice(0)) {
+    faucet.close()
+  }
   if (activeServer) {
     activeServer.close()
     activeServer = null
@@ -158,6 +162,7 @@ describe("Faucet drip flow", () => {
       dailyGlobalLimitEth: "10000",
       perAddressCooldownMs: 86_400_000,
     })
+    activeFaucets.push(faucet)
 
     const result = await faucet.requestDrip(VALID_ADDRESS)
     assert.ok(result.txHash, "should return a tx hash")
@@ -175,6 +180,7 @@ describe("Faucet drip flow", () => {
       dailyGlobalLimitEth: "10000",
       perAddressCooldownMs: 60_000,
     })
+    activeFaucets.push(faucet)
 
     await faucet.requestDrip(VALID_ADDRESS)
 
@@ -200,6 +206,7 @@ describe("Faucet drip flow", () => {
       dailyGlobalLimitEth: "10000",
       perAddressCooldownMs: 86_400_000,
     })
+    activeFaucets.push(faucet)
 
     const r1 = await faucet.requestDrip("0x70997970C51812dc3A010C7d01b50e0d17dc79C8")
     assert.ok(r1.txHash)
@@ -219,6 +226,7 @@ describe("Faucet drip flow", () => {
       dailyGlobalLimitEth: "15",
       perAddressCooldownMs: 0,
     })
+    activeFaucets.push(faucet)
 
     await faucet.requestDrip("0x70997970C51812dc3A010C7d01b50e0d17dc79C8")
 
@@ -246,6 +254,7 @@ describe("Faucet drip flow", () => {
       dailyGlobalLimitEth: "10000",
       perAddressCooldownMs: 86_400_000,
     })
+    activeFaucets.push(faucet)
 
     await assert.rejects(
       () => faucet.requestDrip(VALID_ADDRESS),

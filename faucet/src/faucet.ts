@@ -113,6 +113,12 @@ export class Faucet {
     }
   }
 
+  close(): void {
+    if (typeof this.provider.destroy === "function") {
+      this.provider.destroy()
+    }
+  }
+
   private maybeResetDaily(): void {
     if (Date.now() >= this.dailyResetMs) {
       this.dailyDripTotal = 0n

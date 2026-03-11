@@ -11,6 +11,7 @@ import { IpfsHttpServer } from "./ipfs-http.ts"
 let tmpDir: string
 let store: IpfsBlockstore
 let unixfs: UnixFsBuilder
+let server: IpfsHttpServer
 let port: number
 let baseUrl: string
 
@@ -51,7 +52,7 @@ beforeEach(async () => {
   port = 30000 + Math.floor(Math.random() * 10000)
   baseUrl = `http://127.0.0.1:${port}`
 
-  const server = new IpfsHttpServer(
+  server = new IpfsHttpServer(
     { bind: "127.0.0.1", port, storageDir: tmpDir, nodeId: "test-node" },
     store,
     unixfs,
@@ -62,6 +63,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  await server.stop()
   await rm(tmpDir, { recursive: true, force: true })
 })
 
