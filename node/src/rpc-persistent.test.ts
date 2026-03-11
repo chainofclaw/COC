@@ -610,6 +610,36 @@ test("RPC+Persistent: historical state queries and transaction schema parity", a
     assert.strictEqual(txView.type, "0x1")
     assert.strictEqual(txView.chainId, `0x${CHAIN_ID.toString(16)}`)
 
+    const txByBlockHash = await handleRpcMethod(
+      "eth_getTransactionByBlockHashAndIndex",
+      [block2.hash, "0x0"],
+      CHAIN_ID,
+      evm,
+      engine,
+      p2p,
+    ) as Record<string, unknown>
+    assert.strictEqual(txByBlockHash.hash, deployTxHash)
+    assert.strictEqual(txByBlockHash.blockHash, block2.hash)
+    assert.strictEqual(txByBlockHash.blockNumber, "0x2")
+    assert.strictEqual(txByBlockHash.transactionIndex, "0x0")
+    assert.strictEqual(txByBlockHash.nonce, "0x1")
+    assert.strictEqual(txByBlockHash.chainId, `0x${CHAIN_ID.toString(16)}`)
+
+    const txByBlockNumber = await handleRpcMethod(
+      "eth_getTransactionByBlockNumberAndIndex",
+      ["0x2", "0x0"],
+      CHAIN_ID,
+      evm,
+      engine,
+      p2p,
+    ) as Record<string, unknown>
+    assert.strictEqual(txByBlockNumber.hash, deployTxHash)
+    assert.strictEqual(txByBlockNumber.blockHash, block2.hash)
+    assert.strictEqual(txByBlockNumber.blockNumber, "0x2")
+    assert.strictEqual(txByBlockNumber.transactionIndex, "0x0")
+    assert.strictEqual(txByBlockNumber.nonce, "0x1")
+    assert.strictEqual(txByBlockNumber.chainId, `0x${CHAIN_ID.toString(16)}`)
+
     const receiptView = await handleRpcMethod("eth_getTransactionReceipt", [deployTxHash], CHAIN_ID, evm, engine, p2p) as Record<string, unknown>
     assert.strictEqual(receiptView.transactionHash, deployTxHash)
     assert.strictEqual(receiptView.blockNumber, "0x2")
