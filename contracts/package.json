@@ -7,7 +7,9 @@
     "test": "hardhat test",
     "coverage": "hardhat coverage",
     "coverage:check": "hardhat coverage && node scripts/check-coverage.cjs",
-    "deploy:local": "hardhat run scripts/deploy-posemanager.js --network hardhat",
+    "deploy:pose": "node --experimental-strip-types deploy/cli-deploy-pose.ts",
+    "deploy:pose:coc": "node --experimental-strip-types deploy/cli-deploy-pose.ts --target l2-coc",
+    "deploy:local": "npm run deploy:pose:coc",
     "deploy:governance": "hardhat run scripts/deploy-governance.js --network prowl",
     "deploy:governance:local": "hardhat run scripts/deploy-governance.js --network hardhat",
     "verify:pose": "hardhat run scripts/verify-pose.js --network localhost"

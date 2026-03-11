@@ -12,7 +12,7 @@ As of the current codebase, COC can be considered an "EVM-compatible prototype c
 
 Key takeaways:
 
-- Execution engine is functional: based on `@ethereumjs/vm`, running under fixed Shanghai hardfork semantics.
+- Execution engine is functional: based on `@ethereumjs/vm`, defaulting to Shanghai hardfork semantics and allowing hardfork selection through node configuration.
 - Contracts can be deployed, called, and persisted: supports contract creation, state storage, logs, receipts, `eth_call`, `eth_getCode`, `eth_getStorageAt`, `eth_getLogs`, and other core paths.
 - RPC compatibility is "sufficient but not fully equivalent": core EVM/RPC paths work, but full Ethereum parity is still missing.
 - Contract deployment should use standard `ethers` / Hardhat workflows, submitting signed transactions via `eth_sendRawTransaction`; `eth_sendTransaction` is only available with explicitly enabled dev accounts.
@@ -40,7 +40,7 @@ The current state persistence path is:
 
 1. `PersistentStateTrie` uses LevelDB to persist accounts, storage slots, and code.
 2. `PersistentStateManager` adapts the trie into a state manager compatible with `ethereumjs/vm`.
-3. `EvmChain.create(chainId, stateManager)` injects this persistent state manager into the VM.
+3. `EvmChain.create(chainId, stateManager, { hardfork? })` injects this persistent state manager and optional hardfork selection into the VM.
 4. After node restart, state can be restored directly from the existing state root without full replay.
 
 Related implementation:
@@ -160,7 +160,7 @@ A more accurate characterization:
 
 ### 4.1 Available JSON-RPC Methods
 
-`node/src/rpc.ts` currently implements 85 JSON-RPC methods inside `handleRpcMethod()`, grouped by namespace:
+`node/src/rpc.ts` currently implements 86 JSON-RPC methods inside `handleRpcMethod()`, grouped by namespace:
 
 **eth_ — Standard Ethereum Methods**
 
@@ -174,8 +174,8 @@ A more accurate characterization:
   - `eth_getTransactionByHash`, `eth_getTransactionReceipt`
   - `eth_sendRawTransaction`, `eth_sendTransaction` (only available when `COC_DEV_ACCOUNTS=1`)
 - Contracts
-  - `eth_call`, `eth_estimateGas`, `eth_getCode`, `eth_getStorageAt`
-  - `eth_createAccessList` (simplified, returns empty access list)
+  - `eth_call`, `eth_estimateGas`, `eth_getCode`, `eth_getStorageAt`, `eth_getProof`
+  - `eth_createAccessList` (collects access list data from real execution)
 - Logs and filters
   - `eth_getLogs`, `eth_newFilter`, `eth_newBlockFilter`, `eth_newPendingTransactionFilter`
   - `eth_getFilterChanges`, `eth_getFilterLogs`, `eth_uninstallFilter`
@@ -280,9 +280,9 @@ This is the most important section of this document.
 
 ### 5.1 EVM / Hardfork Limitations
 
-- Current implementation is fixed to `Shanghai`
-- Runtime hardfork switching is not supported
-- If your toolchain or bytecode strictly depends on other fork-era differences, you must verify independently
+- Each node instance still runs under one hardfork configuration at a time, defaulting to `Shanghai`
+- Other `@ethereumjs/common` hardfork names can be configured, but COC does not yet implement Ethereum-style scheduled hardfork transitions by block height
+- If your toolchain or bytecode strictly depends on other fork-era differences, you must still verify independently
 
 Impact:
 
@@ -296,8 +296,8 @@ The following methods are currently missing, simplified, or stubbed:
 | Method/Capability | Status | Notes |
 |---|---|---|
 | `RPC: full EVM parity` | Missing | Repository explicitly marks as Missing |
-| `eth_createAccessList` | Simplified | Executes call but returns empty access list, `gasUsed` fixed at `"0x0"` |
-| `debug_trace*` | Simplified | Not opcode-level instrumentation; simplified trace constructed from replay/receipts |
+| `eth_createAccessList` | Available but still limited | Returns access-list entries and `gasUsed` from real execution, but edge-case parity with Geth is not guaranteed |
+| `debug_trace*` | Partial | Produces opcode-level `structLogs` from actual replayed execution, but method coverage and tracer ecosystem are still far behind Geth |
 | `eth_compile*` / `eth_getCompilers` | Unsupported | Returns not supported |
 | `eth_mining` / `eth_hashrate` / `eth_coinbase` | Stubs | Returns fixed values (`false` / `"0x0"` / zero address) |
 | `eth_getWork` / `eth_submitWork` / `eth_submitHashrate` | Stubs | COC does not do PoW mining |
@@ -366,12 +366,9 @@ Related implementation:
 
 ### 5.6 Configuration Boundaries in Current Repository
 
-The repository currently has two default chainId values:
+The repository now converges the default COC `chainId` to `18780` across the core node, `config.example.json`, and `contracts/hardhat.config.cjs`.
 
-- Core node defaults to `chainId = 18780`
-- `config.example.json` and `contracts/hardhat.config.cjs` PoSe/runtime examples use `20241224`
-
-This is not "two networks being naturally equivalent", but rather configuration examples that have not been fully unified yet.
+This still does not mean deployments can skip verification. If you connect to an external devnet, historical testnet, or custom-configured network, you must use the value returned by the target node.
 
 Therefore, before deploying any contract, you must first query the target node:
 
@@ -468,13 +465,14 @@ This will deploy and wire up:
 - `GovernanceDAO`
 - `Treasury`
 
-### 6.3 PoSeManagerV2 Deployment: Library Function Approach
+### 6.3 PoSeManagerV2 Deployment: Formal CLI and Library Entrypoints
 
-The current official deployment helper for PoSeManagerV2 is:
+The current formal deployment entrypoints for PoSeManagerV2 are:
 
+- [`contracts/deploy/cli-deploy-pose.ts`](/home/bob/projects/ClawdBot/COC/contracts/deploy/cli-deploy-pose.ts)
 - [`contracts/deploy/deploy-pose.ts`](/home/bob/projects/ClawdBot/COC/contracts/deploy/deploy-pose.ts)
 
-It provides:
+The library module provides:
 
 - `resolveDeployParams(target)`
 - `validateDeployParams(params)`
@@ -488,7 +486,29 @@ Supported target presets:
 - `l2-arbitrum`
 - `l2-optimism`
 
-Minimal example:
+Formal CLI usage:
+
+```bash
+cd contracts
+npm install
+npm run compile
+
+export DEPLOYER_PRIVATE_KEY="0xyour_private_key"
+export L2_RPC_URL="http://127.0.0.1:18780"
+
+npm run deploy:pose:coc
+```
+
+You can also invoke the CLI directly:
+
+```bash
+node --experimental-strip-types deploy/cli-deploy-pose.ts \
+  --target l2-coc \
+  --artifact artifacts/contracts-src/settlement/PoSeManagerV2.sol/PoSeManagerV2.json \
+  --json
+```
+
+Minimal library example:
 
 ```ts
 import { readFile } from "node:fs/promises"
@@ -555,21 +575,21 @@ Related references:
 - [`contracts/contracts-src/settlement/PoSeManagerV2.sol`](/home/bob/projects/ClawdBot/COC/contracts/contracts-src/settlement/PoSeManagerV2.sol)
 - [`contracts/test/pose-v2-e2e.test.cjs`](/home/bob/projects/ClawdBot/COC/contracts/test/pose-v2-e2e.test.cjs)
 
-### 6.5 A Practical Limitation of the Current Deployment Toolchain
+### 6.5 Current Deployment Toolchain Boundaries
 
-The repository's [`contracts/package.json`](/home/bob/projects/ClawdBot/COC/contracts/package.json) still contains:
+The repository's [`contracts/package.json`](/home/bob/projects/ClawdBot/COC/contracts/package.json) now converges PoSe deployment onto:
 
-- `npm run deploy:local`
+- `npm run deploy:pose`
+- `npm run deploy:pose:coc`
+- `npm run deploy:local` (compatibility alias that forwards to `deploy:pose:coc`)
 
-But the referenced `scripts/deploy-posemanager.js` does not currently exist.
-
-Therefore the correct approach is:
+Therefore the recommended approach is:
 
 - General contracts: use standard Hardhat/ethers deployment scripts
 - Governance contracts: use `scripts/deploy-governance.js`
-- PoSeManagerV2: use the library functions from `contracts/deploy/deploy-pose.ts`
+- PoSeManagerV2: prefer `deploy/cli-deploy-pose.ts`; use the library functions from `contracts/deploy/deploy-pose.ts` only when embedding deployment into custom automation
 
-Do not rely on the legacy `deploy:local` script name.
+`deploy:local` is still available, but it is now only a compatibility alias rather than a standalone script file.
 
 ## 7. Day-to-Day Usage
 

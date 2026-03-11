@@ -24,7 +24,7 @@ module.exports = {
   networks: {
     prowl: {
       url: process.env.PROWL_RPC_URL || "http://127.0.0.1:18780",
-      chainId: parseInt(process.env.PROWL_CHAIN_ID || "20241224"),
+      chainId: parseInt(process.env.PROWL_CHAIN_ID || "18780"),
       accounts: process.env.DEPLOYER_PRIVATE_KEY
         ? [process.env.DEPLOYER_PRIVATE_KEY]
         : [],

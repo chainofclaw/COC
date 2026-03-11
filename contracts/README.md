@@ -7,7 +7,7 @@ cd COC/contracts
 npm install
 npm run compile
 npm test
-npm run deploy:local
+npm run deploy:pose:coc
 ```
 
 ## Included
@@ -19,12 +19,15 @@ npm run deploy:local
   - `settlement/MerkleProofLite.sol`
 - Hardhat config:
   - `hardhat.config.cjs`
-- Deploy script:
-  - `scripts/deploy-posemanager.js`
+- Deploy entrypoints:
+  - `deploy/cli-deploy-pose.ts`
+  - `deploy/deploy-pose.ts`
 - Contract tests:
-  - `test/PoSeManager.test.js`
+  - `test/*.cjs`
 
 ## Notes
 
-- `deploy:local` deploys to Hardhat in-memory network.
-- For persistent networks, add network config and private key env vars before deployment.
+- `deploy:pose` is the formal PoSeManagerV2 deployment CLI.
+- `deploy:pose:coc` targets the local/default COC network preset.
+- `deploy:local` is now a compatibility alias to `deploy:pose:coc`, not the removed `scripts/deploy-posemanager.js`.
+- For persistent networks, set RPC/private-key environment variables before deployment.
