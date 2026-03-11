@@ -12,6 +12,7 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Wallet, parseEther, Transaction, getCreateAddress } from "ethers"
+import { KECCAK256_NULL_S, KECCAK256_RLP_S } from "@ethereumjs/util"
 import { EvmChain } from "./evm.ts"
 import { PersistentChainEngine } from "./chain-engine-persistent.ts"
 import { startRpcServer } from "./rpc.ts"
@@ -544,6 +545,58 @@ test("RPC+Persistent: historical state queries and transaction schema parity", a
     assert.ok(contractAccess)
     assert.ok(contractAccess!.storageKeys.includes(`0x${"0".repeat(64)}`))
     assert.match(accessListView.gasUsed, /^0x[0-9a-f]+$/)
+
+    const proofBeforeDeploy = await handleRpcMethod(
+      "eth_getProof",
+      [contractAddress, [`0x${"0".repeat(64)}`], "0x1"],
+      CHAIN_ID,
+      evm,
+      engine,
+      p2p,
+    ) as {
+      address: string
+      balance: string
+      codeHash: string
+      nonce: string
+      storageHash: string
+      accountProof: string[]
+      storageProof: Array<{ key: string; value: string; proof: string[] }>
+    }
+    assert.strictEqual(proofBeforeDeploy.address.toLowerCase(), contractAddress.toLowerCase())
+    assert.strictEqual(proofBeforeDeploy.balance, "0x0")
+    assert.strictEqual(proofBeforeDeploy.nonce, "0x0")
+    assert.strictEqual(proofBeforeDeploy.codeHash, KECCAK256_NULL_S)
+    assert.strictEqual(proofBeforeDeploy.storageHash, KECCAK256_RLP_S)
+    assert.ok(proofBeforeDeploy.accountProof.length > 0)
+    assert.strictEqual(proofBeforeDeploy.storageProof.length, 1)
+    assert.strictEqual(proofBeforeDeploy.storageProof[0].value, "0x0")
+
+    const proofAfterDeploy = await handleRpcMethod(
+      "eth_getProof",
+      [contractAddress, [`0x${"0".repeat(64)}`], "0x2"],
+      CHAIN_ID,
+      evm,
+      engine,
+      p2p,
+    ) as {
+      address: string
+      balance: string
+      codeHash: string
+      nonce: string
+      storageHash: string
+      accountProof: string[]
+      storageProof: Array<{ key: string; value: string; proof: string[] }>
+    }
+    assert.strictEqual(proofAfterDeploy.address.toLowerCase(), contractAddress.toLowerCase())
+    assert.strictEqual(proofAfterDeploy.balance, "0x0")
+    assert.strictEqual(proofAfterDeploy.nonce, "0x1")
+    assert.match(proofAfterDeploy.codeHash, /^0x[0-9a-f]{64}$/)
+    assert.match(proofAfterDeploy.storageHash, /^0x[0-9a-f]{64}$/)
+    assert.ok(proofAfterDeploy.accountProof.length > 0)
+    assert.strictEqual(proofAfterDeploy.storageProof.length, 1)
+    assert.strictEqual(proofAfterDeploy.storageProof[0].key, `0x${"0".repeat(64)}`)
+    assert.strictEqual(proofAfterDeploy.storageProof[0].value, "0x2a")
+    assert.ok(proofAfterDeploy.storageProof[0].proof.length > 0)
 
     const txView = await handleRpcMethod("eth_getTransactionByHash", [deployTxHash], CHAIN_ID, evm, engine, p2p) as Record<string, unknown>
     assert.strictEqual(txView.hash, deployTxHash)

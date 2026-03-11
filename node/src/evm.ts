@@ -323,6 +323,25 @@ export class EvmChain {
     return "0x" + hex.slice(2).padStart(64, "0")
   }
 
+  async getProof(address: string, slots: string[], stateRoot?: string): Promise<{
+    address: string
+    balance: string
+    codeHash: string
+    nonce: string
+    storageHash: string
+    accountProof: string[]
+    storageProof: Array<{ key: string; value: string; proof: string[] }>
+  }> {
+    const stateManager = await this.resolveStateManager(stateRoot)
+    if (!(stateManager instanceof PersistentStateManager) || typeof stateManager.getProof !== "function") {
+      throw new Error("eth_getProof requires proof-capable persistent state manager support")
+    }
+    return stateManager.getProof(
+      Address.fromString(address),
+      slots.map((slot) => hexToBytes(slot.length === 66 ? slot : `0x${slot.replace("0x", "").padStart(64, "0")}`)),
+    )
+  }
+
   getAllReceipts(): Map<string, TxReceipt> {
     return new Map(this.receipts)
   }

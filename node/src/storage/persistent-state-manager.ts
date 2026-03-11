@@ -5,7 +5,7 @@
  * enabling EVM state to survive node restarts.
  */
 
-import { Account, Address, bytesToHex, hexToBytes } from "@ethereumjs/util"
+import { Account, Address, KECCAK256_NULL_S, KECCAK256_RLP_S, bigIntToHex, bytesToHex, hexToBytes } from "@ethereumjs/util"
 import { keccak256 } from "ethers"
 import type { IStateTrie, AccountState } from "./state-trie.ts"
 
@@ -217,4 +217,62 @@ export class PersistentStateManager {
     await forkedTrie.setStateRoot(rootHex, { persist: false })
     return new PersistentStateManager(forkedTrie)
   }
+
+  async getProof(address: Address, storageSlots: Uint8Array[] = []): Promise<{
+    address: string
+    balance: string
+    codeHash: string
+    nonce: string
+    storageHash: string
+    accountProof: string[]
+    storageProof: Array<{ key: string; value: string; proof: string[] }>
+  }> {
+    const addr = address.toString().toLowerCase()
+    const accountState = await this.trie.get(addr)
+    const account = await this.getAccount(address)
+
+    const accountProof = (await this.trie.createAccountProof(addr)).map((node) => bytesToHex(node))
+    const storageProof = await Promise.all(storageSlots.map(async (slot) => {
+      const key = normalizeProofSlot(bytesToHex(slot))
+      const proof = await this.trie.createStorageProof(addr, key)
+      const value = await this.trie.getStorageAt(addr, key)
+      return {
+        key,
+        value: normalizeProofValue(value),
+        proof: proof.map((node) => bytesToHex(node)),
+      }
+    }))
+
+    if (!accountState || !account) {
+      return {
+        address: address.toString(),
+        balance: "0x0",
+        codeHash: KECCAK256_NULL_S,
+        nonce: "0x0",
+        storageHash: KECCAK256_RLP_S,
+        accountProof,
+        storageProof,
+      }
+    }
+
+    return {
+      address: address.toString(),
+      balance: bigIntToHex(account.balance),
+      codeHash: bytesToHex(account.codeHash),
+      nonce: bigIntToHex(account.nonce),
+      storageHash: bytesToHex(account.storageRoot),
+      accountProof,
+      storageProof,
+    }
+  }
+}
+
+function normalizeProofSlot(slot: string): string {
+  return slot.length === 66 ? slot : `0x${slot.replace(/^0x/, "").padStart(64, "0")}`
+}
+
+function normalizeProofValue(value: string): string {
+  if (!value || value === "0x" || value === "0x0") return "0x0"
+  const stripped = value.replace(/^0x/, "").replace(/^0+/, "")
+  return stripped.length > 0 ? `0x${stripped}` : "0x0"
 }

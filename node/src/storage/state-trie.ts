@@ -51,6 +51,10 @@ export interface IStateTrie {
   merge(branch: IStateTrie): Promise<void>
   /** Discard a forked branch and release resources */
   discard(): void
+  /** Create an account trie proof for the provided address key */
+  createAccountProof(address: string): Promise<Uint8Array[]>
+  /** Create a storage trie proof for the provided account/slot key */
+  createStorageProof(address: string, slot: string): Promise<Uint8Array[]>
 }
 
 /**
@@ -449,6 +453,20 @@ export class PersistentStateTrie implements IStateTrie {
     this.dirtyAddresses.clear()
   }
 
+  async createAccountProof(address: string): Promise<Uint8Array[]> {
+    return this.trie.createProof(hexToBytes(address))
+  }
+
+  async createStorageProof(address: string, slot: string): Promise<Uint8Array[]> {
+    const account = await this.get(address)
+    if (!account || account.storageRoot === "0x" + "0".repeat(64)) {
+      const emptyTrie = new Trie({ db: new TrieDBAdapter(this.db, `ss:${address}:`) as any })
+      return emptyTrie.createProof(hexToBytes(slot))
+    }
+    const storageTrie = await this.getStorageTrie(address, account.storageRoot)
+    return storageTrie.createProof(hexToBytes(slot))
+  }
+
   private evictAccountCache(): void {
     while (this.accountCache.size >= this.maxAccountCache) {
       const oldest = this.accountCache.keys().next().value
@@ -669,6 +687,16 @@ export class InMemoryStateTrie implements IStateTrie {
     // No-op for in-memory
   }
 
+  async createAccountProof(address: string): Promise<Uint8Array[]> {
+    const trie = await this.buildAccountProofTrie()
+    return trie.createProof(hexToBytes(address))
+  }
+
+  async createStorageProof(address: string, slot: string): Promise<Uint8Array[]> {
+    const trie = await this.buildStorageProofTrie(address)
+    return trie.createProof(hexToBytes(slot))
+  }
+
   /** COW fork: deep-copy all maps into a new InMemoryStateTrie */
   async fork(): Promise<IStateTrie> {
     const forked = new InMemoryStateTrie()
@@ -708,4 +736,32 @@ export class InMemoryStateTrie implements IStateTrie {
     this.checkpoints.length = 0
     this.lastRoot = null
   }
+
+  private async buildAccountProofTrie(): Promise<Trie> {
+    const trie = new Trie()
+    for (const [address, state] of this.accounts) {
+      await trie.put(hexToBytes(address), encodeAccountState(state))
+    }
+    return trie
+  }
+
+  private async buildStorageProofTrie(address: string): Promise<Trie> {
+    const trie = new Trie()
+    const slots = this.storage.get(address)
+    if (!slots) return trie
+    for (const [slot, value] of slots) {
+      await trie.put(hexToBytes(slot), hexToBytes(value))
+    }
+    return trie
+  }
+}
+
+function encodeAccountState(state: AccountState): Uint8Array {
+  const encoder = new TextEncoder()
+  return encoder.encode(JSON.stringify({
+    nonce: state.nonce.toString(),
+    balance: state.balance.toString(),
+    storageRoot: state.storageRoot,
+    codeHash: state.codeHash,
+  }))
 }

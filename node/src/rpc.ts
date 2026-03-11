@@ -507,6 +507,25 @@ async function handleRpc(
       const stateRoot = await resolveHistoricalStateRoot((payload.params ?? [])[2], chain)
       return await evm.getStorageAt(storageAddr, storageSlot, stateRoot)
     }
+    case "eth_getProof": {
+      const proofAddr = requireHexParam(payload.params, 0, "address")
+      const rawSlots = (payload.params ?? [])[1]
+      if (!Array.isArray(rawSlots)) {
+        throw { code: -32602, message: "invalid storage keys: expected array" }
+      }
+      const proofSlots = rawSlots.map((slot, index) => {
+        if (typeof slot !== "string" || !slot.startsWith("0x")) {
+          throw { code: -32602, message: `invalid storage key at index ${index}` }
+        }
+        const normalized = slot.replace(/^0x/, "")
+        if (!/^[0-9a-fA-F]*$/.test(normalized) || normalized.length > 64) {
+          throw { code: -32602, message: `invalid storage key at index ${index}` }
+        }
+        return `0x${normalized.padStart(64, "0")}`
+      })
+      const stateRoot = await resolveHistoricalStateRoot((payload.params ?? [])[2], chain)
+      return await evm.getProof(proofAddr, proofSlots, stateRoot)
+    }
     case "eth_syncing":
       return false
     case "net_listening":
