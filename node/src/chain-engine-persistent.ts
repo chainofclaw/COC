@@ -389,7 +389,7 @@ export class PersistentChainEngine {
             blockNumber: block.number,
             blockHash: block.hash,
             from: txFrom,
-            to: txTo ?? ("0x0" as Hex),
+            to: txTo,
             gasUsed: BigInt(receipt.gasUsed.toString()),
             status: BigInt(receipt.status ?? 1),
             logs: receiptLogs.map((log: EvmLog) => ({

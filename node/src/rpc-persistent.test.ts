@@ -11,12 +11,16 @@ import http from "node:http"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Wallet, parseEther, Transaction } from "ethers"
+import { Wallet, parseEther, Transaction, getCreateAddress } from "ethers"
 import { EvmChain } from "./evm.ts"
 import { PersistentChainEngine } from "./chain-engine-persistent.ts"
 import { startRpcServer } from "./rpc.ts"
+import { handleRpcMethod } from "./rpc.ts"
 import { P2PNode } from "./p2p.ts"
 import type { Hex } from "./blockchain-types.ts"
+import { LevelDatabase } from "./storage/db.ts"
+import { PersistentStateTrie } from "./storage/state-trie.ts"
+import { PersistentStateManager } from "./storage/persistent-state-manager.ts"
 
 const CHAIN_ID = 2077
 
@@ -404,6 +408,159 @@ test("RPC+Persistent: multiple blocks with receipts", async () => {
 
     await engine.close()
   } finally {
+    rmSync(tmpDir, { recursive: true, force: true })
+  }
+})
+
+test("RPC+Persistent: historical state queries and transaction schema parity", async () => {
+  const tmpDir = mkdtempSync(join(tmpdir(), "coc-rpc-history-"))
+  const wallet = Wallet.createRandom()
+  const transferTarget = Wallet.createRandom().address
+  const deployerGasPrice = 1_000_000_000n
+  const runtimeCode = "0x60005460005260206000f3"
+  const initCode = "0x602a600055600b6011600039600b6000f360005460005260206000f3"
+  const p2p = { receiveTx: async () => {} } as P2PNode
+
+  let engine: PersistentChainEngine | null = null
+  let stateDb: LevelDatabase | null = null
+
+  try {
+    stateDb = new LevelDatabase(tmpDir, "state")
+    await stateDb.open()
+    const stateTrie = new PersistentStateTrie(stateDb)
+    await stateTrie.init()
+    const stateManager = new PersistentStateManager(stateTrie)
+    const evm = await EvmChain.create(CHAIN_ID, stateManager)
+
+    engine = new PersistentChainEngine(
+      {
+        dataDir: tmpDir,
+        nodeId: "node-1",
+        chainId: CHAIN_ID,
+        validators: ["node-1"],
+        finalityDepth: 3,
+        maxTxPerBlock: 50,
+        minGasPriceWei: 1n,
+        prefundAccounts: [
+          { address: wallet.address, balanceWei: parseEther("100").toString() },
+        ],
+        stateTrie,
+      },
+      evm,
+    )
+    await engine.init()
+
+    const transferTx = await wallet.signTransaction({
+      to: transferTarget,
+      value: parseEther("1"),
+      gasLimit: 21_000,
+      gasPrice: deployerGasPrice,
+      nonce: 0,
+      chainId: CHAIN_ID,
+    })
+    await engine.addRawTx(transferTx as Hex)
+    await engine.proposeNextBlock()
+
+    const deployTx = await wallet.signTransaction({
+      data: initCode,
+      gasLimit: 200_000,
+      gasPrice: deployerGasPrice,
+      nonce: 1,
+      chainId: CHAIN_ID,
+    })
+    await engine.addRawTx(deployTx as Hex)
+    await engine.proposeNextBlock()
+
+    const block1 = await engine.getBlockByNumber(1n)
+    const block2 = await engine.getBlockByNumber(2n)
+    assert.ok(block1?.stateRoot)
+    assert.ok(block2?.stateRoot)
+
+    const deployTxHash = Transaction.from(deployTx).hash as Hex
+    const contractAddress = getCreateAddress({ from: wallet.address, nonce: 1 })
+
+    const balanceAtBlock1 = await handleRpcMethod("eth_getBalance", [wallet.address, "0x1"], CHAIN_ID, evm, engine, p2p)
+    const balanceAtBlock2 = await handleRpcMethod("eth_getBalance", [wallet.address, "0x2"], CHAIN_ID, evm, engine, p2p)
+    assert.ok(BigInt(balanceAtBlock1 as string) > BigInt(balanceAtBlock2 as string))
+
+    const nonceAtBlock1 = await handleRpcMethod("eth_getTransactionCount", [wallet.address, "0x1"], CHAIN_ID, evm, engine, p2p)
+    const nonceAtBlock2 = await handleRpcMethod("eth_getTransactionCount", [wallet.address, "0x2"], CHAIN_ID, evm, engine, p2p)
+    assert.strictEqual(nonceAtBlock1, "0x1")
+    assert.strictEqual(nonceAtBlock2, "0x2")
+
+    const codeAtBlock1 = await handleRpcMethod("eth_getCode", [contractAddress, "0x1"], CHAIN_ID, evm, engine, p2p)
+    const codeAtBlock2 = await handleRpcMethod("eth_getCode", [contractAddress, "0x2"], CHAIN_ID, evm, engine, p2p)
+    assert.strictEqual(codeAtBlock1, "0x")
+    assert.strictEqual(codeAtBlock2, runtimeCode)
+
+    const storageAtBlock1 = await handleRpcMethod(
+      "eth_getStorageAt",
+      [contractAddress, "0x0", "0x1"],
+      CHAIN_ID,
+      evm,
+      engine,
+      p2p,
+    )
+    const storageAtBlock2 = await handleRpcMethod(
+      "eth_getStorageAt",
+      [contractAddress, "0x0", "0x2"],
+      CHAIN_ID,
+      evm,
+      engine,
+      p2p,
+    )
+    assert.strictEqual(storageAtBlock1, `0x${"0".repeat(64)}`)
+    assert.strictEqual(storageAtBlock2, `0x${"0".repeat(62)}2a`)
+
+    const callAtBlock1 = await handleRpcMethod(
+      "eth_call",
+      [{ to: contractAddress, data: "0x" }, "0x1"],
+      CHAIN_ID,
+      evm,
+      engine,
+      p2p,
+    )
+    const callAtBlock2 = await handleRpcMethod(
+      "eth_call",
+      [{ to: contractAddress, data: "0x" }, "0x2"],
+      CHAIN_ID,
+      evm,
+      engine,
+      p2p,
+    )
+    assert.strictEqual(callAtBlock1, "0x")
+    assert.strictEqual(callAtBlock2, `0x${"0".repeat(62)}2a`)
+
+    const txView = await handleRpcMethod("eth_getTransactionByHash", [deployTxHash], CHAIN_ID, evm, engine, p2p) as Record<string, unknown>
+    assert.strictEqual(txView.hash, deployTxHash)
+    assert.strictEqual(txView.blockNumber, "0x2")
+    assert.strictEqual(txView.blockHash, block2.hash)
+    assert.strictEqual(txView.transactionIndex, "0x0")
+    assert.strictEqual(txView.nonce, "0x1")
+    assert.strictEqual(txView.gas, "0x30d40")
+    assert.strictEqual(txView.gasPrice, "0x3b9aca00")
+    assert.strictEqual(txView.input, initCode)
+    assert.strictEqual(txView.type, "0x1")
+    assert.strictEqual(txView.chainId, `0x${CHAIN_ID.toString(16)}`)
+
+    const receiptView = await handleRpcMethod("eth_getTransactionReceipt", [deployTxHash], CHAIN_ID, evm, engine, p2p) as Record<string, unknown>
+    assert.strictEqual(receiptView.transactionHash, deployTxHash)
+    assert.strictEqual(receiptView.blockNumber, "0x2")
+    assert.strictEqual(receiptView.blockHash, block2.hash)
+    assert.strictEqual(receiptView.transactionIndex, "0x0")
+    assert.strictEqual(receiptView.contractAddress, contractAddress)
+    assert.strictEqual(receiptView.status, "0x1")
+    assert.strictEqual(receiptView.effectiveGasPrice, "0x3b9aca00")
+    assert.match(String(receiptView.logsBloom), /^0x[0-9a-f]{512}$/)
+    assert.ok(typeof receiptView.cumulativeGasUsed === "string")
+    assert.ok(typeof receiptView.gasUsed === "string")
+  } finally {
+    if (engine) {
+      await engine.close()
+    }
+    if (stateDb) {
+      await stateDb.close()
+    }
     rmSync(tmpDir, { recursive: true, force: true })
   }
 })

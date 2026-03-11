@@ -4,6 +4,7 @@ import { Account, Address, bytesToHex, hexToBytes, bigIntToHex } from "@ethereum
 import { createTxFromRLP } from "@ethereumjs/tx"
 import { createBlock } from "@ethereumjs/block"
 import type { PrefundAccount } from "./types.ts"
+import { PersistentStateManager } from "./storage/persistent-state-manager.ts"
 
 export interface ExecutionResult {
   txHash: string
@@ -33,6 +34,9 @@ export interface TxReceipt {
   logsBloom: string
   logs: EvmLog[]
   effectiveGasPrice: string
+  from?: string
+  to?: string | null
+  type?: string
   contractAddress?: string
 }
 
@@ -43,8 +47,18 @@ export interface TxInfo {
   nonce: string
   gas: string
   gasPrice: string
+  maxFeePerGas?: string
+  maxPriorityFeePerGas?: string
   value: string
+  input: string
   blockNumber: string
+  blockHash: string
+  transactionIndex: string
+  type: string
+  chainId: string
+  v: string
+  r: string
+  s: string
 }
 
 const MAX_RECEIPT_CACHE = 50_000
@@ -154,6 +168,13 @@ export class EvmChain {
     const nonce = tx.nonce ?? 0n
     const gasLimit = tx.gasLimit ?? 0n
     const value = tx.value ?? 0n
+    const typeHex = `0x${(tx.type ?? 0).toString(16)}`
+    const txData = tx.data ?? new Uint8Array()
+    const input = txData.length > 0 ? bytesToHex(txData) : "0x"
+    const maxFeePerGas = tx.maxFeePerGas !== undefined ? `0x${tx.maxFeePerGas.toString(16)}` : undefined
+    const maxPriorityFeePerGas = tx.maxPriorityFeePerGas !== undefined
+      ? `0x${tx.maxPriorityFeePerGas.toString(16)}`
+      : undefined
 
     if (this.txs.size >= MAX_TX_CACHE) {
       const first = this.txs.keys().next().value
@@ -167,20 +188,39 @@ export class EvmChain {
       nonce: `0x${nonce.toString(16)}`,
       gas: `0x${gasLimit.toString(16)}`,
       gasPrice: `0x${gasPrice.toString(16)}`,
+      maxFeePerGas,
+      maxPriorityFeePerGas,
       value: `0x${value.toString(16)}`,
-      blockNumber: `0x${appliedBlock.toString(16)}`
+      input,
+      blockNumber: `0x${appliedBlock.toString(16)}`,
+      blockHash: resolvedBlockHash,
+      transactionIndex: `0x${txIndex.toString(16)}`,
+      type: typeHex,
+      chainId: bigIntToHex(this.common.chainId()),
+      v: tx.v !== undefined ? bigIntToHex(tx.v) : "0x0",
+      r: tx.r !== undefined ? bigIntToHex(tx.r) : "0x0",
+      s: tx.s !== undefined ? bigIntToHex(tx.s) : "0x0",
     })
+
+    const storedReceipt = this.receipts.get(txHash)
+    if (storedReceipt) {
+      storedReceipt.from = from
+      storedReceipt.to = to
+      storedReceipt.type = typeHex
+    }
 
     return { txHash, gasUsed: result.totalGasSpent, success: result.execResult.exceptionError === undefined }
   }
 
-  async getBalance(address: string): Promise<bigint> {
-    const acc = await this.vm.stateManager.getAccount(Address.fromString(address))
+  async getBalance(address: string, stateRoot?: string): Promise<bigint> {
+    const stateManager = await this.resolveStateManager(stateRoot)
+    const acc = await stateManager.getAccount(Address.fromString(address))
     return acc?.balance ?? 0n
   }
 
-  async getNonce(address: string): Promise<bigint> {
-    const acc = await this.vm.stateManager.getAccount(Address.fromString(address))
+  async getNonce(address: string, stateRoot?: string): Promise<bigint> {
+    const stateManager = await this.resolveStateManager(stateRoot)
+    const acc = await stateManager.getAccount(Address.fromString(address))
     return acc?.nonce ?? 0n
   }
 
@@ -232,7 +272,48 @@ export class EvmChain {
     return this.txs.get(txHash) ?? null
   }
 
-  async callRaw(params: { from?: string; to: string; data?: string; value?: string; gas?: string }): Promise<{ returnValue: string; gasUsed: bigint }> {
+  async callRaw(
+    params: { from?: string; to: string; data?: string; value?: string; gas?: string },
+    stateRoot?: string,
+  ): Promise<{ returnValue: string; gasUsed: bigint }> {
+    if (stateRoot) {
+      const stateManager = await this.resolveStateManager(stateRoot)
+      const tempVm = await this.createVm(stateManager)
+      return this.runCall(tempVm, params)
+    }
+    return this.runCall(this.vm, params)
+  }
+
+  async estimateGas(params: { from?: string; to: string; data?: string; value?: string; gas?: string }): Promise<bigint> {
+    // Use caller-supplied gas cap or default to 30M (block gas limit)
+    const gasCap = params.gas ?? "0x1c9c380"
+    const { gasUsed } = await this.callRaw({ ...params, gas: gasCap })
+    // Minimum 21000 for basic transaction, plus 10% buffer
+    const base = gasUsed < 21000n ? 21000n : gasUsed
+    return base + base / 10n
+  }
+
+  async getCode(address: string, stateRoot?: string): Promise<string> {
+    const stateManager = await this.resolveStateManager(stateRoot)
+    const code = await stateManager.getCode(Address.fromString(address))
+    if (!code || code.length === 0) return "0x"
+    return bytesToHex(code)
+  }
+
+  async getStorageAt(address: string, slot: string, stateRoot?: string): Promise<string> {
+    const stateManager = await this.resolveStateManager(stateRoot)
+    const key = hexToBytes(slot.length === 66 ? slot : `0x${slot.replace("0x", "").padStart(64, "0")}`)
+    const result = await stateManager.getStorage(Address.fromString(address), key)
+    if (!result || result.length === 0) return "0x" + "0".repeat(64)
+    const hex = bytesToHex(result)
+    return "0x" + hex.slice(2).padStart(64, "0")
+  }
+
+  getAllReceipts(): Map<string, TxReceipt> {
+    return new Map(this.receipts)
+  }
+
+  private async runCall(vm: VM, params: { from?: string; to: string; data?: string; value?: string; gas?: string }): Promise<{ returnValue: string; gasUsed: bigint }> {
     const caller = params.from ? Address.fromString(params.from) : Address.zero()
     const to = params.to ? Address.fromString(params.to) : Address.zero()
     const data = params.data ? hexToBytes(params.data) : new Uint8Array()
@@ -243,9 +324,9 @@ export class EvmChain {
     const gasLimit = requestedGas > MAX_CALL_GAS ? MAX_CALL_GAS : requestedGas
 
     // Checkpoint/revert to prevent eth_call from mutating persistent state
-    await this.vm.stateManager.checkpoint()
+    await vm.stateManager.checkpoint()
     try {
-      const result = await this.vm.evm.runCall({
+      const result = await vm.evm.runCall({
         caller,
         to,
         data,
@@ -262,34 +343,22 @@ export class EvmChain {
         gasUsed: result.execResult.executionGasUsed,
       }
     } finally {
-      await this.vm.stateManager.revert()
+      await vm.stateManager.revert()
     }
   }
 
-  async estimateGas(params: { from?: string; to: string; data?: string; value?: string; gas?: string }): Promise<bigint> {
-    // Use caller-supplied gas cap or default to 30M (block gas limit)
-    const gasCap = params.gas ?? "0x1c9c380"
-    const { gasUsed } = await this.callRaw({ ...params, gas: gasCap })
-    // Minimum 21000 for basic transaction, plus 10% buffer
-    const base = gasUsed < 21000n ? 21000n : gasUsed
-    return base + base / 10n
+  private async resolveStateManager(stateRoot?: string): Promise<any> {
+    if (!stateRoot) {
+      return this.vm.stateManager
+    }
+    if (!(this.externalStateManager instanceof PersistentStateManager)) {
+      throw new Error("historical state queries require persistent state manager support")
+    }
+    return this.externalStateManager.forkAtStateRoot(stateRoot)
   }
 
-  async getCode(address: string): Promise<string> {
-    const code = await this.vm.stateManager.getCode(Address.fromString(address))
-    if (!code || code.length === 0) return "0x"
-    return bytesToHex(code)
-  }
-
-  async getStorageAt(address: string, slot: string): Promise<string> {
-    const key = hexToBytes(slot.length === 66 ? slot : `0x${slot.replace("0x", "").padStart(64, "0")}`)
-    const result = await this.vm.stateManager.getStorage(Address.fromString(address), key)
-    if (!result || result.length === 0) return "0x" + "0".repeat(64)
-    const hex = bytesToHex(result)
-    return "0x" + hex.slice(2).padStart(64, "0")
-  }
-
-  getAllReceipts(): Map<string, TxReceipt> {
-    return new Map(this.receipts)
+  private async createVm(stateManager: unknown): Promise<VM> {
+    const opts: Record<string, unknown> = { common: this.common, stateManager }
+    return createVM(opts as Parameters<typeof createVM>[0])
   }
 }

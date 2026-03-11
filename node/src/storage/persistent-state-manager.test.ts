@@ -5,7 +5,8 @@
 import { test } from "node:test"
 import assert from "node:assert"
 import { PersistentStateManager } from "./persistent-state-manager.ts"
-import { InMemoryStateTrie } from "./state-trie.ts"
+import { InMemoryStateTrie, PersistentStateTrie } from "./state-trie.ts"
+import { MemoryDatabase } from "./db.ts"
 import { Address, Account } from "@ethereumjs/util"
 
 test("PersistentStateManager: put and get account", async () => {
@@ -148,4 +149,34 @@ test("PersistentStateManager: modifyAccountFields creates account if not exists"
   const retrieved = await sm.getAccount(addr)
   assert.ok(retrieved)
   assert.strictEqual(retrieved.balance, 500n)
+})
+
+test("PersistentStateManager: forkAtStateRoot restores historical account state without mutating current root", async () => {
+  const db = new MemoryDatabase()
+  const trie = new PersistentStateTrie(db)
+  const sm = new PersistentStateManager(trie)
+  const addr = Address.fromString("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266")
+
+  await sm.putAccount(addr, Account.fromAccountData({ balance: 100n, nonce: 1n }))
+  await sm.flush()
+  const root1 = trie.stateRoot()
+  assert.ok(root1)
+
+  await sm.putAccount(addr, Account.fromAccountData({ balance: 250n, nonce: 2n }))
+  await sm.flush()
+  const root2 = trie.stateRoot()
+  assert.ok(root2)
+  assert.notStrictEqual(root1, root2)
+
+  const historical = await sm.forkAtStateRoot(root1!)
+  const historicalAccount = await historical.getAccount(addr)
+  const currentAccount = await sm.getAccount(addr)
+
+  assert.ok(historicalAccount)
+  assert.ok(currentAccount)
+  assert.strictEqual(historicalAccount.balance, 100n)
+  assert.strictEqual(historicalAccount.nonce, 1n)
+  assert.strictEqual(currentAccount.balance, 250n)
+  assert.strictEqual(currentAccount.nonce, 2n)
+  assert.strictEqual(trie.stateRoot(), root2)
 })

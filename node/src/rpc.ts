@@ -1,6 +1,6 @@
 import http from "node:http"
 import { timingSafeEqual, randomBytes } from "node:crypto"
-import { SigningKey, keccak256, hashMessage, Transaction, TypedDataEncoder } from "ethers"
+import { SigningKey, keccak256, hashMessage, Transaction, TypedDataEncoder, getCreateAddress } from "ethers"
 import type { IChainEngine } from "./chain-engine-types.ts"
 import { hasGovernance, hasConfig, hasBlockIndex } from "./chain-engine-types.ts"
 import type { EvmChain } from "./evm.ts"
@@ -16,6 +16,7 @@ import type { BftCoordinator } from "./bft-coordinator.ts"
 import { RateLimiter } from "./rate-limiter.ts"
 import { createLogger } from "./logger.ts"
 import { buildBlockHeaderView } from "./block-header.ts"
+import { aggregateBlockLogsBloom } from "./block-header.ts"
 import { lookupRewardClaim, readBestRewardManifest } from "../../runtime/lib/reward-manifest.ts"
 
 const log = createLogger("rpc")
@@ -399,12 +400,14 @@ async function handleRpc(
     }
     case "eth_getBalance": {
       const address = String((payload.params ?? [])[0] ?? "")
-      const balance = await evm.getBalance(address)
+      const stateRoot = await resolveHistoricalStateRoot((payload.params ?? [])[1], chain)
+      const balance = await evm.getBalance(address, stateRoot)
       return `0x${balance.toString(16)}`
     }
     case "eth_getTransactionCount": {
       const address = String((payload.params ?? [])[0] ?? "")
-      const nonce = await evm.getNonce(address)
+      const stateRoot = await resolveHistoricalStateRoot((payload.params ?? [])[1], chain)
+      const nonce = await evm.getNonce(address, stateRoot)
       return `0x${nonce.toString(16)}`
     }
     case "eth_getTransactionReceipt": {
@@ -413,26 +416,7 @@ async function handleRpc(
       if (typeof chain.getTransactionByHash === "function") {
         const tx = await chain.getTransactionByHash(hash as Hex)
         if (tx?.receipt) {
-          const r = tx.receipt
-          return {
-            transactionHash: r.transactionHash,
-            blockNumber: `0x${r.blockNumber.toString(16)}`,
-            blockHash: r.blockHash,
-            from: r.from,
-            to: r.to,
-            gasUsed: `0x${r.gasUsed.toString(16)}`,
-            status: r.status === 1n ? "0x1" : "0x0",
-            logs: (r.logs ?? []).map((log, idx) => ({
-              address: log.address,
-              topics: log.topics,
-              data: log.data,
-              blockNumber: `0x${r.blockNumber.toString(16)}`,
-              blockHash: r.blockHash,
-              transactionHash: r.transactionHash,
-              logIndex: `0x${idx.toString(16)}`,
-              removed: false,
-            })),
-          }
+          return formatPersistentReceipt(tx, chain)
         }
       }
       return evm.getReceipt(hash)
@@ -443,14 +427,13 @@ async function handleRpc(
       if (typeof chain.getTransactionByHash === "function") {
         const tx = await chain.getTransactionByHash(hash as Hex)
         if (tx) {
-          return {
-            hash: tx.receipt.transactionHash,
-            from: tx.receipt.from,
-            to: tx.receipt.to,
-            blockNumber: `0x${tx.receipt.blockNumber.toString(16)}`,
+          const block = await Promise.resolve(chain.getBlockByNumber(tx.receipt.blockNumber))
+          const transactionIndex = block ? findTransactionIndex(block.txs, tx.receipt.transactionHash) : null
+          return formatRawTransaction(tx.rawTx, {
             blockHash: tx.receipt.blockHash,
-            input: tx.rawTx,
-          }
+            blockNumber: tx.receipt.blockNumber,
+            transactionIndex,
+          })
         }
       }
       return evm.getTransaction(hash)
@@ -496,7 +479,8 @@ async function handleRpc(
     }
     case "eth_getCode": {
       const codeAddr = requireHexParam(payload.params, 0, "address")
-      return await evm.getCode(codeAddr)
+      const stateRoot = await resolveHistoricalStateRoot((payload.params ?? [])[1], chain)
+      return await evm.getCode(codeAddr, stateRoot)
     }
     case "eth_call": {
       const callParams = ((payload.params ?? [])[0] ?? {}) as Record<string, string>
@@ -507,19 +491,21 @@ async function handleRpc(
       if (callParams.from && !/^0x[0-9a-fA-F]{1,40}$/i.test(callParams.from)) {
         throw { code: -32602, message: "invalid from address" }
       }
+      const stateRoot = await resolveHistoricalStateRoot((payload.params ?? [])[1], chain)
       const callResult = await evm.callRaw({
         from: callParams.from,
         to,
         data: callParams.data,
         value: callParams.value,
         gas: callParams.gas,
-      })
+      }, stateRoot)
       return callResult.returnValue
     }
     case "eth_getStorageAt": {
       const storageAddr = requireHexParam(payload.params, 0, "address")
       const storageSlot = String((payload.params ?? [])[1] ?? "0x0")
-      return await evm.getStorageAt(storageAddr, storageSlot)
+      const stateRoot = await resolveHistoricalStateRoot((payload.params ?? [])[2], chain)
+      return await evm.getStorageAt(storageAddr, storageSlot, stateRoot)
     }
     case "eth_syncing":
       return false
@@ -747,23 +733,11 @@ async function handleRpc(
       if (!Number.isInteger(txIndex) || txIndex < 0) return null
       const block = await Promise.resolve(chain.getBlockByHash(blockHash))
       if (!block || txIndex >= block.txs.length) return null
-      const rawTx = block.txs[txIndex]
-      try {
-        const parsed = Transaction.from(rawTx)
-        return {
-          hash: parsed.hash,
-          from: parsed.from,
-          to: parsed.to,
-          nonce: `0x${parsed.nonce.toString(16)}`,
-          value: `0x${(parsed.value ?? 0n).toString(16)}`,
-          gas: `0x${(parsed.gasLimit ?? 21000n).toString(16)}`,
-          gasPrice: `0x${(parsed.gasPrice ?? 0n).toString(16)}`,
-          input: parsed.data ?? "0x",
-          blockHash: block.hash,
-          blockNumber: `0x${block.number.toString(16)}`,
-          transactionIndex: `0x${txIndex.toString(16)}`,
-        }
-      } catch { return null }
+      return formatRawTransaction(block.txs[txIndex], {
+        blockHash: block.hash,
+        blockNumber: block.number,
+        transactionIndex: txIndex,
+      })
     }
     case "eth_getTransactionByBlockNumberAndIndex": {
       const tag = String((payload.params ?? [])[0] ?? "latest")
@@ -773,23 +747,11 @@ async function handleRpc(
       const num = parseBlockTag(tag, height)
       const block = await Promise.resolve(chain.getBlockByNumber(num))
       if (!block || txIdx >= block.txs.length) return null
-      const rawTx = block.txs[txIdx]
-      try {
-        const parsed = Transaction.from(rawTx)
-        return {
-          hash: parsed.hash,
-          from: parsed.from,
-          to: parsed.to,
-          nonce: `0x${parsed.nonce.toString(16)}`,
-          value: `0x${(parsed.value ?? 0n).toString(16)}`,
-          gas: `0x${(parsed.gasLimit ?? 21000n).toString(16)}`,
-          gasPrice: `0x${(parsed.gasPrice ?? 0n).toString(16)}`,
-          input: parsed.data ?? "0x",
-          blockHash: block.hash,
-          blockNumber: `0x${block.number.toString(16)}`,
-          transactionIndex: `0x${txIdx.toString(16)}`,
-        }
-      } catch { return null }
+      return formatRawTransaction(block.txs[txIdx], {
+        blockHash: block.hash,
+        blockNumber: block.number,
+        transactionIndex: txIdx,
+      })
     }
     case "eth_getUncleCountByBlockHash":
     case "eth_getUncleCountByBlockNumber":
@@ -1505,6 +1467,188 @@ function parseBlockTag(input: unknown, fallback: bigint): bigint {
   return fallback
 }
 
+async function resolveHistoricalStateRoot(input: unknown, chain: IChainEngine): Promise<string | undefined> {
+  if (
+    input === undefined ||
+    input === null ||
+    input === "latest" ||
+    input === "pending" ||
+    input === "safe" ||
+    input === "finalized"
+  ) {
+    return undefined
+  }
+
+  if (typeof input === "object" && input !== null && "blockHash" in input) {
+    const blockHash = String((input as Record<string, unknown>).blockHash ?? "") as Hex
+    const block = await Promise.resolve(chain.getBlockByHash(blockHash))
+    if (!block) {
+      throw { code: -32001, message: `block not found: ${blockHash}` }
+    }
+    if (!block.stateRoot) {
+      throw { code: -32001, message: `state root unavailable for block ${blockHash}` }
+    }
+    return block.stateRoot
+  }
+
+  const height = await Promise.resolve(chain.getHeight())
+  const blockNumber = parseBlockTag(input, height)
+  const block = await Promise.resolve(chain.getBlockByNumber(blockNumber))
+  if (!block) {
+    throw { code: -32001, message: `block not found: ${String(input)}` }
+  }
+  if (!block.stateRoot) {
+    throw { code: -32001, message: `state root unavailable for block ${blockNumber}` }
+  }
+  return block.stateRoot
+}
+
+function toRpcQuantity(value: bigint | number): string {
+  return `0x${BigInt(value).toString(16)}`
+}
+
+function toRpcHexOrNull(value: string | null | undefined): string | null {
+  return value ?? null
+}
+
+function formatSignatureV(value: bigint | number | null | undefined): string {
+  if (value === undefined || value === null) return "0x0"
+  return toRpcQuantity(value)
+}
+
+function normalizePersistedTo(value: string | null | undefined): string | null {
+  if (!value || value === "0x0") return null
+  return value
+}
+
+function formatRawTransaction(
+  rawTx: Hex,
+  context?: { blockHash?: Hex; blockNumber?: bigint; transactionIndex?: number | null },
+): Record<string, unknown> | null {
+  try {
+    const parsed = Transaction.from(rawTx)
+    return {
+      hash: parsed.hash,
+      from: parsed.from,
+      to: toRpcHexOrNull(parsed.to ?? null),
+      nonce: toRpcQuantity(parsed.nonce),
+      value: toRpcQuantity(parsed.value ?? 0n),
+      gas: toRpcQuantity(parsed.gasLimit ?? 21_000n),
+      gasPrice: toRpcQuantity(parsed.gasPrice ?? parsed.maxFeePerGas ?? 0n),
+      ...(parsed.maxFeePerGas !== null && parsed.maxFeePerGas !== undefined
+        ? { maxFeePerGas: toRpcQuantity(parsed.maxFeePerGas) }
+        : {}),
+      ...(parsed.maxPriorityFeePerGas !== null && parsed.maxPriorityFeePerGas !== undefined
+        ? { maxPriorityFeePerGas: toRpcQuantity(parsed.maxPriorityFeePerGas) }
+        : {}),
+      input: parsed.data ?? "0x",
+      blockHash: context?.blockHash ?? null,
+      blockNumber: context?.blockNumber !== undefined ? toRpcQuantity(context.blockNumber) : null,
+      transactionIndex: context?.transactionIndex !== undefined && context.transactionIndex !== null
+        ? toRpcQuantity(context.transactionIndex)
+        : null,
+      type: toRpcQuantity(parsed.type ?? 0),
+      chainId: parsed.chainId !== null && parsed.chainId !== undefined ? toRpcQuantity(parsed.chainId) : undefined,
+      v: formatSignatureV(parsed.signature?.v),
+      r: parsed.signature?.r ?? "0x0",
+      s: parsed.signature?.s ?? "0x0",
+    }
+  } catch {
+    return null
+  }
+}
+
+function findTransactionIndex(rawTxs: Hex[], txHash: Hex): number | null {
+  for (let i = 0; i < rawTxs.length; i++) {
+    try {
+      if (Transaction.from(rawTxs[i]).hash.toLowerCase() === txHash.toLowerCase()) {
+        return i
+      }
+    } catch {
+      continue
+    }
+  }
+  return null
+}
+
+function computeCumulativeGasUsed(
+  receipts: Array<{ transactionHash: string; gasUsed: bigint | string }>,
+  txHash: Hex,
+): bigint {
+  let total = 0n
+  for (const receipt of receipts) {
+    total += typeof receipt.gasUsed === "bigint" ? receipt.gasUsed : BigInt(receipt.gasUsed)
+    if (receipt.transactionHash.toLowerCase() === txHash.toLowerCase()) {
+      break
+    }
+  }
+  return total
+}
+
+async function formatPersistentReceipt(
+  tx: Awaited<ReturnType<NonNullable<IChainEngine["getTransactionByHash"]>>>,
+  chain: IChainEngine,
+): Promise<Record<string, unknown> | null> {
+  if (!tx?.receipt) return null
+  const parsed = formatRawTransaction(tx.rawTx, {
+    blockHash: tx.receipt.blockHash,
+    blockNumber: tx.receipt.blockNumber,
+  })
+  if (!parsed) return null
+
+  const block = await Promise.resolve(chain.getBlockByNumber(tx.receipt.blockNumber))
+  const transactionIndex = block ? findTransactionIndex(block.txs, tx.receipt.transactionHash) : null
+  const receipts = block
+    ? await Promise.resolve(chain.getReceiptsByBlock(block.number))
+    : [tx.receipt]
+  const cumulativeGasUsed = computeCumulativeGasUsed(
+    receipts.map((receipt) => ({
+      transactionHash: receipt.transactionHash,
+      gasUsed: receipt.gasUsed,
+    })),
+    tx.receipt.transactionHash,
+  )
+  const normalizedTo = normalizePersistedTo(tx.receipt.to)
+  const contractAddress = normalizedTo === null && tx.receipt.status === 1n
+    ? getCreateAddress({ from: tx.receipt.from, nonce: parsed.nonce as string })
+    : null
+  const logsBloom = aggregateBlockLogsBloom([
+    {
+      transactionHash: tx.receipt.transactionHash,
+      gasUsed: tx.receipt.gasUsed,
+      status: tx.receipt.status,
+      logs: tx.receipt.logs,
+    },
+  ])
+
+  return {
+    transactionHash: tx.receipt.transactionHash,
+    transactionIndex: transactionIndex !== null ? toRpcQuantity(transactionIndex) : "0x0",
+    blockNumber: toRpcQuantity(tx.receipt.blockNumber),
+    blockHash: tx.receipt.blockHash,
+    from: tx.receipt.from,
+    to: normalizedTo,
+    cumulativeGasUsed: toRpcQuantity(cumulativeGasUsed),
+    gasUsed: toRpcQuantity(tx.receipt.gasUsed),
+    status: tx.receipt.status === 1n ? "0x1" : "0x0",
+    logsBloom,
+    logs: (tx.receipt.logs ?? []).map((log, idx) => ({
+      address: log.address,
+      topics: log.topics,
+      data: log.data,
+      blockNumber: toRpcQuantity(tx.receipt.blockNumber),
+      blockHash: tx.receipt.blockHash,
+      transactionHash: tx.receipt.transactionHash,
+      transactionIndex: transactionIndex !== null ? toRpcQuantity(transactionIndex) : "0x0",
+      logIndex: toRpcQuantity(idx),
+      removed: false,
+    })),
+    effectiveGasPrice: String((parsed as Record<string, unknown>).gasPrice ?? "0x0"),
+    contractAddress,
+    type: String((parsed as Record<string, unknown>).type ?? "0x0"),
+  }
+}
+
 async function formatBlock(block: Awaited<ReturnType<IChainEngine["getBlockByNumber"]>>, includeTx: boolean, chain?: IChainEngine, evm?: EvmChain) {
   if (!block) return null
 
@@ -1518,28 +1662,11 @@ async function formatBlock(block: Awaited<ReturnType<IChainEngine["getBlockByNum
   const blockNumHex = `0x${block.number.toString(16)}`
   if (includeTx) {
     transactions = block.txs.map((rawTx, i) => {
-      try {
-        const parsed = Transaction.from(rawTx)
-        return {
-          hash: parsed.hash,
-          from: parsed.from,
-          to: parsed.to ?? null,
-          nonce: `0x${parsed.nonce.toString(16)}`,
-          value: `0x${(parsed.value ?? 0n).toString(16)}`,
-          gas: `0x${(parsed.gasLimit ?? 21000n).toString(16)}`,
-          gasPrice: `0x${(parsed.gasPrice ?? parsed.maxFeePerGas ?? 0n).toString(16)}`,
-          input: parsed.data ?? "0x",
-          blockHash: block.hash,
-          blockNumber: blockNumHex,
-          transactionIndex: `0x${i.toString(16)}`,
-          type: `0x${(parsed.type ?? 0).toString(16)}`,
-          v: parsed.signature?.v !== undefined ? `0x${parsed.signature.v.toString(16)}` : "0x0",
-          r: parsed.signature?.r ?? "0x0",
-          s: parsed.signature?.s ?? "0x0",
-        }
-      } catch {
-        return rawTx
-      }
+      return formatRawTransaction(rawTx, {
+        blockHash: block.hash,
+        blockNumber: block.number,
+        transactionIndex: i,
+      }) ?? rawTx
     })
   } else {
     transactions = block.txs.map((rawTx) => {

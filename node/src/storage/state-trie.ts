@@ -38,7 +38,7 @@ export interface IStateTrie {
   revert(): Promise<void>
   close(): Promise<void>
   stateRoot(): string | null
-  setStateRoot(root: string): Promise<void>
+  setStateRoot(root: string, opts?: { persist?: boolean }): Promise<void>
   hasStateRoot(root: string): Promise<boolean>
   clearStorage(address: string): Promise<void>
   /** Iterate all accounts in the trie */
@@ -114,6 +114,10 @@ class TrieDBAdapter {
 
   async open(): Promise<void> {}
   async close(): Promise<void> {}
+
+  shallowCopy(): TrieDBAdapter {
+    return new TrieDBAdapter(this.db, this.prefix)
+  }
 }
 
 const DEFAULT_MAX_CACHED_TRIES = 128
@@ -226,17 +230,18 @@ export class PersistentStateTrie implements IStateTrie {
     this.lastStateRoot = null
   }
 
-  async setStateRoot(root: string): Promise<void> {
+  async setStateRoot(root: string, opts?: { persist?: boolean }): Promise<void> {
     const rootBytes = hexToBytes(root)
-    this.trie = new Trie({ db: this.trieDb as any, root: rootBytes })
+    this.trie.root(rootBytes)
     this.lastStateRoot = root
     this.accountCache.clear()
     this.storageTries.clear()
     this.dirtyAddresses.clear()
 
-    // Persist the new state root
-    const encoder = new TextEncoder()
-    await this.db.put(STATE_ROOT_KEY, encoder.encode(root))
+    if (opts?.persist !== false) {
+      const encoder = new TextEncoder()
+      await this.db.put(STATE_ROOT_KEY, encoder.encode(root))
+    }
   }
 
   async hasStateRoot(root: string): Promise<boolean> {
@@ -327,6 +332,7 @@ export class PersistentStateTrie implements IStateTrie {
     for (const address of dirtySnapshot) {
       this.dirtyAddresses.delete(address)
     }
+    await (this.trie as Trie & { persistRoot?: () => Promise<void> }).persistRoot?.()
     this.lastStateRoot = bytesToHex(this.trie.root())
 
     // Persist state root for recovery across restarts
@@ -519,12 +525,12 @@ export class PersistentStateTrie implements IStateTrie {
 
   /** Create a COW branch: snapshot current state root, create independent instance */
   async fork(): Promise<IStateTrie> {
-    const root = await this.commit()
     const forked = new PersistentStateTrie(this.db, {
       maxCachedTries: this.maxCachedTries,
       maxAccountCache: this.maxAccountCache,
     })
-    await forked.setStateRoot(root)
+    forked.trie = this.trie.shallowCopy(true)
+    forked.lastStateRoot = this.lastStateRoot
     return forked
   }
 
@@ -611,7 +617,7 @@ export class InMemoryStateTrie implements IStateTrie {
     return this.lastRoot
   }
 
-  async setStateRoot(_root: string): Promise<void> {
+  async setStateRoot(_root: string, _opts?: { persist?: boolean }): Promise<void> {
     // No-op for in-memory; state root is just a hash
     this.lastRoot = _root
   }

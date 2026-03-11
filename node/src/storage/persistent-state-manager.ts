@@ -20,7 +20,7 @@ export class PersistentStateManager {
   // Required by EthereumJS VM runTx — accessed as stateManager.originalStorageCache.clear()
   readonly originalStorageCache = {
     clear(): void { /* no-op; persistent storage doesn't use an in-memory cache layer */ },
-    get(_address: Address, _key: Uint8Array): Uint8Array | undefined { return undefined },
+    get(_address: Address, _key: Uint8Array): Uint8Array { return new Uint8Array(0) },
   }
 
   constructor(trie: IStateTrie) {
@@ -148,26 +148,26 @@ export class PersistentStateManager {
   }
 
   getStateRoot(): Uint8Array {
-    // Return a dummy root; the actual root is managed by PersistentStateTrie
-    return new Uint8Array(32)
+    const root = this.trie.stateRoot()
+    return root ? hexToBytes(root) : new Uint8Array(32)
   }
 
   async setStateRoot(root: Uint8Array): Promise<void> {
-    // State root restoration is handled by PersistentStateTrie.init()
+    await this.trie.setStateRoot(bytesToHex(root), { persist: false })
+    this.codeCache.clear()
   }
 
   async hasStateRoot(root: Uint8Array): Promise<boolean> {
-    return true
+    return this.trie.hasStateRoot(bytesToHex(root))
   }
 
   async shallowCopy(): Promise<PersistentStateManager> {
-    // Create a new instance sharing the same trie but with an independent code cache
-    // so eth_call / estimateGas do not pollute the main state manager's cache.
-    // Await checkpoint to guarantee isolation before returning — unawaited checkpoint
-    // could allow the copy to observe or mutate the main trie's uncommitted state.
-    const copy = new PersistentStateManager(this.trie)
-    await copy.checkpoint()
-    return copy
+    const root = this.trie.stateRoot()
+    if (root) {
+      return this.forkAtStateRoot(root)
+    }
+    const forkedTrie = await this.trie.fork()
+    return new PersistentStateManager(forkedTrie)
   }
 
   // Required by some EthereumJS VM paths
@@ -206,5 +206,15 @@ export class PersistentStateManager {
       account.balance = fields.balance
     }
     await this.putAccount(address, account)
+  }
+
+  async forkAtStateRoot(root: string | Uint8Array): Promise<PersistentStateManager> {
+    const rootHex = typeof root === "string" ? root : bytesToHex(root)
+    if (!(await this.trie.hasStateRoot(rootHex))) {
+      throw new Error(`unknown state root: ${rootHex}`)
+    }
+    const forkedTrie = await this.trie.fork()
+    await forkedTrie.setStateRoot(rootHex, { persist: false })
+    return new PersistentStateManager(forkedTrie)
   }
 }
