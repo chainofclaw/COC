@@ -752,7 +752,9 @@ async function shutdown(signal: string) {
   if (wireServer) wireServer.stop()
   for (const client of wireClients) client.disconnect()
   if (dhtNetwork) dhtNetwork.stop()
+  await p2p.stop()
   pubsub.stop()
+  await ipfs.stop()
   clearInterval(poseCleanupTimer)
   if (poseCompactTimer) clearInterval(poseCompactTimer)
   // Allow in-flight block production/sync to drain before closing DB
