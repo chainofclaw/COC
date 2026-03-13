@@ -34,8 +34,12 @@ jobs:
             cd /opt/coc
             git pull origin main
             export IMAGE_TAG=${{ inputs.image_tag }}
+            export COMPOSE_PROFILES=${COMPOSE_PROFILES:-}
             docker compose -f docker/docker-compose.testnet.yml pull
             docker compose -f docker/docker-compose.testnet.yml up -d
             echo "Deployment complete. Waiting for health check..."
             sleep 30
-            curl -sf http://localhost:28780/health || echo "Health check failed"
+            curl -sf http://localhost:9101/health
+            curl -sf -X POST -H "Content-Type: application/json" \
+              -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' \
+              http://localhost:28780/

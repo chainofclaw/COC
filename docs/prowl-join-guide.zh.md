@@ -54,7 +54,10 @@ console.log('地址: ' + w.address);
   "rpcPort": 18780,
   "p2pBind": "0.0.0.0",
   "p2pPort": 19780,
+  "wsBind": "0.0.0.0",
   "wsPort": 18781,
+  "ipfsBind": "0.0.0.0",
+  "wireBind": "0.0.0.0",
   "wirePort": 19781,
   "validators": ["从创世配置获取的验证者列表"],
   "peers": [
@@ -64,15 +67,28 @@ console.log('地址: ' + w.address);
   "enableWireProtocol": true,
   "enableDht": true,
   "enableSnapSync": true,
+  "enableAdminRpc": false,
   "blockTimeMs": 3000,
   "finalityDepth": 3,
   "maxTxPerBlock": 100,
+  "p2pInboundAuthMode": "enforce",
+  "poseInboundAuthMode": "enforce",
+  "dhtRequireAuthenticatedVerify": true,
+  "poseUseGovernanceChallengerAuth": true,
+  "poseUseOnchainChallengerAuth": false,
   "prefund": [],
   "dhtBootstrapPeers": [
     {"id": "种子节点ID", "address": "种子节点IP", "port": 19781}
   ]
 }
 ```
+
+如果协调人已经提供了生成产物，优先使用 `bash scripts/setup-boot-nodes.sh` 输出的文件：
+
+- `configs/prowl-testnet/boot-nodes.json`
+- `configs/prowl-testnet/dht-seeds.json`
+
+这两份文件已经给出了可直接复制到 `peers` 和 `dhtBootstrapPeers` 的具体条目。
 
 ## 第五步：启动节点
 
@@ -101,7 +117,8 @@ docker run -d \
 
 ```bash
 sudo cp docker/systemd/coc-node.service /etc/systemd/system/
-# 编辑服务文件，设置 COC_NODE_KEY
+# 创建 /etc/coc/coc-node.env，并把 COC_NODE_KEY 写进去
+sudo sh -c 'printf "COC_NODE_KEY=0xYOUR_PRIVATE_KEY\n" > /etc/coc/coc-node.env'
 sudo systemctl daemon-reload
 sudo systemctl enable --now coc-node
 ```
@@ -112,8 +129,8 @@ sudo systemctl enable --now coc-node
 # 检查区块高度
 bash scripts/node-status.sh http://localhost:18780
 
-# 检查健康状态
-curl http://localhost:18780/health
+# 检查 metrics 存活探针
+curl http://localhost:9100/health
 
 # 检查 Prometheus 指标
 curl http://localhost:9100/metrics | grep coc_block_height
@@ -131,6 +148,8 @@ curl http://localhost:9100/metrics | grep coc_block_height
 docker compose -f docker/docker-compose.monitoring.yml up -d
 # Grafana: http://localhost:3100 (admin/cocprowl)
 ```
+
+如果你已经启动了 3 节点 Docker 测试网，监控栈会自动加入同一个 `docker_coc-rpc` 网络，并抓取 `node-{1,2,3}:9100`。
 
 ## 防火墙规则
 

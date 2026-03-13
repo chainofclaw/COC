@@ -43,6 +43,22 @@ bash scripts/restore-node.sh /backups/coc-backup-XXXXX.tar.gz /var/lib/coc
 sudo systemctl start coc-node
 ```
 
+## Runtime Services
+
+Coordinator-operated testnet services can run alongside validator nodes:
+
+```bash
+sudo cp docker/systemd/coc-agent.service /etc/systemd/system/
+sudo cp docker/systemd/coc-relayer.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now coc-agent coc-relayer
+```
+
+Environment files:
+
+- `/etc/coc/coc-agent.env` — `COC_OPERATOR_PK`, optional `COC_CONFIG`
+- `/etc/coc/coc-relayer.env` — `COC_SLASHER_PK`, optional `COC_CONFIG`
+
 ## Upgrade Procedure
 
 ### Rolling Update (zero downtime for the network)
@@ -73,6 +89,13 @@ docker compose -f docker/docker-compose.testnet.yml up -d --no-deps node-2
 docker compose -f docker/docker-compose.testnet.yml up -d --no-deps node-3
 ```
 
+If the `pose` profile is enabled, roll the sidecars separately after the node tier:
+
+```bash
+docker compose -f docker/docker-compose.testnet.yml --profile pose pull
+docker compose -f docker/docker-compose.testnet.yml --profile pose up -d --no-deps agent relayer
+```
+
 ## Failure Recovery
 
 ### Consensus Stall
@@ -85,9 +108,17 @@ Symptoms: `coc_consensus_state` stays at 1 (degraded)
 
 ```bash
 # Check all nodes
-for port in 28780 28782 28784; do
-  echo "Node $port:"
-  curl -sf http://localhost:$port/health
+for metrics_port in 9101 9102 9103; do
+  echo "Metrics $metrics_port:"
+  curl -sf http://localhost:$metrics_port/health
+  echo
+done
+
+for rpc_port in 28780 28782 28784; do
+  echo "RPC $rpc_port:"
+  curl -s -X POST http://localhost:$rpc_port \
+    -H 'Content-Type: application/json' \
+    -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}'
   echo
 done
 ```
@@ -157,3 +188,5 @@ LimitNOFILE=65535
 | High Memory | `coc_process_memory_bytes > 2e9` for 10m | Warning |
 | No New Blocks | `delta(coc_block_height[5m]) == 0` | Critical |
 | Low Peers | `coc_peers_connected < 2` for 5m | Warning |
+
+The Docker monitoring stack mounts `ops/alerts/prometheus-rules.yml`; keep this file aligned with any separate operational dashboards or hosted Prometheus setup.

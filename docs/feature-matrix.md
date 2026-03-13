@@ -125,6 +125,9 @@ Status legend:
 - **coc-node HTTP endpoints** — Runtime-wired — `COC/runtime/coc-node.ts` (dual-version signing, `/pose/witness`)
 - **coc-agent automation** — Runtime-wired — `COC/runtime/coc-agent.ts` (v2 challenges, witness collection, reward manifest, persistent pending, metrics, NodeOps tick)
 - **coc-relayer automation** — Runtime-wired — `COC/runtime/coc-relayer.ts` (v2 finalize with reward manifest, epoch nonce init, fault proof lifecycle, persistent pending recovery, scoring-based reward distribution)
+- **Runtime Docker image** — Implemented — `COC/docker/Dockerfile.runtime`
+- **Runtime systemd templates** — Implemented — `COC/docker/systemd/coc-agent.service`, `COC/docker/systemd/coc-relayer.service`
+- **Testnet `pose` compose profile** — Implemented — `COC/docker/docker-compose.testnet.yml`, `COC/docker/testnet-runtime-configs/{agent,relayer}.json`
 - **Runtime metrics** — Implemented — `COC/runtime/lib/runtime-metrics.ts`, `COC/runtime/lib/agent-metrics-server.ts`
 - **Pending retention** — Implemented — `COC/runtime/lib/pending-retention.ts`
 - **Unified retry (exponential backoff)** — Implemented (M6) — `COC/runtime/lib/retry.ts`
@@ -135,6 +138,9 @@ Status legend:
 ## Tooling
 - **Wallet CLI** — Implemented (M7) — `COC/wallet/coc-wallet.ts`
 - **Devnet scripts (3/5/7)** — Implemented — `COC/scripts/*.sh`
+- **Genesis + boot-node artifact generation** — Implemented — `COC/scripts/generate-genesis.sh`, `COC/scripts/setup-boot-nodes.sh`
+- **Testnet image-tag deployment workflow** — Implemented — `COC/.github/workflows/testnet-deploy.yml`, `COC/docker/docker-compose.testnet.yml`
+- **Docker monitoring stack on shared testnet RPC network** — Implemented — `COC/docker/docker-compose.monitoring.yml`, `COC/docker/prometheus/prometheus.yml`, `COC/ops/alerts/prometheus-rules.yml`
 - **Quality gate script** — Implemented — `COC/scripts/quality-gate.sh`
 
 ## Blockchain Explorer
