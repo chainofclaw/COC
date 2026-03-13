@@ -1,10 +1,11 @@
 import { VM, createVM, runTx } from "@ethereumjs/vm"
 import { Hardfork, createCustomCommon, getPresetChainConfig } from "@ethereumjs/common"
 import { Account, Address, bytesToHex, hexToBytes, bigIntToHex } from "@ethereumjs/util"
-import { createTxFromRLP } from "@ethereumjs/tx"
+import { createTxFromRLP, createLegacyTx } from "@ethereumjs/tx"
 import { createBlock } from "@ethereumjs/block"
 import type { PrefundAccount } from "./types.ts"
 import { PersistentStateManager } from "./storage/persistent-state-manager.ts"
+import type { HardforkScheduleEntry } from "./config.ts"
 import type { CallTrace, CallTraceResult, RpcAccessListItem, TraceOptions, TraceStep, TransactionTrace, TxTraceResult } from "./trace-types.ts"
 
 export interface ExecutionResult {
@@ -69,6 +70,7 @@ export class EvmChain {
   private vm: VM
   private readonly common: ReturnType<typeof createCustomCommon>
   private readonly hardfork: Hardfork
+  private readonly hardforkSchedule: Array<{ blockNumber: bigint; hardfork: Hardfork }>
   private blockNumber = 0n
   private readonly receipts = new Map<string, TxReceipt>()
   private readonly txs = new Map<string, TxInfo>()
@@ -81,18 +83,20 @@ export class EvmChain {
     vm: VM,
     common: ReturnType<typeof createCustomCommon>,
     hardfork: Hardfork,
+    hardforkSchedule: Array<{ blockNumber: bigint; hardfork: Hardfork }>,
     externalStateManager?: unknown,
   ) {
     this.vm = vm
     this.common = common
     this.hardfork = hardfork
+    this.hardforkSchedule = hardforkSchedule
     this.externalStateManager = externalStateManager ?? null
   }
 
   static async create(
     chainId: number,
     stateManager?: unknown,
-    opts?: { hardfork?: Hardfork },
+    opts?: { hardfork?: Hardfork; hardforkSchedule?: HardforkScheduleEntry[] },
   ): Promise<EvmChain> {
     const base = getPresetChainConfig("mainnet")
     const hardfork = opts?.hardfork ?? Hardfork.Shanghai
@@ -105,7 +109,8 @@ export class EvmChain {
     }
     // VMOpts type not directly importable in strip-types mode
     const vm = await createVM(vmOpts as Parameters<typeof createVM>[0])
-    return new EvmChain(chainId, vm, common, hardfork, stateManager)
+    const hardforkSchedule = normalizeHardforkSchedule(opts?.hardforkSchedule)
+    return new EvmChain(chainId, vm, common, hardfork, hardforkSchedule, stateManager)
   }
 
   async prefund(accounts: PrefundAccount[]): Promise<void> {
@@ -118,12 +123,14 @@ export class EvmChain {
   }
 
   async executeRawTx(rawTx: string, blockNumber?: bigint, txIndex = 0, blockHash?: string, baseFeePerGas: bigint = 0n): Promise<ExecutionResult> {
-    const tx = createTxFromRLP(hexToBytes(rawTx), { common: this.common })
+    const appliedBlock = blockNumber ?? (this.blockNumber + 1n)
+    const blockCommon = this.createExecutionCommon(appliedBlock)
+    this.applyHardforkToVm(this.vm, appliedBlock)
+    const tx = createTxFromRLP(hexToBytes(rawTx), { common: blockCommon.copy() })
     // Use provided baseFeePerGas (defaults to 0 for backward compatibility with dev chains)
-    const block = createBlock({ header: { baseFeePerGas } }, { common: this.common })
+    const block = createBlock({ header: { baseFeePerGas } }, { common: blockCommon })
     const result = await runTx(this.vm, { tx, block, skipHardForkValidation: true })
     const txHash = bytesToHex(tx.hash())
-    const appliedBlock = blockNumber ?? (this.blockNumber + 1n)
     this.blockNumber = appliedBlock
     const resolvedBlockHash = blockHash ?? `0x${appliedBlock.toString(16).padStart(64, "0")}`
     const gasUsed = `0x${result.totalGasSpent.toString(16)}`
@@ -289,22 +296,32 @@ export class EvmChain {
   async callRaw(
     params: { from?: string; to: string; data?: string; value?: string; gas?: string },
     stateRoot?: string,
+    blockNumber?: bigint,
   ): Promise<{ returnValue: string; gasUsed: bigint }> {
-    if (stateRoot) {
+    if (stateRoot || blockNumber !== undefined) {
       const stateManager = await this.resolveStateManager(stateRoot)
-      const tempVm = await this.createVm(stateManager)
-      return this.runCall(tempVm, params)
+      const tempVm = await this.createVm(stateManager, blockNumber)
+      return this.runCall(tempVm, params, { blockNumber })
     }
-    return this.runCall(this.vm, params)
+    return this.runCall(this.vm, params, { blockNumber })
   }
 
-  async estimateGas(params: { from?: string; to: string; data?: string; value?: string; gas?: string }): Promise<bigint> {
+  async estimateGas(
+    params: { from?: string; to: string; data?: string; value?: string; gas?: string },
+    stateRoot?: string,
+    blockNumber?: bigint,
+  ): Promise<bigint> {
     // Use caller-supplied gas cap or default to 30M (block gas limit)
     const gasCap = params.gas ?? "0x1c9c380"
-    const { gasUsed } = await this.callRaw({ ...params, gas: gasCap })
-    // Minimum 21000 for basic transaction, plus 10% buffer
-    const base = gasUsed < 21000n ? 21000n : gasUsed
-    return base + base / 10n
+    const { gasUsed } = await this.callRaw({ ...params, gas: gasCap }, stateRoot, blockNumber)
+    const executionCommon = this.createExecutionCommon(blockNumber)
+    const intrinsicGas = calculateIntrinsicGas(
+      params.data ? hexToBytes(params.data) : new Uint8Array(),
+      !params.to,
+      executionCommon,
+    )
+    const total = intrinsicGas + gasUsed
+    return total + total / 10n
   }
 
   async getCode(address: string, stateRoot?: string): Promise<string> {
@@ -350,12 +367,18 @@ export class EvmChain {
     return Number(this.common.chainId())
   }
 
-  getHardfork(): Hardfork {
-    return this.hardfork
+  getHardfork(blockNumber?: bigint): Hardfork {
+    return this.resolveHardfork(blockNumber)
   }
 
   async createReplayChain(): Promise<EvmChain> {
-    const replay = await EvmChain.create(this.getChainId(), undefined, { hardfork: this.hardfork })
+    const replay = await EvmChain.create(this.getChainId(), undefined, {
+      hardfork: this.hardfork,
+      hardforkSchedule: this.hardforkSchedule.map((entry) => ({
+        blockNumber: Number(entry.blockNumber),
+        hardfork: entry.hardfork,
+      })),
+    })
     if (this.prefundAccounts.length > 0) {
       await replay.prefund(this.prefundAccounts)
     }
@@ -366,24 +389,26 @@ export class EvmChain {
     params: { from?: string; to: string; data?: string; value?: string; gas?: string },
     options: TraceOptions = {},
     stateRoot?: string,
+    blockNumber?: bigint,
   ): Promise<CallTraceResult> {
     const stateManager = stateRoot ? await this.resolveStateManager(stateRoot) : this.vm.stateManager
-    const vm = await this.createVm(stateManager)
-    return this.traceCallOnVm(vm, params, options)
+    const vm = await this.createVm(stateManager, blockNumber)
+    return this.traceCallOnVm(vm, params, options, { blockNumber })
   }
 
   async traceCallMany(
     calls: Array<{ from?: string; to: string; data?: string; value?: string; gas?: string }>,
     options: TraceOptions = {},
     stateRoot?: string,
+    blockNumber?: bigint,
   ): Promise<CallTraceResult[]> {
     const stateManager = stateRoot ? await this.resolveStateManager(stateRoot) : this.vm.stateManager
-    const vm = await this.createVm(stateManager)
+    const vm = await this.createVm(stateManager, blockNumber)
     const results: CallTraceResult[] = []
     await vm.stateManager.checkpoint()
     try {
       for (const params of calls) {
-        results.push(await this.traceCallOnVm(vm, params, options, { persistAfter: true }))
+        results.push(await this.traceCallOnVm(vm, params, options, { persistAfter: true, blockNumber }))
       }
       return results
     } finally {
@@ -395,14 +420,14 @@ export class EvmChain {
     vm: VM,
     params: { from?: string; to: string; data?: string; value?: string; gas?: string },
     options: TraceOptions = {},
-    opts: { persistAfter?: boolean } = {},
+    opts: { persistAfter?: boolean; blockNumber?: bigint } = {},
   ): Promise<CallTraceResult> {
     const collector = createTraceCollector(vm, options)
     let needsRevert = false
     await vm.evm.journal.cleanup()
     vm.evm.journal.startReportingAccessList()
     try {
-      const result = await this.runCall(vm, params, { revertAfter: false })
+      const result = await this.runCall(vm, params, { revertAfter: false, blockNumber: opts.blockNumber })
       needsRevert = true
       const accessList = normalizeAccessList(vm.evm.journal.accessList)
       const traced = collector.finish({
@@ -418,7 +443,7 @@ export class EvmChain {
       const beforeState = await captureStateSnapshots(vm.stateManager, targets)
       if (opts.persistAfter) {
         await vm.evm.journal.cleanup()
-        await this.runCall(vm, params, { revertAfter: false })
+        await this.runCall(vm, params, { revertAfter: false, blockNumber: opts.blockNumber })
         needsRevert = true
         await vm.stateManager.commit()
         needsRevert = false
@@ -447,8 +472,11 @@ export class EvmChain {
     options: TraceOptions = {},
     context?: { blockNumber?: bigint; txIndex?: number; blockHash?: string; baseFeePerGas?: bigint },
   ): Promise<TxTraceResult> {
-    const tx = createTxFromRLP(hexToBytes(rawTx), { common: this.common })
-    const block = createBlock({ header: { baseFeePerGas: context?.baseFeePerGas ?? 0n } }, { common: this.common })
+    const executionBlockNumber = context?.blockNumber
+    const blockCommon = this.createExecutionCommon(executionBlockNumber)
+    this.applyHardforkToVm(this.vm, executionBlockNumber)
+    const tx = createTxFromRLP(hexToBytes(rawTx), { common: blockCommon.copy() })
+    const block = createBlock({ header: { baseFeePerGas: context?.baseFeePerGas ?? 0n } }, { common: blockCommon })
     const collector = createTraceCollector(this.vm, options)
     let needsRevert = true
     await this.vm.stateManager.checkpoint()
@@ -501,10 +529,15 @@ export class EvmChain {
     context?: { blockNumber?: bigint; txIndex?: number; blockHash?: string; baseFeePerGas?: bigint },
     stateRoot?: string,
   ): Promise<TxTraceResult> {
-    const tx = createTxFromRLP(hexToBytes(rawTx), { common: this.common })
-    const block = createBlock({ header: { baseFeePerGas: context?.baseFeePerGas ?? 0n } }, { common: this.common })
+    const executionBlockNumber = context?.blockNumber
+    const blockCommon = this.createExecutionCommon(executionBlockNumber)
+    const tx = createTxFromRLP(hexToBytes(rawTx), { common: blockCommon.copy() })
+    const block = createBlock({ header: { baseFeePerGas: context?.baseFeePerGas ?? 0n } }, { common: blockCommon })
     const stateManager = stateRoot ? await this.resolveStateManager(stateRoot) : this.vm.stateManager
-    const vm = stateRoot ? await this.createVm(stateManager) : this.vm
+    const vm = stateRoot || executionBlockNumber !== undefined
+      ? await this.createVm(stateManager, executionBlockNumber)
+      : this.vm
+    this.applyHardforkToVm(vm, executionBlockNumber)
     const collector = createTraceCollector(vm, options)
     let needsRevert = true
     await vm.stateManager.checkpoint()
@@ -549,10 +582,11 @@ export class EvmChain {
   private async runCall(
     vm: VM,
     params: { from?: string; to: string; data?: string; value?: string; gas?: string },
-    opts: { revertAfter?: boolean } = {},
+    opts: { revertAfter?: boolean; blockNumber?: bigint } = {},
   ): Promise<{ returnValue: string; gasUsed: bigint; failed: boolean }> {
+    this.applyHardforkToVm(vm, opts.blockNumber)
     const caller = params.from ? Address.fromString(params.from) : Address.zero()
-    const to = params.to ? Address.fromString(params.to) : Address.zero()
+    const to = params.to ? Address.fromString(params.to) : undefined
     const data = params.data ? hexToBytes(params.data) : new Uint8Array()
     let value: bigint
     try { value = params.value ? BigInt(params.value) : 0n } catch { value = 0n }
@@ -597,10 +631,68 @@ export class EvmChain {
     return this.externalStateManager.forkAtStateRoot(stateRoot)
   }
 
-  private async createVm(stateManager: unknown): Promise<VM> {
-    const opts: Record<string, unknown> = { common: this.common, stateManager }
+  private async createVm(stateManager: unknown, blockNumber?: bigint): Promise<VM> {
+    const opts: Record<string, unknown> = { common: this.createExecutionCommon(blockNumber), stateManager }
     return createVM(opts as Parameters<typeof createVM>[0])
   }
+
+  private resolveHardfork(blockNumber?: bigint): Hardfork {
+    if (this.hardforkSchedule.length === 0) {
+      return this.hardfork
+    }
+    const effectiveBlockNumber = blockNumber ?? this.blockNumber
+    let selected = this.hardfork
+    for (const entry of this.hardforkSchedule) {
+      if (entry.blockNumber > effectiveBlockNumber) {
+        break
+      }
+      selected = entry.hardfork
+    }
+    return selected
+  }
+
+  private createExecutionCommon(blockNumber?: bigint): ReturnType<typeof createCustomCommon> {
+    const common = this.common.copy()
+    common.setHardfork(this.resolveHardfork(blockNumber))
+    return common as ReturnType<typeof createCustomCommon>
+  }
+
+  private applyHardforkToVm(vm: VM, blockNumber?: bigint): void {
+    const hardfork = this.resolveHardfork(blockNumber)
+    if (vm.common.hardfork() !== hardfork) {
+      vm.common.setHardfork(hardfork)
+    }
+  }
+}
+
+function normalizeHardforkSchedule(
+  schedule?: HardforkScheduleEntry[],
+): Array<{ blockNumber: bigint; hardfork: Hardfork }> {
+  if (!Array.isArray(schedule) || schedule.length === 0) {
+    return []
+  }
+  return [...schedule]
+    .map((entry) => ({
+      blockNumber: BigInt(entry.blockNumber),
+      hardfork: entry.hardfork,
+    }))
+    .sort((left, right) => (left.blockNumber < right.blockNumber ? -1 : left.blockNumber > right.blockNumber ? 1 : 0))
+}
+
+function calculateIntrinsicGas(
+  data: Uint8Array,
+  isContractCreation: boolean,
+  common: ReturnType<typeof createCustomCommon>,
+): bigint {
+  const tx = createLegacyTx({
+    nonce: 0n,
+    gasLimit: 30_000_000n,
+    gasPrice: 0n,
+    value: 0n,
+    data,
+    to: isContractCreation ? undefined : Address.zero(),
+  }, { common })
+  return tx.getIntrinsicGas()
 }
 
 interface TraceCollector {

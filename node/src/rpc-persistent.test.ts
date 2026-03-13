@@ -532,6 +532,25 @@ test("RPC+Persistent: historical state queries and transaction schema parity", a
     assert.strictEqual(callAtBlock1, "0x")
     assert.strictEqual(callAtBlock2, `0x${"0".repeat(62)}2a`)
 
+    const estimateAtBlock1 = await handleRpcMethod(
+      "eth_estimateGas",
+      [{ from: wallet.address, to: contractAddress, data: "0x" }, "0x1"],
+      CHAIN_ID,
+      evm,
+      engine,
+      p2p,
+    )
+    const estimateAtBlock2 = await handleRpcMethod(
+      "eth_estimateGas",
+      [{ from: wallet.address, to: contractAddress, data: "0x" }, "0x2"],
+      CHAIN_ID,
+      evm,
+      engine,
+      p2p,
+    )
+    assert.strictEqual(estimateAtBlock1, "0x5a3c")
+    assert.ok(BigInt(String(estimateAtBlock2)) > 0x5208n)
+
     const accessListView = await handleRpcMethod(
       "eth_createAccessList",
       [{ from: wallet.address, to: contractAddress, data: "0x" }, "0x2"],

@@ -12,11 +12,17 @@ export interface StorageConfig {
   nonceRetentionDays: number
 }
 
+export interface HardforkScheduleEntry {
+  blockNumber: number
+  hardfork: Hardfork
+}
+
 export interface NodeConfig {
   dataDir: string
   nodeId: string
   chainId: number
   hardfork: Hardfork
+  hardforkSchedule: HardforkScheduleEntry[]
   rpcBind: string
   rpcPort: number
   wsBind: string
@@ -295,6 +301,10 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     process.env.COC_EVM_HARDFORK ?? (user as Record<string, unknown>).hardfork,
     Hardfork.Shanghai,
   )
+  const hardforkSchedule = normalizeHardforkSchedule(
+    process.env.COC_EVM_HARDFORK_SCHEDULE,
+    (user as Record<string, unknown>).hardforkSchedule,
+  )
 
   // Block signature enforcement mode
   const sigEnforcementRaw = process.env.COC_SIGNATURE_ENFORCEMENT
@@ -335,6 +345,7 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     nodeId: "node-1",
     chainId: 18780,
     hardfork: Hardfork.Shanghai,
+    hardforkSchedule: [],
     rpcBind,
     rpcPort: 18780,
     wsBind,
@@ -439,6 +450,7 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     enableAdminRpc,
     nodeMode,
     hardfork,
+    hardforkSchedule,
     signatureEnforcement,
     nodePrivateKey,
     enableGovernance,
@@ -460,6 +472,57 @@ function normalizeHardfork(input: unknown, fallback: Hardfork): Hardfork {
   const normalized = input.trim()
   const supported = new Set(Object.values(Hardfork))
   return supported.has(normalized as Hardfork) ? (normalized as Hardfork) : fallback
+}
+
+function normalizeHardforkSchedule(
+  envInput: string | undefined,
+  configInput: unknown,
+): HardforkScheduleEntry[] {
+  const raw = envInput !== undefined ? safeParseJson(envInput) : configInput
+  if (!Array.isArray(raw)) {
+    return []
+  }
+
+  const normalized = raw
+    .map((entry) => normalizeHardforkScheduleEntry(entry))
+    .filter((entry): entry is HardforkScheduleEntry => entry !== null)
+    .sort((left, right) => left.blockNumber - right.blockNumber)
+
+  const deduped: HardforkScheduleEntry[] = []
+  for (const entry of normalized) {
+    const last = deduped[deduped.length - 1]
+    if (last && last.blockNumber === entry.blockNumber) {
+      deduped[deduped.length - 1] = entry
+      continue
+    }
+    deduped.push(entry)
+  }
+  return deduped
+}
+
+function normalizeHardforkScheduleEntry(input: unknown): HardforkScheduleEntry | null {
+  if (typeof input !== "object" || input === null) {
+    return null
+  }
+  const blockNumberRaw = (input as Record<string, unknown>).blockNumber
+  const hardfork = normalizeHardfork((input as Record<string, unknown>).hardfork, Hardfork.Shanghai)
+  const blockNumber = typeof blockNumberRaw === "number"
+    ? Math.floor(blockNumberRaw)
+    : typeof blockNumberRaw === "string" && blockNumberRaw.trim() !== ""
+      ? Number(blockNumberRaw)
+      : Number.NaN
+  if (!Number.isInteger(blockNumber) || blockNumber < 0) {
+    return null
+  }
+  return { blockNumber, hardfork }
+}
+
+function safeParseJson(input: string): unknown {
+  try {
+    return JSON.parse(input)
+  } catch {
+    return undefined
+  }
 }
 
 function normalizeSigEnforcement(input: unknown): "off" | "monitor" | "enforce" {
@@ -548,6 +611,35 @@ export function validateConfig(cfg: Partial<NodeConfig>): string[] {
     const supported = new Set(Object.values(Hardfork))
     if (typeof cfg.hardfork !== "string" || !supported.has(cfg.hardfork)) {
       errors.push("hardfork must be a valid @ethereumjs/common hardfork name")
+    }
+  }
+
+  if (cfg.hardforkSchedule !== undefined) {
+    if (!Array.isArray(cfg.hardforkSchedule)) {
+      errors.push("hardforkSchedule must be an array")
+    } else {
+      const supported = new Set(Object.values(Hardfork))
+      let previousBlockNumber = -1
+      for (const [index, entry] of cfg.hardforkSchedule.entries()) {
+        if (typeof entry !== "object" || entry === null) {
+          errors.push(`hardforkSchedule[${index}] must be an object`)
+          continue
+        }
+        const blockNumber = (entry as Record<string, unknown>).blockNumber
+        const hardfork = (entry as Record<string, unknown>).hardfork
+        if (!Number.isInteger(blockNumber) || Number(blockNumber) < 0) {
+          errors.push(`hardforkSchedule[${index}].blockNumber must be a non-negative integer`)
+        }
+        if (typeof hardfork !== "string" || !supported.has(hardfork as Hardfork)) {
+          errors.push(`hardforkSchedule[${index}].hardfork must be a valid @ethereumjs/common hardfork name`)
+        }
+        if (Number.isInteger(blockNumber) && Number(blockNumber) < previousBlockNumber) {
+          errors.push("hardforkSchedule must be sorted by ascending blockNumber")
+        }
+        if (Number.isInteger(blockNumber)) {
+          previousBlockNumber = Number(blockNumber)
+        }
+      }
     }
   }
 

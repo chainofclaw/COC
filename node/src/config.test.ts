@@ -197,6 +197,27 @@ describe("validateConfig", () => {
     assert.equal(validateConfig({ hardfork: Hardfork.London }).length, 0)
     assert.ok(validateConfig({ hardfork: "invalid-fork" as Hardfork }).length > 0)
   })
+
+  it("validates hardforkSchedule", () => {
+    assert.equal(validateConfig({
+      hardforkSchedule: [
+        { blockNumber: 0, hardfork: Hardfork.London },
+        { blockNumber: 100, hardfork: Hardfork.Shanghai },
+      ],
+    }).length, 0)
+    assert.ok(validateConfig({
+      hardforkSchedule: [{ blockNumber: -1, hardfork: Hardfork.London }],
+    } as any).length > 0)
+    assert.ok(validateConfig({
+      hardforkSchedule: [{ blockNumber: 10, hardfork: "invalid" }],
+    } as any).length > 0)
+    assert.ok(validateConfig({
+      hardforkSchedule: [
+        { blockNumber: 10, hardfork: Hardfork.Shanghai },
+        { blockNumber: 5, hardfork: Hardfork.London },
+      ],
+    } as any).length > 0)
+  })
 })
 
 describe("loadNodeConfig", () => {
@@ -228,6 +249,53 @@ describe("loadNodeConfig", () => {
       else process.env.COC_NODE_CONFIG = previousEnv.COC_NODE_CONFIG
       if (previousEnv.COC_EVM_HARDFORK === undefined) delete process.env.COC_EVM_HARDFORK
       else process.env.COC_EVM_HARDFORK = previousEnv.COC_EVM_HARDFORK
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it("loads hardforkSchedule from config file and lets env override it", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "coc-config-hardfork-schedule-"))
+    const configPath = join(tempDir, "node-config.json")
+    const previousEnv = {
+      COC_DATA_DIR: process.env.COC_DATA_DIR,
+      COC_NODE_CONFIG: process.env.COC_NODE_CONFIG,
+      COC_EVM_HARDFORK_SCHEDULE: process.env.COC_EVM_HARDFORK_SCHEDULE,
+    }
+
+    try {
+      await writeFile(configPath, JSON.stringify({
+        hardforkSchedule: [
+          { blockNumber: 0, hardfork: Hardfork.London },
+          { blockNumber: 50, hardfork: Hardfork.Shanghai },
+        ],
+      }), "utf-8")
+      process.env.COC_DATA_DIR = tempDir
+      process.env.COC_NODE_CONFIG = configPath
+      delete process.env.COC_EVM_HARDFORK_SCHEDULE
+
+      const fromFile = await loadNodeConfig()
+      assert.deepEqual(fromFile.hardforkSchedule, [
+        { blockNumber: 0, hardfork: Hardfork.London },
+        { blockNumber: 50, hardfork: Hardfork.Shanghai },
+      ])
+
+      process.env.COC_EVM_HARDFORK_SCHEDULE = JSON.stringify([
+        { blockNumber: 0, hardfork: Hardfork.Shanghai },
+        { blockNumber: 100, hardfork: Hardfork.Cancun },
+      ])
+
+      const fromEnv = await loadNodeConfig()
+      assert.deepEqual(fromEnv.hardforkSchedule, [
+        { blockNumber: 0, hardfork: Hardfork.Shanghai },
+        { blockNumber: 100, hardfork: Hardfork.Cancun },
+      ])
+    } finally {
+      if (previousEnv.COC_DATA_DIR === undefined) delete process.env.COC_DATA_DIR
+      else process.env.COC_DATA_DIR = previousEnv.COC_DATA_DIR
+      if (previousEnv.COC_NODE_CONFIG === undefined) delete process.env.COC_NODE_CONFIG
+      else process.env.COC_NODE_CONFIG = previousEnv.COC_NODE_CONFIG
+      if (previousEnv.COC_EVM_HARDFORK_SCHEDULE === undefined) delete process.env.COC_EVM_HARDFORK_SCHEDULE
+      else process.env.COC_EVM_HARDFORK_SCHEDULE = previousEnv.COC_EVM_HARDFORK_SCHEDULE
       await rm(tempDir, { recursive: true, force: true })
     }
   })

@@ -21,8 +21,8 @@ COC is an EVM-compatible blockchain prototype with PoSe (Proof-of-Service) settl
 
 - **Chain Engine**: block production, mempool (EIP-1559, replacement, eviction), snapshots, deterministic proposer rotation, basic finality
 - **P2P Networking**: HTTP-based gossip for tx/blocks, snapshot sync between peers
-- **EVM Execution**: in-memory + persistent state via `@ethereumjs/vm` and LevelDB-backed trie
-- **JSON-RPC**: 57+ standard Ethereum methods + custom `coc_*` / `txpool_*` methods, BigInt-safe serialization, parameter validation with structured error codes
+- **EVM Execution**: in-memory + persistent state via `@ethereumjs/vm` and LevelDB-backed trie, historical state reads, `eth_getProof`, block-height-aware hardfork schedule support
+- **JSON-RPC**: 95 implemented methods spanning `eth_*`, `web3_*`, `net_*`, `debug_*`, `trace_*`, `txpool_*`, `admin_*`, and custom `coc_*` namespaces, with BigInt-safe serialization and structured parameter validation
 - **WebSocket RPC**: `eth_subscribe` / `eth_unsubscribe` for newHeads, newPendingTransactions, logs
 - **PoSe Protocol**:
   - Off-chain: challenge factory, receipt verification, batch aggregation, epoch scoring
@@ -36,7 +36,7 @@ COC is an EVM-compatible blockchain prototype with PoSe (Proof-of-Service) settl
 - **Tooling**:
   - CLI wallet (create address, transfer, query balance)
   - Devnet scripts for 3/5/7 node networks
-  - Quality gate script (unit + integration + e2e tests)
+  - Repository quality gate script covering `node`, `runtime`, `services`, `tests`, `extensions`, `wallet`, `explorer`, `faucet`, and `contracts`
 - **Blockchain Explorer**: Full-featured Next.js app (see below)
 - **BFT Consensus**: BFT-lite three-phase commit (propose/prepare/commit) with stake-weighted quorum, coordinator lifecycle management
 - **Fork Choice**: GHOST-inspired deterministic fork selection (BFT finality > chain length > cumulative weight > hash tiebreaker)
@@ -55,7 +55,7 @@ COC is an EVM-compatible blockchain prototype with PoSe (Proof-of-Service) settl
 - **DHT Enhancement**: wireClientByPeerId O(1) lookup for FIND_NODE, per-peer wire port from config
 - **Devnet Full Features**: Multi-node devnet enables BFT, Wire, DHT, SnapSync by default with per-node wire port and DHT bootstrap peers
 - **Security Hardening**: Node identity authentication (wire handshake signing), BFT mandatory message signatures, DHT peer verification (TCP probe), per-IP wire connection limits, IPFS upload size limit (10MB), MFS path traversal prevention, block timestamp validation, exponential peer ban (max 24h), WebSocket idle timeout, dev accounts gating, default localhost binding, shared rate limiter (RPC/IPFS/PoSe), P2P HTTP signed auth envelope with `off/monitor/enforce` rollout modes and replay guard, governance self-vote removal, PoSeManager ecrecover v-value check, state snapshot stateRoot verification
-- **Testing**: 905 tests across 91 test files, covering chain engine, EVM, mempool, RPC, WebSocket, P2P, storage, IPFS, PoSe, BFT, DHT, wire protocol, fork choice, snap sync, equivocation detection, consensus metrics, wire connection management, wire dedup/relay, cross-protocol propagation, security hardening, BFT slashing, ops hardening, node ops extension, and algorithm safety audit
+- **Testing**: 1563 tests across 145 test files, covering chain engine, EVM, historical execution parity, mempool, RPC, WebSocket, P2P, storage, IPFS, PoSe, BFT, DHT, wire protocol, fork choice, snap sync, equivocation detection, consensus metrics, wire connection management, wire dedup/relay, cross-protocol propagation, security hardening, BFT slashing, ops hardening, node ops extension, and algorithm safety audit
 
 ### Blockchain Explorer Features
 
@@ -181,8 +181,10 @@ npm start
 cd contracts
 npm install
 npm run compile
-npm run deploy:local
+npm run deploy:pose:coc
 ```
+
+`npm run deploy:local` 仍保留为兼容别名，实际会转到同一条 COC PoSe 部署链路。
 
 ### Run devnet
 
@@ -220,6 +222,7 @@ bash scripts/quality-gate.sh
 
 - Implementation status: `docs/implementation-status.md`
 - Feature matrix: `docs/feature-matrix.md`
+- EVM compatibility: `docs/evm-smart-contract-compatibility.en.md`
 - System architecture: `docs/system-architecture.en.md`
 - Core algorithms: `docs/core-algorithms.en.md`
 
