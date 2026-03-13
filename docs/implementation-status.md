@@ -10,7 +10,7 @@ This document maps the whitepaper scope to the current codebase and test coverag
 - **Missing**: not implemented
 
 ## 1) Execution Layer (EVM)
-**Status: Partial (Enhanced in Phase 13.1 + 13.2 + 14 + 17 + 26 + M3 + P0-P5)**
+**Status: Partial (Enhanced in Phase 13.1 + 13.2 + 14 + 17 + 26 + M3 + P0-P5 + post-P6 parity hardening)**
 
 Implemented:
 - In-memory EVM execution using `@ethereumjs/vm`
@@ -41,6 +41,10 @@ Implemented:
 - **Post-P6 trace parity**: `debug_traceCall`, `trace_call`, `trace_replayTransaction`, `trace_replayBlockTransactions`, `trace_rawTransaction`, `trace_block`, `trace_filter`, `trace_get`, `trace_callMany`
 - **Post-P6 trace parity**: built-in `callTracer` / `prestateTracer`, localized OpenEthereum-style trace formatting, best-effort `vmTrace` / `stateDiff`, ABI revert reason decoding, and custom error selector fallback
 - **Post-P6 compile RPC**: `eth_getCompilers` plus lazy `solc`-backed `eth_compileSolidity`
+- **Post-P6 parity hardening**: static block-height `hardforkSchedule` support in node config and EVM execution
+- **Post-P6 parity hardening**: historical execution context propagation into `eth_call`, `eth_estimateGas`, `eth_createAccessList`, `debug_traceCall`, `trace_call`, and `trace_callMany`
+- **Post-P6 parity hardening**: `eth_estimateGas` now includes calldata and contract-creation intrinsic gas, improving contract deployment parity for external toolchains
+- **Post-P6 parity hardening**: `ethers`-level compatibility regression covering deployment, reads/writes, `eth_createAccessList`, and `debug_traceTransaction`
 - **P5**: Formal PoSe deployment CLI, default `chainId` convergence to `18780`, EVM compatibility documentation sync
 - **P6**: Regression test baseline covering P0-P5 capabilities (historical state, tx/receipt schema, access list, debug trace, proof, hardfork, deploy CLI)
 
@@ -303,8 +307,8 @@ Implemented:
 - 3/5/7 node devnet scripts
 - End‑to‑end verify script: block production + tx propagation
 - Repository-wide quality gate script for automated testing (`node`, `runtime`, `services`, `tests`, `extensions`, `wallet`, `explorer`, `faucet`, `contracts`)
-- Comprehensive test coverage (`144` test files, `1558` tests across all modules; vendored `node_modules` tests excluded)
-- Node workspace full suite now exits cleanly after service lifecycle cleanup (`IpfsHttpServer.stop()`, `P2PNode.stop()`), with `859` tests / `124` suites passing via `node --experimental-strip-types --test "src/**/*.test.ts"`
+- Comprehensive test coverage (`145` test files, `1563` tests across all modules; vendored `node_modules` tests excluded)
+- Node workspace full suite now exits cleanly after service lifecycle cleanup (`IpfsHttpServer.stop()`, `P2PNode.stop()`), with `864` tests / `124` suites passing via `node --experimental-strip-types --test "src/**/*.test.ts"`
 - Root `tests/` suite now exits cleanly after test-side RPC server cleanup in `tests/rpc-stress.test.ts`, with `173` tests / `34` suites passing via `node --experimental-strip-types --test "tests/**/*.test.ts"`
 - Ancillary workspaces also pass cleanly: `runtime` (`72` tests), `services+nodeops` (`164` tests), `wallet` (`8` tests), `explorer` (`43` tests), `faucet` (`26` tests), `contracts/deploy` (`18` tests), `contracts` Hardhat suite (`171` tests), `extensions` (`24` tests)
 
@@ -1058,7 +1062,7 @@ Files:
 - Reward Pipeline: v1/v2 unified reward manifest with scoring-based distribution; v1 equal-split placeholder fully replaced (M4).
 - NodeOps Runtime: policy hot-reload, conflict detection, action persistence, agent tick integration (M5).
 - Key Management: resolvePrivateKey with env/envFile/config/configFile priority; unified retryAsync with exponential backoff+jitter across all contract calls (M6).
-- Testing: 1558 tests across 144 files covering all major modules including security hardening (Phase 33), Go/No-Go readiness (Phase 34), node ops extension (Phase 35), ops hardening (Phase 36), algorithm safety audit rounds 1-27, M0-M6 milestones, and M7 doc audit gap remediation.
+- Testing: 1563 tests across 145 files covering all major modules including security hardening (Phase 33), Go/No-Go readiness (Phase 34), node ops extension (Phase 35), ops hardening (Phase 36), algorithm safety audit rounds 1-27, M0-M6 milestones, and M7 doc audit gap remediation.
 - Algorithm Safety Audit (Rounds 1-17): BFT commit blockHash binding, snap sync target validation, full state snapshot trie traversal (iterateAccounts/iterateStorage), EIP-1559 baseFee per-block integration, persistent engine timestamp validation, DHT iterative lookup distance sorting, K-bucket ping-evict replacement, configurable signature enforcement (off/monitor/enforce), handshake canonical format alignment, fetchSnapshots discovery dedup, gas histogram O(n), finality O(1) lookup.
 - Algorithm Safety Audit (Rounds 18-27): block normalization field preservation (gasUsed/stateRoot/signature/bftFinalized), state trie evictLru infinite loop guard (dirty entry skip + maxAttempts), P2P aborted chunk guard, MFS mv/cp circular recursion prevention, FrameDecoder exponential buffer growth O(n) amortized, peer-store defensive JSON validation, wire handshake nonce NaN fail-closed, BFT pending buffer height gap cap (≤10), snapshot validateSnapshot account/storage/code size limits (DoS prevention), FindNode response peer object validation, SnapSync fail-closed single-peer trust, validators hash cross-peer consensus, fetchStateSnapshot 30s timeout + 16MiB limit + cache, state-snapshot independent rate limiter, state snapshot export TTL cache.
 - Manual Security Audit: GET auth wiring (fetchStateSnapshot + fetchPeerList attach x-p2p-auth signed header), trySync/tryPropose reentrant lock (syncInFlight/proposeInFlight guards), PeerDiscovery IP diversity quota (MAX_PEERS_PER_IP=3 anti-Sybil), BFT coordinator↔governance runtime sync (updateValidators on finalize + restoreGovernance), chain-snapshot endpoint auth + rate limit.

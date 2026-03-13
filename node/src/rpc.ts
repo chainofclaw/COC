@@ -470,13 +470,14 @@ async function handleRpc(
       }
       // Default gas cap to block gas limit (30M) to prevent DoS via unbounded execution
       const gasForEstimate = estParams.gas ?? "0x1c9c380"
+      const executionContext = await resolveHistoricalExecutionContext((payload.params ?? [])[1], chain)
       const estimated = await evm.estimateGas({
         from: estParams.from,
         to: estParams.to ?? "",
         data: estParams.data,
         value: estParams.value,
         gas: gasForEstimate,
-      })
+      }, executionContext.stateRoot, executionContext.blockNumber)
       return `0x${estimated.toString(16)}`
     }
     case "eth_getCode": {
@@ -493,14 +494,14 @@ async function handleRpc(
       if (callParams.from && !/^0x[0-9a-fA-F]{1,40}$/i.test(callParams.from)) {
         throw { code: -32602, message: "invalid from address" }
       }
-      const stateRoot = await resolveHistoricalStateRoot((payload.params ?? [])[1], chain)
+      const executionContext = await resolveHistoricalExecutionContext((payload.params ?? [])[1], chain)
       const callResult = await evm.callRaw({
         from: callParams.from,
         to,
         data: callParams.data,
         value: callParams.value,
         gas: callParams.gas,
-      }, stateRoot)
+      }, executionContext.stateRoot, executionContext.blockNumber)
       return callResult.returnValue
     }
     case "eth_getStorageAt": {
@@ -692,14 +693,14 @@ async function handleRpc(
     }
     case "eth_createAccessList": {
       const callParams = ((payload.params ?? [])[0] ?? {}) as Record<string, string>
-      const stateRoot = await resolveHistoricalStateRoot((payload.params ?? [])[1], chain)
+      const executionContext = await resolveHistoricalExecutionContext((payload.params ?? [])[1], chain)
       const result = await evm.traceCall({
         from: callParams.from,
         to: callParams.to ?? "",
         data: callParams.data,
         value: callParams.value,
         gas: callParams.gas,
-      }, {}, stateRoot)
+      }, {}, executionContext.stateRoot, executionContext.blockNumber)
       return {
         accessList: result.accessList,
         gasUsed: `0x${result.gasUsed.toString(16)}`,
@@ -708,7 +709,7 @@ async function handleRpc(
     case "debug_traceCall": {
       if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
       const callParams = ((payload.params ?? [])[0] ?? {}) as Record<string, string>
-      const stateRoot = await resolveHistoricalStateRoot((payload.params ?? [])[1], chain)
+      const executionContext = await resolveHistoricalExecutionContext((payload.params ?? [])[1], chain)
       const traceOpts = ((payload.params ?? [])[2] ?? {}) as Record<string, unknown>
       const result = await evm.traceCall({
         from: callParams.from,
@@ -721,7 +722,7 @@ async function handleRpc(
         disableMemory: Boolean(traceOpts.disableMemory),
         disableStack: Boolean(traceOpts.disableStack),
         tracer: traceOpts.tracer ? String(traceOpts.tracer) : undefined,
-      }, stateRoot)
+      }, executionContext.stateRoot, executionContext.blockNumber)
       return formatDebugTraceResult(result, traceOpts)
     }
     case "debug_traceTransaction": {
@@ -767,24 +768,25 @@ async function handleRpc(
       if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
       const callParams = ((payload.params ?? [])[0] ?? {}) as Record<string, string>
       const traceTypes = normalizeReplayTraceTypes((payload.params ?? [])[1])
-      const stateRoot = await resolveHistoricalStateRoot((payload.params ?? [])[2], chain)
+      const executionContext = await resolveHistoricalExecutionContext((payload.params ?? [])[2], chain)
       const result = await evm.traceCall({
         from: callParams.from,
         to: callParams.to ?? "",
         data: callParams.data,
         value: callParams.value,
         gas: callParams.gas,
-      }, {}, stateRoot)
+      }, {}, executionContext.stateRoot, executionContext.blockNumber)
       return formatTraceReplayResult(result, traceTypes)
     }
     case "trace_callMany": {
       if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
       const callRequests = normalizeTraceCallManyRequests((payload.params ?? [])[0])
-      const stateRoot = await resolveHistoricalStateRoot((payload.params ?? [])[1], chain)
+      const executionContext = await resolveHistoricalExecutionContext((payload.params ?? [])[1], chain)
       const results = await evm.traceCallMany(
         callRequests.map((request) => request.call),
         {},
-        stateRoot,
+        executionContext.stateRoot,
+        executionContext.blockNumber,
       )
       return results.map((result, index) => formatTraceReplayResult(result, callRequests[index].traceTypes))
     }
@@ -1612,6 +1614,13 @@ function parseBlockTag(input: unknown, fallback: bigint): bigint {
 }
 
 async function resolveHistoricalStateRoot(input: unknown, chain: IChainEngine): Promise<string | undefined> {
+  return (await resolveHistoricalExecutionContext(input, chain)).stateRoot
+}
+
+async function resolveHistoricalExecutionContext(
+  input: unknown,
+  chain: IChainEngine,
+): Promise<{ stateRoot?: string; blockNumber?: bigint }> {
   if (
     input === undefined ||
     input === null ||
@@ -1620,7 +1629,8 @@ async function resolveHistoricalStateRoot(input: unknown, chain: IChainEngine): 
     input === "safe" ||
     input === "finalized"
   ) {
-    return undefined
+    const height = await Promise.resolve(chain.getHeight())
+    return { blockNumber: height }
   }
 
   if (typeof input === "object" && input !== null && "blockHash" in input) {
@@ -1632,7 +1642,10 @@ async function resolveHistoricalStateRoot(input: unknown, chain: IChainEngine): 
     if (!block.stateRoot) {
       throw { code: -32001, message: `state root unavailable for block ${blockHash}` }
     }
-    return block.stateRoot
+    return {
+      stateRoot: block.stateRoot,
+      blockNumber: block.number,
+    }
   }
 
   const height = await Promise.resolve(chain.getHeight())
@@ -1644,7 +1657,10 @@ async function resolveHistoricalStateRoot(input: unknown, chain: IChainEngine): 
   if (!block.stateRoot) {
     throw { code: -32001, message: `state root unavailable for block ${blockNumber}` }
   }
-  return block.stateRoot
+  return {
+    stateRoot: block.stateRoot,
+    blockNumber,
+  }
 }
 
 type ReplayTraceType = "trace" | "vmTrace" | "stateDiff"

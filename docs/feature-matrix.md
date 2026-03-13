@@ -16,14 +16,16 @@ Status legend:
 - **RPC: logs + filters** — Implemented (minimal) — `COC/node/src/rpc.ts`
 - **RPC: web3_sha3** — Implemented — `COC/node/src/rpc.ts`
 - **RPC: historical block-tag state reads** — Implemented (P0) — `COC/node/src/rpc.ts`, `COC/node/src/evm.ts`, `COC/node/src/storage/persistent-state-manager.ts`
+- **RPC: historical execution context for call/estimate/trace** — Implemented (post-P6 parity hardening) — `COC/node/src/rpc.ts`, `COC/node/src/evm.ts`
 - **RPC: tx/receipt schema parity** — Implemented (P1) — `COC/node/src/rpc.ts`, `COC/node/src/chain-engine-persistent.ts`
 - **RPC: eth_createAccessList** — Implemented (P2) — `COC/node/src/rpc.ts`, `COC/node/src/evm.ts`
 - **RPC: eth_getProof** — Implemented (P4) — `COC/node/src/rpc.ts`, `COC/node/src/storage/state-trie.ts`
+- **RPC: eth_estimateGas intrinsic gas parity** — Implemented (post-P6 parity hardening) — `COC/node/src/evm.ts`, `COC/node/src/rpc.ts`
 - **RPC: eth_getCompilers** — Implemented (post-P6, Solidity only) — `COC/node/src/rpc.ts`
 - **RPC: eth_compileSolidity** — Implemented (post-P6, lazy `solc`) — `COC/node/src/rpc.ts`
 - **RPC: real block header fields** — Implemented (M3) — `COC/node/src/block-header.ts`, `COC/node/src/rpc.ts`, `COC/node/src/chain-events.ts`
 - **RPC: full EVM parity** — Missing
-- **EVM hardfork configurability** — Implemented (P3) — `COC/node/src/config.ts`, `COC/node/src/evm.ts`
+- **EVM hardfork configurability** — Implemented (P3 + post-P6 parity hardening, single hardfork + static schedule) — `COC/node/src/config.ts`, `COC/node/src/evm.ts`
 
 ## Consensus & Chain
 - **Proposer rotation** — Implemented — `COC/node/src/chain-engine.ts`
@@ -215,9 +217,10 @@ Status legend:
 
 ## EVM Compatibility Regression (P6)
 - **P0-P5 regression baseline** — Implemented (P6) — `COC/node/src/rpc-debug-compatibility.test.ts`, `COC/node/src/rpc-persistent.test.ts`
-- **Node workspace quality gate** — Implemented (`859` tests / `124` suites passing) — `COC/node/src/**/*.test.ts`
+- **Ethers toolchain compatibility regression** — Implemented (post-P6 parity hardening) — `COC/node/src/ethers-toolchain-compat.test.ts`
+- **Node workspace quality gate** — Implemented (`864` tests / `124` suites passing) — `COC/node/src/**/*.test.ts`
 - **Root tests workspace quality gate** — Implemented (`173` tests / `34` suites passing) — `COC/tests/**/*.test.ts`
-- **Repository-wide quality gate** — Implemented (`1558` tests / `144` files across repo workspaces, excluding vendored `node_modules` tests) — `COC/scripts/quality-gate.sh`
+- **Repository-wide quality gate** — Implemented (`1563` tests / `145` files across repo workspaces, excluding vendored `node_modules` tests) — `COC/scripts/quality-gate.sh`
 
 ## Input Validation & Error Handling
 - **RPC parameter validation** — Implemented (Phase 27) — `COC/node/src/rpc.ts`

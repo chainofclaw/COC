@@ -12,7 +12,7 @@ As of the current codebase, COC can be considered an "EVM-compatible prototype c
 
 Key takeaways:
 
-- Execution engine is functional: based on `@ethereumjs/vm`, defaulting to Shanghai hardfork semantics and allowing hardfork selection through node configuration.
+- Execution engine is functional: based on `@ethereumjs/vm`, defaulting to Shanghai semantics, supporting a single configured `hardfork`, and also supporting a static `hardforkSchedule` for block-height-based transitions.
 - Contracts can be deployed, called, and persisted: supports contract creation, state storage, logs, receipts, `eth_call`, `eth_getCode`, `eth_getStorageAt`, `eth_getLogs`, and other core paths.
 - RPC compatibility is "sufficient but not fully equivalent": core EVM/RPC paths work, but full Ethereum parity is still missing.
 - Contract deployment should use standard `ethers` / Hardhat workflows, submitting signed transactions via `eth_sendRawTransaction`; `eth_sendTransaction` is only available with explicitly enabled dev accounts.
@@ -26,7 +26,7 @@ COC's EVM execution core is in [`node/src/evm.ts`](/home/bob/projects/ClawdBot/C
 
 - Execution engine: `@ethereumjs/vm`
 - Common configuration: `createCustomCommon(...)`
-- Hardfork: fixed to `Shanghai`
+- Hardfork: defaults to `Shanghai`, with support for a single `hardfork` override and a static `hardforkSchedule`
 - Transaction execution: `runTx(...)`
 - Read-only contract calls: `vm.evm.runCall(...)`
 
@@ -40,7 +40,7 @@ The current state persistence path is:
 
 1. `PersistentStateTrie` uses LevelDB to persist accounts, storage slots, and code.
 2. `PersistentStateManager` adapts the trie into a state manager compatible with `ethereumjs/vm`.
-3. `EvmChain.create(chainId, stateManager, { hardfork? })` injects this persistent state manager and optional hardfork selection into the VM.
+3. `EvmChain.create(chainId, stateManager, { hardfork?, hardforkSchedule? })` injects this persistent state manager, default hardfork, and optional static upgrade schedule into the VM.
 4. After node restart, state can be restored directly from the existing state root without full replay.
 
 Related implementation:
@@ -130,11 +130,13 @@ Related directories:
 
 Current implementation and tests confirm:
 
-- Fixed Shanghai semantics support
+- Shanghai semantics by default, plus static `hardforkSchedule` switching by block height
 - EIP-1559 base fee calculation support
 - Standard transaction receipts and logs
 - At least precompile boundary paths from 0x01 to 0x09
 - `PUSH0` and other Shanghai features
+- Historical execution context propagation into `eth_call`, `eth_estimateGas`, `eth_createAccessList`, `debug_traceCall`, `trace_call`, and `trace_callMany`
+- `eth_estimateGas` now includes calldata and contract-creation intrinsic gas in the estimate
 
 Related implementation and tests:
 
@@ -283,8 +285,10 @@ This is the most important section of this document.
 
 ### 5.1 EVM / Hardfork Limitations
 
-- Each node instance still runs under one hardfork configuration at a time, defaulting to `Shanghai`
-- Other `@ethereumjs/common` hardfork names can be configured, but COC does not yet implement Ethereum-style scheduled hardfork transitions by block height
+- The default hardfork is `Shanghai`
+- A single configured `hardfork` can switch the whole node to another `@ethereumjs/common` hardfork
+- A static `hardforkSchedule` can switch execution semantics by block height
+- COC still does not derive a full upgrade schedule automatically from chain metadata like mainstream Ethereum clients
 - If your toolchain or bytecode strictly depends on other fork-era differences, you must still verify independently
 
 Impact:
@@ -312,7 +316,7 @@ Current runtime limits include:
 
 - Block gas limit: `30,000,000`
 - `eth_call` gas cap: maximum `30,000,000`
-- `eth_estimateGas` defaults to `30,000,000` as upper bound
+- `eth_estimateGas` defaults to `30,000,000` as upper bound and now includes calldata / contract-creation intrinsic gas in the estimate
 - Raw transaction size limit: ~`128 KiB`
 - RPC request body size limit: `1 MiB`
 - Filter limit: `1000`
@@ -685,7 +689,7 @@ node --experimental-strip-types wallet/coc-wallet.ts send 0xFrom 0xTo 1.0 --rpc 
 ### 8.1 Suitable For
 
 - Deploying standard Solidity business contracts on COC
-- Using `ethers` / Hardhat for contract interaction
+- Using `ethers` / Hardhat for contract interaction; the repository now includes an `ethers`-level regression covering deployment, reads/writes, `eth_createAccessList`, and `debug_traceTransaction`
 - Providing the on-chain execution layer for PoSe / governance / Explorer
 - Local devnet / testnet / prototype validation
 - Events, receipts, state persistence, and basic block header compatibility

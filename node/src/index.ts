@@ -86,7 +86,10 @@ if (usePersistent) {
 
   // Create state manager adapter and pass to EVM
   const stateManager = new PersistentStateManager(trie)
-  evm = await EvmChain.create(config.chainId, stateManager, { hardfork: config.hardfork })
+  evm = await EvmChain.create(config.chainId, stateManager, {
+    hardfork: config.hardfork,
+    hardforkSchedule: config.hardforkSchedule,
+  })
 
   const persistentEngine = new PersistentChainEngine(
     {
@@ -121,7 +124,10 @@ if (usePersistent) {
 
   log.info("using persistent storage backend (LevelDB) with EVM state persistence")
 } else {
-  evm = await EvmChain.create(config.chainId, undefined, { hardfork: config.hardfork })
+  evm = await EvmChain.create(config.chainId, undefined, {
+    hardfork: config.hardfork,
+    hardforkSchedule: config.hardforkSchedule,
+  })
   await evm.prefund(prefund)
   const memoryEngine = new ChainEngine(
     {
