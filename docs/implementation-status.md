@@ -928,7 +928,10 @@ Code:
 - Prometheus alert rules: 12 rules across 4 groups (availability, security, performance, network)
 - On-call runbook with triage flowchart, troubleshooting sections, escalation matrix
 - Rollback runbook with 4 procedures (Docker rollback, binary rollback, snapshot recovery, genesis reset)
-- Testnet configs with full security fields (`ops/testnet/node-config-{1,2,3}.json`)
+- Testnet configs with current peer/DHT object format and full security fields (`ops/testnet/node-config-{1,2,3}.json`)
+- Docker monitoring stack now joins the shared `docker_coc-rpc` network and mounts `ops/alerts/prometheus-rules.yml`
+- Docker testnet stack exposes optional `pose` profile (`agent`, `relayer`) plus runtime deployment templates
+- GHCR image build/push now includes `coc-runtime`, and testnet deployment consumes `IMAGE_TAG`
 
 ### 34.3 ValidatorGovernance Slashing API
 - `applySlash(validatorId, amount)`: Direct stake reduction for slashing penalties
@@ -943,8 +946,14 @@ Code:
 - `COC/ops/alerts/prometheus-rules.yml` (NEW)
 - `COC/ops/runbooks/testnet-oncall.md` (NEW)
 - `COC/ops/runbooks/testnet-rollback.md` (NEW)
-- `COC/ops/testnet/node-config-{1,2,3}.json` (NEW)
+- `COC/ops/testnet/node-config-{1,2,3}.json` (UPDATED - current config schema + security fields)
 - `COC/docker/testnet-configs/node-{1,2,3}.json` (UPDATED - security fields)
+- `COC/docker/testnet-runtime-configs/{agent,relayer}.json` (NEW)
+- `COC/docker/Dockerfile.runtime` (NEW)
+- `COC/docker/systemd/coc-agent.service` (NEW)
+- `COC/docker/systemd/coc-relayer.service` (NEW)
+- `COC/.github/workflows/build-images.yml` (UPDATED - runtime image)
+- `COC/.github/workflows/testnet-deploy.yml` (UPDATED - metrics health check + image tag flow)
 
 Documentation:
 - `COC/docs/phase-34-plan.en.md`

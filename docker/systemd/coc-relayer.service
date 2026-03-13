@@ -1,0 +1,30 @@
+[Unit]
+Description=COC Runtime Relayer
+After=network.target
+Documentation=https://github.com/chainofclaw/coc
+
+[Service]
+Type=simple
+User=coc
+Group=coc
+WorkingDirectory=/opt/coc
+ExecStart=/usr/bin/node --experimental-strip-types runtime/coc-relayer.ts
+Restart=always
+RestartSec=10
+LimitNOFILE=65535
+
+Environment=COC_DATA_DIR=/var/lib/coc/runtime
+Environment=COC_CONFIG=/etc/coc/runtime-relayer.json
+EnvironmentFile=-/etc/coc/coc-relayer.env
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/coc /var/log/coc
+PrivateTmp=true
+
+StandardOutput=append:/var/log/coc/relayer.log
+StandardError=append:/var/log/coc/relayer-error.log
+
+[Install]
+WantedBy=multi-user.target

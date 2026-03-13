@@ -54,7 +54,10 @@ Create `/etc/coc/node-config.json` (or use `COC_NODE_CONFIG` env var):
   "rpcPort": 18780,
   "p2pBind": "0.0.0.0",
   "p2pPort": 19780,
+  "wsBind": "0.0.0.0",
   "wsPort": 18781,
+  "ipfsBind": "0.0.0.0",
+  "wireBind": "0.0.0.0",
   "wirePort": 19781,
   "validators": ["VALIDATOR_LIST_FROM_GENESIS"],
   "peers": [
@@ -64,15 +67,28 @@ Create `/etc/coc/node-config.json` (or use `COC_NODE_CONFIG` env var):
   "enableWireProtocol": true,
   "enableDht": true,
   "enableSnapSync": true,
+  "enableAdminRpc": false,
   "blockTimeMs": 3000,
   "finalityDepth": 3,
   "maxTxPerBlock": 100,
+  "p2pInboundAuthMode": "enforce",
+  "poseInboundAuthMode": "enforce",
+  "dhtRequireAuthenticatedVerify": true,
+  "poseUseGovernanceChallengerAuth": true,
+  "poseUseOnchainChallengerAuth": false,
   "prefund": [],
   "dhtBootstrapPeers": [
     {"id": "SEED_NODE_ID", "address": "SEED_NODE_IP", "port": 19781}
   ]
 }
 ```
+
+If the coordinators provide generated artifacts, prefer the outputs from `bash scripts/setup-boot-nodes.sh`:
+
+- `configs/prowl-testnet/boot-nodes.json`
+- `configs/prowl-testnet/dht-seeds.json`
+
+Those files already contain the concrete `peers` and `dhtBootstrapPeers` entries to copy into your node config.
 
 ## Step 5: Start Node
 
@@ -101,7 +117,8 @@ docker run -d \
 
 ```bash
 sudo cp docker/systemd/coc-node.service /etc/systemd/system/
-# Edit the service file to set COC_NODE_KEY
+# Create /etc/coc/coc-node.env and put COC_NODE_KEY there
+sudo sh -c 'printf "COC_NODE_KEY=0xYOUR_PRIVATE_KEY\n" > /etc/coc/coc-node.env'
 sudo systemctl daemon-reload
 sudo systemctl enable --now coc-node
 ```
@@ -112,8 +129,8 @@ sudo systemctl enable --now coc-node
 # Check block height
 bash scripts/node-status.sh http://localhost:18780
 
-# Check health
-curl http://localhost:18780/health
+# Check metrics liveness
+curl http://localhost:9100/health
 
 # Check metrics
 curl http://localhost:9100/metrics | grep coc_block_height
@@ -131,6 +148,8 @@ Once synced, contact testnet coordinators to be added to the validator set throu
 docker compose -f docker/docker-compose.monitoring.yml up -d
 # Grafana: http://localhost:3100 (admin/cocprowl)
 ```
+
+If you are already running the 3-node Docker testnet, the monitoring stack joins the same `docker_coc-rpc` network and scrapes `node-{1,2,3}:9100` automatically.
 
 ## Firewall Rules
 

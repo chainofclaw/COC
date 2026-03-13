@@ -1,6 +1,5 @@
 # COC Monitoring Stack (Prometheus + Grafana)
 # Usage: docker compose -f docker/docker-compose.monitoring.yml up -d
-version: "3.9"
 
 services:
   prometheus:
@@ -10,12 +9,13 @@ services:
       - "9090:9090"
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../ops/alerts/prometheus-rules.yml:/etc/prometheus/alerts.yml:ro
       - prometheus-data:/prometheus
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.retention.time=30d"
     networks:
-      - coc-internal
+      - coc-rpc
     restart: unless-stopped
 
   grafana:
@@ -34,7 +34,7 @@ services:
     depends_on:
       - prometheus
     networks:
-      - coc-internal
+      - coc-rpc
     restart: unless-stopped
 
 volumes:
@@ -42,6 +42,6 @@ volumes:
   grafana-data:
 
 networks:
-  coc-internal:
+  coc-rpc:
     external: true
-    name: docker_coc-internal
+    name: docker_coc-rpc

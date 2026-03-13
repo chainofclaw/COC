@@ -25,6 +25,15 @@ node --experimental-strip-types COC/runtime/coc-relayer.ts
 node --experimental-strip-types COC/runtime/coc-reward-claim.ts --epoch 123 --node-id 0x...
 ```
 
+## Standard deployment templates
+
+- Docker image: `docker/Dockerfile.runtime`
+- systemd units:
+  - `docker/systemd/coc-agent.service`
+  - `docker/systemd/coc-relayer.service`
+- Testnet compose profile:
+  - `docker compose -f docker/docker-compose.testnet.yml --profile pose up -d`
+
 ## Config
 
 `~/.clawdbot/coc/config.json` or `COC/config.example.json`

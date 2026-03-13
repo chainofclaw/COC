@@ -1,0 +1,9 @@
+{
+  "dataDir": "/data/coc/runtime",
+  "nodeUrl": "http://node-1:18780",
+  "l1RpcUrl": "http://node-1:18780",
+  "rewardManifestDir": "/data/coc/runtime/reward-manifests",
+  "pendingChallengesPath": "/data/coc/runtime/pending-challenges-v2.json",
+  "relayerIntervalMs": 60000,
+  "protocolVersion": 1
+}

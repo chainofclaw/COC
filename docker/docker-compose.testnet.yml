@@ -2,6 +2,7 @@
 # Usage: docker compose -f docker/docker-compose.testnet.yml up -d
 
 x-node-base: &node-base
+  image: ${COC_NODE_IMAGE:-ghcr.io/chainofclaw/coc-node}:${IMAGE_TAG:-latest}
   build:
     context: ..
     dockerfile: docker/Dockerfile.node
@@ -64,6 +65,7 @@ services:
       - COC_NODE_KEY=0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a
 
   explorer:
+    image: ${COC_EXPLORER_IMAGE:-ghcr.io/chainofclaw/coc-explorer}:${IMAGE_TAG:-latest}
     build:
       context: ..
       dockerfile: docker/Dockerfile.explorer
@@ -81,6 +83,7 @@ services:
     restart: unless-stopped
 
   faucet:
+    image: ${COC_FAUCET_IMAGE:-ghcr.io/chainofclaw/coc-faucet}:${IMAGE_TAG:-latest}
     build:
       context: ..
       dockerfile: docker/Dockerfile.faucet
@@ -97,14 +100,69 @@ services:
       - coc-rpc
     restart: unless-stopped
 
+  agent:
+    image: ${COC_RUNTIME_IMAGE:-ghcr.io/chainofclaw/coc-runtime}:${IMAGE_TAG:-latest}
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.runtime
+    container_name: coc-agent
+    command: ["runtime/coc-agent.ts"]
+    environment:
+      - COC_DATA_DIR=/data/coc/runtime
+      - COC_CONFIG=/data/coc/runtime/agent.json
+      - COC_OPERATOR_PK=${COC_OPERATOR_PK:-0x8b3a350cf5c34c9194ca3a545d6546d9f8b66d0f6937f33ce3cbb7a7e3c7eca0}
+    volumes:
+      - runtime-data:/data/coc/runtime
+      - ./testnet-runtime-configs/agent.json:/data/coc/runtime/agent.json:ro
+    depends_on:
+      node-1:
+        condition: service_healthy
+      node-2:
+        condition: service_healthy
+      node-3:
+        condition: service_healthy
+    networks:
+      - coc-rpc
+    restart: unless-stopped
+    profiles:
+      - pose
+
+  relayer:
+    image: ${COC_RUNTIME_IMAGE:-ghcr.io/chainofclaw/coc-runtime}:${IMAGE_TAG:-latest}
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.runtime
+    container_name: coc-relayer
+    command: ["runtime/coc-relayer.ts"]
+    environment:
+      - COC_DATA_DIR=/data/coc/runtime
+      - COC_CONFIG=/data/coc/runtime/relayer.json
+      - COC_SLASHER_PK=${COC_SLASHER_PK:-0xdbda1821b80551c171720b42e0ca60ef6d611f8c6e3853e54af5d3f8ef500c4c}
+    volumes:
+      - runtime-data:/data/coc/runtime
+      - ./testnet-runtime-configs/relayer.json:/data/coc/runtime/relayer.json:ro
+    depends_on:
+      node-1:
+        condition: service_healthy
+      agent:
+        condition: service_started
+    networks:
+      - coc-rpc
+    restart: unless-stopped
+    profiles:
+      - pose
+
 volumes:
   node1-data:
   node2-data:
   node3-data:
+  runtime-data:
 
 networks:
   coc-p2p:
     driver: bridge
     internal: true
+    name: docker_coc-p2p
   coc-rpc:
     driver: bridge
+    name: docker_coc-rpc

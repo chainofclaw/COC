@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   test-node:
-    name: Node Tests (757+)
+    name: Node Tests (859+)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -26,7 +26,7 @@ jobs:
       - name: Run node tests
         run: |
           cd node
-          node --experimental-strip-types --test --test-force-exit --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=node-results.xml src/*.test.ts src/**/*.test.ts
+          node --experimental-strip-types --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=node-results.xml $(find src -name '*.test.ts' -type f | sort)
         env:
           NODE_ENV: test
       - name: Upload test results
@@ -37,8 +37,8 @@ jobs:
           path: node/node-results.xml
           retention-days: 7
 
-  test-services:
-    name: Service Tests (119+)
+  test-runtime:
+    name: Runtime Tests (72+)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -47,11 +47,36 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: package-lock.json
-      - run: npm ci --workspaces --include-workspace-root
+          cache-dependency-path: node/package-lock.json
+      - run: cd node && npm ci
+      - run: cd runtime && npm install --omit=dev
+      - name: Run runtime tests
+        run: |
+          node --experimental-strip-types --test \
+            $(find runtime/lib -name '*.test.ts' -type f | sort) \
+            $(find runtime -maxdepth 1 -name '*.test.ts' -type f | sort)
+        env:
+          NODE_ENV: test
+
+  test-services:
+    name: Services + NodeOps + Tests Workspace (337+)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: node/package-lock.json
+      - run: cd node && npm ci
+      - run: npm install --no-save ethers
       - name: Run service tests
         run: |
-          node --experimental-strip-types --test --test-force-exit --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=service-results.xml services/**/*.test.ts nodeops/*.test.ts tests/**/*.test.ts
+          node --experimental-strip-types --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=service-results.xml \
+            $(find services -name '*.test.ts' -type f | sort) \
+            $(find nodeops -name '*.test.ts' -type f | sort) \
+            $(find tests -name '*.test.ts' -type f | sort)
         env:
           NODE_ENV: test
       - name: Upload test results
@@ -63,7 +88,7 @@ jobs:
           retention-days: 7
 
   test-contracts:
-    name: Contract Tests
+    name: Contract Tests + Deploy CLI
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -75,9 +100,31 @@ jobs:
           cache-dependency-path: contracts/package-lock.json
       - run: cd contracts && npm ci
       - run: cd contracts && npm test
+      - run: |
+          node --experimental-default-type=module --experimental-strip-types --test \
+            $(find contracts/deploy -name '*.test.ts' -type f | sort)
+
+  test-wallet:
+    name: Wallet Tests (8+)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: node/package-lock.json
+      - run: cd wallet && npm install --omit=dev
+      - name: Run wallet tests
+        run: |
+          node --experimental-strip-types --test \
+            $(find wallet -maxdepth 1 -name '*.test.ts' -type f | sort)
+        env:
+          NODE_ENV: test
 
   test-explorer:
-    name: Explorer Build + Lib Tests
+    name: Explorer Build + Lib Tests (43+)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -90,7 +137,8 @@ jobs:
       - run: cd explorer && npm ci
       - name: Run explorer lib tests
         run: |
-          node --experimental-strip-types --test --test-force-exit explorer/src/lib/*.test.ts
+          node --experimental-default-type=module --experimental-strip-types --test \
+            $(find explorer/src/lib -name '*.test.ts' -type f | sort)
         env:
           NODE_ENV: test
       - name: Build explorer
@@ -99,7 +147,7 @@ jobs:
           NEXT_TELEMETRY_DISABLED: "1"
 
   test-faucet:
-    name: Faucet Tests
+    name: Faucet Tests (26+)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -112,27 +160,32 @@ jobs:
       - run: cd faucet && npm ci
       - name: Run faucet tests
         run: |
-          node --experimental-strip-types --test --test-force-exit faucet/src/*.test.ts
+          node --experimental-strip-types --test \
+            $(find faucet/src -name '*.test.ts' -type f | sort)
         env:
           NODE_ENV: test
 
   test-gate:
     name: Test Gate
-    needs: [test-node, test-services, test-contracts, test-explorer, test-faucet]
+    needs: [test-node, test-runtime, test-services, test-contracts, test-wallet, test-explorer, test-faucet]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Check test results
         run: |
           if [ "${{ needs.test-node.result }}" != "success" ] || \
+             [ "${{ needs.test-runtime.result }}" != "success" ] || \
              [ "${{ needs.test-services.result }}" != "success" ] || \
              [ "${{ needs.test-contracts.result }}" != "success" ] || \
+             [ "${{ needs.test-wallet.result }}" != "success" ] || \
              [ "${{ needs.test-explorer.result }}" != "success" ] || \
              [ "${{ needs.test-faucet.result }}" != "success" ]; then
             echo "::error::One or more test suites failed"
             echo "Node: ${{ needs.test-node.result }}"
+            echo "Runtime: ${{ needs.test-runtime.result }}"
             echo "Services: ${{ needs.test-services.result }}"
             echo "Contracts: ${{ needs.test-contracts.result }}"
+            echo "Wallet: ${{ needs.test-wallet.result }}"
             echo "Explorer: ${{ needs.test-explorer.result }}"
             echo "Faucet: ${{ needs.test-faucet.result }}"
             exit 1

@@ -267,7 +267,7 @@ bash scripts/stop-devnet.sh 3
 ## 6. Docker Testnet Deployment
 
 Principle: containerized deployments trade some host flexibility for reproducibility, making them useful when operators need a known-good topology that can be recreated quickly.
-Module / program focus: this chapter covers the Docker Compose stacks and images that package the core node, explorer, website, and faucet into a testnet-style deployment.
+Module / program focus: this chapter covers the Docker Compose stacks and images that package the core node, runtime sidecars, explorer, website, and faucet into a testnet-style deployment.
 
 ### 6.1 Single-Node Docker
 
@@ -284,6 +284,9 @@ Exposed ports: 18780 (RPC), 3000 (Explorer), 3001 (Website)
 # Start
 docker compose -f docker/docker-compose.testnet.yml up -d
 
+# Start the same stack plus PoSe runtime sidecars
+docker compose -f docker/docker-compose.testnet.yml --profile pose up -d
+
 # Or use the launch script
 bash scripts/launch-testnet.sh up
 bash scripts/launch-testnet.sh status
@@ -292,6 +295,7 @@ bash scripts/launch-testnet.sh down
 ```
 
 Services: `node-1`, `node-2`, `node-3`, `explorer`, `faucet`
+Optional profile: `agent`, `relayer` via `--profile pose`
 
 | Service | Port |
 |---------|------|
@@ -301,7 +305,9 @@ Services: `node-1`, `node-2`, `node-3`, `explorer`, `faucet`
 | Explorer | 3000 |
 | Faucet | 3003 |
 
-Environment: Set `COC_FAUCET_KEY` for faucet private key.
+Environment:
+- Set `COC_FAUCET_KEY` for faucet private key
+- Set `IMAGE_TAG` plus optional `COC_NODE_IMAGE` / `COC_RUNTIME_IMAGE` / `COC_EXPLORER_IMAGE` / `COC_FAUCET_IMAGE` to deploy prebuilt images
 
 ### 6.3 Dockerfile
 
@@ -314,6 +320,12 @@ The node image (`docker/Dockerfile.node`) uses:
 
 ```bash
 docker build -f docker/Dockerfile.node -t coc-node:latest .
+```
+
+The runtime image (`docker/Dockerfile.runtime`) packages `coc-agent` and `coc-relayer` on top of the same Node 22 base:
+
+```bash
+docker build -f docker/Dockerfile.runtime -t coc-runtime:latest .
 ```
 
 ---
@@ -335,10 +347,10 @@ bash scripts/generate-validator-keys.sh <count>
 
 ```bash
 # For Docker deployment
-bash scripts/generate-genesis.sh --docker --validators=3
+COC_DOCKER=1 bash scripts/generate-genesis.sh 3
 
-# For bare-metal deployment
-bash scripts/generate-genesis.sh --bare-metal --validators=3
+# For bare-metal deployment (replace 203.0.113.10 with your bootstrap host)
+COC_BOOT_HOST=203.0.113.10 bash scripts/generate-genesis.sh 3
 ```
 
 ### 7.3 Bootstrap Nodes
@@ -351,6 +363,7 @@ Configures:
 - DNS TXT records for seed discovery
 - DHT bootstrap peer list
 - Initial peer connections
+- `boot-nodes.json` / `dht-seeds.json` artifacts for validator onboarding
 
 ### 7.4 systemd Service
 
@@ -358,14 +371,20 @@ Install the systemd unit file:
 
 ```bash
 sudo cp docker/systemd/coc-node.service /etc/systemd/system/
+sudo cp docker/systemd/coc-agent.service /etc/systemd/system/
+sudo cp docker/systemd/coc-relayer.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now coc-node
 ```
 
 Key settings in `coc-node.service`:
-- `Restart=always` with `RestartSec=5`
-- `LimitNOFILE=65536` for LevelDB
-- Environment file: `/etc/coc/node.env`
+- `Restart=always` with `RestartSec=10`
+- `LimitNOFILE=65535` for LevelDB
+- Environment file: `/etc/coc/coc-node.env`
+
+`coc-agent.service` and `coc-relayer.service` follow the same pattern, using:
+- `/etc/coc/coc-agent.env`
+- `/etc/coc/coc-relayer.env`
 
 ### 7.5 Nginx Reverse Proxy
 
@@ -695,15 +714,24 @@ Key metrics:
 
 ### Alert Rules
 
-Alerts are defined in `docker/prometheus/alerts.yml`:
+The monitoring compose file mounts `ops/alerts/prometheus-rules.yml` as the active Prometheus rule set:
 
 | Alert | Condition |
 |-------|-----------|
-| BlockProductionStopped | No new blocks for > 30 seconds |
-| HighMempoolSize | Mempool > 1000 pending transactions |
-| PeerCountLow | Connected peers < 2 |
-| DiskSpaceLow | Available disk < 10% |
-| HighMemoryUsage | Memory > 90% |
+| NodeDown | `up{job="coc-node"} == 0` |
+| BlockProductionStalled | `increase(coc_block_height[5m]) == 0` |
+| ConsensusStateDegraded | `coc_consensus_state != 0` |
+| HighAuthRejections | `rate(coc_p2p_auth_rejected_total[5m]) > 10` |
+| NoWireConnections | `coc_wire_connections == 0 and coc_peers_connected > 0` |
+
+When you run the 3-node Docker testnet, start monitoring separately:
+
+```bash
+docker compose -f docker/docker-compose.testnet.yml up -d
+docker compose -f docker/docker-compose.monitoring.yml up -d
+```
+
+The monitoring stack joins the external `docker_coc-rpc` network and scrapes `node-{1,2,3}:9100`.
 | BftFinalityLag | BFT finalized height > 10 blocks behind |
 
 ---
@@ -757,7 +785,7 @@ curl -s http://127.0.0.1:9100/health
 # Returns: ok
 
 # PoSe runtime service (runtime/coc-node.ts)
-curl -s http://127.0.0.1:18780/health
+curl -s http://127.0.0.1:19780/health
 # Returns: {"ok":true,"ts":...}
 ```
 
@@ -826,33 +854,39 @@ Module / program focus: this chapter maps the quality-gate script to the underly
 bash scripts/quality-gate.sh
 ```
 
-### Test Breakdown (1409 tests, 140 files)
+### Test Breakdown (1558 tests, 144 files)
 
 | Layer | Command | Tests |
 |-------|---------|-------|
-| Node core | `cd node && node --experimental-strip-types --test --test-force-exit src/*.test.ts src/**/*.test.ts` | 839 |
-| Services + NodeOps | `node --experimental-strip-types --test --test-force-exit services/**/*.test.ts nodeops/*.test.ts tests/*.test.ts` | 296 |
-| Runtime + Wallet | `node --experimental-strip-types --test --test-force-exit runtime/lib/*.test.ts runtime/*.test.ts wallet/coc-wallet.test.ts` | 79 |
+| Node core | `cd node && node --experimental-strip-types --test $(find src -name '*.test.ts' -type f | sort)` | 859 |
+| Runtime | `node --experimental-strip-types --test $(find runtime/lib -name '*.test.ts' -type f | sort) $(find runtime -maxdepth 1 -name '*.test.ts' -type f | sort)` | 72 |
+| Services + NodeOps | `node --experimental-strip-types --test $(find services -name '*.test.ts' -type f | sort) $(find nodeops -name '*.test.ts' -type f | sort)` | 164 |
+| Tests workspace | `node --experimental-strip-types --test $(find tests -name '*.test.ts' -type f | sort)` | 173 |
+| Extensions | `node --experimental-strip-types --test $(find extensions -name '*.test.ts' -type f | sort)` | 24 |
+| Wallet | `node --experimental-strip-types --test $(find wallet -maxdepth 1 -name '*.test.ts' -type f | sort)` | 8 |
+| Explorer lib | `node --experimental-default-type=module --experimental-strip-types --test $(find explorer/src/lib -name '*.test.ts' -type f | sort)` | 43 |
+| Faucet | `node --experimental-strip-types --test $(find faucet/src -name '*.test.ts' -type f | sort)` | 26 |
+| Contracts deploy | `node --experimental-default-type=module --experimental-strip-types --test $(find contracts/deploy -name '*.test.ts' -type f | sort)` | 18 |
 | Contracts | `cd contracts && npm test` | 171 |
-| Extensions | `cd extensions/coc-nodeops && node --experimental-strip-types --test src/*.test.ts src/**/*.test.ts` | 24 |
 
 ### Run Specific Test Layers
 
 ```bash
 # Node core only
-cd node && node --experimental-strip-types --test --test-force-exit \
-  src/*.test.ts src/**/*.test.ts
+cd node && node --experimental-strip-types --test \
+  $(find src -name '*.test.ts' -type f | sort)
 
 # Contract tests with coverage
 cd contracts && npm run coverage:check
 
-# Integration tests
-node --experimental-strip-types --test --test-force-exit \
-  tests/integration/*.test.ts
+# Runtime only
+node --experimental-strip-types --test \
+  $(find runtime/lib -name '*.test.ts' -type f | sort) \
+  $(find runtime -maxdepth 1 -name '*.test.ts' -type f | sort)
 
-# E2E tests
-node --experimental-strip-types --test --test-force-exit \
-  tests/e2e/*.test.ts
+# Tests workspace only
+node --experimental-strip-types --test \
+  $(find tests -name '*.test.ts' -type f | sort)
 ```
 
 ---
@@ -873,7 +907,7 @@ Module / program focus: this chapter provides operator-oriented diagnosis and re
 | Peers not connecting | Firewall or wrong P2P port | Check `COC_P2P_PORT`, ensure port is open, verify peer URLs |
 | RPC auth rejected | Missing or wrong token | Set `COC_RPC_AUTH_TOKEN` and pass `Authorization: Bearer <token>` header |
 | Transaction stuck | Nonce gap or low gas price | Check `eth_getTransactionCount` and `eth_gasPrice`; resubmit with correct nonce |
-| PoSe challenge timeout | Node unreachable or slow storage | Check node `/health` endpoint; verify IPFS storage is responsive |
+| PoSe challenge timeout | Node unreachable or slow storage | Check node liveness on `:9100/health` and verify `eth_blockNumber`; confirm IPFS storage is responsive |
 | Agent not submitting batches | Contract not deployed or wrong address | Verify `COC_POSE_MANAGER` address matches deployed contract |
 | Relayer finalization fails | Epoch not ready or insufficient gas | Check epoch timing; ensure relayer account has ETH for gas |
 | Explorer blank page | Wrong RPC URL | Verify `NEXT_PUBLIC_RPC_URL` points to a running node |
