@@ -15,6 +15,9 @@ Key takeaways:
 - Execution engine is functional: based on `@ethereumjs/vm`, defaulting to Shanghai semantics, supporting a single configured `hardfork`, and also supporting a static `hardforkSchedule` for block-height-based transitions.
 - Contracts can be deployed, called, and persisted: supports contract creation, state storage, logs, receipts, `eth_call`, `eth_getCode`, `eth_getStorageAt`, `eth_getLogs`, and other core paths.
 - RPC compatibility is "sufficient but not fully equivalent": core EVM/RPC paths work, but full Ethereum parity is still missing.
+- Common block-tag semantics are now wired into the main path: `pending` nonce, pending transaction lookup, `safe/finalized` historical reads, and replay-backed trace coverage all have regressions.
+- Cancun-era block header and blob-gas surface fields are now exposed, including `blobGasUsed`, `excessBlobGas`, `parentBeaconBlockRoot`, and dynamic `eth_blobBaseFee`, but this still does not mean full blob-transaction support.
+- `parentBeaconBlockRoot` now participates in real execution semantics instead of being a header-only passthrough; empty blocks, replay, `eth_call`, and trace paths all have dedicated regression coverage.
 - Contract deployment should use standard `ethers` / Hardhat workflows, submitting signed transactions via `eth_sendRawTransaction`; `eth_sendTransaction` is only available with explicitly enabled dev accounts.
 - PoSe settlement and governance contracts have test coverage, but the deployment toolchain is not entirely "out of the box" — some script entries must be used according to current repository reality, not legacy documentation.
 
@@ -136,6 +139,7 @@ Current implementation and tests confirm:
 - At least precompile boundary paths from 0x01 to 0x09
 - `PUSH0` and other Shanghai features
 - Historical execution context propagation into `eth_call`, `eth_estimateGas`, `eth_createAccessList`, `debug_traceCall`, `trace_call`, and `trace_callMany`
+- Unified propagation of `parentBeaconBlockRoot` / `timestamp` / `baseFee` / `excessBlobGas` across block execution, empty blocks, replay, `eth_call`, and trace paths
 - `eth_estimateGas` now includes calldata and contract-creation intrinsic gas in the estimate
 
 Related implementation and tests:
@@ -294,7 +298,8 @@ This is the most important section of this document.
 Impact:
 
 - Shanghai features like `PUSH0` are available
-- Scenarios requiring "exact behavioral equivalence under London / Berlin / Cancun" should not be assumed
+- Verified Cancun-era capabilities now include `MCOPY`, `TSTORE/TLOAD`, Cancun header fields, and blob-gas pricing surface
+- Scenarios requiring exact behavioral equivalence with Ethereum clients under London / Berlin / Cancun should still not be assumed
 
 ### 5.2 Not a Complete Ethereum Node
 
@@ -303,6 +308,8 @@ The following methods are currently missing, simplified, or stubbed:
 | Method/Capability | Status | Notes |
 |---|---|---|
 | `RPC: full EVM parity` | Missing | Repository explicitly marks as Missing |
+| `eth_blobBaseFee` / Cancun block header fields / EIP-4788 beacon-root behavior | Implemented but limited | Returns dynamic blob gas pricing and exposes `blobGasUsed`, `excessBlobGas`, and `parentBeaconBlockRoot` in block RPCs; `parentBeaconBlockRoot` is also applied to execution and replay semantics, but there is still no blob sidecar or type-3 inclusion path |
+| blob / type-3 transactions | Explicitly unsupported | Both mempool admission and EVM execution reject type-3 blob transactions |
 | `eth_createAccessList` | Available but still limited | Returns access-list entries and `gasUsed` from real execution, but edge-case parity with Geth is not guaranteed |
 | `debug_trace*` / `trace_*` | Partial | Supports `debug_traceCall`, `trace_call`, `trace_callMany`, `trace_replayTransaction`, `trace_replayBlockTransactions`, `trace_rawTransaction`, `trace_block`, `trace_filter`, and `trace_get`, producing replay-backed traces from real execution; `trace_transaction`, `trace_block`, `trace_filter`, and `trace_get` now consistently return localized OpenEthereum-style traces; `debug_traceCall`, `debug_traceTransaction`, and `debug_traceBlockByNumber` now also support the built-in `callTracer` and `prestateTracer`, with `callTracer.onlyTopCall`, `callTracer.withLog`, and best-effort ABI `revertReason` decoding for `Error(string)` / `Panic(uint256)`; unknown custom errors fall back to `CustomError(0x<selector>)`; plus `prestateTracer.diffMode`, `disableCode`, and `disableStorage`; `trace_filter` now supports `fromBlock/toBlock`, `fromAddress/toAddress`, and `after/count`, `trace_get` can resolve a single localized trace by `traceAddress`, and `trace_callMany` applies each simulated call on top of the previous call's resulting state; `vmTrace` now exports best-effort `code` and a depth-collapsed `sub` tree, while `stateDiff` combines access-list targets with storage observed in `structLogs`, and now covers created-contract `code/storage` changes as well, but it still falls short of full OpenEthereum semantics |
 | `eth_compile*` / `eth_getCompilers` | Partial | `eth_getCompilers` and `eth_compileSolidity` are now supported; `eth_compileSolidity` compiles source via lazily loaded `solc`, while `eth_compileLLL` / `eth_compileSerpent` still return unsupported |
@@ -689,16 +696,18 @@ node --experimental-strip-types wallet/coc-wallet.ts send 0xFrom 0xTo 1.0 --rpc 
 ### 8.1 Suitable For
 
 - Deploying standard Solidity business contracts on COC
-- Using `ethers` / Hardhat for contract interaction; the repository now includes an `ethers`-level regression covering deployment, reads/writes, `eth_createAccessList`, and `debug_traceTransaction`
+- Using `ethers` / `viem` / Hardhat / Foundry for common contract workflows; the repository now includes `ethers`, `viem`, RPC semantic, and contract lifecycle regressions
 - Providing the on-chain execution layer for PoSe / governance / Explorer
 - Local devnet / testnet / prototype validation
-- Events, receipts, state persistence, and basic block header compatibility
+- Events, receipts, state persistence, `pending/safe/finalized` historical reads, and basic Cancun header compatibility
+- Cancun non-blob workflows that depend on EIP-4788 beacon-root contract reads
 
 ### 8.2 Should Not Be Assumed
 
 - Method-for-method equivalence with mainstream Ethereum clients
 - Workflows relying on complete access list tracking
 - Debuggers requiring Geth-level opcode trace precision
+- Workflows requiring blob sidecars, type-3 blob transactions, or a full Cancun blob transaction pipeline
 - Legacy toolchains relying on PoW, uncle, or compilation RPCs
 - Long-history auditing/indexing on pruned `light` or pruned `full` nodes
 
