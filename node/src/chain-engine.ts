@@ -101,6 +101,13 @@ export class ChainEngine {
     return this.getTip()?.number ?? 0n
   }
 
+  getHighestFinalizedBlock(): bigint {
+    const tip = this.getHeight()
+    const depth = BigInt(Math.max(1, this.cfg.finalityDepth))
+    const finalized = tip - depth
+    return finalized < 0n ? 0n : finalized
+  }
+
   getBlockByNumber(number: bigint): ChainBlock | null {
     return this.blockByNumber.get(number) ?? null
   }
