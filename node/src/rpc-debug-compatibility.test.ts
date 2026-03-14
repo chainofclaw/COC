@@ -6,6 +6,9 @@ import { join } from "node:path"
 import { Wallet, Interface, getCreateAddress, parseEther, Transaction } from "ethers"
 import { EvmChain } from "./evm.ts"
 import { PersistentChainEngine } from "./chain-engine-persistent.ts"
+import { PersistentStateManager } from "./storage/persistent-state-manager.ts"
+import { PersistentStateTrie } from "./storage/state-trie.ts"
+import { MemoryDatabase } from "./storage/db.ts"
 import type { Hex } from "./blockchain-types.ts"
 import type { P2PNode } from "./p2p.ts"
 
@@ -15,6 +18,17 @@ const FUNDED_ADDRESS = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
 const GAS_PRICE = 1_000_000_000n
 const INIT_CODE = "0x602a600055600b6011600039600b6000f360005460005260206000f3"
 const RUNTIME_CODE = "0x60005460005260206000f3"
+const COUNTER_SOURCE = `
+pragma solidity ^0.8.0;
+
+contract Counter {
+    uint256 public value;
+
+    function set(uint256 nextValue) external {
+        value = nextValue;
+    }
+}
+`
 const NESTED_CALL_SOURCE = `
 pragma solidity ^0.8.0;
 
@@ -60,6 +74,7 @@ type NestedCallArtifacts = {
 }
 
 let nestedCallArtifactsPromise: Promise<NestedCallArtifacts> | null = null
+let counterArtifactPromise: Promise<CompiledContractArtifact> | null = null
 
 async function deployStorageContract(engine: PersistentChainEngine): Promise<{ contractAddress: string; deployTxHash: Hex }> {
   const wallet = new Wallet(FUNDED_PK)
@@ -159,8 +174,58 @@ async function compileNestedCallArtifacts(): Promise<NestedCallArtifacts> {
   return nestedCallArtifactsPromise
 }
 
+async function compileCounterArtifact(): Promise<CompiledContractArtifact> {
+  if (!counterArtifactPromise) {
+    counterArtifactPromise = import("solc")
+      .then((module) => {
+        const solc = (module.default ?? module) as { compile(input: string): string }
+        const input = {
+          language: "Solidity",
+          sources: {
+            "Counter.sol": { content: COUNTER_SOURCE },
+          },
+          settings: {
+            outputSelection: {
+              "*": {
+                "*": ["abi", "evm.bytecode.object", "evm.deployedBytecode.object"],
+              },
+            },
+          },
+        }
+        const output = JSON.parse(solc.compile(JSON.stringify(input))) as {
+          contracts?: Record<string, Record<string, {
+            abi?: any[]
+            evm?: {
+              bytecode?: { object?: string }
+              deployedBytecode?: { object?: string }
+            }
+          }>>
+          errors?: Array<{ severity?: string; formattedMessage?: string; message?: string }>
+        }
+        const fatalErrors = (output.errors ?? []).filter((entry) => entry.severity === "error")
+        if (fatalErrors.length > 0) {
+          throw new Error(fatalErrors.map((entry) => entry.formattedMessage ?? entry.message ?? "solc error").join("\n"))
+        }
+        const artifact = output.contracts?.["Counter.sol"]?.Counter
+        if (!artifact) {
+          throw new Error("counter artifact missing")
+        }
+        return {
+          abi: artifact.abi ?? [],
+          bytecode: normalizeCompiledHex(artifact.evm?.bytecode?.object),
+          runtimeCode: normalizeCompiledHex(artifact.evm?.deployedBytecode?.object),
+        }
+      })
+  }
+  return counterArtifactPromise
+}
+
 function normalizeCompiledHex(value: string | undefined): string {
   return value && value.length > 0 ? `0x${value}` : "0x"
+}
+
+function formatUint256(value: bigint): string {
+  return `0x${value.toString(16).padStart(64, "0")}`
 }
 
 async function deployContract(engine: PersistentChainEngine, initCode: Hex, nonce: number): Promise<{ contractAddress: string; txHash: Hex }> {
@@ -193,6 +258,36 @@ async function callContract(engine: PersistentChainEngine, to: string, data: Hex
   await engine.addRawTx(callTx as Hex)
   await engine.proposeNextBlock()
   return Transaction.from(callTx).hash as Hex
+}
+
+async function createHistoricalTraceHarness(): Promise<{
+  tmpDir: string
+  evm: EvmChain
+  engine: PersistentChainEngine
+}> {
+  const tmpDir = await mkdtemp(join(tmpdir(), "rpc-debug-history-"))
+  const stateDb = new MemoryDatabase()
+  const stateTrie = new PersistentStateTrie(stateDb)
+  const stateManager = new PersistentStateManager(stateTrie)
+  const evm = await EvmChain.create(CHAIN_ID, stateManager)
+  const engine = new PersistentChainEngine(
+    {
+      dataDir: tmpDir,
+      nodeId: "node-1",
+      chainId: CHAIN_ID,
+      validators: ["node-1"],
+      finalityDepth: 2,
+      maxTxPerBlock: 50,
+      minGasPriceWei: 1n,
+      prefundAccounts: [
+        { address: FUNDED_ADDRESS, balanceWei: parseEther("10000").toString() },
+      ],
+      stateTrie,
+    },
+    evm,
+  )
+  await engine.init()
+  return { tmpDir, evm, engine }
 }
 
 describe("RPC debug compatibility", () => {
@@ -425,6 +520,115 @@ describe("RPC debug compatibility", () => {
     assert.equal(blockTraces[0].result.output, `0x${"0".repeat(62)}2a`)
   })
 
+  it("debug_traceCall and trace_call use finalized/safe historical state instead of latest", async () => {
+    const harness = await createHistoricalTraceHarness()
+    const artifact = await compileCounterArtifact()
+    const counterInterface = new Interface(artifact.abi)
+    const valueData = counterInterface.encodeFunctionData("value")
+    const set7Data = counterInterface.encodeFunctionData("set", [7n]) as Hex
+    const set9Data = counterInterface.encodeFunctionData("set", [9n]) as Hex
+
+    try {
+      const { contractAddress } = await deployContract(harness.engine, artifact.bytecode as Hex, 0)
+      await callContract(harness.engine, contractAddress, set7Data, 1)
+      await callContract(harness.engine, contractAddress, set9Data, 2)
+
+      const wallet = new Wallet(FUNDED_PK)
+      const advanceTx = await wallet.signTransaction({
+        to: "0x00000000000000000000000000000000000000aa",
+        value: 1n,
+        gasLimit: 21_000n,
+        gasPrice: GAS_PRICE,
+        nonce: 3,
+        chainId: CHAIN_ID,
+      })
+      await harness.engine.addRawTx(advanceTx as Hex)
+      await harness.engine.proposeNextBlock()
+
+      const latestTraceCall = await rpc.handleRpcMethod(
+        "debug_traceCall",
+        [{ from: FUNDED_ADDRESS, to: contractAddress, data: valueData }, "latest", {}],
+        CHAIN_ID,
+        harness.evm,
+        harness.engine,
+        p2p,
+      ) as {
+        failed: boolean
+        returnValue: string
+        structLogs: Array<{ op: string }>
+      }
+      const finalizedTraceCall = await rpc.handleRpcMethod(
+        "debug_traceCall",
+        [{ from: FUNDED_ADDRESS, to: contractAddress, data: valueData }, "finalized", {}],
+        CHAIN_ID,
+        harness.evm,
+        harness.engine,
+        p2p,
+      ) as {
+        failed: boolean
+        returnValue: string
+        structLogs: Array<{ op: string }>
+      }
+      const safeTraceCall = await rpc.handleRpcMethod(
+        "debug_traceCall",
+        [{ from: FUNDED_ADDRESS, to: contractAddress, data: valueData }, "safe", {}],
+        CHAIN_ID,
+        harness.evm,
+        harness.engine,
+        p2p,
+      ) as {
+        failed: boolean
+        returnValue: string
+      }
+      assert.equal(latestTraceCall.failed, false)
+      assert.equal(finalizedTraceCall.failed, false)
+      assert.equal(latestTraceCall.returnValue, formatUint256(9n))
+      assert.equal(finalizedTraceCall.returnValue, formatUint256(7n))
+      assert.equal(safeTraceCall.returnValue, formatUint256(7n))
+      assert.ok(finalizedTraceCall.structLogs.some((step) => step.op === "SLOAD"))
+
+      const latestReplay = await rpc.handleRpcMethod(
+        "trace_call",
+        [{ from: FUNDED_ADDRESS, to: contractAddress, data: valueData }, ["trace"], "latest"],
+        CHAIN_ID,
+        harness.evm,
+        harness.engine,
+        p2p,
+      ) as {
+        output: string
+        trace: Array<{
+          type: string
+          action: { to: string; input: string }
+          result?: { output: string }
+        }>
+      }
+      const finalizedReplay = await rpc.handleRpcMethod(
+        "trace_call",
+        [{ from: FUNDED_ADDRESS, to: contractAddress, data: valueData }, ["trace"], "finalized"],
+        CHAIN_ID,
+        harness.evm,
+        harness.engine,
+        p2p,
+      ) as {
+        output: string
+        trace: Array<{
+          type: string
+          action: { to: string; input: string }
+          result?: { output: string }
+        }>
+      }
+      assert.equal(latestReplay.output, formatUint256(9n))
+      assert.equal(finalizedReplay.output, formatUint256(7n))
+      assert.equal(finalizedReplay.trace[0].type, "call")
+      assert.equal(finalizedReplay.trace[0].action.to.toLowerCase(), contractAddress.toLowerCase())
+      assert.equal(finalizedReplay.trace[0].action.input.toLowerCase(), valueData.toLowerCase())
+      assert.equal(finalizedReplay.trace[0].result?.output, formatUint256(7n))
+    } finally {
+      await harness.engine.close()
+      await rm(harness.tmpDir, { recursive: true, force: true }).catch(() => {})
+    }
+  })
+
   it("debug_trace* supports prestateTracer output", async () => {
     const { contractAddress } = await deployStorageContract(engine)
     const callTxHash = await callStorageContract(engine, contractAddress)
@@ -587,6 +791,91 @@ describe("RPC debug compatibility", () => {
     assert.equal(secondPage[0].transactionHash, secondCallTxHash)
     assert.equal(secondPage[0].blockNumber, "0x3")
     assert.equal(secondPage[0].action.to.toLowerCase(), contractAddress.toLowerCase())
+  })
+
+  it("finalized block tags resolve consistently across trace block/replay/filter RPCs", async () => {
+    const harness = await createHistoricalTraceHarness()
+    const artifact = await compileCounterArtifact()
+    const counterInterface = new Interface(artifact.abi)
+    const set7Data = counterInterface.encodeFunctionData("set", [7n]) as Hex
+    const set9Data = counterInterface.encodeFunctionData("set", [9n]) as Hex
+
+    try {
+      const { contractAddress } = await deployContract(harness.engine, artifact.bytecode as Hex, 0)
+      const set7TxHash = await callContract(harness.engine, contractAddress, set7Data, 1)
+      await callContract(harness.engine, contractAddress, set9Data, 2)
+
+      const wallet = new Wallet(FUNDED_PK)
+      const advanceTx = await wallet.signTransaction({
+        to: "0x00000000000000000000000000000000000000bb",
+        value: 1n,
+        gasLimit: 21_000n,
+        gasPrice: GAS_PRICE,
+        nonce: 3,
+        chainId: CHAIN_ID,
+      })
+      await harness.engine.addRawTx(advanceTx as Hex)
+      await harness.engine.proposeNextBlock()
+
+      const finalizedBlockTraces = await rpc.handleRpcMethod(
+        "debug_traceBlockByNumber",
+        ["finalized", { tracer: "callTracer" }],
+        CHAIN_ID,
+        harness.evm,
+        harness.engine,
+        p2p,
+      ) as Array<{
+        txHash: string
+        result: { type: string; to: string; input: string }
+      }>
+      assert.equal(finalizedBlockTraces.length, 1)
+      assert.equal(finalizedBlockTraces[0].txHash, set7TxHash)
+      assert.equal(finalizedBlockTraces[0].result.type, "CALL")
+      assert.equal(finalizedBlockTraces[0].result.to.toLowerCase(), contractAddress.toLowerCase())
+      assert.equal(finalizedBlockTraces[0].result.input.toLowerCase(), set7Data.toLowerCase())
+
+      const finalizedReplay = await rpc.handleRpcMethod(
+        "trace_replayBlockTransactions",
+        ["finalized", ["trace"]],
+        CHAIN_ID,
+        harness.evm,
+        harness.engine,
+        p2p,
+      ) as Array<{
+        trace: Array<{
+          action: { to: string; input: string }
+        }>
+      }>
+      assert.equal(finalizedReplay.length, 1)
+      assert.equal(finalizedReplay[0].trace[0].action.to.toLowerCase(), contractAddress.toLowerCase())
+      assert.equal(finalizedReplay[0].trace[0].action.input.toLowerCase(), set7Data.toLowerCase())
+
+      const finalizedFiltered = await rpc.handleRpcMethod(
+        "trace_filter",
+        [{
+          fromBlock: "finalized",
+          toBlock: "finalized",
+          fromAddress: [FUNDED_ADDRESS],
+          toAddress: [contractAddress],
+        }],
+        CHAIN_ID,
+        harness.evm,
+        harness.engine,
+        p2p,
+      ) as Array<{
+        transactionHash: string
+        blockNumber: string
+        action: { to: string; input: string }
+      }>
+      assert.equal(finalizedFiltered.length, 1)
+      assert.equal(finalizedFiltered[0].transactionHash, set7TxHash)
+      assert.equal(finalizedFiltered[0].blockNumber, "0x2")
+      assert.equal(finalizedFiltered[0].action.to.toLowerCase(), contractAddress.toLowerCase())
+      assert.equal(finalizedFiltered[0].action.input.toLowerCase(), set7Data.toLowerCase())
+    } finally {
+      await harness.engine.close()
+      await rm(harness.tmpDir, { recursive: true, force: true }).catch(() => {})
+    }
   })
 
   it("trace_get returns a localized trace for the requested traceAddress", async () => {

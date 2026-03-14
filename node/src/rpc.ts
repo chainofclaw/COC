@@ -4,7 +4,7 @@ import { hexToBytes } from "@ethereumjs/util"
 import { SigningKey, keccak256, hashMessage, Transaction, TypedDataEncoder, getCreateAddress } from "ethers"
 import type { IChainEngine } from "./chain-engine-types.ts"
 import { hasGovernance, hasConfig, hasBlockIndex } from "./chain-engine-types.ts"
-import type { EvmChain } from "./evm.ts"
+import type { EvmChain, ExecutionContext } from "./evm.ts"
 import type { Hex, PendingFilter } from "./blockchain-types.ts"
 import type { P2PNode } from "./p2p.ts"
 import type { PoSeEngine } from "./pose-engine.ts"
@@ -502,7 +502,7 @@ async function handleRpc(
         data: estParams.data,
         value: estParams.value,
         gas: gasForEstimate,
-      }, executionContext.stateRoot, executionContext.blockNumber)
+      }, executionContext.stateRoot, executionContext)
       return `0x${estimated.toString(16)}`
     }
     case "eth_getCode": {
@@ -526,7 +526,7 @@ async function handleRpc(
         data: callParams.data,
         value: callParams.value,
         gas: callParams.gas,
-      }, executionContext.stateRoot, executionContext.blockNumber)
+      }, executionContext.stateRoot, executionContext)
       return callResult.returnValue
     }
     case "eth_getStorageAt": {
@@ -737,7 +737,7 @@ async function handleRpc(
         data: callParams.data,
         value: callParams.value,
         gas: callParams.gas,
-      }, {}, executionContext.stateRoot, executionContext.blockNumber)
+      }, {}, executionContext.stateRoot, executionContext)
       return {
         accessList: result.accessList,
         gasUsed: `0x${result.gasUsed.toString(16)}`,
@@ -759,7 +759,7 @@ async function handleRpc(
         disableMemory: Boolean(traceOpts.disableMemory),
         disableStack: Boolean(traceOpts.disableStack),
         tracer: traceOpts.tracer ? String(traceOpts.tracer) : undefined,
-      }, executionContext.stateRoot, executionContext.blockNumber)
+      }, executionContext.stateRoot, executionContext)
       return formatDebugTraceResult(result, traceOpts)
     }
     case "debug_traceTransaction": {
@@ -811,7 +811,7 @@ async function handleRpc(
         data: callParams.data,
         value: callParams.value,
         gas: callParams.gas,
-      }, {}, executionContext.stateRoot, executionContext.blockNumber)
+      }, {}, executionContext.stateRoot, executionContext)
       return formatTraceReplayResult(result, traceTypes)
     }
     case "trace_callMany": {
@@ -822,7 +822,7 @@ async function handleRpc(
         callRequests.map((request) => request.call),
         {},
         executionContext.stateRoot,
-        executionContext.blockNumber,
+        executionContext,
       )
       return results.map((result, index) => formatTraceReplayResult(result, callRequests[index].traceTypes))
     }
@@ -1748,7 +1748,7 @@ async function resolveHistoricalStateRoot(input: unknown, chain: IChainEngine): 
 async function resolveHistoricalExecutionContext(
   input: unknown,
   chain: IChainEngine,
-): Promise<{ stateRoot?: string; blockNumber?: bigint }> {
+): Promise<{ stateRoot?: string } & ExecutionContext> {
   if (
     input === undefined ||
     input === null ||
@@ -1756,7 +1756,11 @@ async function resolveHistoricalExecutionContext(
     input === "pending"
   ) {
     const height = await Promise.resolve(chain.getHeight())
-    return { blockNumber: height }
+    const block = await Promise.resolve(chain.getBlockByNumber(height))
+    return {
+      blockNumber: height,
+      ...buildExecutionContextFromBlock(block),
+    }
   }
   if (input === "safe" || input === "finalized") {
     const finalized = await Promise.resolve(chain.getHighestFinalizedBlock())
@@ -1764,6 +1768,7 @@ async function resolveHistoricalExecutionContext(
     return {
       stateRoot: block?.stateRoot,
       blockNumber: finalized,
+      ...buildExecutionContextFromBlock(block),
     }
   }
 
@@ -1779,6 +1784,7 @@ async function resolveHistoricalExecutionContext(
     return {
       stateRoot: block.stateRoot,
       blockNumber: block.number,
+      ...buildExecutionContextFromBlock(block),
     }
   }
 
@@ -1794,6 +1800,19 @@ async function resolveHistoricalExecutionContext(
   return {
     stateRoot: block.stateRoot,
     blockNumber,
+    ...buildExecutionContextFromBlock(block),
+  }
+}
+
+function buildExecutionContextFromBlock(block: { timestampMs: number; baseFee?: bigint; excessBlobGas?: bigint; parentBeaconBlockRoot?: Hex } | null | undefined): ExecutionContext {
+  if (!block) {
+    return {}
+  }
+  return {
+    timestamp: BigInt(Math.floor(block.timestampMs / 1000)),
+    baseFeePerGas: block.baseFee ?? 0n,
+    excessBlobGas: block.excessBlobGas,
+    parentBeaconBlockRoot: block.parentBeaconBlockRoot ? hexToBytes(block.parentBeaconBlockRoot) : undefined,
   }
 }
 
@@ -2641,6 +2660,7 @@ async function queryTraceFilter(chain: IChainEngine, evm: EvmChain, query: Recor
         baseFeePerGas: block.baseFee ?? 0n,
         excessBlobGas: block.excessBlobGas,
         parentBeaconBlockRoot: block.parentBeaconBlockRoot ? hexToBytes(block.parentBeaconBlockRoot) : undefined,
+        timestamp: BigInt(Math.floor(block.timestampMs / 1000)),
       })
       const filteredCalls = traced.callTraces.filter((callTrace) =>
         matchesTraceAddressFilter(callTrace, fromAddresses, toAddresses)
@@ -2755,10 +2775,19 @@ async function replayTraceBlocksBefore(replay: EvmChain, chain: IChainEngine, ta
     if (!block) {
       throw new Error(`block not found: ${blockNumber}`)
     }
+    const executionTimestamp = BigInt(Math.floor(block.timestampMs / 1000))
+    await replay.applyBlockContext({
+      blockNumber: block.number,
+      baseFeePerGas: block.baseFee ?? 0n,
+      excessBlobGas: block.excessBlobGas,
+      parentBeaconBlockRoot: block.parentBeaconBlockRoot ? hexToBytes(block.parentBeaconBlockRoot) : undefined,
+      timestamp: executionTimestamp,
+    })
     for (let txIndex = 0; txIndex < block.txs.length; txIndex++) {
       await replay.executeRawTx(block.txs[txIndex], block.number, txIndex, block.hash, block.baseFee ?? 0n, {
         excessBlobGas: block.excessBlobGas,
         parentBeaconBlockRoot: block.parentBeaconBlockRoot ? hexToBytes(block.parentBeaconBlockRoot) : undefined,
+        timestamp: executionTimestamp,
       })
     }
   }

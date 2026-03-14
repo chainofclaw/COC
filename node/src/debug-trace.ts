@@ -124,11 +124,20 @@ async function replayBlocksBefore(replay: EvmChain, chain: IChainEngine, targetB
 }
 
 async function replayBlockTransactions(replay: EvmChain, block: ChainBlock, stopBeforeTxIndex?: number): Promise<void> {
+  const executionTimestamp = BigInt(Math.floor(block.timestampMs / 1000))
+  await replay.applyBlockContext({
+    blockNumber: block.number,
+    baseFeePerGas: block.baseFee ?? 0n,
+    excessBlobGas: block.excessBlobGas,
+    parentBeaconBlockRoot: block.parentBeaconBlockRoot ? hexToBytes(block.parentBeaconBlockRoot) : undefined,
+    timestamp: executionTimestamp,
+  })
   const end = stopBeforeTxIndex ?? block.txs.length
   for (let txIndex = 0; txIndex < end; txIndex++) {
     await replay.executeRawTx(block.txs[txIndex], block.number, txIndex, block.hash, block.baseFee ?? 0n, {
       excessBlobGas: block.excessBlobGas,
       parentBeaconBlockRoot: block.parentBeaconBlockRoot ? hexToBytes(block.parentBeaconBlockRoot) : undefined,
+      timestamp: executionTimestamp,
     })
   }
 }

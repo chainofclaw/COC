@@ -311,12 +311,21 @@ export class ChainEngine {
 
     const receipts: TxReceipt[] = []
     let totalGasUsed = 0n
+    const executionTimestamp = BigInt(Math.floor(block.timestampMs / 1000))
     try {
+      await this.evm.applyBlockContext({
+        blockNumber: block.number,
+        baseFeePerGas: block.baseFee ?? 0n,
+        excessBlobGas: block.excessBlobGas,
+        parentBeaconBlockRoot: block.parentBeaconBlockRoot ? hexToBytes(block.parentBeaconBlockRoot) : undefined,
+        timestamp: executionTimestamp,
+      })
       for (let i = 0; i < block.txs.length; i++) {
         const raw = block.txs[i]
         const result = await this.evm.executeRawTx(raw, block.number, i, block.hash, block.baseFee ?? 0n, {
           excessBlobGas: block.excessBlobGas,
           parentBeaconBlockRoot: block.parentBeaconBlockRoot ? hexToBytes(block.parentBeaconBlockRoot) : undefined,
+          timestamp: executionTimestamp,
         })
         const receipt = this.evm.getReceipt(result.txHash)
         if (receipt) {

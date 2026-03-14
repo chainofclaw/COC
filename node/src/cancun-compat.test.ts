@@ -1,8 +1,13 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
+import { mkdtemp, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { Hardfork } from "@ethereumjs/common"
+import { hexToBytes } from "@ethereumjs/util"
 import { Wallet } from "ethers"
 import { EvmChain } from "./evm.ts"
+import { ChainEngine } from "./chain-engine.ts"
 import { Mempool } from "./mempool.ts"
 import { calculateExcessBlobGas, computeBlobGasPrice } from "./base-fee.ts"
 import { hashBlockPayload, zeroHash } from "./hash.ts"
@@ -12,6 +17,8 @@ import type { ChainBlock, Hex } from "./blockchain-types.ts"
 const CHAIN_ID = 18780
 const FUNDED_PK = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 const FUNDED_ADDRESS = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+const NODE_ID = "node-1"
+const BEACON_ROOTS_ADDRESS = "0x000F3df6D732807Ef1319fB7B8bB8522d0Beac02"
 
 async function signTx(opts: {
   nonce?: number
@@ -31,6 +38,10 @@ async function signTx(opts: {
     gasPrice: opts.gasPrice ?? 1_000_000_000n,
     chainId: CHAIN_ID,
   }) as Hex
+}
+
+function formatUint256(value: bigint): Hex {
+  return `0x${value.toString(16).padStart(64, "0")}`
 }
 
 describe("Cancun EVM compatibility", () => {
@@ -226,5 +237,101 @@ describe("Cancun EVM compatibility", () => {
     assert.equal(block.blobGasUsed, 0n)
     assert.equal(block.excessBlobGas, 0n)
     assert.equal(block.parentBeaconBlockRoot, zeroHash())
+  })
+
+  it("parentBeaconBlockRoot is readable through the EIP-4788 contract after tx execution", async () => {
+    const evm = await EvmChain.create(CHAIN_ID, undefined, { hardfork: Hardfork.Cancun })
+    await evm.prefund([{ address: FUNDED_ADDRESS, balanceWei: "1000000000000000000" }])
+
+    const timestamp = 1_700_000_000n
+    const beaconRootHex = `0x${"12".repeat(32)}` as Hex
+    const rawTx = await signTx({ nonce: 0, gasLimit: 21_000 })
+
+    await evm.executeRawTx(rawTx, 1n, 0, undefined, 0n, {
+      excessBlobGas: 0n,
+      parentBeaconBlockRoot: hexToBytes(beaconRootHex),
+      timestamp,
+    })
+
+    const result = await evm.callRaw(
+      {
+        to: BEACON_ROOTS_ADDRESS,
+        data: formatUint256(timestamp),
+        gas: "0x186a0",
+      },
+      undefined,
+      {
+        blockNumber: 1n,
+        baseFeePerGas: 0n,
+        excessBlobGas: 0n,
+        parentBeaconBlockRoot: hexToBytes(beaconRootHex),
+        timestamp,
+      },
+    )
+
+    assert.equal(result.returnValue, beaconRootHex)
+  })
+
+  it("empty Cancun blocks still apply parentBeaconBlockRoot state updates", async () => {
+    const tmpDir = await mkdtemp(join(tmpdir(), "coc-cancun-empty-"))
+
+    try {
+      const evm = await EvmChain.create(CHAIN_ID, undefined, { hardfork: Hardfork.Cancun })
+      const engine = new ChainEngine(
+        {
+          dataDir: tmpDir,
+          nodeId: NODE_ID,
+          validators: [NODE_ID],
+          finalityDepth: 3,
+          maxTxPerBlock: 50,
+          minGasPriceWei: 1n,
+        },
+        evm,
+      )
+
+      const timestampMs = 1_700_000_001_000
+      const timestamp = 1_700_000_001n
+      const beaconRootHex = `0x${"34".repeat(32)}` as Hex
+      const payload = {
+        number: 1n,
+        parentHash: zeroHash(),
+        proposer: NODE_ID,
+        timestampMs,
+        txs: [] as Hex[],
+        baseFee: 0n,
+        cumulativeWeight: 1n,
+        blobGasUsed: 0n,
+        excessBlobGas: 0n,
+        parentBeaconBlockRoot: beaconRootHex,
+      }
+      const block: ChainBlock = {
+        ...payload,
+        hash: hashBlockPayload(payload),
+        finalized: false,
+      }
+
+      await engine.applyBlock(block)
+
+      const result = await evm.callRaw(
+        {
+          to: BEACON_ROOTS_ADDRESS,
+          data: formatUint256(timestamp),
+          gas: "0x186a0",
+        },
+        undefined,
+        {
+          blockNumber: 1n,
+          baseFeePerGas: 0n,
+          excessBlobGas: 0n,
+          parentBeaconBlockRoot: hexToBytes(beaconRootHex),
+          timestamp,
+        },
+      )
+
+      assert.equal(result.returnValue, beaconRootHex)
+      assert.equal(engine.getHeight(), 1n)
+    } finally {
+      await rm(tmpDir, { recursive: true, force: true }).catch(() => {})
+    }
   })
 })

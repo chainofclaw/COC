@@ -1,6 +1,6 @@
 import { VM, createVM, runTx } from "@ethereumjs/vm"
 import { Hardfork, createCustomCommon, getPresetChainConfig } from "@ethereumjs/common"
-import { Account, Address, bytesToHex, hexToBytes, bigIntToHex } from "@ethereumjs/util"
+import { Account, Address, bytesToHex, hexToBytes, bigIntToBytes, bigIntToHex, setLengthLeft } from "@ethereumjs/util"
 import { createTxFromRLP, createLegacyTx } from "@ethereumjs/tx"
 import { createBlock } from "@ethereumjs/block"
 import type { PrefundAccount } from "./types.ts"
@@ -63,8 +63,22 @@ export interface TxInfo {
   s: string
 }
 
+export interface ExecutionContext {
+  blockNumber?: bigint
+  txIndex?: number
+  blockHash?: string
+  baseFeePerGas?: bigint
+  excessBlobGas?: bigint
+  parentBeaconBlockRoot?: Uint8Array
+  timestamp?: bigint
+}
+
 const MAX_RECEIPT_CACHE = 50_000
 const MAX_TX_CACHE = 50_000
+const BEACON_ROOTS_ADDRESS = Address.fromString("0x000F3df6D732807Ef1319fB7B8bB8522d0Beac02")
+const BEACON_ROOTS_RUNTIME_CODE =
+  "0x3373fffffffffffffffffffffffffffffffffffffffe14604d57602036146024575f5ffd5b5f35801560495762001fff810690815414603c575f5ffd5b62001fff01545f5260205ff35b5f5ffd5b62001fff42064281555f359062001fff015500"
+const ZERO_BEACON_ROOT = new Uint8Array(32)
 
 export class EvmChain {
   private vm: VM
@@ -122,24 +136,35 @@ export class EvmChain {
     }
   }
 
-  async executeRawTx(rawTx: string, blockNumber?: bigint, txIndex = 0, blockHash?: string, baseFeePerGas: bigint = 0n, opts?: { excessBlobGas?: bigint; parentBeaconBlockRoot?: Uint8Array }): Promise<ExecutionResult> {
+  async applyBlockContext(context: ExecutionContext = {}): Promise<void> {
+    const normalized = normalizeExecutionContext(context)
+    const blockCommon = this.createExecutionCommon(normalized.blockNumber)
+    this.applyHardforkToVm(this.vm, normalized.blockNumber)
+    await this.prepareVmForExecution(this.vm, blockCommon, normalized)
+    if (normalized.blockNumber !== undefined) {
+      this.blockNumber = normalized.blockNumber
+    }
+  }
+
+  async executeRawTx(rawTx: string, blockNumber?: bigint, txIndex = 0, blockHash?: string, baseFeePerGas: bigint = 0n, opts?: { excessBlobGas?: bigint; parentBeaconBlockRoot?: Uint8Array; timestamp?: bigint }): Promise<ExecutionResult> {
     const appliedBlock = blockNumber ?? (this.blockNumber + 1n)
+    const executionContext: ExecutionContext = {
+      blockNumber: appliedBlock,
+      txIndex,
+      blockHash,
+      baseFeePerGas,
+      excessBlobGas: opts?.excessBlobGas,
+      parentBeaconBlockRoot: opts?.parentBeaconBlockRoot,
+      timestamp: opts?.timestamp,
+    }
     const blockCommon = this.createExecutionCommon(appliedBlock)
     this.applyHardforkToVm(this.vm, appliedBlock)
+    await this.prepareVmForExecution(this.vm, blockCommon, executionContext)
     const tx = createTxFromRLP(hexToBytes(rawTx), { common: blockCommon.copy() })
     if (tx.type === 3) {
       throw new Error("blob transactions (type 3) are not supported")
     }
-    // Use provided baseFeePerGas (defaults to 0 for backward compatibility with dev chains)
-    // Only pass Cancun-specific fields when hardfork >= Cancun to avoid @ethereumjs errors
-    const isCancunOrLater = blockCommon.gteHardfork(Hardfork.Cancun)
-    const block = createBlock({
-      header: {
-        baseFeePerGas,
-        ...(isCancunOrLater && opts?.excessBlobGas !== undefined ? { excessBlobGas: opts.excessBlobGas } : {}),
-        ...(isCancunOrLater && opts?.parentBeaconBlockRoot ? { parentBeaconBlockRoot: opts.parentBeaconBlockRoot } : {}),
-      },
-    }, { common: blockCommon })
+    const block = this.createExecutionBlock(blockCommon, executionContext)
     const result = await runTx(this.vm, { tx, block, skipHardForkValidation: true })
     const txHash = bytesToHex(tx.hash())
     this.blockNumber = appliedBlock
@@ -307,25 +332,27 @@ export class EvmChain {
   async callRaw(
     params: { from?: string; to: string; data?: string; value?: string; gas?: string },
     stateRoot?: string,
-    blockNumber?: bigint,
+    context?: bigint | ExecutionContext,
   ): Promise<{ returnValue: string; gasUsed: bigint }> {
-    if (stateRoot || blockNumber !== undefined) {
+    const executionContext = normalizeExecutionContext(context)
+    if (stateRoot || executionContext.blockNumber !== undefined) {
       const stateManager = await this.resolveStateManager(stateRoot)
-      const tempVm = await this.createVm(stateManager, blockNumber)
-      return this.runCall(tempVm, params, { blockNumber })
+      const tempVm = await this.createVm(stateManager, executionContext.blockNumber)
+      return this.runCall(tempVm, params, executionContext)
     }
-    return this.runCall(this.vm, params, { blockNumber })
+    return this.runCall(this.vm, params, executionContext)
   }
 
   async estimateGas(
     params: { from?: string; to: string; data?: string; value?: string; gas?: string },
     stateRoot?: string,
-    blockNumber?: bigint,
+    context?: bigint | ExecutionContext,
   ): Promise<bigint> {
+    const executionContext = normalizeExecutionContext(context)
     // Use caller-supplied gas cap or default to 30M (block gas limit)
     const gasCap = params.gas ?? "0x1c9c380"
-    const { gasUsed } = await this.callRaw({ ...params, gas: gasCap }, stateRoot, blockNumber)
-    const executionCommon = this.createExecutionCommon(blockNumber)
+    const { gasUsed } = await this.callRaw({ ...params, gas: gasCap }, stateRoot, executionContext)
+    const executionCommon = this.createExecutionCommon(executionContext.blockNumber)
     const intrinsicGas = calculateIntrinsicGas(
       params.data ? hexToBytes(params.data) : new Uint8Array(),
       !params.to,
@@ -400,26 +427,28 @@ export class EvmChain {
     params: { from?: string; to: string; data?: string; value?: string; gas?: string },
     options: TraceOptions = {},
     stateRoot?: string,
-    blockNumber?: bigint,
+    context?: bigint | ExecutionContext,
   ): Promise<CallTraceResult> {
+    const executionContext = normalizeExecutionContext(context)
     const stateManager = stateRoot ? await this.resolveStateManager(stateRoot) : this.vm.stateManager
-    const vm = await this.createVm(stateManager, blockNumber)
-    return this.traceCallOnVm(vm, params, options, { blockNumber })
+    const vm = await this.createVm(stateManager, executionContext.blockNumber)
+    return this.traceCallOnVm(vm, params, options, executionContext)
   }
 
   async traceCallMany(
     calls: Array<{ from?: string; to: string; data?: string; value?: string; gas?: string }>,
     options: TraceOptions = {},
     stateRoot?: string,
-    blockNumber?: bigint,
+    context?: bigint | ExecutionContext,
   ): Promise<CallTraceResult[]> {
+    const executionContext = normalizeExecutionContext(context)
     const stateManager = stateRoot ? await this.resolveStateManager(stateRoot) : this.vm.stateManager
-    const vm = await this.createVm(stateManager, blockNumber)
+    const vm = await this.createVm(stateManager, executionContext.blockNumber)
     const results: CallTraceResult[] = []
     await vm.stateManager.checkpoint()
     try {
       for (const params of calls) {
-        results.push(await this.traceCallOnVm(vm, params, options, { persistAfter: true, blockNumber }))
+        results.push(await this.traceCallOnVm(vm, params, options, { ...executionContext, persistAfter: true }))
       }
       return results
     } finally {
@@ -431,14 +460,14 @@ export class EvmChain {
     vm: VM,
     params: { from?: string; to: string; data?: string; value?: string; gas?: string },
     options: TraceOptions = {},
-    opts: { persistAfter?: boolean; blockNumber?: bigint } = {},
+    opts: ExecutionContext & { persistAfter?: boolean } = {},
   ): Promise<CallTraceResult> {
     const collector = createTraceCollector(vm, options)
     let needsRevert = false
     await vm.evm.journal.cleanup()
     vm.evm.journal.startReportingAccessList()
     try {
-      const result = await this.runCall(vm, params, { revertAfter: false, blockNumber: opts.blockNumber })
+      const result = await this.runCall(vm, params, { ...opts, revertAfter: false })
       needsRevert = true
       const accessList = normalizeAccessList(vm.evm.journal.accessList)
       const traced = collector.finish({
@@ -454,7 +483,7 @@ export class EvmChain {
       const beforeState = await captureStateSnapshots(vm.stateManager, targets)
       if (opts.persistAfter) {
         await vm.evm.journal.cleanup()
-        await this.runCall(vm, params, { revertAfter: false, blockNumber: opts.blockNumber })
+        await this.runCall(vm, params, { ...opts, revertAfter: false })
         needsRevert = true
         await vm.stateManager.commit()
         needsRevert = false
@@ -481,20 +510,15 @@ export class EvmChain {
   async traceRawTx(
     rawTx: string,
     options: TraceOptions = {},
-    context?: { blockNumber?: bigint; txIndex?: number; blockHash?: string; baseFeePerGas?: bigint; excessBlobGas?: bigint; parentBeaconBlockRoot?: Uint8Array },
+    context?: ExecutionContext,
   ): Promise<TxTraceResult> {
-    const executionBlockNumber = context?.blockNumber
+    const executionContext = normalizeExecutionContext(context)
+    const executionBlockNumber = executionContext.blockNumber
     const blockCommon = this.createExecutionCommon(executionBlockNumber)
     this.applyHardforkToVm(this.vm, executionBlockNumber)
+    await this.prepareVmForExecution(this.vm, blockCommon, executionContext)
     const tx = createTxFromRLP(hexToBytes(rawTx), { common: blockCommon.copy() })
-    const isCancun = blockCommon.gteHardfork(Hardfork.Cancun)
-    const block = createBlock({
-      header: {
-        baseFeePerGas: context?.baseFeePerGas ?? 0n,
-        ...(isCancun && context?.excessBlobGas !== undefined ? { excessBlobGas: context.excessBlobGas } : {}),
-        ...(isCancun && context?.parentBeaconBlockRoot ? { parentBeaconBlockRoot: context.parentBeaconBlockRoot } : {}),
-      },
-    }, { common: blockCommon })
+    const block = this.createExecutionBlock(blockCommon, executionContext)
     const collector = createTraceCollector(this.vm, options)
     let needsRevert = true
     await this.vm.stateManager.checkpoint()
@@ -544,25 +568,20 @@ export class EvmChain {
   async traceRawTxOnState(
     rawTx: string,
     options: TraceOptions = {},
-    context?: { blockNumber?: bigint; txIndex?: number; blockHash?: string; baseFeePerGas?: bigint; excessBlobGas?: bigint; parentBeaconBlockRoot?: Uint8Array },
+    context?: ExecutionContext,
     stateRoot?: string,
   ): Promise<TxTraceResult> {
-    const executionBlockNumber = context?.blockNumber
+    const executionContext = normalizeExecutionContext(context)
+    const executionBlockNumber = executionContext.blockNumber
     const blockCommon = this.createExecutionCommon(executionBlockNumber)
     const tx = createTxFromRLP(hexToBytes(rawTx), { common: blockCommon.copy() })
-    const isCancun = blockCommon.gteHardfork(Hardfork.Cancun)
-    const block = createBlock({
-      header: {
-        baseFeePerGas: context?.baseFeePerGas ?? 0n,
-        ...(isCancun && context?.excessBlobGas !== undefined ? { excessBlobGas: context.excessBlobGas } : {}),
-        ...(isCancun && context?.parentBeaconBlockRoot ? { parentBeaconBlockRoot: context.parentBeaconBlockRoot } : {}),
-      },
-    }, { common: blockCommon })
+    const block = this.createExecutionBlock(blockCommon, executionContext)
     const stateManager = stateRoot ? await this.resolveStateManager(stateRoot) : this.vm.stateManager
     const vm = stateRoot || executionBlockNumber !== undefined
       ? await this.createVm(stateManager, executionBlockNumber)
       : this.vm
     this.applyHardforkToVm(vm, executionBlockNumber)
+    await this.prepareVmForExecution(vm, blockCommon, executionContext)
     const collector = createTraceCollector(vm, options)
     let needsRevert = true
     await vm.stateManager.checkpoint()
@@ -607,9 +626,11 @@ export class EvmChain {
   private async runCall(
     vm: VM,
     params: { from?: string; to: string; data?: string; value?: string; gas?: string },
-    opts: { revertAfter?: boolean; blockNumber?: bigint } = {},
+    opts: ExecutionContext & { revertAfter?: boolean } = {},
   ): Promise<{ returnValue: string; gasUsed: bigint; failed: boolean }> {
-    this.applyHardforkToVm(vm, opts.blockNumber)
+    const executionContext = normalizeExecutionContext(opts)
+    const blockCommon = this.createExecutionCommon(executionContext.blockNumber)
+    this.applyHardforkToVm(vm, executionContext.blockNumber)
     const caller = params.from ? Address.fromString(params.from) : Address.zero()
     const to = params.to ? Address.fromString(params.to) : undefined
     const data = params.data ? hexToBytes(params.data) : new Uint8Array()
@@ -622,12 +643,15 @@ export class EvmChain {
     // Checkpoint/revert to prevent eth_call from mutating persistent state
     await vm.stateManager.checkpoint()
     try {
+      await this.prepareVmForExecution(vm, blockCommon, executionContext)
+      const block = this.createExecutionBlock(blockCommon, executionContext)
       const result = await vm.evm.runCall({
         caller,
         to,
         data,
         value,
         gasLimit,
+        block,
       })
 
       const returnValue = result.execResult.returnValue.length > 0
@@ -661,6 +685,79 @@ export class EvmChain {
     return createVM(opts as Parameters<typeof createVM>[0])
   }
 
+  private createExecutionBlock(
+    blockCommon: ReturnType<typeof createCustomCommon>,
+    context: ExecutionContext = {},
+  ) {
+    const isCancunOrLater = blockCommon.gteHardfork(Hardfork.Cancun)
+    return createBlock({
+      header: {
+        ...(context.blockNumber !== undefined ? { number: context.blockNumber } : {}),
+        ...(context.timestamp !== undefined ? { timestamp: context.timestamp } : {}),
+        baseFeePerGas: context.baseFeePerGas ?? 0n,
+        ...(isCancunOrLater && context.excessBlobGas !== undefined ? { excessBlobGas: context.excessBlobGas } : {}),
+        ...(isCancunOrLater ? { parentBeaconBlockRoot: context.parentBeaconBlockRoot ?? ZERO_BEACON_ROOT } : {}),
+      },
+    }, { common: blockCommon })
+  }
+
+  private async prepareVmForExecution(
+    vm: VM,
+    blockCommon: ReturnType<typeof createCustomCommon>,
+    context: ExecutionContext = {},
+  ): Promise<void> {
+    if (!blockCommon.gteHardfork(Hardfork.Cancun)) {
+      return
+    }
+    await this.ensureBeaconRootsContract(vm)
+    await this.applyParentBeaconBlockRoot(
+      vm,
+      context.timestamp ?? 0n,
+      context.parentBeaconBlockRoot ?? ZERO_BEACON_ROOT,
+    )
+  }
+
+  private async ensureBeaconRootsContract(vm: VM): Promise<void> {
+    if (!vm.common.gteHardfork(Hardfork.Cancun)) {
+      return
+    }
+    const existingCode = await vm.stateManager.getCode(BEACON_ROOTS_ADDRESS)
+    if (existingCode.length > 0) {
+      return
+    }
+    const existingAccount = await vm.stateManager.getAccount(BEACON_ROOTS_ADDRESS)
+    await vm.stateManager.putAccount(
+      BEACON_ROOTS_ADDRESS,
+      existingAccount ?? Account.fromAccountData({ nonce: 1n }),
+    )
+    await vm.stateManager.putCode(BEACON_ROOTS_ADDRESS, hexToBytes(BEACON_ROOTS_RUNTIME_CODE))
+  }
+
+  private async applyParentBeaconBlockRoot(
+    vm: VM,
+    timestamp: bigint,
+    parentBeaconBlockRoot: Uint8Array,
+  ): Promise<void> {
+    const code = await vm.stateManager.getCode(BEACON_ROOTS_ADDRESS)
+    if (code.length === 0) {
+      return
+    }
+    const historicalRootsLength = BigInt(vm.common.param("historicalRootsLength"))
+    const timestampIndex = timestamp % historicalRootsLength
+    const timestampExtended = timestampIndex + historicalRootsLength
+    await vm.stateManager.putStorage(
+      BEACON_ROOTS_ADDRESS,
+      setLengthLeft(bigIntToBytes(timestampIndex), 32),
+      bigIntToBytes(timestamp),
+    )
+    await vm.stateManager.putStorage(
+      BEACON_ROOTS_ADDRESS,
+      setLengthLeft(bigIntToBytes(timestampExtended), 32),
+      parentBeaconBlockRoot,
+    )
+    await vm.evm.journal.cleanup()
+  }
+
   private resolveHardfork(blockNumber?: bigint): Hardfork {
     if (this.hardforkSchedule.length === 0) {
       return this.hardfork
@@ -688,6 +785,13 @@ export class EvmChain {
       vm.common.setHardfork(hardfork)
     }
   }
+}
+
+function normalizeExecutionContext(context?: bigint | ExecutionContext): ExecutionContext {
+  if (typeof context === "bigint") {
+    return { blockNumber: context }
+  }
+  return context ?? {}
 }
 
 function normalizeHardforkSchedule(
