@@ -415,7 +415,13 @@ async function handleRpc(
     }
     case "eth_getTransactionCount": {
       const address = String((payload.params ?? [])[0] ?? "")
-      const stateRoot = await resolveHistoricalStateRoot((payload.params ?? [])[1], chain)
+      const tag = (payload.params ?? [])[1]
+      if (tag === "pending") {
+        const onchainNonce = await evm.getNonce(address)
+        const pendingNonce = chain.mempool.getPendingNonce(address as Hex, onchainNonce)
+        return `0x${pendingNonce.toString(16)}`
+      }
+      const stateRoot = await resolveHistoricalStateRoot(tag, chain)
       const nonce = await evm.getNonce(address, stateRoot)
       return `0x${nonce.toString(16)}`
     }
@@ -445,13 +451,24 @@ async function handleRpc(
           })
         }
       }
-      return evm.getTransaction(hash)
+      const evmResult = evm.getTransaction(hash)
+      if (evmResult) return evmResult
+      // Check mempool for pending transactions
+      const allPending = chain.mempool.getAll()
+      const pendingTx = allPending.find((mtx) => mtx.hash.toLowerCase() === hash.toLowerCase())
+      if (pendingTx) {
+        return formatRawTransaction(pendingTx.rawTx, {
+          blockHash: null as unknown as Hex,
+          blockNumber: null as unknown as bigint,
+          transactionIndex: null,
+        })
+      }
+      return null
     }
     case "eth_getBlockByNumber": {
       const tag = String((payload.params ?? [])[0] ?? "latest")
       const includeTx = Boolean((payload.params ?? [])[1])
-      const currentHeight = await Promise.resolve(chain.getHeight())
-      const number = parseBlockTag(tag, currentHeight)
+      const number = await resolveBlockNumber(tag, chain)
       const block = await Promise.resolve(chain.getBlockByNumber(number))
       return formatBlock(block, includeTx, chain, evm)
     }
@@ -759,8 +776,7 @@ async function handleRpc(
     case "debug_traceBlockByNumber": {
       if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
       const blockTag = String((payload.params ?? [])[0] ?? "latest")
-      const traceHeight = await Promise.resolve(chain.getHeight())
-      const traceBlockNum = blockTag === "latest" ? traceHeight : safeBigInt(blockTag)
+      const traceBlockNum = await resolveBlockNumber(blockTag, chain)
       const traceOpts2 = ((payload.params ?? [])[1] ?? {}) as Record<string, unknown>
       const traced = await traceBlockTransactions(traceBlockNum, chain, evm, {
         disableStorage: Boolean(traceOpts2.disableStorage),
@@ -820,8 +836,7 @@ async function handleRpc(
       if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
       const blockTag = String((payload.params ?? [])[0] ?? "latest")
       const traceTypes = normalizeReplayTraceTypes((payload.params ?? [])[1])
-      const traceHeight = await Promise.resolve(chain.getHeight())
-      const blockNumber = blockTag === "latest" ? traceHeight : safeBigInt(blockTag)
+      const blockNumber = await resolveBlockNumber(blockTag, chain)
       const results = await traceBlockTransactions(blockNumber, chain, evm)
       return results.map((result) => formatTraceReplayResult(result, traceTypes))
     }
@@ -835,8 +850,7 @@ async function handleRpc(
     case "trace_block": {
       if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
       const blockTag = String((payload.params ?? [])[0] ?? "latest")
-      const traceHeight = await Promise.resolve(chain.getHeight())
-      const blockNumber = blockTag === "latest" ? traceHeight : safeBigInt(blockTag)
+      const blockNumber = await resolveBlockNumber(blockTag, chain)
       const block = await Promise.resolve(chain.getBlockByNumber(blockNumber))
       if (!block) {
         throw new Error(`block not found: ${blockTag}`)
@@ -1007,8 +1021,7 @@ async function handleRpc(
       if (rewardPercentiles.length > 100) {
         throw { code: -32602, message: `rewardPercentiles array too large: ${rewardPercentiles.length} (max 100)` }
       }
-      const height = await Promise.resolve(chain.getHeight())
-      const newest = parseBlockTag(newestBlock, height)
+      const newest = await resolveBlockNumber(newestBlock, chain)
       const count = Math.min(blockCount, Number(newest), 1024)
       const baseFees: string[] = []
       const gasUsedRatios: number[] = []
@@ -1110,8 +1123,7 @@ async function handleRpc(
       throw new Error(`${payload.method} is not supported`)
     case "eth_getBlockReceipts": {
       const tag = String((payload.params ?? [])[0] ?? "latest")
-      const height = await Promise.resolve(chain.getHeight())
-      const num = parseBlockTag(tag, height)
+      const num = await resolveBlockNumber(tag, chain)
       const block = await Promise.resolve(chain.getBlockByNumber(num))
       if (!block) return null
       const receipts: unknown[] = []
@@ -1700,19 +1712,28 @@ function safeBigInt(input: string): bigint {
   }
 }
 
-function parseBlockTag(input: unknown, fallback: bigint): bigint {
+function parseBlockTag(input: unknown, fallback: bigint, finalizedHeight?: bigint): bigint {
   if (typeof input === "number") {
     if (!Number.isFinite(input) || input < 0) throw { code: -32602, message: `invalid block number` }
     return BigInt(Math.floor(input))
   }
   if (typeof input === "string") {
-    if (input === "latest" || input === "pending" || input === "safe" || input === "finalized") return fallback
+    if (input === "latest" || input === "pending") return fallback
+    if (input === "safe" || input === "finalized") return finalizedHeight ?? fallback
     if (input === "earliest") return 0n
     const n = safeBigInt(input)
     if (n < 0n) throw { code: -32602, message: `invalid block number: ${input}` }
     return n
   }
   return fallback
+}
+
+async function resolveBlockNumber(input: unknown, chain: IChainEngine): Promise<bigint> {
+  const height = await Promise.resolve(chain.getHeight())
+  if (typeof input === "string" && (input === "safe" || input === "finalized")) {
+    return Promise.resolve(chain.getHighestFinalizedBlock())
+  }
+  return parseBlockTag(input, height)
 }
 
 async function resolveHistoricalStateRoot(input: unknown, chain: IChainEngine): Promise<string | undefined> {
@@ -1727,12 +1748,18 @@ async function resolveHistoricalExecutionContext(
     input === undefined ||
     input === null ||
     input === "latest" ||
-    input === "pending" ||
-    input === "safe" ||
-    input === "finalized"
+    input === "pending"
   ) {
     const height = await Promise.resolve(chain.getHeight())
     return { blockNumber: height }
+  }
+  if (input === "safe" || input === "finalized") {
+    const finalized = await Promise.resolve(chain.getHighestFinalizedBlock())
+    const block = await Promise.resolve(chain.getBlockByNumber(finalized))
+    return {
+      stateRoot: block?.stateRoot,
+      blockNumber: finalized,
+    }
   }
 
   if (typeof input === "object" && input !== null && "blockHash" in input) {
@@ -2335,8 +2362,8 @@ function formatRawTransaction(
         : {}),
       input: parsed.data ?? "0x",
       blockHash: context?.blockHash ?? null,
-      blockNumber: context?.blockNumber !== undefined ? toRpcQuantity(context.blockNumber) : null,
-      transactionIndex: context?.transactionIndex !== undefined && context.transactionIndex !== null
+      blockNumber: context?.blockNumber != null ? toRpcQuantity(context.blockNumber) : null,
+      transactionIndex: context?.transactionIndex != null
         ? toRpcQuantity(context.transactionIndex)
         : null,
       type: toRpcQuantity(parsed.type ?? 0),
@@ -2501,6 +2528,9 @@ async function formatBlock(block: Awaited<ReturnType<IChainEngine["getBlockByNum
     baseFeePerGas: `0x${headerView.baseFeePerGas.toString(16)}`,
     withdrawals: [],
     withdrawalsRoot: "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
+    blobGasUsed: "0x0",
+    excessBlobGas: "0x0",
+    parentBeaconBlockRoot: "0x" + "0".repeat(64),
     finalized: block.finalized,
     transactions,
   }
@@ -2513,8 +2543,9 @@ const MAX_TRACE_RESULTS = 1_000
 
 async function queryLogs(chain: IChainEngine, query: Record<string, unknown>, resolvedHeight?: bigint): Promise<unknown[]> {
   const height = resolvedHeight ?? await Promise.resolve(chain.getHeight())
-  const fromBlock = parseBlockTag(query.fromBlock, height)
-  const toBlock = parseBlockTag(query.toBlock, height)
+  const finalizedHeight = await Promise.resolve(chain.getHighestFinalizedBlock())
+  const fromBlock = parseBlockTag(query.fromBlock, height, finalizedHeight)
+  const toBlock = parseBlockTag(query.toBlock, height, finalizedHeight)
 
   // Reject invalid range where fromBlock > toBlock
   if (fromBlock > toBlock) {
@@ -2571,8 +2602,9 @@ async function queryLogs(chain: IChainEngine, query: Record<string, unknown>, re
 
 async function queryTraceFilter(chain: IChainEngine, evm: EvmChain, query: Record<string, unknown>): Promise<unknown[]> {
   const height = await Promise.resolve(chain.getHeight())
-  const fromBlock = parseBlockTag(query.fromBlock ?? "earliest", height)
-  const toBlock = parseBlockTag(query.toBlock ?? "latest", height)
+  const finalizedHeight = await Promise.resolve(chain.getHighestFinalizedBlock())
+  const fromBlock = parseBlockTag(query.fromBlock ?? "earliest", height, finalizedHeight)
+  const toBlock = parseBlockTag(query.toBlock ?? "latest", height, finalizedHeight)
   if (fromBlock > toBlock) {
     throw new Error(`invalid block range: fromBlock ${fromBlock} > toBlock ${toBlock}`)
   }

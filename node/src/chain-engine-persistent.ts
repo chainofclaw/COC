@@ -700,6 +700,13 @@ export class PersistentChainEngine {
     }
   }
 
+  async getHighestFinalizedBlock(): Promise<bigint> {
+    const tip = await this.getHeight()
+    const depth = BigInt(Math.max(1, this.cfg.finalityDepth))
+    const finalized = tip - depth
+    return finalized < 0n ? 0n : finalized
+  }
+
   private async updateFinalityFlags(): Promise<void> {
     const depth = BigInt(Math.max(1, this.cfg.finalityDepth))
     const tip = await this.getHeight()

@@ -22,6 +22,7 @@ export interface IChainEngine {
   // Block queries
   getTip(): ChainBlock | null | undefined | Promise<ChainBlock | null | undefined>
   getHeight(): bigint | Promise<bigint>
+  getHighestFinalizedBlock(): bigint | Promise<bigint>
   getBlockByNumber(number: bigint): ChainBlock | null | Promise<ChainBlock | null>
   getBlockByHash(hash: Hex): ChainBlock | null | Promise<ChainBlock | null>
   getReceiptsByBlock(number: bigint): TxReceipt[] | Promise<TxReceipt[]>
