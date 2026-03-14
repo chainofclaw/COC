@@ -122,13 +122,24 @@ export class EvmChain {
     }
   }
 
-  async executeRawTx(rawTx: string, blockNumber?: bigint, txIndex = 0, blockHash?: string, baseFeePerGas: bigint = 0n): Promise<ExecutionResult> {
+  async executeRawTx(rawTx: string, blockNumber?: bigint, txIndex = 0, blockHash?: string, baseFeePerGas: bigint = 0n, opts?: { excessBlobGas?: bigint; parentBeaconBlockRoot?: Uint8Array }): Promise<ExecutionResult> {
     const appliedBlock = blockNumber ?? (this.blockNumber + 1n)
     const blockCommon = this.createExecutionCommon(appliedBlock)
     this.applyHardforkToVm(this.vm, appliedBlock)
     const tx = createTxFromRLP(hexToBytes(rawTx), { common: blockCommon.copy() })
+    if (tx.type === 3) {
+      throw new Error("blob transactions (type 3) are not supported")
+    }
     // Use provided baseFeePerGas (defaults to 0 for backward compatibility with dev chains)
-    const block = createBlock({ header: { baseFeePerGas } }, { common: blockCommon })
+    // Only pass Cancun-specific fields when hardfork >= Cancun to avoid @ethereumjs errors
+    const isCancunOrLater = blockCommon.gteHardfork(Hardfork.Cancun)
+    const block = createBlock({
+      header: {
+        baseFeePerGas,
+        ...(isCancunOrLater && opts?.excessBlobGas !== undefined ? { excessBlobGas: opts.excessBlobGas } : {}),
+        ...(isCancunOrLater && opts?.parentBeaconBlockRoot ? { parentBeaconBlockRoot: opts.parentBeaconBlockRoot } : {}),
+      },
+    }, { common: blockCommon })
     const result = await runTx(this.vm, { tx, block, skipHardForkValidation: true })
     const txHash = bytesToHex(tx.hash())
     this.blockNumber = appliedBlock
@@ -470,13 +481,20 @@ export class EvmChain {
   async traceRawTx(
     rawTx: string,
     options: TraceOptions = {},
-    context?: { blockNumber?: bigint; txIndex?: number; blockHash?: string; baseFeePerGas?: bigint },
+    context?: { blockNumber?: bigint; txIndex?: number; blockHash?: string; baseFeePerGas?: bigint; excessBlobGas?: bigint; parentBeaconBlockRoot?: Uint8Array },
   ): Promise<TxTraceResult> {
     const executionBlockNumber = context?.blockNumber
     const blockCommon = this.createExecutionCommon(executionBlockNumber)
     this.applyHardforkToVm(this.vm, executionBlockNumber)
     const tx = createTxFromRLP(hexToBytes(rawTx), { common: blockCommon.copy() })
-    const block = createBlock({ header: { baseFeePerGas: context?.baseFeePerGas ?? 0n } }, { common: blockCommon })
+    const isCancun = blockCommon.gteHardfork(Hardfork.Cancun)
+    const block = createBlock({
+      header: {
+        baseFeePerGas: context?.baseFeePerGas ?? 0n,
+        ...(isCancun && context?.excessBlobGas !== undefined ? { excessBlobGas: context.excessBlobGas } : {}),
+        ...(isCancun && context?.parentBeaconBlockRoot ? { parentBeaconBlockRoot: context.parentBeaconBlockRoot } : {}),
+      },
+    }, { common: blockCommon })
     const collector = createTraceCollector(this.vm, options)
     let needsRevert = true
     await this.vm.stateManager.checkpoint()
@@ -526,13 +544,20 @@ export class EvmChain {
   async traceRawTxOnState(
     rawTx: string,
     options: TraceOptions = {},
-    context?: { blockNumber?: bigint; txIndex?: number; blockHash?: string; baseFeePerGas?: bigint },
+    context?: { blockNumber?: bigint; txIndex?: number; blockHash?: string; baseFeePerGas?: bigint; excessBlobGas?: bigint; parentBeaconBlockRoot?: Uint8Array },
     stateRoot?: string,
   ): Promise<TxTraceResult> {
     const executionBlockNumber = context?.blockNumber
     const blockCommon = this.createExecutionCommon(executionBlockNumber)
     const tx = createTxFromRLP(hexToBytes(rawTx), { common: blockCommon.copy() })
-    const block = createBlock({ header: { baseFeePerGas: context?.baseFeePerGas ?? 0n } }, { common: blockCommon })
+    const isCancun = blockCommon.gteHardfork(Hardfork.Cancun)
+    const block = createBlock({
+      header: {
+        baseFeePerGas: context?.baseFeePerGas ?? 0n,
+        ...(isCancun && context?.excessBlobGas !== undefined ? { excessBlobGas: context.excessBlobGas } : {}),
+        ...(isCancun && context?.parentBeaconBlockRoot ? { parentBeaconBlockRoot: context.parentBeaconBlockRoot } : {}),
+      },
+    }, { common: blockCommon })
     const stateManager = stateRoot ? await this.resolveStateManager(stateRoot) : this.vm.stateManager
     const vm = stateRoot || executionBlockNumber !== undefined
       ? await this.createVm(stateManager, executionBlockNumber)

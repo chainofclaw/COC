@@ -1,5 +1,6 @@
 import http from "node:http"
 import { timingSafeEqual, randomBytes } from "node:crypto"
+import { hexToBytes } from "@ethereumjs/util"
 import { SigningKey, keccak256, hashMessage, Transaction, TypedDataEncoder, getCreateAddress } from "ethers"
 import type { IChainEngine } from "./chain-engine-types.ts"
 import { hasGovernance, hasConfig, hasBlockIndex } from "./chain-engine-types.ts"
@@ -10,7 +11,7 @@ import type { PoSeEngine } from "./pose-engine.ts"
 import { registerPoseRoutes, handlePoseRequest } from "./pose-http.ts"
 import type { PoseInboundAuthOptions } from "./pose-http.ts"
 import { keccak256Hex } from "../../services/relayer/keccak256.ts"
-import { calculateBaseFee, genesisBaseFee, BLOCK_GAS_LIMIT } from "./base-fee.ts"
+import { calculateBaseFee, computeBlobGasPrice, genesisBaseFee, BLOCK_GAS_LIMIT } from "./base-fee.ts"
 import { FeeOracle } from "./fee-oracle.ts"
 import { traceBlockTransactions, traceTransactionResult } from "./debug-trace.ts"
 import type { BftCoordinator } from "./bft-coordinator.ts"
@@ -1095,9 +1096,13 @@ async function handleRpc(
       const tip = await feeOracle.computeMaxPriorityFeePerGas(chain)
       return `0x${tip.toString(16)}`
     }
-    case "eth_blobBaseFee":
-      // COC does not support blob (EIP-4844) transactions
-      return "0x0"
+    case "eth_blobBaseFee": {
+      const blobHeight = await Promise.resolve(chain.getHeight())
+      const blobTipBlock = blobHeight > 0n ? await Promise.resolve(chain.getBlockByNumber(blobHeight)) : null
+      const tipExcessBlobGas = blobTipBlock?.excessBlobGas ?? 0n
+      const blobPrice = computeBlobGasPrice(tipExcessBlobGas)
+      return `0x${blobPrice.toString(16)}`
+    }
     case "eth_mining":
       return false
     case "eth_hashrate":
@@ -2528,9 +2533,9 @@ async function formatBlock(block: Awaited<ReturnType<IChainEngine["getBlockByNum
     baseFeePerGas: `0x${headerView.baseFeePerGas.toString(16)}`,
     withdrawals: [],
     withdrawalsRoot: "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
-    blobGasUsed: "0x0",
-    excessBlobGas: "0x0",
-    parentBeaconBlockRoot: "0x" + "0".repeat(64),
+    blobGasUsed: `0x${(block.blobGasUsed ?? 0n).toString(16)}`,
+    excessBlobGas: `0x${(block.excessBlobGas ?? 0n).toString(16)}`,
+    parentBeaconBlockRoot: block.parentBeaconBlockRoot ?? ("0x" + "0".repeat(64)),
     finalized: block.finalized,
     transactions,
   }
@@ -2634,6 +2639,8 @@ async function queryTraceFilter(chain: IChainEngine, evm: EvmChain, query: Recor
         txIndex,
         blockHash: block.hash,
         baseFeePerGas: block.baseFee ?? 0n,
+        excessBlobGas: block.excessBlobGas,
+        parentBeaconBlockRoot: block.parentBeaconBlockRoot ? hexToBytes(block.parentBeaconBlockRoot) : undefined,
       })
       const filteredCalls = traced.callTraces.filter((callTrace) =>
         matchesTraceAddressFilter(callTrace, fromAddresses, toAddresses)
@@ -2749,7 +2756,10 @@ async function replayTraceBlocksBefore(replay: EvmChain, chain: IChainEngine, ta
       throw new Error(`block not found: ${blockNumber}`)
     }
     for (let txIndex = 0; txIndex < block.txs.length; txIndex++) {
-      await replay.executeRawTx(block.txs[txIndex], block.number, txIndex, block.hash, block.baseFee ?? 0n)
+      await replay.executeRawTx(block.txs[txIndex], block.number, txIndex, block.hash, block.baseFee ?? 0n, {
+        excessBlobGas: block.excessBlobGas,
+        parentBeaconBlockRoot: block.parentBeaconBlockRoot ? hexToBytes(block.parentBeaconBlockRoot) : undefined,
+      })
     }
   }
 }

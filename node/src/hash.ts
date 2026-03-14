@@ -9,10 +9,13 @@ export function hashBlockPayload(input: {
   txs: Hex[]
   baseFee?: bigint
   cumulativeWeight?: bigint
+  blobGasUsed?: bigint
+  excessBlobGas?: bigint
+  parentBeaconBlockRoot?: string
 }): Hex {
   // baseFee and cumulativeWeight are pre-execution and bound into hash
   // gasUsed and stateRoot are post-execution — verified separately after tx replay
-  const stable = `${input.number.toString()}|${input.parentHash}|${input.proposer}|${input.timestampMs}|${input.txs.join(",")}|${(input.baseFee ?? 0n).toString()}|${(input.cumulativeWeight ?? 0n).toString()}`
+  const stable = `${input.number.toString()}|${input.parentHash}|${input.proposer}|${input.timestampMs}|${input.txs.join(",")}|${(input.baseFee ?? 0n).toString()}|${(input.cumulativeWeight ?? 0n).toString()}|${(input.blobGasUsed ?? 0n).toString()}|${(input.excessBlobGas ?? 0n).toString()}|${input.parentBeaconBlockRoot ?? ""}`
   return `0x${keccak256Hex(Buffer.from(stable, "utf-8"))}` as Hex
 }
 

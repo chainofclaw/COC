@@ -4,9 +4,10 @@ import { ChainStorage } from "./storage.ts"
 import { hashBlockPayload, validateBlockLink, zeroHash } from "./hash.ts"
 import type { ChainBlock, ChainSnapshot, Hex, MempoolTx } from "./blockchain-types.ts"
 import { Transaction } from "ethers"
+import { hexToBytes } from "@ethereumjs/util"
 import { ChainEventEmitter } from "./chain-events.ts"
 import type { NodeSigner, SignatureVerifier } from "./crypto/signer.ts"
-import { calculateBaseFee, genesisBaseFee, BLOCK_GAS_LIMIT } from "./base-fee.ts"
+import { calculateBaseFee, calculateExcessBlobGas, genesisBaseFee, BLOCK_GAS_LIMIT } from "./base-fee.ts"
 import { BoundedSet } from "./p2p.ts"
 import { createLogger } from "./logger.ts"
 
@@ -290,6 +291,9 @@ export class ChainEngine {
       txs: block.txs,
       baseFee: block.baseFee,
       cumulativeWeight: block.cumulativeWeight,
+      blobGasUsed: block.blobGasUsed,
+      excessBlobGas: block.excessBlobGas,
+      parentBeaconBlockRoot: block.parentBeaconBlockRoot,
     })
     if (expectedHash !== block.hash) {
       throw new Error("invalid block hash")
@@ -310,7 +314,10 @@ export class ChainEngine {
     try {
       for (let i = 0; i < block.txs.length; i++) {
         const raw = block.txs[i]
-        const result = await this.evm.executeRawTx(raw, block.number, i, block.hash, block.baseFee ?? 0n)
+        const result = await this.evm.executeRawTx(raw, block.number, i, block.hash, block.baseFee ?? 0n, {
+          excessBlobGas: block.excessBlobGas,
+          parentBeaconBlockRoot: block.parentBeaconBlockRoot ? hexToBytes(block.parentBeaconBlockRoot) : undefined,
+        })
         const receipt = this.evm.getReceipt(result.txHash)
         if (receipt) {
           receipts.push(receipt)
@@ -385,6 +392,9 @@ export class ChainEngine {
       // Never trust remote/non-hash metadata from gossip. Finality is local-state derived.
       finalized: false,
       bftFinalized: locallyProposed && block.bftFinalized === true,
+      ...(block.blobGasUsed !== undefined ? { blobGasUsed: BigInt(block.blobGasUsed) } : {}),
+      ...(block.excessBlobGas !== undefined ? { excessBlobGas: BigInt(block.excessBlobGas) } : {}),
+      ...(block.parentBeaconBlockRoot ? { parentBeaconBlockRoot: block.parentBeaconBlockRoot } : {}),
     }
 
     // Persist BEFORE committing to memory — if persistence fails, the block is
@@ -479,6 +489,9 @@ export class ChainEngine {
         ...normalized,
         baseFee: block.baseFee !== undefined ? BigInt(block.baseFee) : undefined,
         cumulativeWeight: block.cumulativeWeight !== undefined ? BigInt(block.cumulativeWeight) : undefined,
+        blobGasUsed: block.blobGasUsed !== undefined ? BigInt(block.blobGasUsed) : undefined,
+        excessBlobGas: block.excessBlobGas !== undefined ? BigInt(block.excessBlobGas) : undefined,
+        parentBeaconBlockRoot: block.parentBeaconBlockRoot,
       })
       if (expectedHash !== block.hash) {
         return false
@@ -535,6 +548,13 @@ export class ChainEngine {
     const parentWeight = tip?.cumulativeWeight ?? 0n
     const cumulativeWeight = parentWeight + 1n
 
+    // Cancun blob gas state chain (EIP-4844)
+    const parentExcessBlobGas = tip?.excessBlobGas ?? 0n
+    const parentBlobGasUsed = tip?.blobGasUsed ?? 0n
+    const excessBlobGas = calculateExcessBlobGas(parentExcessBlobGas, parentBlobGasUsed)
+    const blobGasUsed = 0n  // COC does not support blob transactions
+    const parentBeaconBlockRoot = zeroHash()
+
     const hash = hashBlockPayload({
       number: nextHeight,
       parentHash,
@@ -543,6 +563,9 @@ export class ChainEngine {
       txs,
       baseFee,
       cumulativeWeight,
+      blobGasUsed,
+      excessBlobGas,
+      parentBeaconBlockRoot,
     })
 
     return {
@@ -555,6 +578,9 @@ export class ChainEngine {
       finalized: false,
       baseFee,
       cumulativeWeight,
+      blobGasUsed,
+      excessBlobGas,
+      parentBeaconBlockRoot,
     }
   }
 
@@ -596,6 +622,9 @@ export class ChainEngine {
         ...(block.baseFee !== undefined ? { baseFee: BigInt(block.baseFee) } : {}),
         ...(block.gasUsed !== undefined ? { gasUsed: BigInt(block.gasUsed) } : {}),
         ...(block.cumulativeWeight !== undefined ? { cumulativeWeight: BigInt(block.cumulativeWeight) } : {}),
+        ...(block.blobGasUsed !== undefined ? { blobGasUsed: BigInt(block.blobGasUsed) } : {}),
+        ...(block.excessBlobGas !== undefined ? { excessBlobGas: BigInt(block.excessBlobGas) } : {}),
+        ...(block.parentBeaconBlockRoot ? { parentBeaconBlockRoot: block.parentBeaconBlockRoot } : {}),
       }
       try {
         await this.applyBlock(normalized)

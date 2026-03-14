@@ -168,6 +168,8 @@ export class BlockIndex implements IBlockIndex {
       if (block.baseFee !== undefined) block.baseFee = BigInt(block.baseFee)
       if (block.gasUsed !== undefined) block.gasUsed = BigInt(block.gasUsed)
       if (block.cumulativeWeight !== undefined) block.cumulativeWeight = BigInt(block.cumulativeWeight)
+      if (block.blobGasUsed !== undefined) block.blobGasUsed = BigInt(block.blobGasUsed)
+      if (block.excessBlobGas !== undefined) block.excessBlobGas = BigInt(block.excessBlobGas)
     } catch {
       return null // corrupted block data
     }
@@ -200,6 +202,8 @@ export class BlockIndex implements IBlockIndex {
       if (block.baseFee !== undefined) block.baseFee = BigInt(block.baseFee)
       if (block.gasUsed !== undefined) block.gasUsed = BigInt(block.gasUsed)
       if (block.cumulativeWeight !== undefined) block.cumulativeWeight = BigInt(block.cumulativeWeight)
+      if (block.blobGasUsed !== undefined) block.blobGasUsed = BigInt(block.blobGasUsed)
+      if (block.excessBlobGas !== undefined) block.excessBlobGas = BigInt(block.excessBlobGas)
     } catch {
       return null // corrupted block data
     }

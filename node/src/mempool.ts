@@ -91,6 +91,11 @@ export class Mempool {
     const maxPriorityFeePerGas = tx.maxPriorityFeePerGas ?? 0n
     const gasLimit = tx.gasLimit ?? 21000n
 
+    // Reject blob transactions (type 3) — COC has no blob sidecar support
+    if (tx.type === 3) {
+      throw new Error("blob transactions (type 3) are not supported")
+    }
+
     // Reject transactions with gasLimit exceeding block gas limit (prevents
     // mempool pollution with txs that can never be included in a block)
     const MAX_TX_GAS_LIMIT = 30_000_000n

@@ -27,6 +27,9 @@ export interface ChainBlock {
   baseFee?: bigint
   gasUsed?: bigint
   cumulativeWeight?: bigint
+  blobGasUsed?: bigint
+  excessBlobGas?: bigint
+  parentBeaconBlockRoot?: Hex
 }
 
 export interface ChainSnapshot {

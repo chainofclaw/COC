@@ -13,8 +13,9 @@ import { hashBlockPayload, validateBlockLink, zeroHash } from "./hash.ts"
 import { keccak256Hex } from "../../services/relayer/keccak256.ts"
 import type { ChainBlock, Hex, MempoolTx } from "./blockchain-types.ts"
 import { Transaction } from "ethers"
+import { hexToBytes } from "@ethereumjs/util"
 import type { NodeSigner, SignatureVerifier } from "./crypto/signer.ts"
-import { calculateBaseFee, genesisBaseFee, BLOCK_GAS_LIMIT } from "./base-fee.ts"
+import { calculateBaseFee, calculateExcessBlobGas, genesisBaseFee, BLOCK_GAS_LIMIT } from "./base-fee.ts"
 import { LevelDatabase } from "./storage/db.ts"
 import { BlockIndex } from "./storage/block-index.ts"
 import type { TxWithReceipt, IndexedLog, LogFilter } from "./storage/block-index.ts"
@@ -351,6 +352,9 @@ export class PersistentChainEngine {
       txs: block.txs,
       baseFee: block.baseFee,
       cumulativeWeight: block.cumulativeWeight,
+      blobGasUsed: block.blobGasUsed,
+      excessBlobGas: block.excessBlobGas,
+      parentBeaconBlockRoot: block.parentBeaconBlockRoot,
     })
     if (expectedHash !== block.hash) {
       throw new Error("invalid block hash")
@@ -370,7 +374,10 @@ export class PersistentChainEngine {
 
     for (let i = 0; i < block.txs.length; i++) {
       const raw = block.txs[i]
-      const result = await this.evm.executeRawTx(raw, block.number, i, block.hash, block.baseFee ?? 0n)
+      const result = await this.evm.executeRawTx(raw, block.number, i, block.hash, block.baseFee ?? 0n, {
+        excessBlobGas: block.excessBlobGas,
+        parentBeaconBlockRoot: block.parentBeaconBlockRoot ? hexToBytes(block.parentBeaconBlockRoot) : undefined,
+      })
       const receipt = this.evm.getReceipt(result.txHash)
 
       // Extract from/to from the raw transaction
@@ -488,6 +495,9 @@ export class PersistentChainEngine {
       finalized: false,
       bftFinalized: locallyProposed && block.bftFinalized === true,
       ...(stateRoot !== undefined ? { stateRoot } : {}),
+      ...(block.blobGasUsed !== undefined ? { blobGasUsed: BigInt(block.blobGasUsed) } : {}),
+      ...(block.excessBlobGas !== undefined ? { excessBlobGas: BigInt(block.excessBlobGas) } : {}),
+      ...(block.parentBeaconBlockRoot ? { parentBeaconBlockRoot: block.parentBeaconBlockRoot } : {}),
     }
 
     // Store block and logs
@@ -626,6 +636,9 @@ export class PersistentChainEngine {
         ...normalized,
         baseFee: block.baseFee !== undefined ? BigInt(block.baseFee) : undefined,
         cumulativeWeight: block.cumulativeWeight !== undefined ? BigInt(block.cumulativeWeight) : undefined,
+        blobGasUsed: block.blobGasUsed !== undefined ? BigInt(block.blobGasUsed) : undefined,
+        excessBlobGas: block.excessBlobGas !== undefined ? BigInt(block.excessBlobGas) : undefined,
+        parentBeaconBlockRoot: block.parentBeaconBlockRoot,
       })
       if (expectedHash !== block.hash) {
         return false
@@ -677,6 +690,13 @@ export class PersistentChainEngine {
     const proposerStake = this.getValidatorStake(this.cfg.nodeId)
     const cumulativeWeight = parentWeight + proposerStake
 
+    // Cancun blob gas state chain (EIP-4844)
+    const parentExcessBlobGas = tip?.excessBlobGas ?? 0n
+    const parentBlobGasUsed = tip?.blobGasUsed ?? 0n
+    const excessBlobGas = calculateExcessBlobGas(parentExcessBlobGas, parentBlobGasUsed)
+    const blobGasUsed = 0n  // COC does not support blob transactions
+    const parentBeaconBlockRoot = zeroHash()
+
     const hash = hashBlockPayload({
       number: nextHeight,
       parentHash,
@@ -685,6 +705,9 @@ export class PersistentChainEngine {
       txs,
       baseFee,
       cumulativeWeight,
+      blobGasUsed,
+      excessBlobGas,
+      parentBeaconBlockRoot,
     })
 
     return {
@@ -697,6 +720,9 @@ export class PersistentChainEngine {
       finalized: false,
       baseFee,
       cumulativeWeight,
+      blobGasUsed,
+      excessBlobGas,
+      parentBeaconBlockRoot,
     }
   }
 
@@ -737,7 +763,10 @@ export class PersistentChainEngine {
       // Re-execute transactions to restore EVM state
       for (let txIdx = 0; txIdx < block.txs.length; txIdx++) {
         const raw = block.txs[txIdx]
-        await this.evm.executeRawTx(raw, block.number, txIdx, block.hash, block.baseFee ?? 0n)
+        await this.evm.executeRawTx(raw, block.number, txIdx, block.hash, block.baseFee ?? 0n, {
+          excessBlobGas: block.excessBlobGas,
+          parentBeaconBlockRoot: block.parentBeaconBlockRoot ? hexToBytes(block.parentBeaconBlockRoot) : undefined,
+        })
       }
     }
   }

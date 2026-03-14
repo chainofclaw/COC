@@ -27,6 +27,9 @@ export interface BlockHeaderView {
   gasUsed: bigint
   stateRoot: Hex
   baseFeePerGas: bigint
+  blobGasUsed: bigint
+  excessBlobGas: bigint
+  parentBeaconBlockRoot: Hex
 }
 
 export async function buildBlockHeaderView(
@@ -44,6 +47,9 @@ export async function buildBlockHeaderView(
     gasUsed,
     stateRoot: (block.stateRoot ?? (`0x${"0".repeat(64)}`)) as Hex,
     baseFeePerGas: block.baseFee ?? genesisBaseFee(),
+    blobGasUsed: block.blobGasUsed ?? 0n,
+    excessBlobGas: block.excessBlobGas ?? 0n,
+    parentBeaconBlockRoot: (block.parentBeaconBlockRoot ?? (`0x${"0".repeat(64)}`)) as Hex,
   }
 }
 

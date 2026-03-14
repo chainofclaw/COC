@@ -57,3 +57,43 @@ export function calculateBaseFee(params: BaseFeeParams): bigint {
 export function genesisBaseFee(): bigint {
   return MIN_BASE_FEE
 }
+
+// EIP-4844 Blob Gas constants
+export const TARGET_BLOB_GAS_PER_BLOCK = 393_216n  // 3 blobs * 131072
+export const MAX_BLOB_GAS_PER_BLOCK = 786_432n     // 6 blobs * 131072
+const BLOB_GAS_PRICE_UPDATE_FRACTION = 3_338_477n
+const MIN_BLOB_GAS_PRICE = 1n
+
+/**
+ * Calculate excess blob gas for the next block (EIP-4844).
+ * excess = max(0, parentExcess + parentBlobGasUsed - TARGET)
+ */
+export function calculateExcessBlobGas(parentExcessBlobGas: bigint, parentBlobGasUsed: bigint): bigint {
+  const total = parentExcessBlobGas + parentBlobGasUsed
+  if (total < TARGET_BLOB_GAS_PER_BLOCK) return 0n
+  return total - TARGET_BLOB_GAS_PER_BLOCK
+}
+
+/**
+ * Compute blob gas price from excess blob gas using fake exponential (EIP-4844).
+ * price = fakeExponential(MIN_BLOB_GAS_PRICE, excessBlobGas, BLOB_GAS_PRICE_UPDATE_FRACTION)
+ */
+export function computeBlobGasPrice(excessBlobGas: bigint): bigint {
+  return fakeExponential(MIN_BLOB_GAS_PRICE, excessBlobGas, BLOB_GAS_PRICE_UPDATE_FRACTION)
+}
+
+/**
+ * Fake exponential approximation from EIP-4844 spec.
+ * Returns factor * e^(numerator/denominator) using Taylor series.
+ */
+function fakeExponential(factor: bigint, numerator: bigint, denominator: bigint): bigint {
+  let i = 1n
+  let output = 0n
+  let acc = factor * denominator
+  while (acc > 0n) {
+    output += acc
+    acc = (acc * numerator) / (denominator * i)
+    i++
+  }
+  return output / denominator
+}

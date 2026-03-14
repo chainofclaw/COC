@@ -203,14 +203,15 @@ describe("P8: Block/receipt format standardization", () => {
     })
   })
 
-  it("eth_blobBaseFee returns 0x0", async () => {
+  it("eth_blobBaseFee returns minimum blob gas price (0x1) when no excess", async () => {
     const chain = createMockChain(blocks)
     const port = 38700 + Math.floor(Math.random() * 1000)
     const server = startRpcServer("127.0.0.1", port, 31337, createMockEvm() as any, chain as any, createMockP2P() as any)
     await new Promise((r) => setTimeout(r, 100))
 
     const result = await rpcCall(port, "eth_blobBaseFee")
-    assert.equal(result, "0x0")
+    // EIP-4844: minimum blob gas price is 1 when excessBlobGas = 0
+    assert.equal(result, "0x1")
 
     await new Promise<void>((resolve, reject) => {
       (server as any).close((err: Error | undefined) => err ? reject(err) : resolve())

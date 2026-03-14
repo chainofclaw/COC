@@ -6,6 +6,7 @@
  */
 
 import { Transaction } from "ethers"
+import { hexToBytes } from "@ethereumjs/util"
 import type { EvmChain } from "./evm.ts"
 import type { IChainEngine } from "./chain-engine-types.ts"
 import type { ChainBlock, Hex } from "./blockchain-types.ts"
@@ -68,6 +69,8 @@ export async function traceBlockTransactions(
       txIndex,
       blockHash: block.hash,
       baseFeePerGas: block.baseFee ?? 0n,
+      excessBlobGas: block.excessBlobGas,
+      parentBeaconBlockRoot: block.parentBeaconBlockRoot ? hexToBytes(block.parentBeaconBlockRoot) : undefined,
     })
     results.push(traced)
   }
@@ -105,6 +108,8 @@ async function traceTransactionInternal(
     txIndex: located.txIndex,
     blockHash: located.block.hash,
     baseFeePerGas: located.block.baseFee ?? 0n,
+    excessBlobGas: located.block.excessBlobGas,
+    parentBeaconBlockRoot: located.block.parentBeaconBlockRoot ? hexToBytes(located.block.parentBeaconBlockRoot) : undefined,
   })
 }
 
@@ -121,7 +126,10 @@ async function replayBlocksBefore(replay: EvmChain, chain: IChainEngine, targetB
 async function replayBlockTransactions(replay: EvmChain, block: ChainBlock, stopBeforeTxIndex?: number): Promise<void> {
   const end = stopBeforeTxIndex ?? block.txs.length
   for (let txIndex = 0; txIndex < end; txIndex++) {
-    await replay.executeRawTx(block.txs[txIndex], block.number, txIndex, block.hash, block.baseFee ?? 0n)
+    await replay.executeRawTx(block.txs[txIndex], block.number, txIndex, block.hash, block.baseFee ?? 0n, {
+      excessBlobGas: block.excessBlobGas,
+      parentBeaconBlockRoot: block.parentBeaconBlockRoot ? hexToBytes(block.parentBeaconBlockRoot) : undefined,
+    })
   }
 }
 
