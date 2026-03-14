@@ -13,6 +13,8 @@ Status legend:
 - **EVM execution engine** — Partial — `COC/node/src/evm.ts`
 - **RPC: basic chain info** — Implemented — `COC/node/src/rpc.ts`
 - **RPC: block/tx queries** — Implemented — `COC/node/src/rpc.ts`
+- **RPC: pending tx visibility + pending nonce** — Implemented — `COC/node/src/rpc.ts`, `COC/node/src/rpc-semantic-compat.test.ts`
+- **RPC: safe/finalized historical block-tag semantics** — Implemented — `COC/node/src/rpc.ts`, `COC/node/src/rpc-semantic-compat.test.ts`
 - **RPC: logs + filters** — Implemented (minimal) — `COC/node/src/rpc.ts`
 - **RPC: web3_sha3** — Implemented — `COC/node/src/rpc.ts`
 - **RPC: historical block-tag state reads** — Implemented (P0) — `COC/node/src/rpc.ts`, `COC/node/src/evm.ts`, `COC/node/src/storage/persistent-state-manager.ts`
@@ -24,6 +26,7 @@ Status legend:
 - **RPC: eth_getCompilers** — Implemented (post-P6, Solidity only) — `COC/node/src/rpc.ts`
 - **RPC: eth_compileSolidity** — Implemented (post-P6, lazy `solc`) — `COC/node/src/rpc.ts`
 - **RPC: real block header fields** — Implemented (M3) — `COC/node/src/block-header.ts`, `COC/node/src/rpc.ts`, `COC/node/src/chain-events.ts`
+- **RPC: Cancun header/blob-gas surface** — Implemented (no blob tx inclusion) — `COC/node/src/base-fee.ts`, `COC/node/src/block-header.ts`, `COC/node/src/rpc.ts`
 - **RPC: full EVM parity** — Missing
 - **EVM hardfork configurability** — Implemented (P3 + post-P6 parity hardening, single hardfork + static schedule) — `COC/node/src/config.ts`, `COC/node/src/evm.ts`
 
@@ -97,6 +100,7 @@ Status legend:
 - **EIP-1559 effective gas price sorting** — Implemented — `COC/node/src/mempool.ts`
 - **Dynamic base fee calculation** — Implemented — `COC/node/src/base-fee.ts`
 - **Per-block baseFee integration** — Implemented (Audit) — `COC/node/src/chain-engine.ts`, `COC/node/src/chain-engine-persistent.ts`
+- **Blob / type-3 tx rejection** — Implemented (explicitly unsupported) — `COC/node/src/mempool.ts`, `COC/node/src/evm.ts`
 
 ## PoSe (Off‑chain)
 - **Challenge factory (v1)** — Implemented — `COC/services/challenger/challenge-factory.ts`
@@ -217,7 +221,13 @@ Status legend:
 
 ## EVM Compatibility Regression (P6)
 - **P0-P5 regression baseline** — Implemented (P6) — `COC/node/src/rpc-debug-compatibility.test.ts`, `COC/node/src/rpc-persistent.test.ts`
+- **RPC semantic compatibility regression** — Implemented — `COC/node/src/rpc-semantic-compat.test.ts`
+- **Historical trace/finalized tag regression** — Implemented — `COC/node/src/rpc-debug-compatibility.test.ts`
+- **Cancun/blob-gas compatibility regression** — Implemented (header + blob-gas surface, no type-3 support) — `COC/node/src/cancun-compat.test.ts`, `COC/node/src/blob-gas.test.ts`
+- **EIP-4788 beacon-root behavior regression** — Implemented — `COC/node/src/cancun-compat.test.ts`
 - **Ethers toolchain compatibility regression** — Implemented (post-P6 parity hardening) — `COC/node/src/ethers-toolchain-compat.test.ts`
+- **Viem toolchain compatibility regression** — Implemented — `COC/node/src/viem-toolchain-compat.test.ts`
+- **Wallet / Foundry RPC smoke regression** — Implemented — `COC/node/src/wallet-toolchain-compat.test.ts`
 - **Node workspace quality gate** — Implemented (`864` tests / `124` suites passing) — `COC/node/src/**/*.test.ts`
 - **Root tests workspace quality gate** — Implemented (`173` tests / `34` suites passing) — `COC/tests/**/*.test.ts`
 - **Repository-wide quality gate** — Implemented (`1563` tests / `145` files across repo workspaces, excluding vendored `node_modules` tests) — `COC/scripts/quality-gate.sh`
