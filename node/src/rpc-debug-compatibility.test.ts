@@ -974,4 +974,89 @@ describe("RPC debug compatibility", () => {
     assert.equal(revertedTrace.revertReason, `CustomError(${expectedSelector})`)
     assert.equal(revertedTrace.calls?.[0].revertReason, `CustomError(${expectedSelector})`)
   })
+
+  it("rpc_modules returns module list", async () => {
+    const result = await rpc.handleRpcMethod("rpc_modules", [], CHAIN_ID, evm, engine, p2p) as Record<string, string>
+    assert.equal(result.eth, "1.0")
+    assert.equal(result.net, "1.0")
+    assert.equal(result.web3, "1.0")
+    assert.equal(result.coc, "1.0")
+    assert.equal(result.txpool, "1.0")
+    // debug/trace depend on COC_DEBUG_RPC env var (set in beforeEach)
+    assert.equal(result.debug, "1.0")
+    assert.equal(result.trace, "1.0")
+  })
+
+  it("debug_getRawTransaction returns raw tx hex", async () => {
+    const { deployTxHash } = await deployStorageContract(engine)
+    const result = await rpc.handleRpcMethod(
+      "debug_getRawTransaction",
+      [deployTxHash],
+      CHAIN_ID, evm, engine, p2p,
+    ) as string
+    assert.ok(result)
+    assert.ok(result.startsWith("0x"))
+    // The raw tx should produce the same hash when parsed
+    const parsedBack = Transaction.from(result)
+    assert.equal(parsedBack.hash, deployTxHash)
+  })
+
+  it("debug_getRawTransaction returns null for unknown tx", async () => {
+    const result = await rpc.handleRpcMethod(
+      "debug_getRawTransaction",
+      ["0x" + "ff".repeat(32)],
+      CHAIN_ID, evm, engine, p2p,
+    )
+    assert.equal(result, null)
+  })
+
+  it("debug_getRawReceipts returns raw txs for a block", async () => {
+    await deployStorageContract(engine)
+    const result = await rpc.handleRpcMethod(
+      "debug_getRawReceipts",
+      ["0x1"],
+      CHAIN_ID, evm, engine, p2p,
+    ) as string[]
+    assert.ok(Array.isArray(result))
+    assert.equal(result.length, 1)
+    assert.ok(result[0].startsWith("0x"))
+  })
+
+  it("debug_getRawReceipts returns empty for genesis block", async () => {
+    const result = await rpc.handleRpcMethod(
+      "debug_getRawReceipts",
+      ["0x0"],
+      CHAIN_ID, evm, engine, p2p,
+    ) as string[]
+    assert.ok(Array.isArray(result))
+    assert.equal(result.length, 0)
+  })
+
+  it("debug_getRawHeader returns hex-encoded header without txs", async () => {
+    await deployStorageContract(engine)
+    const result = await rpc.handleRpcMethod(
+      "debug_getRawHeader",
+      ["0x1"],
+      CHAIN_ID, evm, engine, p2p,
+    ) as string
+    assert.ok(result.startsWith("0x"))
+    const decoded = JSON.parse(Buffer.from(result.slice(2), "hex").toString())
+    assert.equal(decoded.number, "1")
+    assert.ok(decoded.hash)
+    assert.equal(decoded.txs, undefined)
+  })
+
+  it("debug_getRawBlock returns hex-encoded block with txs", async () => {
+    await deployStorageContract(engine)
+    const result = await rpc.handleRpcMethod(
+      "debug_getRawBlock",
+      ["0x1"],
+      CHAIN_ID, evm, engine, p2p,
+    ) as string
+    assert.ok(result.startsWith("0x"))
+    const decoded = JSON.parse(Buffer.from(result.slice(2), "hex").toString())
+    assert.equal(decoded.number, "1")
+    assert.ok(Array.isArray(decoded.txs))
+    assert.equal(decoded.txs.length, 1)
+  })
 })

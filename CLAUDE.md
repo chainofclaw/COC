@@ -76,11 +76,11 @@ Policy files are located at `nodeops/policies/*.yaml` and can be loaded and eval
 
 ## Test Strategy
 
-Uses Node.js built-in test framework and Hardhat test runner (`1563` tests across `145` test files, excluding vendored `node_modules` tests):
-- **Node layer tests**: `node/src/*.test.ts node/src/**/*.test.ts` (`864` tests, `71` files) - chain engine, EVM, RPC, WebSocket, P2P, mempool, storage, IPFS, PoSe, BFT consensus, DHT, wire protocol, fork choice, state snapshot, wire server, DHT network, snap sync, consensus-BFT integration, consensus metrics, wire connection manager, wire tx relay, sync progress, gas histogram, governance stats, wire dedup/relay, security hardening, P2P auth, wire auth handshake, replay guard, nonce registry, PoSe auth, Prometheus metrics, BFT slashing, Phase 36 ops hardening, algorithm safety audit round 3, P2P benchmarks, wire priority frames, stateRoot verification, speculative execution, coc_getEquivocations, ethers toolchain compatibility
+Uses Node.js built-in test framework and Hardhat test runner (`1603` tests across `150` test files, excluding vendored `node_modules` tests):
+- **Node layer tests**: `node/src/*.test.ts node/src/**/*.test.ts` (`899` tests, `75` files) - chain engine, EVM, RPC, WebSocket, P2P, mempool, storage, IPFS, PoSe, BFT consensus, DHT, wire protocol, fork choice, state snapshot, wire server, DHT network, snap sync, consensus-BFT integration, consensus metrics, wire connection manager, wire tx relay, sync progress, gas histogram, governance stats, wire dedup/relay, security hardening, P2P auth, wire auth handshake, replay guard, nonce registry, PoSe auth, Prometheus metrics, BFT slashing, Phase 36 ops hardening, algorithm safety audit round 3, P2P benchmarks, wire priority frames, stateRoot verification, speculative execution, coc_getEquivocations, ethers toolchain compatibility, viem toolchain compatibility, fee oracle, RPC data accuracy, block format standardization
 - **Services + NodeOps tests**: `services/**/*.test.ts` + `nodeops/*.test.ts` (`164` tests, `25` files) - PoSe v2 services, reward tree, scoring determinism, challenger rewards, policy DSL, policy hot reload
 - **Runtime tests**: `runtime/lib/*.test.ts` + `runtime/coc-relayer.test.ts` (`72` tests, `16` files) - pending retention, runtime metrics, agent metrics server, reward manifest, pose-v2 fault proof, relayer dispute recovery, BFT slash bridge
-- **Tests workspace**: `tests/**/*.test.ts` (`173` tests, `13` files) - integration, e2e, stress, chaos, governance scripts, infra validation, v1 reward scoring
+- **Tests workspace**: `tests/**/*.test.ts` (`178` tests, `14` files) - integration, e2e, stress, chaos, governance scripts, infra validation, v1 reward scoring, contract lifecycle
 - **Wallet tests**: `wallet/coc-wallet.test.ts` (`8` tests, `1` file) - wallet CLI, keystore, import/export, formatting
 - **Explorer tests**: `explorer/src/lib/*.test.ts` (`43` tests, `3` files) - ABI decoding, provider helpers, Solidity compiler version resolution
 - **Faucet tests**: `faucet/src/*.test.ts` (`26` tests, `3` files) - drip flow, web UI, server wiring, cooldown logic
@@ -129,11 +129,12 @@ cd contracts && npm test
 - `evm.ts`: EVM execution layer (based on @ethereumjs/vm)
 - `consensus.ts`: Consensus engine (deterministic rotation + degraded mode + auto-recovery + optional BFT coordinator + snap sync provider)
 - `p2p.ts`: HTTP gossip network (per-peer dedup, request body limits, broadcast concurrency control)
-- `rpc.ts`: JSON-RPC interface (77+ methods, parameter validation, structured error codes)
+- `rpc.ts`: JSON-RPC interface (83+ methods, parameter validation, structured error codes)
 - `websocket-rpc.ts`: WebSocket RPC (eth_subscribe, subscription validation and limits, idle timeout)
 - `config.ts`: Node configuration with validation (chainId, ports, validators, storage, enableBft, enableWireProtocol, enableDht, enableSnapSync, rpcAuthToken, enableAdminRpc, COC_*_BIND env vars, nodeMode full/archive/light)
 - `mempool.ts`: Transaction mempool (EIP-1559 effective gas price sorting)
 - `base-fee.ts`: EIP-1559 dynamic baseFee calculation
+- `fee-oracle.ts`: Fee estimation module (priority fee median, fee history reward percentiles, cache)
 - `health.ts`: Health checks (memory/WS/storage/consensus diagnostics)
 - `debug-trace.ts`: Transaction tracing (debug_traceTransaction, trace_transaction)
 - `storage.ts`: Chain snapshot persistence

@@ -10,7 +10,8 @@ import type { PoSeEngine } from "./pose-engine.ts"
 import { registerPoseRoutes, handlePoseRequest } from "./pose-http.ts"
 import type { PoseInboundAuthOptions } from "./pose-http.ts"
 import { keccak256Hex } from "../../services/relayer/keccak256.ts"
-import { calculateBaseFee, genesisBaseFee } from "./base-fee.ts"
+import { calculateBaseFee, genesisBaseFee, BLOCK_GAS_LIMIT } from "./base-fee.ts"
+import { FeeOracle } from "./fee-oracle.ts"
 import { traceBlockTransactions, traceTransactionResult } from "./debug-trace.ts"
 import type { BftCoordinator } from "./bft-coordinator.ts"
 import { RateLimiter } from "./rate-limiter.ts"
@@ -34,6 +35,8 @@ let solcLoaderPromise: Promise<{ compile(input: string): string; version(): stri
 
 const FILTER_CLEANUP_THROTTLE_MS = 30_000 // run cleanup at most once per 30s
 let lastFilterCleanupMs = 0
+
+const feeOracle = new FeeOracle()
 
 function cleanupExpiredFilters(filters: Map<string, PendingFilter>): void {
   const now = Date.now()
@@ -175,6 +178,7 @@ interface RpcRuntimeOptions {
   getDhtStats?: () => unknown
   rewardManifestDir?: string
   getBftEquivocations?: (sinceMs: number) => Array<{ rawEvidence?: Record<string, unknown>; [key: string]: unknown }>
+  getSyncProgress?: () => Promise<{ syncing: boolean; currentHeight: bigint; highestPeerHeight: bigint; startingHeight: bigint }>
 }
 
 export function startRpcServer(
@@ -291,6 +295,9 @@ export function startRpcServer(
         }
         if (runtimeOptions?.getBftEquivocations) {
           rpcOpts.getBftEquivocations = runtimeOptions.getBftEquivocations
+        }
+        if (runtimeOptions?.getSyncProgress) {
+          rpcOpts.getSyncProgress = runtimeOptions.getSyncProgress
         }
         const scopedOpts = Object.keys(rpcOpts).length > 0 ? rpcOpts : undefined
         const MAX_BATCH_SIZE = 100
@@ -529,12 +536,24 @@ async function handleRpc(
       const stateRoot = await resolveHistoricalStateRoot((payload.params ?? [])[2], chain)
       return await evm.getProof(proofAddr, proofSlots, stateRoot)
     }
-    case "eth_syncing":
+    case "eth_syncing": {
+      const syncProgressGetter = (opts as Record<string, unknown> | undefined)?.getSyncProgress as RpcRuntimeOptions["getSyncProgress"] | undefined
+      if (syncProgressGetter) {
+        const progress = await syncProgressGetter()
+        if (progress.syncing) {
+          return {
+            startingBlock: `0x${progress.startingHeight.toString(16)}`,
+            currentBlock: `0x${progress.currentHeight.toString(16)}`,
+            highestBlock: `0x${progress.highestPeerHeight.toString(16)}`,
+          }
+        }
+      }
       return false
+    }
     case "net_listening":
       return true
     case "net_peerCount":
-      return `0x${p2p ? "1" : "0"}`
+      return `0x${(p2p?.getPeers?.()?.length ?? 0).toString(16)}`
     case "eth_accounts":
       if (!isDevAccountsEnabled()) return []
       return Array.from(testAccounts.keys())
@@ -854,6 +873,79 @@ async function handleRpc(
       }
       return formatLocalizedOpenEthereumCallTraces([matched], txContext)[0] ?? null
     }
+    case "rpc_modules":
+      return {
+        eth: "1.0", net: "1.0", web3: "1.0", txpool: "1.0",
+        ...(DEBUG_RPC_ENABLED ? { debug: "1.0", trace: "1.0" } : {}),
+        ...((opts as Record<string, unknown> | undefined)?.enableAdminRpc ? { admin: "1.0" } : {}),
+        coc: "1.0",
+      }
+    case "debug_getRawTransaction": {
+      if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
+      const rawTxHash = String((payload.params ?? [])[0] ?? "") as Hex
+      // Find block containing the transaction
+      if (typeof chain.getTransactionByHash === "function") {
+        const txRecord = await chain.getTransactionByHash(rawTxHash)
+        if (txRecord?.rawTx) return txRecord.rawTx
+      }
+      // Fallback: scan recent blocks
+      const scanHeight = await Promise.resolve(chain.getHeight())
+      for (let h = scanHeight; h >= 0n && h > scanHeight - 256n; h--) {
+        const blk = await Promise.resolve(chain.getBlockByNumber(h))
+        if (!blk) continue
+        for (const rawTx of blk.txs) {
+          try {
+            if (Transaction.from(rawTx).hash?.toLowerCase() === rawTxHash.toLowerCase()) {
+              return rawTx
+            }
+          } catch { /* skip */ }
+        }
+      }
+      return null
+    }
+    case "debug_getRawReceipts": {
+      if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
+      const rawReceiptTag = String((payload.params ?? [])[0] ?? "latest")
+      const rawReceiptHeight = await Promise.resolve(chain.getHeight())
+      const rawReceiptNum = parseBlockTag(rawReceiptTag, rawReceiptHeight)
+      const rawReceiptBlock = await Promise.resolve(chain.getBlockByNumber(rawReceiptNum))
+      if (!rawReceiptBlock) return []
+      return rawReceiptBlock.txs
+    }
+    case "debug_getRawHeader":
+    case "debug_getRawBlock": {
+      if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
+      // Simplified: return JSON-encoded block data as hex (not RLP)
+      // Full RLP encoding deferred to future phase
+      const rawBlockTag = String((payload.params ?? [])[0] ?? "latest")
+      const rawBlockHeight = await Promise.resolve(chain.getHeight())
+      const rawBlockNum = parseBlockTag(rawBlockTag, rawBlockHeight)
+      const rawBlock = await Promise.resolve(chain.getBlockByNumber(rawBlockNum))
+      if (!rawBlock) return null
+      if (payload.method === "debug_getRawHeader") {
+        const headerData = {
+          number: rawBlock.number.toString(),
+          hash: rawBlock.hash,
+          parentHash: rawBlock.parentHash,
+          proposer: rawBlock.proposer,
+          timestampMs: rawBlock.timestampMs,
+          gasUsed: (rawBlock.gasUsed ?? 0n).toString(),
+          baseFee: (rawBlock.baseFee ?? 0n).toString(),
+        }
+        return "0x" + Buffer.from(JSON.stringify(headerData)).toString("hex")
+      }
+      const blockData = {
+        number: rawBlock.number.toString(),
+        hash: rawBlock.hash,
+        parentHash: rawBlock.parentHash,
+        proposer: rawBlock.proposer,
+        timestampMs: rawBlock.timestampMs,
+        gasUsed: (rawBlock.gasUsed ?? 0n).toString(),
+        baseFee: (rawBlock.baseFee ?? 0n).toString(),
+        txs: rawBlock.txs,
+      }
+      return "0x" + Buffer.from(JSON.stringify(blockData)).toString("hex")
+    }
     case "eth_getBlockTransactionCountByHash": {
       const hash = String((payload.params ?? [])[0] ?? "") as Hex
       const block = await Promise.resolve(chain.getBlockByHash(hash))
@@ -928,10 +1020,10 @@ async function handleRpc(
         baseFees.push(`0x${blockBaseFee.toString(16)}`)
         const blk = await Promise.resolve(chain.getBlockByNumber(blockNum))
         const gasUsed = blk?.gasUsed ?? 0n
-        const ratio = Number(gasUsed) / 30_000_000 // GAS_LIMIT = 30M
+        const ratio = Number(gasUsed) / Number(BLOCK_GAS_LIMIT)
         gasUsedRatios.push(Math.round(ratio * 10000) / 10000)
         if (rewardPercentiles.length > 0) {
-          rewards.push(rewardPercentiles.map(() => "0x3b9aca00"))
+          rewards.push(feeOracle.computeFeeHistoryRewards(blk, blockBaseFee, rewardPercentiles))
         }
       }
       // Extra entry for next block's baseFee prediction
@@ -986,14 +1078,24 @@ async function handleRpc(
       }
       return collectLogs(chain, filter.fromBlock, end, filter)
     }
-    case "eth_maxPriorityFeePerGas":
-      return "0x3b9aca00" // 1 gwei
+    case "eth_maxPriorityFeePerGas": {
+      const tip = await feeOracle.computeMaxPriorityFeePerGas(chain)
+      return `0x${tip.toString(16)}`
+    }
+    case "eth_blobBaseFee":
+      // COC does not support blob (EIP-4844) transactions
+      return "0x0"
     case "eth_mining":
       return false
     case "eth_hashrate":
       return "0x0"
-    case "eth_coinbase":
-      return "0x0000000000000000000000000000000000000000"
+    case "eth_coinbase": {
+      const cbHeight = await Promise.resolve(chain.getHeight())
+      const proposer = chain.expectedProposer(cbHeight + 1n)
+      return proposer && proposer.startsWith("0x") && proposer.length === 42
+        ? proposer
+        : "0x0000000000000000000000000000000000000000"
+    }
     case "eth_getCompilers":
       return ["solidity"]
     case "eth_compileSolidity": {
@@ -2368,6 +2470,15 @@ async function formatBlock(block: Awaited<ReturnType<IChainEngine["getBlockByNum
     })
   }
 
+  // Approximate block size: header overhead + sum of tx hex byte lengths
+  const HEADER_OVERHEAD = 508
+  let txBytesSize = 0
+  for (const rawTx of block.txs) {
+    // Each hex char = 0.5 bytes, minus "0x" prefix
+    txBytesSize += Math.max(0, (rawTx.length - 2)) / 2
+  }
+  const blockSize = HEADER_OVERHEAD + Math.floor(txBytesSize)
+
   return {
     number: `0x${block.number.toString(16)}`,
     hash: block.hash,
@@ -2382,11 +2493,14 @@ async function formatBlock(block: Awaited<ReturnType<IChainEngine["getBlockByNum
     difficulty: "0x0",
     totalDifficulty: "0x0",
     extraData: `0x${Buffer.from(block.proposer, "utf-8").toString("hex")}`,
-    size: `0x${(100 + block.txs.length * 200).toString(16)}`,
-    gasLimit: "0x1c9c380",
+    mixHash: "0x" + "0".repeat(64),
+    size: `0x${blockSize.toString(16)}`,
+    gasLimit: `0x${BLOCK_GAS_LIMIT.toString(16)}`,
     gasUsed: `0x${headerView.gasUsed.toString(16)}`,
     timestamp: `0x${Math.floor(block.timestampMs / 1000).toString(16)}`,
     baseFeePerGas: `0x${headerView.baseFeePerGas.toString(16)}`,
+    withdrawals: [],
+    withdrawalsRoot: "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
     finalized: block.finalized,
     transactions,
   }

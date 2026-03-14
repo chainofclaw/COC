@@ -574,6 +574,7 @@ startRpcServer(
     getP2PStats: () => p2p.getStats(),
     getWireStats: () => wireServer?.getStats(),
     getDhtStats: () => dhtNetwork?.getStats(),
+    getSyncProgress: () => consensus.getSyncProgress(),
     rewardManifestDir: join(config.dataDir, "reward-manifests"),
     getBftEquivocations: (sinceMs: number) => bftEvidenceStore.peek().filter(
       (e) => (e.rawEvidence?.detectedAtMs ?? 0) > sinceMs
