@@ -267,6 +267,16 @@ Current `coc-nodeops` plugin (v0.1) CLI commands: `init`, `start`, `stop`, `rest
 | 真实工作负载 | 至少 1 个 OpenClaw 真实工作负载，2 个示范集成 | At least 1 real OpenClaw workload and 2 demo integrations |
 | 开发者可用性 | 外部开发者可在 30 分钟内完成接入、领水、发交易、查询结果 | An external developer can onboard, get faucet funds, send a transaction, and query results within 30 minutes |
 
+### 8.3 OpenClaw 融合指标 / OpenClaw Integration Metrics
+
+| 指标 | 中文目标 | English Target |
+|---|---|---|
+| CLI Skills 覆盖 | `coc-nodeops` v0.2 包含至少 6 个新 Skills，全部通过单元测试 | `coc-nodeops` v0.2 includes at least 6 new Skills, all with passing unit tests |
+| 插件市场发布 | `@openclaw/coc-nodeops` v0.2 在 npm 和 OpenClaw 插件市场可安装 | `@openclaw/coc-nodeops` v0.2 installable from npm and OpenClaw plugin marketplace |
+| 社群规模 | Discord 成员数 200+，GitHub Discussions 帖子 20+ | Discord membership 200+, GitHub Discussions posts 20+ |
+| 内容产出 | 至少 3 篇技术内容（1 博客 + 1 教程 + 1 视频演示） | At least 3 pieces of technical content (1 blog + 1 tutorial + 1 video demo) |
+| OpenClaw 运营方 | 至少 2 个 beta 运营方通过 `openclaw coc` CLI 管理节点 | At least 2 beta operators manage nodes via `openclaw coc` CLI |
+
 ## 9. 风险登记 / Risk Register
 
 | 风险 | 影响 | 缓解措施 | Risk | Impact | Mitigation |
@@ -276,6 +286,8 @@ Current `coc-nodeops` plugin (v0.1) CLI commands: `init`, `start`, `stop`, `rest
 | L1/L2 staging 链路因外部依赖（测试网 RPC、合约部署权限）延期 | Day 45 staging 集成目标滑移 | 准备本地 Hardhat/Anvil 模拟链作为后备 | L1/L2 staging path delayed by external dependencies (testnet RPC, contract deploy permissions) | Day 45 staging integration slips | Prepare local Hardhat/Anvil mock chain as fallback |
 | 独立运营方招募不足（少于 3 家） | 邀请制 beta 缺乏多样性验证 | 内部运行 3+ 地理分布节点作为最低覆盖 | Fewer than 3 independent operators recruited | Invited beta lacks diversity validation | Run 3+ geographically distributed internal nodes as minimum coverage |
 | 经济参数设计延期导致测试网激励规则缺失 | 公开测试网无法吸引外部参与 | 使用固定测试激励（faucet + 固定 epoch 奖励）作为 v0 兜底 | Economics design delay causes missing testnet incentive rules | Public testnet cannot attract external participants | Use fixed test incentives (faucet + flat epoch rewards) as v0 fallback |
+| OpenClaw 插件 SDK 接口不稳定或文档不足 | Skills 开发受阻，v0.2 发布延期 | 优先锁定 `api.registerCli()` 接口；必要时直接用 `commander` 独立发布 CLI 工具 | OpenClaw plugin SDK API unstable or poorly documented | Skills development blocked, v0.2 release slips | Lock `api.registerCli()` interface first; if needed, publish CLI tool independently via `commander` |
+| Discord 社群冷启动缓慢（< 50 成员） | 公开测试网发布时缺乏社区支撑 | 通过 OpenClaw 主社群导流 + 赏金计划激励早期参与者 | Discord community cold-start slow (< 50 members) | Lacks community support when public testnet launches | Drive traffic from OpenClaw main community + incentivize early participants via bounty program |
 
 ## 10. 明确不做 / Explicit Non-Goals
 
