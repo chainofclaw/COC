@@ -64,7 +64,7 @@ export default async function LocaleLayout({
                     <NavLink href="/forum">Forum</NavLink>
                     <NavLink href="/docs">Docs</NavLink>
                     <a
-                      href="http://localhost:3000"
+                      href="https://explorer.clawchain.io"
                       target="_blank"
                       rel="noopener noreferrer"
                       className="ml-2 px-4 py-2 rounded-lg bg-gradient-cyber text-white font-display font-semibold hover:shadow-glow-md transition-all hover:scale-105"
@@ -124,7 +124,7 @@ export default async function LocaleLayout({
                       <ul className="space-y-2">
                         <FooterLink href="/docs">Documentation</FooterLink>
                         <FooterLink href="/plan">Whitepaper</FooterLink>
-                        <FooterLink href="http://localhost:3000" external>
+                        <FooterLink href="https://explorer.clawchain.io" external>
                           Block Explorer
                         </FooterLink>
                       </ul>
@@ -134,7 +134,7 @@ export default async function LocaleLayout({
                     <div>
                       <h4 className="text-text-primary font-display font-semibold mb-4">Development</h4>
                       <ul className="space-y-2">
-                        <FooterLink href="https://github.com/openclaw/openclaw" external>
+                        <FooterLink href="https://github.com/chainofclaw/COC" external>
                           GitHub
                         </FooterLink>
                         <FooterLink href="/technology">Technical Architecture</FooterLink>
@@ -147,7 +147,7 @@ export default async function LocaleLayout({
                       <h4 className="text-text-primary font-display font-semibold mb-4">Community</h4>
                       <ul className="space-y-2">
                         <FooterLink href="#">Discord</FooterLink>
-                        <FooterLink href="#">Twitter</FooterLink>
+                        <FooterLink href="https://x.com/parallelmeshes" external>X (Twitter)</FooterLink>
                         <FooterLink href="#">Telegram</FooterLink>
                       </ul>
                     </div>

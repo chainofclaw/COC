@@ -1,7 +1,6 @@
 'use client'
 
 import { NetworkStats } from '@/components/NetworkStats'
-import { provider } from '@/lib/provider'
 import { rpcCall } from '@/lib/rpc'
 import Link from 'next/link'
 import { useTranslations } from 'next-intl'
@@ -10,11 +9,19 @@ import { useEffect, useState } from 'react'
 // Moved to client component for consistency with design system
 
 type NodeInfo = {
-  runtime: string
-  version: string
-  startTime: number
-  uptime: number
-  endpoints: {
+  clientVersion?: string
+  chainId?: number
+  blockHeight?: string
+  mempool?: {
+    size: number
+    senders: number
+    oldestMs: number
+  }
+  uptime?: number
+  runtime?: string
+  version?: string
+  startTime?: number
+  endpoints?: {
     rpc: string
     ws: string
     p2p: string
@@ -95,6 +102,13 @@ type DaoStats = {
   treasuryBalance?: string
 }
 
+type CountdownTime = {
+  days: number
+  hours: number
+  minutes: number
+  seconds: number
+}
+
 export default function NetworkPage() {
   const t = useTranslations('network')
   const [nodeInfo, setNodeInfo] = useState<NodeInfo>(null)
@@ -109,6 +123,7 @@ export default function NetworkPage() {
   const [networkStats, setNetworkStats] = useState<NetworkStats | null>(null)
   const [memPoolStatus, setMemPoolStatus] = useState<MemPoolStatus | null>(null)
   const [daoStats, setDaoStats] = useState<DaoStats | null>(null)
+  const [countdown, setCountdown] = useState<CountdownTime>({ days: 0, hours: 0, minutes: 0, seconds: 0 })
 
   useEffect(() => {
     async function fetchData() {
@@ -123,7 +138,7 @@ export default function NetworkPage() {
           networkStatsData,
           memPoolStatusData,
           daoStatsData,
-          blockNumber
+          blockNumberHex
         ] = await Promise.all([
           rpcCall<NodeInfo>('coc_nodeInfo').catch(() => null),
           rpcCall<Validator[]>('coc_validators').catch(() => []),
@@ -132,8 +147,10 @@ export default function NetworkPage() {
           rpcCall<NetworkStats>('coc_getNetworkStats').catch(() => null),
           rpcCall<MemPoolStatus>('txpool_status').catch(() => null),
           rpcCall<DaoStats>('coc_getDaoStats').catch(() => null),
-          provider.getBlockNumber().catch(() => 0)
+          rpcCall<string>('eth_blockNumber').catch(() => '0x0')
         ])
+
+        const blockNumber = parseInt(blockNumberHex, 16)
 
         setNodeInfo(info)
         setValidators(vals)
@@ -144,12 +161,32 @@ export default function NetworkPage() {
         setDaoStats(daoStatsData)
 
         // Fetch recent blocks
-        const count = Math.min(10, blockNumber + 1)
-        const blocks = await Promise.all(
-          Array.from({ length: count }, (_, i) => provider.getBlock(blockNumber - i))
-        )
-        const filteredBlocks = blocks.filter(Boolean) as unknown as BlockData[]
-        setRecentBlocks(filteredBlocks)
+        let filteredBlocks: BlockData[] = []
+        if (blockNumber > 0) {
+          const count = Math.min(10, blockNumber + 1)
+          const blocks = await Promise.all(
+            Array.from({ length: count }, (_, i) => {
+              const blockNum = Math.max(0, blockNumber - i)
+              return rpcCall<any>('eth_getBlockByNumber', [`0x${blockNum.toString(16)}`, false])
+                .then(block => {
+                  if (!block) return null
+                  try {
+                    return {
+                      number: typeof block.number === 'number' ? block.number : parseInt(block.number, 16),
+                      timestamp: typeof block.timestamp === 'number' ? block.timestamp : parseInt(block.timestamp, 16),
+                      transactions: Array.isArray(block.transactions) ? block.transactions : [],
+                      gasUsed: block.gasUsed ? BigInt(block.gasUsed) : undefined
+                    }
+                  } catch {
+                    return null
+                  }
+                })
+                .catch(() => null)
+            })
+          )
+          filteredBlocks = blocks.filter(Boolean) as BlockData[]
+          setRecentBlocks(filteredBlocks)
+        }
 
         // Calculate stats
         if (filteredBlocks.length > 1) {
@@ -170,8 +207,32 @@ export default function NetworkPage() {
     }
 
     fetchData()
-    const interval = setInterval(fetchData, 5000)
+    const interval = setInterval(fetchData, 15000)
     return () => clearInterval(interval)
+  }, [])
+
+  // Countdown timer for testnet launch
+  useEffect(() => {
+    const calculateCountdown = () => {
+      // Target date: March 27, 2026, 00:00:00 UTC
+      const launchDate = new Date('2026-03-27T00:00:00Z').getTime()
+      const now = new Date().getTime()
+      const diff = launchDate - now
+
+      if (diff <= 0) {
+        setCountdown({ days: 0, hours: 0, minutes: 0, seconds: 0 })
+      } else {
+        const days = Math.floor(diff / (1000 * 60 * 60 * 24))
+        const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60))
+        const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60))
+        const seconds = Math.floor((diff % (1000 * 60)) / 1000)
+        setCountdown({ days, hours, minutes, seconds })
+      }
+    }
+
+    calculateCountdown()
+    const timer = setInterval(calculateCountdown, 1000)
+    return () => clearInterval(timer)
   }, [])
 
   return (
@@ -203,6 +264,24 @@ export default function NetworkPage() {
             <p className="text-xl text-text-secondary font-body fade-in-delay-2">
               {t('subtitle')}
             </p>
+
+            {/* Testnet Launch Countdown */}
+            <div className="mt-12 mb-6 fade-in-delay-3">
+              <div className="inline-block px-6 py-4 rounded-lg border border-accent-cyan/50 bg-accent-cyan/10 backdrop-blur-sm">
+                <p className="text-sm text-accent-cyan font-display uppercase tracking-widest mb-4">
+                  ⏱️ Testnet Launch Countdown
+                </p>
+                <div className="grid grid-cols-4 gap-4">
+                  <CountdownUnit value={countdown.days} label="Days" />
+                  <CountdownUnit value={countdown.hours} label="Hours" />
+                  <CountdownUnit value={countdown.minutes} label="Minutes" />
+                  <CountdownUnit value={countdown.seconds} label="Seconds" />
+                </div>
+                <p className="text-xs text-accent-cyan/70 mt-4">
+                  Launching on March 27, 2026
+                </p>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -387,19 +466,22 @@ export default function NetworkPage() {
             </h2>
             <div className="bg-bg-elevated rounded-xl p-8 border border-text-muted/10 hover:border-accent-cyan/30 transition-all duration-500 shadow-glow-sm hover:shadow-glow-md noise-texture">
               <div className="grid md:grid-cols-2 gap-6">
-                <InfoRow label={t('nodeInfo.runtime')} value={nodeInfo.runtime} />
-                <InfoRow label={t('nodeInfo.version')} value={nodeInfo.version} />
-                <InfoRow
+                {nodeInfo.runtime && <InfoRow label={t('nodeInfo.runtime')} value={nodeInfo.runtime} />}
+                {nodeInfo.version && <InfoRow label={t('nodeInfo.version')} value={nodeInfo.version} />}
+                {nodeInfo.clientVersion && <InfoRow label="Client" value={nodeInfo.clientVersion} />}
+                {nodeInfo.chainId && <InfoRow label="Chain ID" value={nodeInfo.chainId.toString()} />}
+                {nodeInfo.blockHeight && <InfoRow label={t('blockHeight')} value={parseInt(nodeInfo.blockHeight, 16).toString()} />}
+                {nodeInfo.startTime && <InfoRow
                   label={t('nodeInfo.startTime')}
                   value={new Date(nodeInfo.startTime).toLocaleString('zh-CN')}
-                />
-                <InfoRow
+                />}
+                {nodeInfo.uptime && <InfoRow
                   label={t('nodeInfo.uptime')}
-                  value={formatUptime(nodeInfo.uptime)}
-                />
-                <InfoRow label={t('nodeInfo.rpcEndpoint')} value={nodeInfo.endpoints.rpc} mono />
-                <InfoRow label={t('nodeInfo.wsEndpoint')} value={nodeInfo.endpoints.ws} mono />
-                <InfoRow label={t('nodeInfo.p2pEndpoint')} value={nodeInfo.endpoints.p2p} mono />
+                  value={formatUptime(nodeInfo.uptime * 1000)}
+                />}
+                {nodeInfo.endpoints?.rpc && <InfoRow label={t('nodeInfo.rpcEndpoint')} value={nodeInfo.endpoints.rpc} mono />}
+                {nodeInfo.endpoints?.ws && <InfoRow label={t('nodeInfo.wsEndpoint')} value={nodeInfo.endpoints.ws} mono />}
+                {nodeInfo.endpoints?.p2p && <InfoRow label={t('nodeInfo.p2pEndpoint')} value={nodeInfo.endpoints.p2p} mono />}
               </div>
             </div>
           </section>
@@ -482,7 +564,7 @@ export default function NetworkPage() {
                 {t('recentBlocks.title')}
               </h2>
               <a
-                href="http://localhost:3000"
+                href="https://explorer.clawchain.io"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="group inline-flex items-center gap-2 font-display text-accent-cyan hover:text-accent-blue transition-colors"
@@ -522,7 +604,7 @@ export default function NetworkPage() {
                       <tr key={block.number} className="group hover:bg-accent-cyan/5 transition-colors duration-300">
                         <td className="px-6 py-4 font-display text-sm">
                           <a
-                            href={`http://localhost:3000/block/${block.number}`}
+                            href={`https://explorer.clawchain.io/block/${block.number}`}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="text-accent-cyan hover:text-accent-blue transition-colors"
@@ -562,7 +644,7 @@ export default function NetworkPage() {
                 <QuickLink
                   title={t('quickLinks.explorer.title')}
                   description={t('quickLinks.explorer.description')}
-                  href="http://localhost:3000"
+                  href="https://explorer.clawchain.io"
                   external
                 />
                 <QuickLink
@@ -580,15 +662,7 @@ export default function NetworkPage() {
           </div>
         </section>
 
-        {/* Loading State */}
-        {isLoading && (
-          <div className="fixed inset-0 bg-bg-primary/80 backdrop-blur-sm z-50 flex items-center justify-center">
-            <div className="text-center">
-              <div className="w-16 h-16 border-4 border-accent-cyan/20 border-t-accent-cyan rounded-full animate-spin mx-auto mb-4" />
-              <p className="font-display text-text-secondary">加载网络数据...</p>
-            </div>
-          </div>
-        )}
+        {/* Loading state removed - silent background loading */}
       </div>
     </div>
   )
@@ -670,11 +744,11 @@ function StatMetricCard({
         <h3 className="text-xs font-display font-semibold text-text-muted uppercase tracking-wider mb-3">
           {title}
         </h3>
-        <div className="flex items-baseline gap-2">
+        <div className="flex flex-col items-start gap-1">
           <p className="text-2xl md:text-3xl font-display font-bold text-accent-cyan group-hover:glow-text transition-all duration-500">
             {value}
           </p>
-          {unit && <p className="text-xs font-body text-text-secondary">{unit}</p>}
+          {unit && <p className="text-xs font-body text-text-secondary/70">{unit}</p>}
         </div>
         {status && (
           <div className={`text-xs font-display mt-2 ${statusColor}`}>
@@ -729,6 +803,20 @@ function QuickLink({
       {/* Bottom Border Accent */}
       <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-accent-cyan to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
     </Component>
+  )
+}
+
+function CountdownUnit({ value, label }: { value: number; label: string }) {
+  const formattedValue = value.toString().padStart(2, '0')
+  return (
+    <div className="flex flex-col items-center">
+      <div className="bg-gradient-cyan/20 border border-accent-cyan/30 rounded-lg px-3 py-2 mb-2">
+        <span className="text-2xl font-display font-bold text-accent-cyan">
+          {formattedValue}
+        </span>
+      </div>
+      <span className="text-xs font-body text-text-secondary">{label}</span>
+    </div>
   )
 }
 

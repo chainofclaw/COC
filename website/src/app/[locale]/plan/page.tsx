@@ -1,9 +1,14 @@
 'use client'
 
-import { useTranslations } from 'next-intl'
+import { useTranslations, useLocale } from 'next-intl'
 
 export default function PlanPage() {
   const t = useTranslations('about')
+  const locale = useLocale()
+
+  // Determine whitepaper filename based on locale
+  const whitepaperFile = locale === 'zh' ? 'COC_whitepaper.zh.md' : 'COC_whitepaper.en.md'
+  const downloadLabel = locale === 'zh' ? '下载白皮书 (Markdown)' : 'Download Whitepaper (Markdown)'
 
   return (
     <div className="relative">
@@ -33,6 +38,21 @@ export default function PlanPage() {
             <p className="text-xl text-text-secondary max-w-3xl mx-auto font-body fade-in-delay-2">
               {t('subtitle')}
             </p>
+
+            <div className="flex flex-col sm:flex-row gap-4 justify-center mt-8 fade-in-delay-3">
+              <a
+                href={`/downloads/${whitepaperFile}`}
+                download={whitepaperFile}
+                className="group inline-flex items-center gap-3 px-8 py-4 rounded-lg font-display font-semibold border-2 border-accent-cyan/50 bg-accent-cyan/5 hover:bg-accent-cyan/10 hover:border-accent-cyan transition-all hover:shadow-glow-md"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                <span className="text-accent-cyan group-hover:text-accent-cyan/90">
+                  {downloadLabel}
+                </span>
+              </a>
+            </div>
           </div>
         </div>
 

@@ -42,7 +42,7 @@ export default function TestnetPage() {
                 {t('joinNow')}
               </Link>
               <a
-                href="https://faucet.chainofclaw.com"
+                href="https://faucet.clawchain.io"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="px-8 py-3 rounded-lg border border-accent-cyan/30 text-accent-cyan font-display font-semibold hover:bg-accent-cyan/10 transition-all"
@@ -68,8 +68,8 @@ export default function TestnetPage() {
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             <InfoCard label={t('chainId')} value="18780" />
-            <InfoCard label={t('rpcEndpoint')} value="prowl-rpc.chainofclaw.com:18780" mono />
-            <InfoCard label={t('wsEndpoint')} value="prowl-rpc.chainofclaw.com:18781" mono />
+            <InfoCard label={t('rpcEndpoint')} value="rpc.clawchain.io:18780" mono />
+            <InfoCard label={t('wsEndpoint')} value="rpc.clawchain.io:18781" mono />
             <InfoCard label={t('blockTime')} value="3s" />
             <InfoCard label={t('consensus')} value="BFT + PoSe" />
             <InfoCard label={t('tokenSymbol')} value="COC" />
@@ -118,10 +118,10 @@ export default function TestnetPage() {
 
               <div className="bg-bg-primary/50 rounded-lg p-6 text-left font-mono text-sm text-text-secondary space-y-2">
                 <p><span className="text-accent-cyan">Network Name:</span> COC Prowl Testnet</p>
-                <p><span className="text-accent-cyan">RPC URL:</span> http://prowl-rpc.chainofclaw.com:18780</p>
+                <p><span className="text-accent-cyan">RPC URL:</span> http://rpc.clawchain.io:18780</p>
                 <p><span className="text-accent-cyan">Chain ID:</span> 18780</p>
                 <p><span className="text-accent-cyan">Currency Symbol:</span> COC</p>
-                <p><span className="text-accent-cyan">Explorer:</span> https://explorer.chainofclaw.com</p>
+                <p><span className="text-accent-cyan">Explorer:</span> https://explorer.clawchain.io</p>
               </div>
             </div>
           </div>
@@ -132,13 +132,13 @@ export default function TestnetPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
             <QuickLink
               title={t('links.explorer')}
-              href="https://explorer.chainofclaw.com"
+              href="https://explorer.clawchain.io"
               external
               icon="search"
             />
             <QuickLink
               title={t('links.faucet')}
-              href="https://faucet.chainofclaw.com"
+              href="https://faucet.clawchain.io"
               external
               icon="droplet"
             />
@@ -149,7 +149,7 @@ export default function TestnetPage() {
             />
             <QuickLink
               title={t('links.github')}
-              href="https://github.com/chainofclaw/coc"
+              href="https://github.com/chainofclaw/COC"
               external
               icon="code"
             />

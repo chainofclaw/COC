@@ -217,7 +217,7 @@ export default function DocsPage() {
                 {t('implementationStatus.detailsNote')}
               </p>
               <a
-                href="https://github.com/openclaw/openclaw"
+                href="https://github.com/chainofclaw/COC"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="group inline-flex items-center gap-3 px-8 py-4 rounded-lg font-display font-semibold border-2 border-accent-cyan/50 bg-accent-cyan/5 hover:bg-accent-cyan/10 hover:border-accent-cyan transition-all hover:shadow-glow-md"
@@ -253,7 +253,7 @@ export default function DocsPage() {
               title={t('tools.explorer.title')}
               description={t('tools.explorer.description')}
               features={t.raw('tools.explorer.features') as string[]}
-              link="http://localhost:3000"
+              link="https://explorer.clawchain.io"
               openToolText={t('tools.openTool')}
               delay="0.1"
             />

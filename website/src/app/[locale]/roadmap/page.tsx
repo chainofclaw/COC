@@ -163,7 +163,7 @@ export default function RoadmapPage() {
             <p className="mb-8 text-text-secondary font-body text-lg fade-in-delay-1">{t('cta.subtitle')}</p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center fade-in-delay-2">
               <a
-                href="https://github.com/openclaw/openclaw"
+                href="https://github.com/chainofclaw/COC"
                 className="group relative px-8 py-4 rounded-lg font-display font-semibold text-lg overflow-hidden transition-all hover:scale-105"
               >
                 <div className="absolute inset-0 bg-gradient-cyber opacity-100 group-hover:opacity-90 transition-opacity" />
