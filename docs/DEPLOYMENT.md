@@ -87,7 +87,13 @@ COC_RPC_URL=http://127.0.0.1:18780
 ```
 NEXT_PUBLIC_RPC_URL=https://clawchain.io/api/rpc
 NEXT_PUBLIC_WS_URL=wss://clawchain.io/api/ws
+COC_RPC_URL=http://127.0.0.1:18780
 ```
+
+**说明**:
+- `NEXT_PUBLIC_RPC_URL` 和 `NEXT_PUBLIC_WS_URL` 用于客户端浏览器访问（公网 HTTPS）
+- `COC_RPC_URL` 用于服务端 SSR 渲染时调用 RPC（内部 localhost）
+- 分离的 RPC 端点确保服务端渲染和客户端交互都能正常工作
 
 ### IPFS Demo
 ```
@@ -470,6 +476,7 @@ dig _acme-challenge.clawchain.io TXT
 | 2026-03-15 | Faucet 首次部署 (端口 3003) + 私钥配置 | ✅ 完成 |
 | 2026-03-15 | IPFS/Faucet Nginx 配置 + SSL 证书启用 | ✅ 完成 |
 | 2026-03-15 | 网站域名更新 (explorer/ipfs 子域名更新) | ✅ 完成 |
+| 2026-03-15 | Explorer SSR RPC 修复 (使用 COC_RPC_URL 环境变量) | ✅ 完成 |
 
 ---
 
