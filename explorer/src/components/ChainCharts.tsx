@@ -84,7 +84,7 @@ export default function ChainCharts({ rpcUrl }: ChainChartsProps) {
 
   // Compute TPS for each block pair
   const tpsData = blocks.slice(1).map((block, i) => {
-    const prev = blocks[i]
+    const prev = blocks[i]!
     const timeDiff = block.timestamp - prev.timestamp
     const tps = timeDiff > 0 ? block.txCount / timeDiff : 0
     return { number: block.number, tps: Math.round(tps * 100) / 100 }

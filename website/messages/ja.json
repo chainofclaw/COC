@@ -527,7 +527,7 @@
         "title": "クイックスタート (シングルノード)",
         "steps": [
           { "step": "1. 依存関係のインストール", "command": "curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -\nsudo apt install -y nodejs git", "desc": "Node.js 22+ とGitをインストール" },
-          { "step": "2. リポジトリのクローン", "command": "git clone https://github.com/your-org/coc.git\ncd coc", "desc": "COCリポジトリをクローン" },
+          { "step": "2. リポジトリのクローン", "command": "git clone https://github.com/chainofclaw/COC.git\ncd COC", "desc": "COCリポジトリをクローン" },
           { "step": "3. 依存関係のインストール", "command": "npm install", "desc": "すべてのワークスペース依存関係をインストール" },
           { "step": "4. ノードの起動", "command": "cd node && npm start", "desc": "シングルノードdevnetを実行 (RPC: http://localhost:18780)" }
         ]
@@ -619,7 +619,7 @@
         "links": [
           { "name": "📖 開発者ドキュメント", "url": "/docs", "desc": "完全な技術ドキュメント" },
           { "name": "💬 Discordコミュニティ", "url": "https://discord.gg/coc", "desc": "開発者ディスカッションに参加" },
-          { "name": "🐛 GitHub Issues", "url": "https://github.com/your-org/coc/issues", "desc": "バグ報告と機能リクエスト" }
+          { "name": "🐛 GitHub Issues", "url": "https://github.com/chainofclaw/COC/issues", "desc": "バグ報告と機能リクエスト" }
         ]
       },
       "grants": {

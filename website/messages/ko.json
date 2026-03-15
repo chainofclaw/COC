@@ -527,7 +527,7 @@
         "title": "빠른 시작 (단일 노드)",
         "steps": [
           { "step": "1. 종속성 설치", "command": "curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -\nsudo apt install -y nodejs git", "desc": "Node.js 22+ 및 Git 설치" },
-          { "step": "2. 저장소 복제", "command": "git clone https://github.com/your-org/coc.git\ncd coc", "desc": "COC 저장소 복제" },
+          { "step": "2. 저장소 복제", "command": "git clone https://github.com/chainofclaw/COC.git\ncd COC", "desc": "COC 저장소 복제" },
           { "step": "3. 종속성 설치", "command": "npm install", "desc": "모든 워크스페이스 종속성 설치" },
           { "step": "4. 노드 시작", "command": "cd node && npm start", "desc": "단일 노드 devnet 실행 (RPC: http://localhost:18780)" }
         ]
@@ -619,7 +619,7 @@
         "links": [
           { "name": "📖 개발자 문서", "url": "/docs", "desc": "완전한 기술 문서" },
           { "name": "💬 Discord 커뮤니티", "url": "https://discord.gg/coc", "desc": "개발자 토론 참여" },
-          { "name": "🐛 GitHub Issues", "url": "https://github.com/your-org/coc/issues", "desc": "버그 보고 및 기능 요청" }
+          { "name": "🐛 GitHub Issues", "url": "https://github.com/chainofclaw/COC/issues", "desc": "버그 보고 및 기능 요청" }
         ]
       },
       "grants": {

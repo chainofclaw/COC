@@ -258,7 +258,7 @@
         "title": "快速开始 (单节点)",
         "steps": [
           { "step": "1. 安装依赖", "command": "curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -\nsudo apt install -y nodejs git", "desc": "安装 Node.js 22+ 和 Git" },
-          { "step": "2. 克隆仓库", "command": "git clone https://github.com/your-org/coc.git\ncd coc", "desc": "克隆 COC 仓库" },
+          { "step": "2. 克隆仓库", "command": "git clone https://github.com/chainofclaw/COC.git\ncd COC", "desc": "克隆 COC 仓库" },
           { "step": "3. 安装依赖", "command": "npm install", "desc": "安装所有 workspace 依赖" },
           { "step": "4. 启动节点", "command": "cd node && npm start", "desc": "运行单节点 devnet (RPC: http://localhost:18780)" }
         ]
@@ -350,7 +350,7 @@
         "links": [
           { "name": "📖 开发者文档", "url": "/docs", "desc": "完整的技术文档" },
           { "name": "💬 Discord 社区", "url": "https://discord.gg/coc", "desc": "加入开发者讨论" },
-          { "name": "🐛 GitHub Issues", "url": "https://github.com/your-org/coc/issues", "desc": "报告 bug 和功能请求" }
+          { "name": "🐛 GitHub Issues", "url": "https://github.com/chainofclaw/COC/issues", "desc": "报告 bug 和功能请求" }
         ]
       },
       "grants": {
@@ -480,7 +480,7 @@
   },
   "network": {
     "title": "COC网络状态",
-    "subtitle": "实时监控区块链网络健康状况",
+    "subtitle": "测试网即将上线 — 实时监控区块链网络健康状况",
     "realTimeStats": "实时统计",
     "blockHeight": "区块高度",
     "avgBlockTime": "平均出块时间",

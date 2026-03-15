@@ -4,9 +4,10 @@ import { useWalletContext } from '@/components/shared/WalletProvider'
 import { useTranslations } from 'next-intl'
 
 export function WalletConnect() {
-  const { address, isConnected, faction, connectionState, error, connectMetaMask, connectOpenClaw, disconnect } = useWalletContext()
+  const { address, isConnected, faction, disconnect } = useWalletContext()
   const t = useTranslations('identity')
 
+  // Only show wallet info when connected, hide connection buttons
   if (isConnected && address) {
     return (
       <div className="flex items-center gap-3">
@@ -29,23 +30,6 @@ export function WalletConnect() {
     )
   }
 
-  return (
-    <div className="flex items-center gap-2">
-      <button
-        onClick={connectMetaMask}
-        disabled={connectionState === 'connecting'}
-        className="px-4 py-2 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20 transition-all font-display text-sm disabled:opacity-50"
-      >
-        {connectionState === 'connecting' ? '...' : t('connectHuman')}
-      </button>
-      <button
-        onClick={connectOpenClaw}
-        disabled={connectionState === 'connecting'}
-        className="px-4 py-2 rounded-lg bg-purple-500/10 border border-purple-500/30 text-purple-400 hover:bg-purple-500/20 transition-all font-display text-sm disabled:opacity-50"
-      >
-        {connectionState === 'connecting' ? '...' : t('connectClaw')}
-      </button>
-      {error && <span className="text-xs text-red-400">{error}</span>}
-    </div>
-  )
+  // Connection buttons removed - return empty
+  return null
 }
