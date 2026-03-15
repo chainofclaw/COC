@@ -3,7 +3,7 @@
 **Date / 日期**: 2026-03-15
 **Planning Window / 规划窗口**: 2026-03-15 to 2026-06-13
 **Planning Baseline / 规划基线**: Repository assessment, local gate execution, and current market reality as of 2026-03-15
-**Last Updated / 最后更新**: 2026-03-15 (rev 2)
+**Last Updated / 最后更新**: 2026-03-15 (rev 3)
 
 ## Table of Contents / 目录
 
@@ -318,4 +318,5 @@ The following are explicitly excluded within the Day-90 window (see [Section 3](
 |---|---|---|
 | 1 | 2026-03-15 | Initial 90-day roadmap based on repository assessment |
 | 2 | 2026-03-15 | Added EVM compatibility baseline (Cancun/EIP-4844, RPC semantic compat), risk register, cross-references, TOC; fixed stale `economics.md` reference; refined P2 blob/type-3 scope description |
+| 3 | 2026-03-15 | Added OpenClaw integration workstream (Section 5.5): COC docs alignment, 6 new CLI Skills plan, community promotion timeline; added OpenClaw items to P0/P1 checklists, metrics (Section 8.3), and risk register |
 
