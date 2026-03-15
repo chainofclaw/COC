@@ -477,6 +477,9 @@ dig _acme-challenge.clawchain.io TXT
 | 2026-03-15 | IPFS/Faucet Nginx 配置 + SSL 证书启用 | ✅ 完成 |
 | 2026-03-15 | 网站域名更新 (explorer/ipfs 子域名更新) | ✅ 完成 |
 | 2026-03-15 | Explorer SSR RPC 修复 (使用 COC_RPC_URL 环境变量) | ✅ 完成 |
+| 2026-03-15 | **Nginx 配置修复** — clawchain.io 代理到 3001 (Website) 而非 3000 | ✅ 完成 |
+| 2026-03-15 | **IPFS Demo 端口修复** — 从 3001 改为 3002，避免与 Website 冲突 | ✅ 完成 |
+| 2026-03-15 | **Faucet 环境变量配置** — 通过 ecosystem.config.cjs 设置 COC_FAUCET_PRIVATE_KEY | ✅ 完成 |
 
 ---
 
