@@ -1,11 +1,14 @@
 import { JsonRpcProvider } from 'ethers'
 
-// COC node RPC endpoints
+// Public RPC endpoints (for client-side and display)
 export const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL || 'http://127.0.0.1:18780'
 export const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://127.0.0.1:18781'
 
-// 创建 ethers.js Provider
-export const provider = new JsonRpcProvider(RPC_URL, {
+// Server-side RPC endpoint (for SSR and server operations)
+const SERVER_RPC_URL = process.env.COC_RPC_URL || 'http://127.0.0.1:18780'
+
+// 创建 ethers.js Provider - 使用服务器端地址进行 SSR 调用
+export const provider = new JsonRpcProvider(SERVER_RPC_URL, {
   chainId: 18780, // COC chainId
   name: 'ChainOfClaw'
 })
