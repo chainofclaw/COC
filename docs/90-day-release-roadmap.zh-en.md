@@ -45,7 +45,7 @@
 | EVM 兼容性 | 已完成 Cancun/EIP-4844 实质兼容（blob gas 计费、EIP-4788 beacon root 行为、Cancun opcode），RPC 语义兼容（pending nonce、safe/finalized 状态、debug block tags），ethers/viem/Hardhat 工具链验证通过。 | Cancun/EIP-4844 substantive compatibility is landed (blob gas accounting, EIP-4788 beacon root behavior, Cancun opcodes), RPC semantic compatibility (pending nonce, safe/finalized state, debug block tags), and ethers/viem/Hardhat toolchain verification passes. |
 | 核心安全 | `relay-witness-security` 与 `bft-slashing.integration` 本地通过，说明关键安全闭环基本存在。 | `relay-witness-security` and `bft-slashing.integration` pass locally, indicating key security loops are materially in place. |
 | 质量门禁 | `scripts/quality-gate.sh` 本地未通过，当前观察到 2 个性能基准失败。 | `scripts/quality-gate.sh` does not pass locally; 2 performance benchmark tests currently fail. |
-| 联网冒烟 | `scripts/verify-devnet.sh 3` 本地失败，暴露出 devnet 端口规划和启动可靠性问题。 | `scripts/verify-devnet.sh 3` fails locally, exposing devnet port-planning and startup reliability issues. |
+| 联网冒烟 | `scripts/verify-devnet.sh 3` — 已修复：端口规划重构（P2P/Wire/WS/IPFS 各间隔 10，消除冲突），启动就绪轮询替代固定 sleep，修复 wallet CLI 路径和命令，添加端口占用预检和进程存活检测。 | `scripts/verify-devnet.sh 3` — Fixed: port layout restructured (P2P/Wire/WS/IPFS bases 10 apart, no collisions), startup readiness polling replaces fixed sleep, wallet CLI path and command corrected, port pre-check and process liveness detection added. |
 | 架构定位 | 文档同时描述为独立 PoSe 区块链与 L1 结算 + L2 Rollup 架构，定位冲突。 | The docs simultaneously describe COC as an independent PoSe chain and as an L1 settlement + L2 rollup architecture; positioning is conflicted. |
 | L1/L2 集成 | 运行时文档仍明确写着”缺少生产级 L1/L2 网络完整集成”。 | Runtime status still explicitly says “full integration with a production L1/L2 network” is remaining work. |
 | OpenClaw 集成 | `extensions/coc-nodeops` 插件已实现基本 CLI（init/start/stop/status/list/remove/config/logs），5 种节点预设（validator/fullnode/archive/gateway/dev），但尚未发布到 OpenClaw 插件市场，缺少 PoSe 监控 skill、链统计 skill 和运维自动化 skill。社区渠道（Discord/论坛）尚未正式开放。 | `extensions/coc-nodeops` plugin implements basic CLI commands (init/start/stop/status/list/remove/config/logs) with 5 node presets (validator/fullnode/archive/gateway/dev), but is not yet published to the OpenClaw plugin marketplace. Missing PoSe monitoring skill, chain stats skill, and ops automation skills. Community channels (Discord/forum) not yet formally launched. |
@@ -181,6 +181,47 @@ Current `coc-nodeops` plugin (v0.1) CLI commands: `init`, `start`, `stop`, `rest
 | 同步发布公开测试网参与指南到 Discord、GitHub、OpenClaw 官方渠道。 | Simultaneously publish public testnet participation guide to Discord, GitHub, and OpenClaw official channels. | Day 84 |
 | 启动社群贡献者赏金计划（参照现有 CONTRIBUTING.md 的 $50-$5000 梯度）。 | Launch community contributor bounty program (following the existing CONTRIBUTING.md $50-$5000 tiers). | Day 30 |
 
+### 5.6 里程碑交付物 / Milestone Deliverables
+
+| 里程碑 | 中文交付物 | English Deliverables |
+|---|---|---|
+| Day 14 | 定位冻结包：官网文案更新、README/白皮书摘要统一、公开 FAQ、明确不做清单。 | Positioning freeze package: updated website copy, aligned README/whitepaper summary, public FAQ, explicit non-goals list. |
+| Day 21 | 工程转绿包：`quality-gate` 通过记录、3/5 节点 devnet 连续成功记录、端口/启动问题关闭列表、性能基线报告。 | Engineering-green package: passing `quality-gate` record, repeated successful 3/5-node devnet runs, closed startup/port issue list, performance baseline report. |
+| Day 45 | staging 集成包：PoSe 合约部署记录、agent/relayer 配置、密钥托管 ADR、升级/回滚/备份恢复演练记录。 | Staging integration package: PoSe deployment records, agent/relayer configs, key-custody ADR, upgrade/rollback/backup-restore drill records. |
+| Day 60 | 邀请制 beta 包：运营方名单、节点接入清单、值守轮班表、监控看板、已知问题列表。 | Invited-beta package: operator roster, node onboarding checklist, on-call rotation, monitoring dashboards, known-issues list. |
+| Day 84 | 公开测试网候选包：7 天 soak 报告、安全例外清单、社区支持材料、发布说明草案。 | Public-testnet candidate package: 7-day soak report, security exception log, community support materials, draft release notes. |
+| Day 90 | 决策包：Go/No-Go 纪要、签字页、最终发布说明或延期说明、下一窗口行动项。 | Decision package: Go/No-Go memo, sign-off page, final launch notes or slip notice, and next-window action items. |
+
+### 5.7 关键依赖与降级顺序 / Critical Dependencies and Descope Order
+
+#### 5.7.1 关键依赖 / Critical Dependencies
+
+| 输出 | 依赖项 | 若依赖滑移 / If Dependency Slips |
+|---|---|---|
+| Day 21 工程转绿 | Devnet 端口修复、共识异常修复、性能门禁稳定 | 若 Day 21 前仍为红灯，暂停公开宣发，所有资源转入稳定性修复。 |
+| Day 45 staging 集成 | 合约部署权限、测试网 RPC、最小密钥托管方案、PoSe runtime 配置 | 若外部链路不可用，先用本地 staging 模拟链验证逻辑，但不得把它当成 Day 45 全完成。 |
+| Day 60 邀请制 beta | 3/5 节点冒烟稳定、24h 稳定性通过、值守人员到位、文档齐备 | 若 beta 无法按时启动，自动取消 Day 90 公开测试网承诺。 |
+| Day 84 公开测试网候选 | 7 天 soak、社区支持面、faucet/explorer/文档、上线联系人 | 若 Day 84 未形成候选包，Day 90 只能做 Go/No-Go 复盘，不做正式上线。 |
+
+#### 5.7.2 范围收缩顺序 / Descope Order
+
+| 顺序 | 中文 | English |
+|---|---|---|
+| 1 | 先砍外围传播项，而不是砍核心稳定性工作。 | Cut peripheral promotion work before cutting core stability work. |
+| 2 | 先砍桥接、额外生态接入、非关键 demo，不砍 `quality-gate`、devnet、staging、beta。 | Cut bridge work, extra ecosystem integrations, and non-critical demos before touching `quality-gate`, devnet, staging, or beta. |
+| 3 | `coc-nodeops` v0.2 的 6 个新 Skills 若延期，可先缩到 3 个核心命令：`pose-status`、`health`、`upgrade`。 | If the 6 new `coc-nodeops` v0.2 Skills slip, reduce to 3 core commands first: `pose-status`, `health`, and `upgrade`. |
+| 4 | Day 90 宁可延迟公开测试网，也不应带着红色 P0 门禁上线。 | On Day 90, it is better to delay the public testnet than launch with red P0 gates. |
+
+### 5.8 执行治理节奏 / Execution Governance Cadence
+
+| 节奏 | 中文要求 | English Requirement |
+|---|---|---|
+| 每日核心站会 | Core Node、PoSe、SRE、QA 每日 15 分钟，同步 blocker、红灯项、当天提交目标。 | Core Node, PoSe, SRE, and QA run a 15-minute daily sync for blockers, red items, and day goals. |
+| 每周发布评审 | 每周一次 60 分钟，更新 P0/P1/P2 状态、门禁、风险、是否需要降级。 | Weekly 60-minute release review to update P0/P1/P2 status, gates, risks, and descoping decisions. |
+| 里程碑评审 | Day 14、21、45、60、84、90 必须形成书面纪要和 owner 签字。 | Day 14, 21, 45, 60, 84, and 90 reviews must produce written minutes and owner sign-offs. |
+| 故障复盘 | 任意 P0 事故在 24 小时内完成初版 RCA，72 小时内完成修复计划。 | Any P0 incident requires an initial RCA within 24 hours and a remediation plan within 72 hours. |
+| 状态分级 | 绿：按计划；黄：滑移 < 7 天；红：滑移 >= 7 天或阻断 Day 90。 | Status scoring: Green = on plan; Yellow = slip < 7 days; Red = slip >= 7 days or blocks Day 90. |
+
 ## 6. P0 / P1 / P2 优先级清单 / Priority Checklist
 
 ### 6.1 P0: Day 90 前必须完成 / Must Be Done Before Day 90
@@ -279,15 +320,23 @@ Current `coc-nodeops` plugin (v0.1) CLI commands: `init`, `start`, `stop`, `rest
 
 ## 9. 风险登记 / Risk Register
 
-| 风险 | 影响 | 缓解措施 | Risk | Impact | Mitigation |
+| 风险 / Risk | 触发信号 / Trigger | 影响 / Impact | 负责人 / Owner | 缓解措施 / Mitigation | 降级方案 / Fallback |
 |---|---|---|---|---|---|
-| `quality-gate` 性能基准噪声过大，无法在 Day 21 前稳定转绿 | Phase 1 退出条件无法满足，整体进度右移 | 拆出独立 perf gate，核心门禁只保留正确性测试 | Quality-gate perf benchmarks too noisy to stabilize by Day 21 | Phase 1 exit criteria unmet, entire schedule shifts right | Split a dedicated perf gate; keep only correctness tests in the core gate |
-| 多节点 devnet 启动可靠性持续不稳定 | 无法进入邀请制 beta | 优先投入 Week 2 的端口/启动修复；设 3 次连续成功为门槛 | Multi-node devnet startup remains unreliable | Cannot enter invited beta | Prioritize Week 2 port/startup fixes; require 3 consecutive successful starts as threshold |
-| L1/L2 staging 链路因外部依赖（测试网 RPC、合约部署权限）延期 | Day 45 staging 集成目标滑移 | 准备本地 Hardhat/Anvil 模拟链作为后备 | L1/L2 staging path delayed by external dependencies (testnet RPC, contract deploy permissions) | Day 45 staging integration slips | Prepare local Hardhat/Anvil mock chain as fallback |
-| 独立运营方招募不足（少于 3 家） | 邀请制 beta 缺乏多样性验证 | 内部运行 3+ 地理分布节点作为最低覆盖 | Fewer than 3 independent operators recruited | Invited beta lacks diversity validation | Run 3+ geographically distributed internal nodes as minimum coverage |
-| 经济参数设计延期导致测试网激励规则缺失 | 公开测试网无法吸引外部参与 | 使用固定测试激励（faucet + 固定 epoch 奖励）作为 v0 兜底 | Economics design delay causes missing testnet incentive rules | Public testnet cannot attract external participants | Use fixed test incentives (faucet + flat epoch rewards) as v0 fallback |
-| OpenClaw 插件 SDK 接口不稳定或文档不足 | Skills 开发受阻，v0.2 发布延期 | 优先锁定 `api.registerCli()` 接口；必要时直接用 `commander` 独立发布 CLI 工具 | OpenClaw plugin SDK API unstable or poorly documented | Skills development blocked, v0.2 release slips | Lock `api.registerCli()` interface first; if needed, publish CLI tool independently via `commander` |
-| Discord 社群冷启动缓慢（< 50 成员） | 公开测试网发布时缺乏社区支撑 | 通过 OpenClaw 主社群导流 + 赏金计划激励早期参与者 | Discord community cold-start slow (< 50 members) | Lacks community support when public testnet launches | Drive traffic from OpenClaw main community + incentivize early participants via bounty program |
+| `quality-gate` 性能基准噪声过大 / Quality-gate perf noise | Day 18 前仍无法稳定连续通过 3 次 | Day 21 工程转绿失败，Phase 1 右移 | QA Lead + Core Node Lead | 拆出独立 perf gate，核心门禁先只保留正确性测试 | 公开承认性能门禁转为观察项，Day 30 前只推进邀请制 beta，不承诺 Day 90 公测 |
+| 多节点 devnet 持续不稳定 / Multi-node devnet instability | 连续 3 次 3/5 节点冒烟仍失败 | 无法进入 beta 准备 | Core Node Lead | 集中修复端口、冷启动、wire/p2p 冲突；暂停外围工作 | 只保留单节点和 3 节点路径，公开测试网自动顺延 |
+| L1/L2 staging 链路延期 / L1-L2 staging delay | Day 35 前无真实 staging 可用环境 | Day 45 集成目标滑移 | PoSe Lead + Contracts Lead | 提前申请测试网资源和部署权限；保留本地 staging 作为逻辑验证 | Day 60 仅开 beta，不开公开测试网 |
+| 运营方招募不足 / Operator recruitment shortfall | Day 50 前独立运营方 < 3 | beta 多样性不足，验证价值下降 | Release Manager + Community Lead | 优先从现有 OpenClaw 社群与熟悉运营方定向邀请 | 用内部多地区节点兜底，但公开宣发保持保守 |
+| 经济参数冻结延期 / Economics freeze delay | Day 60 前测试网奖励规则仍未冻结 | 外部参与预期不清，公测吸引力不足 | Token/Economics Lead | 采用固定测试激励 v0，并明确非主网承诺 | 若仍未冻结，Day 90 只做 beta 扩容，不做公开测试网 |
+| OpenClaw SDK/插件接口不稳 / OpenClaw SDK instability | Day 35 前关键接口仍反复变化 | Skills v0.2 发布延期 | OpenClaw Lead | 提前锁定 `api.registerCli()` 接口和最小扩展面 | 将 Skills 缩到 3 个核心命令，必要时以独立 CLI 先发布 |
+| 社群冷启动缓慢 / Community cold start | Day 60 前 Discord 成员 < 50 且 AMA 未完成 | 公开测试网缺少用户入口和反馈面 | Community Lead + DevRel | 借力 OpenClaw 主社群导流，配合 bounty 与内容输出 | 保持邀请制 beta，推迟大范围公开注册 |
+
+### 9.1 风险处理规则 / Risk Handling Rules
+
+| 中文 | English |
+|---|---|
+| 任意红色 P0 风险存在超过 7 天，必须召开专项评审，不得默认继续按 Day 90 上线推进。 | Any red P0 risk that remains open for more than 7 days requires a dedicated review; the team must not assume Day-90 launch remains valid. |
+| 若同时存在 2 个及以上红色 P0 风险，自动触发公开测试网延期预案。 | If 2 or more red P0 risks exist simultaneously, automatically trigger the public-testnet slip plan. |
+| 所有延期必须输出书面说明：原因、影响范围、恢复计划、新日期。 | Every slip must produce a written notice with reason, impact scope, recovery plan, and new dates. |
 
 ## 10. 明确不做 / Explicit Non-Goals
 
@@ -319,4 +368,3 @@ The following are explicitly excluded within the Day-90 window (see [Section 3](
 | 1 | 2026-03-15 | Initial 90-day roadmap based on repository assessment |
 | 2 | 2026-03-15 | Added EVM compatibility baseline (Cancun/EIP-4844, RPC semantic compat), risk register, cross-references, TOC; fixed stale `economics.md` reference; refined P2 blob/type-3 scope description |
 | 3 | 2026-03-15 | Added OpenClaw integration workstream (Section 5.5): COC docs alignment, 6 new CLI Skills plan, community promotion timeline; added OpenClaw items to P0/P1 checklists, metrics (Section 8.3), and risk register |
-

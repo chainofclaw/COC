@@ -50,11 +50,11 @@ npm run deploy:governance:coc   # Deploy governance contracts to the default COC
 
 ### Run Devnet
 ```bash
-bash scripts/devnet-3.sh  # 3-node network
-bash scripts/devnet-5.sh  # 5-node network
-bash scripts/devnet-7.sh  # 7-node network
-bash scripts/stop-devnet.sh    # Stop devnet
-bash scripts/verify-devnet.sh  # Verify devnet status
+bash scripts/start-devnet.sh 3  # 3-node network
+bash scripts/start-devnet.sh 5  # 5-node network
+bash scripts/start-devnet.sh 7  # 7-node network
+bash scripts/stop-devnet.sh     # Stop devnet
+bash scripts/verify-devnet.sh   # Verify devnet status
 ```
 
 ### Blockchain Explorer
