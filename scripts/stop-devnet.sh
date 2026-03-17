@@ -15,6 +15,11 @@ for pidfile in "$RUN_DIR"/*.pid; do
   PID="$(cat "$pidfile")"
   if kill -0 "$PID" >/dev/null 2>&1; then
     kill "$PID" || true
+    # Wait for process to exit (max 10s)
+    for _ in $(seq 1 100); do
+      kill -0 "$PID" 2>/dev/null || break
+      sleep 0.1
+    done
     echo "stopped pid ${PID}"
   fi
   rm -f "$pidfile"
