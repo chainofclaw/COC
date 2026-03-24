@@ -51,17 +51,21 @@ export function activate(api: OpenClawPluginApi) {
       },
     },
     async execute(params: { full?: boolean }) {
-      const result = await scheduler.runBackup(params.full ?? false)
-      if (!result) {
-        return { success: true, message: "No changes detected, backup skipped" }
-      }
-      return {
-        success: true,
-        manifestCid: result.manifestCid,
-        fileCount: result.fileCount,
-        totalBytes: result.totalBytes,
-        backupType: result.backupType === 0 ? "full" : "incremental",
-        txHash: result.txHash,
+      try {
+        const result = await scheduler.runBackup(params.full ?? false)
+        if (!result) {
+          return { success: true, message: "No changes detected, backup skipped" }
+        }
+        return {
+          success: true,
+          manifestCid: result.manifestCid,
+          fileCount: result.fileCount,
+          totalBytes: result.totalBytes,
+          backupType: result.backupType === 0 ? "full" : "incremental",
+          txHash: result.txHash,
+        }
+      } catch (error) {
+        return { success: false, error: String(error) }
       }
     },
   })
@@ -92,6 +96,7 @@ export function activate(api: OpenClawPluginApi) {
         config.privateKey,
         false,
         logger,
+        soulClient,
       )
       return {
         success: true,
@@ -133,7 +138,11 @@ export function activate(api: OpenClawPluginApi) {
   if (config.backupOnSessionEnd) {
     api.registerHook?.("stop", async () => {
       logger.info("Session ending — running final backup...")
-      await scheduler.runBackup()
+      try {
+        await scheduler.runBackup()
+      } catch (error) {
+        logger.error(`Session-end backup failed: ${String(error)}`)
+      }
     })
   }
 

@@ -6,7 +6,8 @@ import type { IpfsClient } from "../ipfs-client.ts"
 import type { RecoveryResult, SnapshotManifest } from "../types.ts"
 import { resolveChainFromCid } from "./chain-resolver.ts"
 import { applyManifestChain } from "./downloader.ts"
-import { verifyManifestMerkleRoot, verifyRestoredFiles } from "./integrity-checker.ts"
+import { verifyManifestMerkleRoot, verifyRestoredFiles, verifyOnChainAnchor } from "./integrity-checker.ts"
+import { cidToBytes32 } from "../backup/anchor.ts"
 
 interface Logger {
   info(msg: string): void
@@ -25,6 +26,7 @@ export async function restoreFromManifestCid(
   privateKeyOrPassword: string,
   isPassword: boolean,
   logger: Logger,
+  soul?: SoulClient,
 ): Promise<RecoveryResult> {
   logger.info(`Starting recovery from manifest CID: ${manifestCid}`)
 
@@ -42,6 +44,38 @@ export async function restoreFromManifestCid(
       )
     }
     logger.info(`Manifest ${i}: Merkle root verified (${manifest.fileCount} files)`)
+  }
+
+  // 2b. Verify on-chain anchor if SoulClient available
+  if (soul) {
+    const latestManifest = chain[chain.length - 1]
+    try {
+      const agentId = await soul.getAgentIdForOwner()
+      const zeroId = "0x" + "0".repeat(64)
+      if (agentId !== zeroId) {
+        const onChainBackup = await soul.getLatestBackup(agentId)
+        const manifestCidBytes32 = cidToBytes32(manifestCid)
+        if (onChainBackup.manifestCid === manifestCidBytes32) {
+          const onChainValid = verifyOnChainAnchor(
+            latestManifest.merkleRoot,
+            onChainBackup.dataMerkleRoot,
+          )
+          if (!onChainValid) {
+            throw new Error(
+              "On-chain anchor verification failed: Merkle root mismatch between manifest and chain",
+            )
+          }
+          logger.info("On-chain anchor verified: Merkle root matches")
+        } else {
+          logger.warn("On-chain anchor check skipped: manifest CID does not match latest on-chain backup")
+        }
+      }
+    } catch (error) {
+      if (String(error).includes("anchor verification failed")) throw error
+      logger.warn(`On-chain verification unavailable: ${String(error)}`)
+    }
+  } else {
+    logger.warn("No SoulClient provided — skipping on-chain anchor verification")
   }
 
   // 3. Download and apply the chain

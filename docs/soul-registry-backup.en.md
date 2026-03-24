@@ -58,7 +58,7 @@ The system comprises two core components:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `agentId` | `bytes32` | `keccak256(Ed25519 public key)`, unique identity |
+| `agentId` | `bytes32` | Unique identity (contract comment says `keccak256(Ed25519 pubkey)`, CLI defaults to `keccak256(walletAddress)` when omitted) |
 | `owner` | `address` | EOA controlling this soul |
 | `identityCid` | `bytes32` | IPFS CID hash of IDENTITY.md + SOUL.md |
 | `latestSnapshotCid` | `bytes32` | Latest backup manifest CID hash |
@@ -297,7 +297,7 @@ Defined in `change-detector.ts` (priority-ordered matching):
 
 ### Merkle Tree Implementation
 
-`manifest-builder.ts` implements the same algorithm as `node/src/ipfs-merkle.ts`:
+`manifest-builder.ts` implements the same structure (domain separation prefixes, odd-node handling) as `node/src/ipfs-merkle.ts` but with a different hash function. The node core uses Keccak-256 (EVM-compatible), while the backup extension uses SHA-256 (off-chain integrity):
 
 - **Leaf hash:** `SHA-256(0x00 || leafData)` — `0x00` prefix prevents leaf/internal node collision
 - **Internal hash:** `SHA-256(0x01 || left || right)` — `0x01` prefix for domain separation
@@ -337,6 +337,7 @@ Defined in `change-detector.ts` (priority-ordered matching):
 3. **Scheduler state not persisted:** `lastManifest` and `incrementalCount` are memory-only; process restart forces full backup
 4. **Sequential file upload:** No concurrent upload for large file sets
 5. **Guardian soft delete:** On-chain `_guardians` array only grows (soft delete via `active=false`), but bounded by `MAX_GUARDIANS=7`
+6. **Hash function divergence:** Backup Merkle tree uses SHA-256, while node core `ipfs-merkle.ts` uses Keccak-256 — they cannot cross-verify directly
 
 ---
 

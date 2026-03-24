@@ -409,6 +409,9 @@ contract SoulRegistry {
         if (req.approvalCount < threshold) revert RecoveryNotReady();
         if (block.timestamp < req.initiatedAt + RECOVERY_DELAY) revert RecoveryNotReady();
 
+        // Enforce one-to-one: newOwner must not already own another soul
+        if (ownerToAgent[req.newOwner] != bytes32(0)) revert AlreadyRegistered();
+
         req.executed = true;
 
         SoulIdentity storage soul = souls[req.agentId];

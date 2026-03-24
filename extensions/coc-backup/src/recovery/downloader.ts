@@ -1,6 +1,6 @@
 // File downloader: retrieves files from IPFS and decrypts as needed
 
-import { mkdir, writeFile } from "node:fs/promises"
+import { mkdir, writeFile, unlink } from "node:fs/promises"
 import { join, dirname } from "node:path"
 import type { IpfsClient } from "../ipfs-client.ts"
 import { decrypt } from "../crypto.ts"
@@ -67,8 +67,7 @@ export async function applyManifestChain(
   // Track which files have been written (later manifests override earlier ones)
   const writtenPaths = new Set<string>()
 
-  // Process from newest to oldest to avoid writing files that will be overwritten
-  // Actually, for correctness with deletions, apply oldest-first
+  // Apply oldest-first so later manifests overwrite earlier ones
   for (const manifest of chain) {
     const result = await downloadManifestFiles(
       manifest,
@@ -84,6 +83,18 @@ export async function applyManifestChain(
 
     for (const path of Object.keys(manifest.files)) {
       writtenPaths.add(path)
+    }
+  }
+
+  // Delete files from earlier manifests that are absent in the latest manifest
+  const latestFiles = new Set(Object.keys(chain[chain.length - 1].files))
+  for (const path of writtenPaths) {
+    if (!latestFiles.has(path)) {
+      try {
+        await unlink(join(targetDir, path))
+      } catch {
+        // File may already be absent
+      }
     }
   }
 

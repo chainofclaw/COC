@@ -19,7 +19,7 @@ export const CocBackupConfigSchema = z.object({
     memory: z.boolean().default(true).describe("Backup memory files"),
     chat: z.boolean().default(true).describe("Backup chat history"),
     workspace: z.boolean().default(true).describe("Backup workspace state"),
-  }).default({}),
+  }).default({ identity: true, config: true, memory: true, chat: true, workspace: true }),
 })
 
 export type CocBackupConfig = z.infer<typeof CocBackupConfigSchema>

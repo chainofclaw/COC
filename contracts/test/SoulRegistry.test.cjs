@@ -570,6 +570,39 @@ describe("SoulRegistry", function () {
       ).to.be.revertedWithCustomError(registry, "NotGuardian")
     })
 
+    it("should reject recovery to address that already owns a soul", async function () {
+      // Register a second soul owned by stranger
+      const agentId2 = randomBytes32()
+      const identityCid2 = randomBytes32()
+      const sig2 = await stranger.signTypedData(domain, REGISTER_SOUL_TYPES, {
+        agentId: agentId2,
+        identityCid: identityCid2,
+        owner: stranger.address,
+        nonce: 0,
+      })
+      await registry.connect(stranger).registerSoul(agentId2, identityCid2, sig2)
+
+      // Initiate recovery of first soul to stranger (who already owns agentId2)
+      const tx = await registry.connect(guardian1).initiateRecovery(agentId, stranger.address)
+      const receipt = await tx.wait()
+      const event = receipt.logs.find(
+        (l) => l.fragment && l.fragment.name === "RecoveryInitiated"
+      )
+      const requestId = event.args[0]
+
+      // Guardian2 approves (2/3 quorum met)
+      await registry.connect(guardian2).approveRecovery(requestId)
+
+      // Advance time past RECOVERY_DELAY
+      await ethers.provider.send("evm_increaseTime", [86401])
+      await ethers.provider.send("evm_mine")
+
+      // Complete should fail — stranger already owns a soul
+      await expect(
+        registry.completeRecovery(requestId)
+      ).to.be.revertedWithCustomError(registry, "AlreadyRegistered")
+    })
+
     it("should reject double approval", async function () {
       const tx = await registry.connect(guardian1).initiateRecovery(agentId, stranger.address)
       const receipt = await tx.wait()

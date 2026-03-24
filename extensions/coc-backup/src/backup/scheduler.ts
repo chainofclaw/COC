@@ -43,7 +43,9 @@ export class BackupScheduler {
     if (this.timer) return
 
     this.timer = setInterval(() => {
-      void this.runBackup()
+      this.runBackup().catch((error) => {
+        this.logger.error(`Auto-backup failed: ${String(error)}`)
+      })
     }, this.config.autoBackupIntervalMs)
 
     this.logger.info(
@@ -69,9 +71,6 @@ export class BackupScheduler {
     this.running = true
     try {
       return await this._executeBackup(forceFullBackup)
-    } catch (error) {
-      this.logger.error(`Backup failed: ${String(error)}`)
-      return null
     } finally {
       this.running = false
     }
@@ -127,7 +126,7 @@ export class BackupScheduler {
     }
 
     // 4. Build manifest
-    const parentCid = isFullBackup ? null : (this.lastManifest?.agentId ? this.lastManifestCid : null)
+    const parentCid = isFullBackup ? null : (this.lastManifestCid ?? null)
     const manifest = buildManifest(agentId, allEntries, parentCid)
 
     // 5. Anchor on-chain

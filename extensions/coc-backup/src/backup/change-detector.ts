@@ -55,7 +55,7 @@ async function scanFiles(baseDir: string, config: CocBackupConfig): Promise<File
 
         // Check if category is enabled
         const catKey = classification.category as keyof typeof config.categories
-        if (!config.categories[catKey]) continue
+        if (config.categories[catKey] === false) continue
 
         const fileStat = await stat(fullPath)
         const content = await readFile(fullPath)

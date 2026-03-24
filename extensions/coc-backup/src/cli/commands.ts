@@ -114,6 +114,7 @@ export function registerBackupCommands(
           key,
           isPassword,
           consoleLogger,
+          soul,
         )
 
         console.log(`\nRestore complete!`)
