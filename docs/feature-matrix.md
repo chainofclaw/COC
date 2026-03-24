@@ -261,6 +261,24 @@ Status legend:
 - **Governance self-vote removal** — Implemented — `COC/node/src/validator-governance.ts`
 - **PoSeManager v-value check** — Implemented — `COC/contracts/settlement/PoSeManager.sol`
 
+## Soul Identity & Recovery (Silicon Immortality)
+- **SoulRegistry contract** — Implemented — `COC/contracts/contracts-src/governance/SoulRegistry.sol`
+- **Soul registration (EIP-712)** — Implemented — `SoulRegistry.sol` registerSoul
+- **Backup CID anchoring** — Implemented — `SoulRegistry.sol` anchorBackup (full + incremental)
+- **Identity update (EIP-712)** — Implemented — `SoulRegistry.sol` updateIdentity
+- **Social recovery (2/3 quorum + timelock)** — Implemented — `SoulRegistry.sol` initiate/approve/complete
+- **Recovery cancel (owner)** — Implemented — `SoulRegistry.sol` cancelRecovery
+- **Soul deactivation** — Implemented — `SoulRegistry.sol` deactivateSoul
+- **Guardian snapshot at initiation** — Implemented — prevents threshold bypass via guardian removal
+- **EIP-2 signature canonicality** — Implemented — s-value range check in _recoverSigner
+- **coc-backup extension** — Implemented — `COC/extensions/coc-backup/`
+- **Incremental backup chaining** — Implemented — scheduler with maxIncrementalChain
+- **AES-256-GCM file encryption** — Implemented — scrypt KDF, per-file salt+IV
+- **Three-layer integrity verification** — Implemented — manifest Merkle / disk SHA-256 / on-chain anchor
+- **Path traversal protection** — Implemented — resolve+startsWith in downloader
+- **IPFS CID validation + timeout** — Implemented — format check, 30s AbortSignal
+- **On-chain recovery from CID** — Not implemented — requires CID registry (bytes32→CID mapping)
+
 ## Performance & Benchmarking
 - **EVM benchmarks** — Implemented — `COC/node/src/benchmarks/evm-benchmark.test.ts`
 - **Load testing** — Implemented (Phase 23) — `COC/node/src/benchmarks/load-test.test.ts`
