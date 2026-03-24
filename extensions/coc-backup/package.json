@@ -1,0 +1,28 @@
+{
+  "name": "@openclaw/coc-backup",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "OpenClaw COC soul backup and recovery via IPFS + on-chain anchoring",
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "service": {
+      "id": "coc-backup",
+      "label": "COC Soul Backup",
+      "description": "Soul identity backup, IPFS persistence, and social recovery"
+    },
+    "install": {
+      "npmSpec": "@openclaw/coc-backup",
+      "localPath": "extensions/coc-backup",
+      "defaultChoice": "local"
+    }
+  },
+  "dependencies": {
+    "ethers": "^6.13.5",
+    "zod": "^4.3.6"
+  },
+  "peerDependencies": {
+    "openclaw": "*"
+  }
+}

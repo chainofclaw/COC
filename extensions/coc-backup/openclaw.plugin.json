@@ -1,0 +1,15 @@
+{
+  "id": "coc-backup",
+  "name": "COC Soul Backup",
+  "version": "0.1.0",
+  "description": "Blockchain-backed soul identity backup and recovery for OpenClaw agents",
+  "entry": "./index.ts",
+  "commands": ["coc-backup"],
+  "tools": ["soul-backup", "soul-restore", "soul-status"],
+  "hooks": {
+    "stop": {
+      "enabled": true,
+      "description": "Auto-backup on session end"
+    }
+  }
+}
