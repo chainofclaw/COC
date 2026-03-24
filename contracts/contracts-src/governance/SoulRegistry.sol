@@ -45,6 +45,7 @@ contract SoulRegistry {
         address initiator;
         uint64  initiatedAt;
         uint8   approvalCount;
+        uint8   guardianSnapshot; // active guardian count at initiation
         bool    executed;
     }
 
@@ -98,6 +99,8 @@ contract SoulRegistry {
     event RecoveryInitiated(bytes32 indexed requestId, bytes32 indexed agentId, address newOwner);
     event RecoveryApproved(bytes32 indexed requestId, address indexed guardian);
     event RecoveryCompleted(bytes32 indexed requestId, bytes32 indexed agentId, address newOwner);
+    event RecoveryCancelled(bytes32 indexed requestId, bytes32 indexed agentId);
+    event SoulDeactivated(bytes32 indexed agentId, address indexed owner);
 
     // -----------------------------------------------------------------------
     //  Errors
@@ -122,6 +125,8 @@ contract SoulRegistry {
     error NotGuardian();
     error InvalidBackupType();
     error ParentCidRequired();
+    error InvalidAddress();
+    error InvalidCid();
 
     // -----------------------------------------------------------------------
     //  Constructor
@@ -199,6 +204,7 @@ contract SoulRegistry {
         SoulIdentity storage soul = souls[agentId];
         if (!soul.active) revert SoulNotActive();
         if (msg.sender != soul.owner) revert NotOwner();
+        if (manifestCid == bytes32(0) || dataMerkleRoot == bytes32(0)) revert InvalidCid();
         if (backupType > 1) revert InvalidBackupType();
         if (backupType == 1 && parentManifestCid == bytes32(0)) revert ParentCidRequired();
 
@@ -364,18 +370,21 @@ contract SoulRegistry {
     function initiateRecovery(bytes32 agentId, address newOwner) external {
         SoulIdentity storage soul = souls[agentId];
         if (!soul.active) revert SoulNotActive();
+        if (newOwner == address(0)) revert InvalidAddress();
         if (!_isActiveGuardian(agentId, msg.sender)) revert NotGuardian();
 
         bytes32 requestId = keccak256(
-            abi.encodePacked(agentId, newOwner, block.timestamp)
+            abi.encodePacked(agentId, newOwner, block.timestamp, msg.sender)
         );
 
+        uint256 activeCount = getActiveGuardianCount(agentId);
         recoveryRequests[requestId] = RecoveryRequest({
             agentId: agentId,
             newOwner: newOwner,
             initiator: msg.sender,
             initiatedAt: uint64(block.timestamp),
             approvalCount: 1,
+            guardianSnapshot: uint8(activeCount),
             executed: false
         });
         recoveryApprovals[requestId][msg.sender] = true;
@@ -404,8 +413,8 @@ contract SoulRegistry {
         if (req.initiatedAt == 0) revert RecoveryNotFound();
         if (req.executed) revert RecoveryAlreadyExecuted();
 
-        uint256 activeCount = getActiveGuardianCount(req.agentId);
-        uint256 threshold = (activeCount * 2 + 2) / 3; // ceil(2/3)
+        uint256 snapshotCount = uint256(req.guardianSnapshot);
+        uint256 threshold = (snapshotCount * 2 + 2) / 3; // ceil(2/3)
         if (req.approvalCount < threshold) revert RecoveryNotReady();
         if (block.timestamp < req.initiatedAt + RECOVERY_DELAY) revert RecoveryNotReady();
 
@@ -423,6 +432,33 @@ contract SoulRegistry {
         ownerToAgent[req.newOwner] = req.agentId;
 
         emit RecoveryCompleted(requestId, req.agentId, req.newOwner);
+    }
+
+    /// @notice Cancel a pending recovery request — only the soul owner
+    function cancelRecovery(bytes32 requestId) external {
+        RecoveryRequest storage req = recoveryRequests[requestId];
+        if (req.initiatedAt == 0) revert RecoveryNotFound();
+        if (req.executed) revert RecoveryAlreadyExecuted();
+        if (msg.sender != souls[req.agentId].owner) revert NotOwner();
+
+        req.executed = true;
+        emit RecoveryCancelled(requestId, req.agentId);
+    }
+
+    // -----------------------------------------------------------------------
+    //  Soul Lifecycle
+    // -----------------------------------------------------------------------
+
+    /// @notice Deactivate a soul — releases the owner→agent binding
+    function deactivateSoul(bytes32 agentId) external {
+        SoulIdentity storage soul = souls[agentId];
+        if (!soul.active) revert SoulNotActive();
+        if (msg.sender != soul.owner) revert NotOwner();
+
+        soul.active = false;
+        delete ownerToAgent[msg.sender];
+
+        emit SoulDeactivated(agentId, msg.sender);
     }
 
     // -----------------------------------------------------------------------
@@ -453,6 +489,10 @@ contract SoulRegistry {
         }
         if (v < 27) v += 27;
         if (v != 27 && v != 28) revert InvalidSignature();
+        // EIP-2: reject non-canonical s to prevent signature malleability
+        if (uint256(s) > 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0) {
+            revert InvalidSignature();
+        }
 
         address recovered = ecrecover(hash, v, r, s);
         if (recovered == address(0)) revert InvalidSignature();

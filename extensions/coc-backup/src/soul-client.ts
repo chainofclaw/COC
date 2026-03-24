@@ -85,6 +85,7 @@ export class SoulClient {
 
     const tx = await this.contract.registerSoul(agentId, identityCid, sig)
     const receipt = await tx.wait()
+    if (!receipt || receipt.status !== 1) throw new Error("Transaction reverted")
     return receipt.hash
   }
 
@@ -131,6 +132,7 @@ export class SoulClient {
       fileCount, totalBytes, backupType, parentManifestCid, sig,
     )
     const receipt = await tx.wait()
+    if (!receipt || receipt.status !== 1) throw new Error("Transaction reverted")
     return receipt.hash
   }
 
@@ -156,6 +158,7 @@ export class SoulClient {
 
     const tx = await this.contract.updateIdentity(agentId, newIdentityCid, sig)
     const receipt = await tx.wait()
+    if (!receipt || receipt.status !== 1) throw new Error("Transaction reverted")
     return receipt.hash
   }
 

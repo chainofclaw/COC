@@ -77,7 +77,7 @@ Policy files are located at `nodeops/policies/*.yaml` and can be loaded and eval
 
 ## Test Strategy
 
-Uses Node.js built-in test framework and Hardhat test runner (`1603` tests across `150` test files, excluding vendored `node_modules` tests):
+Uses Node.js built-in test framework and Hardhat test runner (`1635` tests across `151` test files, excluding vendored `node_modules` tests):
 - **Node layer tests**: `node/src/*.test.ts node/src/**/*.test.ts` (`899` tests, `75` files) - chain engine, EVM, RPC, WebSocket, P2P, mempool, storage, IPFS, PoSe, BFT consensus, DHT, wire protocol, fork choice, state snapshot, wire server, DHT network, snap sync, consensus-BFT integration, consensus metrics, wire connection manager, wire tx relay, sync progress, gas histogram, governance stats, wire dedup/relay, security hardening, P2P auth, wire auth handshake, replay guard, nonce registry, PoSe auth, Prometheus metrics, BFT slashing, Phase 36 ops hardening, algorithm safety audit round 3, P2P benchmarks, wire priority frames, stateRoot verification, speculative execution, coc_getEquivocations, ethers toolchain compatibility, viem toolchain compatibility, fee oracle, RPC data accuracy, block format standardization
 - **Services + NodeOps tests**: `services/**/*.test.ts` + `nodeops/*.test.ts` (`164` tests, `25` files) - PoSe v2 services, reward tree, scoring determinism, challenger rewards, policy DSL, policy hot reload
 - **Runtime tests**: `runtime/lib/*.test.ts` + `runtime/coc-relayer.test.ts` (`72` tests, `16` files) - pending retention, runtime metrics, agent metrics server, reward manifest, pose-v2 fault proof, relayer dispute recovery, BFT slash bridge
@@ -86,7 +86,7 @@ Uses Node.js built-in test framework and Hardhat test runner (`1603` tests acros
 - **Explorer tests**: `explorer/src/lib/*.test.ts` (`43` tests, `3` files) - ABI decoding, provider helpers, Solidity compiler version resolution
 - **Faucet tests**: `faucet/src/*.test.ts` (`26` tests, `3` files) - drip flow, web UI, server wiring, cooldown logic
 - **Contract deploy tests**: `contracts/deploy/*.test.ts` (`18` tests, `2` files) - deploy config resolution, CLI wrapper, PoSe deploy helper validation
-- **Contract tests**: `cd contracts && npm test` (`171` tests, `8` files) - PoSeManager v1, PoSeManagerV2, v2 E2E lifecycle, gas benchmarks, security audit, EIP-712 cross-check
+- **Contract tests**: `cd contracts && npm test` (`203` tests, `9` files) - PoSeManager v1, PoSeManagerV2, v2 E2E lifecycle, gas benchmarks, security audit, EIP-712 cross-check, SoulRegistry (identity, backup, recovery, guardians)
 - **Extension tests**: `extensions/coc-nodeops/src/**/*.test.ts` (`24` tests, `3` files) - node types, network presets, node manager
 - **Storage layer tests**: `node/src/storage/*.test.ts` (included in node layer)
 

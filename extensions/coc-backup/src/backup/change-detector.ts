@@ -3,6 +3,8 @@
 
 import { readdir, stat, readFile } from "node:fs/promises"
 import { join, relative } from "node:path"
+
+const MAX_FILE_BYTES = 100 * 1024 * 1024 // 100 MB
 import { sha256Hex } from "../crypto.ts"
 import type { FileState, FileCategory, ChangeSet, SnapshotManifest } from "../types.ts"
 import type { CocBackupConfig } from "../config-schema.ts"
@@ -43,9 +45,10 @@ async function scanFiles(baseDir: string, config: CocBackupConfig): Promise<File
     }
 
     for (const entry of entries) {
+      if (entry.isSymbolicLink()) continue
       const fullPath = join(dir, entry.name)
       if (entry.isDirectory()) {
-        // Skip hidden dirs except identity/
+        // Skip hidden dirs except .claude
         if (entry.name.startsWith(".") && entry.name !== ".claude") continue
         await walk(fullPath)
       } else if (entry.isFile()) {
@@ -58,6 +61,7 @@ async function scanFiles(baseDir: string, config: CocBackupConfig): Promise<File
         if (config.categories[catKey] === false) continue
 
         const fileStat = await stat(fullPath)
+        if (fileStat.size > MAX_FILE_BYTES) continue
         const content = await readFile(fullPath)
         const hash = sha256Hex(content)
 
@@ -123,18 +127,4 @@ export async function detectChanges(
   const deleted = [...prevPaths]
 
   return { added, modified, deleted, unchanged }
-}
-
-/** Check if a full backup should be forced (incremental chain too long) */
-export function shouldForceFullBackup(
-  previousManifest: SnapshotManifest | null,
-  maxIncrementalChain: number,
-): boolean {
-  if (!previousManifest) return true
-  if (previousManifest.parentCid === null) return false
-
-  // Count incremental chain length by checking parentCid
-  // Since we only have the current manifest, we check config limit
-  // The caller should track the chain length
-  return false
 }

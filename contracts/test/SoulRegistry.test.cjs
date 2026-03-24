@@ -570,6 +570,35 @@ describe("SoulRegistry", function () {
       ).to.be.revertedWithCustomError(registry, "NotGuardian")
     })
 
+    it("should reject recovery to address(0)", async function () {
+      await expect(
+        registry.connect(guardian1).initiateRecovery(agentId, ethers.ZeroAddress)
+      ).to.be.revertedWithCustomError(registry, "InvalidAddress")
+    })
+
+    it("should use guardian snapshot for threshold after guardian removal", async function () {
+      // Initiate recovery with 3 active guardians (snapshot=3, threshold=ceil(2/3*3)=2)
+      const tx = await registry.connect(guardian1).initiateRecovery(agentId, stranger.address)
+      const receipt = await tx.wait()
+      const event = receipt.logs.find(
+        (l) => l.fragment && l.fragment.name === "RecoveryInitiated"
+      )
+      const requestId = event.args[0]
+
+      // Owner removes all 3 guardians
+      await registry.removeGuardian(agentId, guardian1.address)
+      await registry.removeGuardian(agentId, guardian2.address)
+      await registry.removeGuardian(agentId, guardian3.address)
+
+      // Only 1 approval (from guardian1 at initiation) — should still need 2
+      await ethers.provider.send("evm_increaseTime", [86401])
+      await ethers.provider.send("evm_mine")
+
+      await expect(
+        registry.completeRecovery(requestId)
+      ).to.be.revertedWithCustomError(registry, "RecoveryNotReady")
+    })
+
     it("should reject recovery to address that already owns a soul", async function () {
       // Register a second soul owned by stranger
       const agentId2 = randomBytes32()
@@ -614,6 +643,114 @@ describe("SoulRegistry", function () {
       await expect(
         registry.connect(guardian1).approveRecovery(requestId)
       ).to.be.revertedWithCustomError(registry, "AlreadyApproved")
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  //  Cancel Recovery
+  // -----------------------------------------------------------------------
+
+  describe("cancelRecovery", function () {
+    let agentId
+
+    beforeEach(async function () {
+      agentId = randomBytes32()
+      const identityCid = randomBytes32()
+      const sig = await owner.signTypedData(domain, REGISTER_SOUL_TYPES, {
+        agentId,
+        identityCid,
+        owner: owner.address,
+        nonce: 0,
+      })
+      await registry.registerSoul(agentId, identityCid, sig)
+      await registry.addGuardian(agentId, guardian1.address)
+      await registry.addGuardian(agentId, guardian2.address)
+    })
+
+    it("should allow owner to cancel a pending recovery", async function () {
+      const tx = await registry.connect(guardian1).initiateRecovery(agentId, stranger.address)
+      const receipt = await tx.wait()
+      const event = receipt.logs.find(
+        (l) => l.fragment && l.fragment.name === "RecoveryInitiated"
+      )
+      const requestId = event.args[0]
+
+      await expect(registry.cancelRecovery(requestId))
+        .to.emit(registry, "RecoveryCancelled")
+        .withArgs(requestId, agentId)
+
+      // Cancelled recovery cannot be completed
+      await registry.connect(guardian2).approveRecovery(requestId).catch(() => {})
+      await ethers.provider.send("evm_increaseTime", [86401])
+      await ethers.provider.send("evm_mine")
+      await expect(
+        registry.completeRecovery(requestId)
+      ).to.be.revertedWithCustomError(registry, "RecoveryAlreadyExecuted")
+    })
+
+    it("should reject cancel from non-owner", async function () {
+      const tx = await registry.connect(guardian1).initiateRecovery(agentId, stranger.address)
+      const receipt = await tx.wait()
+      const event = receipt.logs.find(
+        (l) => l.fragment && l.fragment.name === "RecoveryInitiated"
+      )
+      const requestId = event.args[0]
+
+      await expect(
+        registry.connect(stranger).cancelRecovery(requestId)
+      ).to.be.revertedWithCustomError(registry, "NotOwner")
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  //  Soul Deactivation
+  // -----------------------------------------------------------------------
+
+  describe("deactivateSoul", function () {
+    let agentId
+
+    beforeEach(async function () {
+      agentId = randomBytes32()
+      const identityCid = randomBytes32()
+      const sig = await owner.signTypedData(domain, REGISTER_SOUL_TYPES, {
+        agentId,
+        identityCid,
+        owner: owner.address,
+        nonce: 0,
+      })
+      await registry.registerSoul(agentId, identityCid, sig)
+    })
+
+    it("should deactivate soul and release owner binding", async function () {
+      await expect(registry.deactivateSoul(agentId))
+        .to.emit(registry, "SoulDeactivated")
+        .withArgs(agentId, owner.address)
+
+      const soul = await registry.getSoul(agentId)
+      expect(soul.active).to.equal(false)
+      expect(await registry.ownerToAgent(owner.address)).to.equal(ethers.ZeroHash)
+    })
+
+    it("should allow re-registration after deactivation", async function () {
+      await registry.deactivateSoul(agentId)
+
+      // Owner can now register a new soul
+      const newAgentId = randomBytes32()
+      const newCid = randomBytes32()
+      const sig = await owner.signTypedData(domain, REGISTER_SOUL_TYPES, {
+        agentId: newAgentId,
+        identityCid: newCid,
+        owner: owner.address,
+        nonce: 0,
+      })
+      await expect(registry.registerSoul(newAgentId, newCid, sig))
+        .to.emit(registry, "SoulRegistered")
+    })
+
+    it("should reject deactivation from non-owner", async function () {
+      await expect(
+        registry.connect(stranger).deactivateSoul(agentId)
+      ).to.be.revertedWithCustomError(registry, "NotOwner")
     })
   })
 
