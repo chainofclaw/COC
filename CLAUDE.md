@@ -18,6 +18,7 @@ The project uses npm workspaces to manage multiple packages:
 - `wallet/`: CLI wallet tool
 - `tests/`: Integration and end-to-end tests
 - `explorer/`: Next.js blockchain explorer
+- `extensions/coc-backup/`: Soul identity backup and recovery (OpenClaw plugin)
 - `website/`: Project website
 
 ## Runtime Requirements
@@ -218,6 +219,7 @@ cd contracts && npm test
 - `settlement/PoSeTypesV2.sol`: v2 data structures (EvidenceLeafV2, FaultProof, ChallengeRecord, RewardClaim)
 - `settlement/IPoSeManagerV2.sol`: v2 interface and events
 - `settlement/MerkleProofLite.sol`: Merkle proof verification (calldata + memory variants)
+- `governance/SoulRegistry.sol`: Soul identity registration, backup CID anchoring, EIP-712 signed operations, social recovery with 2/3 guardian quorum
 
 ### Performance Benchmarks (node/src/benchmarks/)
 - `evm-benchmark.test.ts`: EVM execution performance benchmarks
@@ -284,6 +286,7 @@ cd contracts && npm test
 - System architecture: `docs/system-architecture.en.md`
 - Core algorithms: `docs/core-algorithms.en.md`
 - Feature matrix: `docs/feature-matrix.md`
+- Soul Registry & Backup: `docs/soul-registry-backup.en.md` / `docs/soul-registry-backup.zh.md`
 
 ## Code and Documentation Language Requirements
 
