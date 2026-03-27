@@ -64,7 +64,7 @@ export default async function LocaleLayout({
                     <NavLink href="/forum">Forum</NavLink>
                     <NavLink href="/docs">Docs</NavLink>
                     <a
-                      href="https://explorer.chainofclaw.io"
+                      href="https://explorer.clawchain.io"
                       target="_blank"
                       rel="noopener noreferrer"
                       className="ml-2 px-4 py-2 rounded-lg bg-gradient-cyber text-white font-display font-semibold hover:shadow-glow-md transition-all hover:scale-105"
@@ -124,7 +124,7 @@ export default async function LocaleLayout({
                       <ul className="space-y-2">
                         <FooterLink href="/docs">Documentation</FooterLink>
                         <FooterLink href="/plan">Whitepaper</FooterLink>
-                        <FooterLink href="https://explorer.chainofclaw.io" external>
+                        <FooterLink href="https://explorer.clawchain.io" external>
                           Block Explorer
                         </FooterLink>
                       </ul>

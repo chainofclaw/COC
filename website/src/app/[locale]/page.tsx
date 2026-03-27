@@ -53,7 +53,7 @@ export default function HomePage() {
               </Link>
 
               <a
-                href="https://explorer.chainofclaw.io"
+                href="https://explorer.clawchain.io"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="group px-8 py-4 rounded-lg font-display font-semibold text-lg border-2 border-accent-cyan/50 bg-accent-cyan/5 hover:bg-accent-cyan/10 hover:border-accent-cyan transition-all hover:shadow-glow-md backdrop-blur-sm"
