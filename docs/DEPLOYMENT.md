@@ -60,6 +60,30 @@
 
 ## 📂 服务文件位置
 
+### Next.js 安全版本基线（最低要求）
+
+为避免已知 App Router / RSC 漏洞（包括 CVE-2025-66478 及后续补丁链），所有 Next.js 服务必须满足以下基线：
+
+```
+最低安全版本: Next.js 15.1.11
+适用服务:
+- Website (/root/clawd/COC/website)
+- Block Explorer (/root/clawd/COC/explorer)
+- IPFS Demo (/root/clawd/COC/ipfs-demo)
+```
+
+**发布要求**:
+- 生产环境禁止低于 `15.1.11` 的 Next.js 版本上线
+- 升级后必须执行 `npm install && npm run build` 并重启对应 PM2 进程
+- 若服务在漏洞窗口期对公网暴露，升级后需轮换相关敏感凭据（网关令牌、私钥、API 密钥等）
+
+**版本核验命令**:
+```bash
+cd /root/clawd/COC
+npm list next -w coc-website -w coc-explorer
+cd /root/clawd/COC/ipfs-demo && npm list next --depth=0
+```
+
 ### Website (Next.js)
 ```
 代码: /root/clawd/COC/website
