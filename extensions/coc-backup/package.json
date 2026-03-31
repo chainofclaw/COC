@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "type": "module",
   "description": "OpenClaw COC soul backup and recovery via IPFS + on-chain anchoring",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
   "openclaw": {
     "extensions": [
       "./index.ts"
@@ -24,5 +28,9 @@
   },
   "peerDependencies": {
     "openclaw": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.7.2",
+    "vitest": "^3.2.4"
   }
 }

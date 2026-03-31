@@ -111,9 +111,14 @@ export async function resolveChainFromCid(
   ipfs: IpfsClient,
 ): Promise<SnapshotManifest[]> {
   const chain: SnapshotManifest[] = []
+  const visited = new Set<string>()
   let currentCid: string | null = manifestCid
 
   while (currentCid) {
+    if (visited.has(currentCid)) {
+      throw new Error(`Circular parentCid reference detected: ${currentCid}`)
+    }
+    visited.add(currentCid)
     const manifest = await ipfs.catManifest(currentCid)
     chain.unshift(manifest) // prepend: build oldest-first order
     currentCid = manifest.parentCid

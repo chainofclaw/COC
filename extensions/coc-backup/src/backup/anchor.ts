@@ -45,6 +45,16 @@ export async function anchorBackup(
     parentManifestCid,
   )
 
+  let anchoredAt: number | null = null
+  try {
+    const latest = await soul.getLatestBackup(agentId)
+    if (latest.manifestCid === manifestCidBytes32) {
+      anchoredAt = latest.anchoredAt
+    }
+  } catch {
+    // Best-effort enrichment for recovery package metadata.
+  }
+
   // 4. Organize in MFS for browsability
   try {
     const date = manifest.timestamp.slice(0, 10)
@@ -63,5 +73,6 @@ export async function anchorBackup(
     backupType: backupType as 0 | 1,
     parentManifestCid: manifest.parentCid,
     txHash,
+    anchoredAt,
   }
 }

@@ -1,7 +1,7 @@
 // Merkle integrity verification: verifies manifest against on-chain Merkle root
 
 import { readFile } from "node:fs/promises"
-import { join } from "node:path"
+import { join, resolve, sep } from "node:path"
 import { sha256Hex } from "../crypto.ts"
 import { computeDataMerkleRoot } from "../backup/manifest-builder.ts"
 import type { SnapshotManifest } from "../types.ts"
@@ -39,9 +39,13 @@ export async function verifyRestoredFiles(
   const fileResults: IntegrityResult["fileResults"] = []
   let allValid = true
 
+  const resolvedTarget = resolve(targetDir)
   for (const [relPath, entry] of Object.entries(manifest.files)) {
     try {
-      const fullPath = join(targetDir, relPath)
+      const fullPath = resolve(join(targetDir, relPath))
+      if (!fullPath.startsWith(resolvedTarget + sep) && fullPath !== resolvedTarget) {
+        throw new Error(`Path traversal detected: ${relPath}`)
+      }
       const content = await readFile(fullPath)
       const actualHash = sha256Hex(content)
       const valid = actualHash === entry.hash

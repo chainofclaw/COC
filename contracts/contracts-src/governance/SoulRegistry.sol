@@ -12,7 +12,7 @@ contract SoulRegistry {
     // -----------------------------------------------------------------------
 
     struct SoulIdentity {
-        bytes32 agentId;           // keccak256(Ed25519 pubkey)
+        bytes32 agentId;           // unique soul id (CLI default: keccak256(owner wallet address))
         address owner;             // EOA controlling this soul
         bytes32 identityCid;       // IDENTITY.md + SOUL.md IPFS CID
         bytes32 latestSnapshotCid; // latest full backup manifest CID
@@ -49,12 +49,50 @@ contract SoulRegistry {
         bool    executed;
     }
 
+    // Resurrection types
+    enum ResurrectionTrigger {
+        OwnerKey,       // Owner uses resurrection key
+        GuardianVote    // Guardians vote after offline timeout
+    }
+
+    struct ResurrectionConfig {
+        bytes32 resurrectionKeyHash;   // keccak256(abi.encodePacked(resurrection key address))
+        uint64  maxOfflineDuration;    // max allowed offline seconds
+        uint64  lastHeartbeat;         // last heartbeat timestamp
+        bool    configured;            // whether configured
+    }
+
+    struct Carrier {
+        bytes32 carrierId;             // unique identifier
+        address owner;                 // carrier provider EOA
+        string  endpoint;              // communication URL/IP
+        uint64  registeredAt;
+        uint64  cpuMillicores;         // CPU spec
+        uint64  memoryMB;              // memory spec
+        uint64  storageMB;             // storage spec
+        bool    available;             // accepting new souls
+        bool    active;
+    }
+
+    struct ResurrectionRequest {
+        bytes32 agentId;
+        bytes32 carrierId;             // target carrier
+        address initiator;
+        uint64  initiatedAt;
+        uint8   approvalCount;
+        uint8   guardianSnapshot;
+        bool    executed;
+        bool    carrierConfirmed;      // carrier acknowledged
+        ResurrectionTrigger trigger;
+    }
+
     // -----------------------------------------------------------------------
     //  Constants
     // -----------------------------------------------------------------------
 
     uint256 public constant MAX_GUARDIANS = 7;
     uint256 public constant RECOVERY_DELAY = 1 days;
+    uint256 public constant RESURRECTION_DELAY = 12 hours;
     uint16  public constant CURRENT_VERSION = 1;
 
     // EIP-712 domain
@@ -70,6 +108,12 @@ contract SoulRegistry {
     bytes32 public constant UPDATE_IDENTITY_TYPEHASH = keccak256(
         "UpdateIdentity(bytes32 agentId,bytes32 newIdentityCid,uint64 nonce)"
     );
+    bytes32 public constant RESURRECT_SOUL_TYPEHASH = keccak256(
+        "ResurrectSoul(bytes32 agentId,bytes32 carrierId,uint64 nonce)"
+    );
+    bytes32 public constant HEARTBEAT_TYPEHASH = keccak256(
+        "Heartbeat(bytes32 agentId,uint64 timestamp,uint64 nonce)"
+    );
 
     bytes32 public immutable DOMAIN_SEPARATOR;
 
@@ -84,6 +128,12 @@ contract SoulRegistry {
     mapping(bytes32 => RecoveryRequest) public recoveryRequests;
     mapping(bytes32 => mapping(address => bool)) public recoveryApprovals;
     mapping(bytes32 => uint64) public nonces;
+
+    // Resurrection storage
+    mapping(bytes32 => ResurrectionConfig) public resurrectionConfigs; // agentId => config
+    mapping(bytes32 => Carrier) public carriers;                       // carrierId => carrier
+    mapping(bytes32 => ResurrectionRequest) public resurrectionRequests; // requestId => request
+    mapping(bytes32 => mapping(address => bool)) public resurrectionApprovals; // requestId => guardian => approved
 
     uint256 public soulCount;
 
@@ -102,6 +152,17 @@ contract SoulRegistry {
     event RecoveryCancelled(bytes32 indexed requestId, bytes32 indexed agentId);
     event SoulDeactivated(bytes32 indexed agentId, address indexed owner);
 
+    // Resurrection events
+    event ResurrectionConfigured(bytes32 indexed agentId, bytes32 resurrectionKeyHash, uint64 maxOfflineDuration);
+    event Heartbeat(bytes32 indexed agentId, uint64 timestamp);
+    event CarrierRegistered(bytes32 indexed carrierId, address indexed owner, string endpoint);
+    event CarrierDeregistered(bytes32 indexed carrierId);
+    event ResurrectionInitiated(bytes32 indexed requestId, bytes32 indexed agentId, bytes32 carrierId, ResurrectionTrigger trigger);
+    event ResurrectionApproved(bytes32 indexed requestId, address indexed guardian);
+    event CarrierConfirmed(bytes32 indexed requestId, bytes32 indexed carrierId);
+    event ResurrectionCompleted(bytes32 indexed requestId, bytes32 indexed agentId, bytes32 carrierId);
+    event ResurrectionCancelled(bytes32 indexed requestId);
+
     // -----------------------------------------------------------------------
     //  Errors
     // -----------------------------------------------------------------------
@@ -111,7 +172,6 @@ contract SoulRegistry {
     error NotOwner();
     error InvalidAgentId();
     error InvalidSignature();
-    error InvalidNonce();
     error AgentIdTaken();
     error SoulNotActive();
     error GuardianLimitReached();
@@ -127,6 +187,19 @@ contract SoulRegistry {
     error ParentCidRequired();
     error InvalidAddress();
     error InvalidCid();
+
+    // Resurrection errors
+    error ResurrectionNotConfigured();
+    error NotOffline();
+    error CarrierNotFound();
+    error CarrierNotAvailable();
+    error NotCarrierOwner();
+    error CarrierAlreadyRegistered();
+    error ResurrectionNotFound();
+    error ResurrectionAlreadyExecuted();
+    error ResurrectionNotReady();
+    error CarrierNotConfirmed();
+    error InvalidKeyHash();
 
     // -----------------------------------------------------------------------
     //  Constructor
@@ -158,6 +231,7 @@ contract SoulRegistry {
         bytes calldata ownershipSig
     ) external {
         if (agentId == bytes32(0)) revert InvalidAgentId();
+        if (identityCid == bytes32(0)) revert InvalidCid();
         if (souls[agentId].active) revert AlreadyRegistered();
         if (ownerToAgent[msg.sender] != bytes32(0)) revert AlreadyRegistered();
 
@@ -251,6 +325,7 @@ contract SoulRegistry {
         SoulIdentity storage soul = souls[agentId];
         if (!soul.active) revert SoulNotActive();
         if (msg.sender != soul.owner) revert NotOwner();
+        if (newIdentityCid == bytes32(0)) revert InvalidCid();
 
         uint64 nonce = nonces[agentId];
         bytes32 structHash = keccak256(
@@ -329,9 +404,16 @@ contract SoulRegistry {
 
         RecoveryGuardian[] storage gs = _guardians[agentId];
 
-        // Check if already added
+        // Check if already added or can be reactivated
         for (uint256 i = 0; i < gs.length; i++) {
-            if (gs[i].guardian == guardian && gs[i].active) revert GuardianAlreadyAdded();
+            if (gs[i].guardian == guardian) {
+                if (gs[i].active) revert GuardianAlreadyAdded();
+                // Reactivate existing entry instead of pushing a new one
+                gs[i].active = true;
+                gs[i].addedAt = uint64(block.timestamp);
+                emit GuardianAdded(agentId, guardian);
+                return;
+            }
         }
 
         gs.push(RecoveryGuardian({
@@ -459,6 +541,330 @@ contract SoulRegistry {
         delete ownerToAgent[msg.sender];
 
         emit SoulDeactivated(agentId, msg.sender);
+    }
+
+    // -----------------------------------------------------------------------
+    //  Resurrection: Configuration & Heartbeat
+    // -----------------------------------------------------------------------
+
+    /// @notice Configure resurrection parameters for a soul
+    function configureResurrection(
+        bytes32 agentId,
+        bytes32 resurrectionKeyHash,
+        uint64 maxOfflineDuration
+    ) external {
+        SoulIdentity storage soul = souls[agentId];
+        if (!soul.active) revert SoulNotActive();
+        if (msg.sender != soul.owner) revert NotOwner();
+        if (resurrectionKeyHash == bytes32(0)) revert InvalidKeyHash();
+        if (maxOfflineDuration == 0) revert InvalidAddress(); // reuse for "invalid param"
+
+        resurrectionConfigs[agentId] = ResurrectionConfig({
+            resurrectionKeyHash: resurrectionKeyHash,
+            maxOfflineDuration: maxOfflineDuration,
+            lastHeartbeat: uint64(block.timestamp),
+            configured: true
+        });
+
+        emit ResurrectionConfigured(agentId, resurrectionKeyHash, maxOfflineDuration);
+    }
+
+    /// @notice Send heartbeat proving the agent is alive (EIP-712 signed)
+    function heartbeat(
+        bytes32 agentId,
+        uint64 timestamp,
+        bytes calldata sig
+    ) external {
+        SoulIdentity storage soul = souls[agentId];
+        if (!soul.active) revert SoulNotActive();
+        if (msg.sender != soul.owner) revert NotOwner();
+
+        ResurrectionConfig storage rc = resurrectionConfigs[agentId];
+        if (!rc.configured) revert ResurrectionNotConfigured();
+
+        uint64 nonce = nonces[agentId];
+        bytes32 structHash = keccak256(
+            abi.encode(HEARTBEAT_TYPEHASH, agentId, timestamp, nonce)
+        );
+        _verifySig(structHash, sig, msg.sender);
+        nonces[agentId] = nonce + 1;
+
+        rc.lastHeartbeat = uint64(block.timestamp);
+
+        emit Heartbeat(agentId, uint64(block.timestamp));
+    }
+
+    /// @notice Check if a soul's agent is offline (heartbeat expired)
+    function isOffline(bytes32 agentId) public view returns (bool) {
+        ResurrectionConfig storage rc = resurrectionConfigs[agentId];
+        if (!rc.configured) return false;
+        return block.timestamp > rc.lastHeartbeat + rc.maxOfflineDuration;
+    }
+
+    /// @notice Get resurrection config for a soul
+    function getResurrectionConfig(bytes32 agentId) external view returns (ResurrectionConfig memory) {
+        return resurrectionConfigs[agentId];
+    }
+
+    // -----------------------------------------------------------------------
+    //  Resurrection: Carrier Management
+    // -----------------------------------------------------------------------
+
+    /// @notice Register a new carrier (physical host for agent resurrection)
+    function registerCarrier(
+        bytes32 carrierId,
+        string calldata endpoint,
+        uint64 cpuMillicores,
+        uint64 memoryMB,
+        uint64 storageMB
+    ) external {
+        if (carrierId == bytes32(0)) revert InvalidAgentId(); // reuse for "invalid id"
+        if (carriers[carrierId].active) revert CarrierAlreadyRegistered();
+
+        carriers[carrierId] = Carrier({
+            carrierId: carrierId,
+            owner: msg.sender,
+            endpoint: endpoint,
+            registeredAt: uint64(block.timestamp),
+            cpuMillicores: cpuMillicores,
+            memoryMB: memoryMB,
+            storageMB: storageMB,
+            available: true,
+            active: true
+        });
+
+        emit CarrierRegistered(carrierId, msg.sender, endpoint);
+    }
+
+    /// @notice Deregister a carrier
+    function deregisterCarrier(bytes32 carrierId) external {
+        Carrier storage c = carriers[carrierId];
+        if (!c.active) revert CarrierNotFound();
+        if (msg.sender != c.owner) revert NotCarrierOwner();
+
+        c.active = false;
+        c.available = false;
+
+        emit CarrierDeregistered(carrierId);
+    }
+
+    /// @notice Update carrier availability
+    function updateCarrierAvailability(bytes32 carrierId, bool available) external {
+        Carrier storage c = carriers[carrierId];
+        if (!c.active) revert CarrierNotFound();
+        if (msg.sender != c.owner) revert NotCarrierOwner();
+
+        c.available = available;
+    }
+
+    /// @notice Get carrier info
+    function getCarrier(bytes32 carrierId) external view returns (Carrier memory) {
+        return carriers[carrierId];
+    }
+
+    /// @notice Get aggregated readiness for a resurrection request
+    function getResurrectionReadiness(bytes32 requestId) external view returns (
+        bool exists,
+        ResurrectionTrigger trigger,
+        uint8 approvalCount,
+        uint8 approvalThreshold,
+        bool carrierConfirmed,
+        bool offlineNow,
+        uint64 readyAt,
+        bool canComplete
+    ) {
+        ResurrectionRequest storage req = resurrectionRequests[requestId];
+        if (req.initiatedAt == 0) {
+            return (false, ResurrectionTrigger.OwnerKey, 0, 0, false, false, 0, false);
+        }
+
+        uint8 threshold = 0;
+        uint64 executableAt = req.initiatedAt;
+        if (req.trigger == ResurrectionTrigger.GuardianVote) {
+            threshold = uint8((uint256(req.guardianSnapshot) * 2 + 2) / 3);
+            executableAt = req.initiatedAt + uint64(RESURRECTION_DELAY);
+        }
+
+        bool currentlyOffline = isOffline(req.agentId);
+        bool completeable = !req.executed && req.carrierConfirmed;
+        if (req.trigger == ResurrectionTrigger.GuardianVote) {
+            completeable =
+                completeable &&
+                currentlyOffline &&
+                req.approvalCount >= threshold &&
+                block.timestamp >= executableAt;
+        }
+
+        return (
+            true,
+            req.trigger,
+            req.approvalCount,
+            threshold,
+            req.carrierConfirmed,
+            currentlyOffline,
+            executableAt,
+            completeable
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    //  Resurrection: Request Flow
+    // -----------------------------------------------------------------------
+
+    /// @notice Owner initiates resurrection using resurrection key (EIP-712 signed)
+    function initiateResurrection(
+        bytes32 agentId,
+        bytes32 carrierId,
+        bytes calldata sig
+    ) external {
+        SoulIdentity storage soul = souls[agentId];
+        if (!soul.active) revert SoulNotActive();
+
+        ResurrectionConfig storage rc = resurrectionConfigs[agentId];
+        if (!rc.configured) revert ResurrectionNotConfigured();
+
+        Carrier storage c = carriers[carrierId];
+        if (!c.active) revert CarrierNotFound();
+        if (!c.available) revert CarrierNotAvailable();
+
+        // Verify resurrection key signature
+        uint64 nonce = nonces[agentId];
+        bytes32 structHash = keccak256(
+            abi.encode(RESURRECT_SOUL_TYPEHASH, agentId, carrierId, nonce)
+        );
+        bytes32 digest = keccak256(
+            abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash)
+        );
+        address recovered = _recoverSigner(digest, sig);
+        // Verify signer's address hashes to the resurrection key hash
+        if (keccak256(abi.encodePacked(recovered)) != rc.resurrectionKeyHash) revert InvalidSignature();
+        nonces[agentId] = nonce + 1;
+
+        bytes32 requestId = keccak256(
+            abi.encodePacked(agentId, carrierId, block.timestamp, msg.sender, "resurrect")
+        );
+
+        resurrectionRequests[requestId] = ResurrectionRequest({
+            agentId: agentId,
+            carrierId: carrierId,
+            initiator: msg.sender,
+            initiatedAt: uint64(block.timestamp),
+            approvalCount: 0,
+            guardianSnapshot: 0,
+            executed: false,
+            carrierConfirmed: false,
+            trigger: ResurrectionTrigger.OwnerKey
+        });
+
+        emit ResurrectionInitiated(requestId, agentId, carrierId, ResurrectionTrigger.OwnerKey);
+    }
+
+    /// @notice Guardian initiates resurrection after offline timeout
+    function initiateGuardianResurrection(
+        bytes32 agentId,
+        bytes32 carrierId
+    ) external {
+        SoulIdentity storage soul = souls[agentId];
+        if (!soul.active) revert SoulNotActive();
+        if (!_isActiveGuardian(agentId, msg.sender)) revert NotGuardian();
+
+        ResurrectionConfig storage rc = resurrectionConfigs[agentId];
+        if (!rc.configured) revert ResurrectionNotConfigured();
+        if (!isOffline(agentId)) revert NotOffline();
+
+        Carrier storage c = carriers[carrierId];
+        if (!c.active) revert CarrierNotFound();
+        if (!c.available) revert CarrierNotAvailable();
+
+        bytes32 requestId = keccak256(
+            abi.encodePacked(agentId, carrierId, block.timestamp, msg.sender, "guardian-resurrect")
+        );
+
+        uint256 activeCount = getActiveGuardianCount(agentId);
+        resurrectionRequests[requestId] = ResurrectionRequest({
+            agentId: agentId,
+            carrierId: carrierId,
+            initiator: msg.sender,
+            initiatedAt: uint64(block.timestamp),
+            approvalCount: 1,
+            guardianSnapshot: uint8(activeCount),
+            executed: false,
+            carrierConfirmed: false,
+            trigger: ResurrectionTrigger.GuardianVote
+        });
+        resurrectionApprovals[requestId][msg.sender] = true;
+
+        emit ResurrectionInitiated(requestId, agentId, carrierId, ResurrectionTrigger.GuardianVote);
+        emit ResurrectionApproved(requestId, msg.sender);
+    }
+
+    /// @notice Guardian approves a pending resurrection request
+    function approveResurrection(bytes32 requestId) external {
+        ResurrectionRequest storage req = resurrectionRequests[requestId];
+        if (req.initiatedAt == 0) revert ResurrectionNotFound();
+        if (req.executed) revert ResurrectionAlreadyExecuted();
+        if (!_isActiveGuardian(req.agentId, msg.sender)) revert NotGuardian();
+        if (resurrectionApprovals[requestId][msg.sender]) revert AlreadyApproved();
+
+        resurrectionApprovals[requestId][msg.sender] = true;
+        req.approvalCount += 1;
+
+        emit ResurrectionApproved(requestId, msg.sender);
+    }
+
+    /// @notice Carrier owner confirms willingness to host the resurrected agent
+    function confirmCarrier(bytes32 requestId) external {
+        ResurrectionRequest storage req = resurrectionRequests[requestId];
+        if (req.initiatedAt == 0) revert ResurrectionNotFound();
+        if (req.executed) revert ResurrectionAlreadyExecuted();
+
+        Carrier storage c = carriers[req.carrierId];
+        if (msg.sender != c.owner) revert NotCarrierOwner();
+
+        req.carrierConfirmed = true;
+
+        emit CarrierConfirmed(requestId, req.carrierId);
+    }
+
+    /// @notice Complete resurrection — conditions depend on trigger type
+    function completeResurrection(bytes32 requestId) external {
+        ResurrectionRequest storage req = resurrectionRequests[requestId];
+        if (req.initiatedAt == 0) revert ResurrectionNotFound();
+        if (req.executed) revert ResurrectionAlreadyExecuted();
+        if (!req.carrierConfirmed) revert CarrierNotConfirmed();
+
+        if (req.trigger == ResurrectionTrigger.GuardianVote) {
+            // Guardian path: re-check offline status (agent may have recovered during delay)
+            if (!isOffline(req.agentId)) revert NotOffline();
+            // Guardian path: needs 2/3 approval + time lock
+            uint256 snapshotCount = uint256(req.guardianSnapshot);
+            uint256 threshold = (snapshotCount * 2 + 2) / 3; // ceil(2/3)
+            if (req.approvalCount < threshold) revert ResurrectionNotReady();
+            if (block.timestamp < req.initiatedAt + RESURRECTION_DELAY) revert ResurrectionNotReady();
+        }
+        // OwnerKey path: no approval or time lock needed, just carrier confirmation
+
+        req.executed = true;
+
+        // Reset heartbeat to current time so the agent is considered alive
+        ResurrectionConfig storage rc = resurrectionConfigs[req.agentId];
+        rc.lastHeartbeat = uint64(block.timestamp);
+
+        emit ResurrectionCompleted(requestId, req.agentId, req.carrierId);
+    }
+
+    /// @notice Cancel a pending resurrection request
+    function cancelResurrection(bytes32 requestId) external {
+        ResurrectionRequest storage req = resurrectionRequests[requestId];
+        if (req.initiatedAt == 0) revert ResurrectionNotFound();
+        if (req.executed) revert ResurrectionAlreadyExecuted();
+
+        // Owner or initiator can cancel
+        bytes32 agentId = req.agentId;
+        if (msg.sender != souls[agentId].owner && msg.sender != req.initiator) revert NotOwner();
+
+        req.executed = true;
+        emit ResurrectionCancelled(requestId);
     }
 
     // -----------------------------------------------------------------------
