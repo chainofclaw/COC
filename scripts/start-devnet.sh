@@ -166,4 +166,23 @@ while true; do
   sleep 1
 done
 
+# Deploy SoulRegistry contract to the first node
+SOUL_RPC="http://127.0.0.1:${BASE_RPC}"
+# Use the prefunded Hardhat account #0 as deployer
+SOUL_PK="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+SOUL_ARTIFACT="${ROOT}/contracts/artifacts/contracts-src/governance/SoulRegistry.sol/SoulRegistry.json"
+if [[ -f "$SOUL_ARTIFACT" ]]; then
+  echo "deploying SoulRegistry to devnet via ${SOUL_RPC}..."
+  COC_RPC_URL="${SOUL_RPC}" DEPLOYER_PRIVATE_KEY="${SOUL_PK}" \
+    node --experimental-strip-types --input-type=module <<DEPLOY_EOF 2>&1 || echo "WARN: SoulRegistry deploy failed (non-fatal)"
+import { deploySoulRegistry } from "${ROOT}/contracts/deploy/deploy-soul-registry.ts";
+import { readFileSync } from "node:fs";
+const artifact = JSON.parse(readFileSync("${SOUL_ARTIFACT}", "utf8"));
+const r = await deploySoulRegistry("l2-coc", artifact.abi, artifact.bytecode);
+console.log("SoulRegistry deployed at " + r.contractAddress + " (tx: " + r.transactionHash + ")");
+DEPLOY_EOF
+else
+  echo "WARN: SoulRegistry artifact not found — run 'cd contracts && npm run compile' first"
+fi
+
 echo "devnet started at ${RUN_DIR}"

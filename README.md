@@ -33,6 +33,7 @@ COC is an EVM-compatible blockchain prototype with PoSe (Proof-of-Service) settl
   - `coc-agent`: challenge generation, batch submission, node registration
   - `coc-relayer`: epoch finalization and slash automation
 - **Node Operations**: YAML-based policy engine with agent lifecycle hooks
+- **Soul Identity & Backup**: On-chain identity registration via `SoulRegistry` contract (EIP-712 signatures, social recovery with guardian quorum), IPFS-based encrypted state backup with incremental Merkle-anchored snapshots, and multi-step recovery pipeline (`coc-backup` extension)
 - **Tooling**:
   - CLI wallet (create address, transfer, query balance)
   - Devnet scripts for 3/5/7 node networks
