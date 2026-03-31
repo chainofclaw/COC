@@ -74,7 +74,7 @@ services:
         NEXT_PUBLIC_WS_URL: ws://node-1:18781
     container_name: coc-explorer
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     depends_on:
       node-1:
         condition: service_healthy

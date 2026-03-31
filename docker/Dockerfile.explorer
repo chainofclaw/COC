@@ -24,10 +24,14 @@ FROM node:22-slim AS runtime
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+RUN groupadd --system coc && useradd --system --gid coc --create-home --home-dir /home/coc coc
 
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
+
+RUN chown -R coc:coc /app
+USER coc
 
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
