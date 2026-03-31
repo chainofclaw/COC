@@ -52,7 +52,15 @@ COC 是一个 EVM 兼容的区块链原型，结合轻量执行层与 PoSe（Pro
    - 通过 JSON-RPC 获取实时链数据。
    - Tailwind CSS 响应式 UI。
 
-9. **安全层（Phase 33）**
+9. **DID 身份层**
+   - 符合 W3C DID Core v1.0 标准的 `did:coc` 方法，面向 AI agent 去中心化身份。
+   - DIDRegistry 合约：密钥轮换、委托注册、凭证锚定、临时身份、谱系追踪。
+   - DID 解析器从 SoulRegistry + DIDRegistry 链上状态组装 DID 文档。
+   - 委托框架：作用域受限、时间限制、最大深度 3、级联撤销。
+   - 可验证凭证：链上哈希锚定 + 基于 Merkle 证明的选择性披露。
+   - Wire/P2P 握手的 DID 认证（向后兼容）。
+
+10. **安全层（Phase 33）**
    - 节点身份认证：通过 `NodeSigner`/`SignatureVerifier` 对 Wire 握手签名。
    - BFT 消息强制签名与验证（拒绝无签名/伪造投票）。
    - DHT 防投毒：节点加入路由表前先进行 TCP 连接探测验证。
@@ -69,7 +77,9 @@ COC 是一个 EVM 兼容的区块链原型，结合轻量执行层与 PoSe（Pro
 
 ## 核心组件
 - **节点运行时**：`COC/node/src/*`
+- **DID 模块**：`COC/node/src/did/*`
 - **PoSe 合约**：`COC/contracts/settlement/*`
+- **治理合约**：`COC/contracts/governance/*`（SoulRegistry、DIDRegistry）
 - **PoSe 服务**：`COC/services/*`
 - **运行时服务**：`COC/runtime/*`
 - **节点运维**：`COC/nodeops/*`

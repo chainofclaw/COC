@@ -25,6 +25,9 @@ export interface P2PAuthEnvelope {
   timestampMs: number
   nonce: string
   signature: string
+  // DID extensions (optional, backward compatible)
+  did?: string
+  delegationChain?: unknown[]
 }
 
 interface AuthNonceTracker {
