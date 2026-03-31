@@ -52,7 +52,15 @@ COC is an EVM-compatible blockchain prototype that combines a lightweight execut
    - Real-time chain data via JSON-RPC.
    - Responsive UI with Tailwind CSS.
 
-9. **Security Layer (Phase 33)**
+9. **DID Identity Layer**
+   - W3C DID Core v1.0 compliant `did:coc` method for AI agent decentralized identity.
+   - DIDRegistry contract for key rotation, delegation, credential anchoring, ephemeral identities, lineage.
+   - DID Resolver assembles DID Documents from SoulRegistry + DIDRegistry on-chain state.
+   - Delegation framework: scope-limited, time-bound, max depth 3, cascading revocation.
+   - Verifiable Credentials with on-chain hash anchoring and selective disclosure via Merkle proofs.
+   - DID-based authentication for Wire/P2P handshakes (backward compatible).
+
+10. **Security Layer (Phase 33)**
    - Node identity authentication via `NodeSigner`/`SignatureVerifier` (wire handshake signing).
    - BFT message mandatory signatures with verification (reject unsigned/forged votes).
    - DHT anti-poisoning: peer verification (TCP probe) before routing table insertion.
@@ -69,7 +77,9 @@ COC is an EVM-compatible blockchain prototype that combines a lightweight execut
 
 ## Core Components
 - **Node Runtime**: `COC/node/src/*`
+- **DID Module**: `COC/node/src/did/*`
 - **PoSe Contracts**: `COC/contracts/settlement/*`
+- **Governance Contracts**: `COC/contracts/governance/*` (SoulRegistry, DIDRegistry)
 - **PoSe Services**: `COC/services/*`
 - **Runtime Services**: `COC/runtime/*`
 - **Node Operations**: `COC/nodeops/*`

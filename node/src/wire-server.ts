@@ -24,6 +24,9 @@ interface HandshakePayload {
   publicKey?: string
   nonce?: string
   signature?: string
+  // DID extensions (optional, backward compatible)
+  did?: string
+  didProof?: string
 }
 
 export interface WireServerConfig {

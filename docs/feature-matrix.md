@@ -279,6 +279,30 @@ Status legend:
 - **IPFS CID validation + timeout** — Implemented — format check, 30s AbortSignal
 - **On-chain recovery from CID** — Not implemented — requires CID registry (bytes32→CID mapping)
 
+## DID (Decentralized Identity for AI Agents)
+- **DIDRegistry contract** — Implemented — `COC/contracts/contracts-src/governance/DIDRegistry.sol`
+- **did:coc method resolver** — Implemented — `COC/node/src/did/did-resolver.ts`
+- **DID Document builder (W3C compliant)** — Implemented — `COC/node/src/did/did-document-builder.ts`
+- **EIP-712 types for DIDRegistry** — Implemented — `COC/node/src/crypto/did-registry-types.ts`
+- **Key rotation (add/revoke verification methods)** — Implemented — DIDRegistry addVerificationMethod / revokeVerificationMethod
+- **Delegation registry (scope-limited, time-bound)** — Implemented — DIDRegistry grantDelegation / revokeDelegation / revokeAllDelegations
+- **Delegation chain verification (depth ≤ 3)** — Implemented — `COC/node/src/did/delegation-chain.ts`
+- **Scope subset checking (URI pattern + constraint narrowing)** — Implemented — delegation-chain.ts isScopeSubset
+- **Cascading revocation + global epoch** — Implemented — DIDRegistry isDelegationValid + globalRevocationEpoch
+- **Rate-limited delegation creation** — Implemented — MIN_DELEGATION_INTERVAL=60s, MAX_DELEGATIONS_PER_AGENT=32
+- **Ephemeral sub-identities** — Implemented — DIDRegistry createEphemeralIdentity / deactivateEphemeralIdentity
+- **Agent lineage tracking** — Implemented — DIDRegistry recordLineage (parent, forkHeight, generation)
+- **Verifiable Credential anchoring** — Implemented — DIDRegistry anchorCredential / revokeCredential
+- **Selective disclosure (Merkle tree)** — Implemented — `COC/node/src/did/verifiable-credentials.ts`
+- **Capability bitmask (16 flags)** — Implemented — DIDRegistry updateCapabilities
+- **DID-based authentication (challenge-response)** — Implemented — `COC/node/src/did/did-auth.ts`
+- **Wire handshake DID extension** — Implemented — HandshakePayload + optional did/didProof fields
+- **P2P auth DID extension** — Implemented — P2PAuthEnvelope + optional did/delegationChain fields
+- **DID config (didEnabled, didAuthMode)** — Implemented — `COC/node/src/config.ts`
+- **Explorer DID pages** — Implemented — `COC/explorer/src/app/did/`
+- **RPC methods (coc_resolveDid etc.)** — Partial — types defined, wiring pending
+- **DID deployment script** — Implemented — `COC/contracts/deploy/deploy-did-registry.ts`
+
 ## Performance & Benchmarking
 - **EVM benchmarks** — Implemented — `COC/node/src/benchmarks/evm-benchmark.test.ts`
 - **Load testing** — Implemented (Phase 23) — `COC/node/src/benchmarks/load-test.test.ts`

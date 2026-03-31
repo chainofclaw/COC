@@ -105,6 +105,10 @@ export interface NodeConfig {
   validatorStakes: Array<{ id: string; address: string; stake: string }>
   // Identity mapping: nodeId → address for signature verification
   validatorAddresses?: Record<string, string>
+  // DID Registry (optional)
+  didRegistryAddress?: string
+  didEnabled: boolean
+  didAuthMode: "off" | "optional" | "required"
 }
 
 export async function loadNodeConfig(): Promise<NodeConfig> {
@@ -456,6 +460,9 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     enableGovernance,
     validatorStakes,
     validatorAddresses,
+    didRegistryAddress: user.didRegistryAddress,
+    didEnabled: user.didEnabled ?? false,
+    didAuthMode: user.didAuthMode ?? "off",
     storage: { ...storageDefaults, ...userStorage },
   }
 }

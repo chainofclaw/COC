@@ -86,7 +86,7 @@ Uses Node.js built-in test framework and Hardhat test runner (`1635` tests acros
 - **Explorer tests**: `explorer/src/lib/*.test.ts` (`43` tests, `3` files) - ABI decoding, provider helpers, Solidity compiler version resolution
 - **Faucet tests**: `faucet/src/*.test.ts` (`26` tests, `3` files) - drip flow, web UI, server wiring, cooldown logic
 - **Contract deploy tests**: `contracts/deploy/*.test.ts` (`18` tests, `2` files) - deploy config resolution, CLI wrapper, PoSe deploy helper validation
-- **Contract tests**: `cd contracts && npm test` (`203` tests, `9` files) - PoSeManager v1, PoSeManagerV2, v2 E2E lifecycle, gas benchmarks, security audit, EIP-712 cross-check, SoulRegistry (identity, backup, recovery, guardians)
+- **Contract tests**: `cd contracts && npm test` (`227` tests, `10` files) - PoSeManager v1, PoSeManagerV2, v2 E2E lifecycle, gas benchmarks, security audit, EIP-712 cross-check, SoulRegistry (identity, backup, recovery, guardians), DIDRegistry (key rotation, delegation, credentials, ephemeral identities, lineage)
 - **Extension tests**: `extensions/coc-nodeops/src/**/*.test.ts` (`24` tests, `3` files) - node types, network presets, node manager
 - **Storage layer tests**: `node/src/storage/*.test.ts` (included in node layer)
 
@@ -220,6 +220,15 @@ cd contracts && npm test
 - `settlement/IPoSeManagerV2.sol`: v2 interface and events
 - `settlement/MerkleProofLite.sol`: Merkle proof verification (calldata + memory variants)
 - `governance/SoulRegistry.sol`: Soul identity registration, backup CID anchoring, EIP-712 signed operations, social recovery with 2/3 guardian quorum
+- `governance/DIDRegistry.sol`: DID management for AI agents — key rotation, delegation registry (depth≤3, scope-limited, time-bound), ephemeral identities, agent lineage tracking, verifiable credential anchoring, EIP-712 signed operations
+
+### DID Module (node/src/did/)
+- `did-types.ts`: W3C DID Core types, delegation scope/credential types, capability bitmask flags
+- `did-resolver.ts`: DID resolver (`did:coc` method), parses DID identifiers, resolves from on-chain state
+- `did-document-builder.ts`: Builds DID Documents from SoulRegistry + DIDRegistry data
+- `did-auth.ts`: DID-based authentication (challenge-response, Wire/P2P handshake integration)
+- `delegation-chain.ts`: Delegation chain verification, scope subset checking, revocation checking
+- `verifiable-credentials.ts`: VC issuance, selective disclosure via Merkle tree, credential verification
 
 ### Performance Benchmarks (node/src/benchmarks/)
 - `evm-benchmark.test.ts`: EVM execution performance benchmarks
@@ -287,6 +296,7 @@ cd contracts && npm test
 - Core algorithms: `docs/core-algorithms.en.md`
 - Feature matrix: `docs/feature-matrix.md`
 - Soul Registry & Backup: `docs/soul-registry-backup.en.md` / `docs/soul-registry-backup.zh.md`
+- DID Method Specification: `docs/did-method-spec.en.md` / `docs/did-method-spec.zh.md`
 
 ## Code and Documentation Language Requirements
 
