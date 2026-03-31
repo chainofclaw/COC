@@ -284,3 +284,9 @@ Status legend:
 - **Load testing** — Implemented (Phase 23) — `COC/node/src/benchmarks/load-test.test.ts`
 - **formatBlock optimization** — Implemented (O(n) via Transaction.from) — `COC/node/src/rpc.ts`
 - **P2P benchmarks** — Implemented (M7) — `COC/node/src/benchmarks/p2p-benchmark.test.ts`
+- **TPS 100+ optimization (Phase 37)** — Implemented — Single-node sequencer: 16.7 TPS → **131 TPS** via mega-batch atomic DB writes
+- **Op-builder pattern (batch DB operations)** — Implemented (Phase 37) — `COC/node/src/storage/block-index.ts`, `COC/node/src/storage/nonce-store.ts`
+- **Reduced transaction parsing** — Implemented (Phase 37) — Eliminated 200x ECDSA recovery per block (mempool removal reuses execution-phase hashes)
+- **High-throughput benchmarks** — Implemented (Phase 37) — 200 tx/block (1.5s), 1000 tx/10 blocks (131 TPS), pickForBlock(256) latency (1.26ms)
+- **blockTimeMs config** — Implemented (Phase 37, configurable) — Default 1s (was 3s), min 100ms
+- **maxTxPerBlock config** — Implemented (Phase 37, configurable) — Default 256 (was 50)

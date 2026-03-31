@@ -5,7 +5,7 @@
  * with multiple access patterns (by number, by hash, by address).
  */
 
-import type { IDatabase, RangeOptions } from "./db.ts"
+import type { IDatabase, BatchOp, RangeOptions } from "./db.ts"
 import type { ChainBlock, Hex } from "../blockchain-types.ts"
 
 const BLOCK_BY_NUMBER_PREFIX = "b:"
@@ -109,29 +109,17 @@ export class BlockIndex implements IBlockIndex {
     this.db = db
   }
 
-  async putBlock(block: ChainBlock): Promise<void> {
+  buildBlockOps(block: ChainBlock): BatchOp[] {
     const blockData = encoder.encode(serializeJSON(block))
+    return [
+      { type: "put", key: BLOCK_BY_NUMBER_PREFIX + block.number.toString(), value: blockData },
+      { type: "put", key: BLOCK_BY_HASH_PREFIX + block.hash, value: encoder.encode(block.number.toString()) },
+      { type: "put", key: LATEST_BLOCK_KEY, value: blockData },
+    ]
+  }
 
-    await this.db.batch([
-      // Store by number
-      {
-        type: "put",
-        key: BLOCK_BY_NUMBER_PREFIX + block.number.toString(),
-        value: blockData,
-      },
-      // Store hash -> number mapping
-      {
-        type: "put",
-        key: BLOCK_BY_HASH_PREFIX + block.hash,
-        value: encoder.encode(block.number.toString()),
-      },
-      // Update latest block pointer
-      {
-        type: "put",
-        key: LATEST_BLOCK_KEY,
-        value: blockData,
-      },
-    ])
+  async putBlock(block: ChainBlock): Promise<void> {
+    await this.db.batch(this.buildBlockOps(block))
   }
 
   /**
@@ -210,14 +198,13 @@ export class BlockIndex implements IBlockIndex {
     return block
   }
 
-  async putTransaction(txHash: Hex, tx: TxWithReceipt): Promise<void> {
+  buildTransactionOps(txHash: Hex, tx: TxWithReceipt): BatchOp[] {
     const key = TX_BY_HASH_PREFIX + txHash
     const txData = encoder.encode(serializeJSON(tx))
-    const ops: Array<{ type: "put"; key: string; value: Uint8Array }> = [
+    const ops: BatchOp[] = [
       { type: "put", key, value: txData },
     ]
 
-    // Build address indexes for from/to
     const blockPad = padBlockNumber(tx.receipt.blockNumber)
     const hashLower = txHash.toLowerCase()
 
@@ -230,7 +217,11 @@ export class BlockIndex implements IBlockIndex {
       ops.push({ type: "put", key: toKey, value: encoder.encode(txHash) })
     }
 
-    await this.db.batch(ops)
+    return ops
+  }
+
+  async putTransaction(txHash: Hex, tx: TxWithReceipt): Promise<void> {
+    await this.db.batch(this.buildTransactionOps(txHash, tx))
   }
 
   async getTransactionByHash(hash: Hex): Promise<TxWithReceipt | null> {
@@ -283,11 +274,16 @@ export class BlockIndex implements IBlockIndex {
     return keys.length
   }
 
-  async putLogs(blockNumber: bigint, logs: IndexedLog[]): Promise<void> {
-    if (logs.length === 0) return
+  buildLogOps(blockNumber: bigint, logs: IndexedLog[]): BatchOp[] {
+    if (logs.length === 0) return []
     const key = LOG_BY_BLOCK_PREFIX + blockNumber.toString()
     const data = encoder.encode(serializeJSON(logs))
-    await this.db.put(key, data)
+    return [{ type: "put", key, value: data }]
+  }
+
+  async putLogs(blockNumber: bigint, logs: IndexedLog[]): Promise<void> {
+    const ops = this.buildLogOps(blockNumber, logs)
+    if (ops.length > 0) await this.db.batch(ops)
   }
 
   async getLogs(filter: LogFilter): Promise<IndexedLog[]> {
@@ -329,7 +325,7 @@ export class BlockIndex implements IBlockIndex {
     return results
   }
 
-  async registerContract(address: Hex, blockNumber: bigint, txHash: Hex, creator: Hex): Promise<void> {
+  buildContractOps(address: Hex, blockNumber: bigint, txHash: Hex, creator: Hex): BatchOp[] {
     const record: ContractRecord = {
       address,
       blockNumber,
@@ -339,10 +335,14 @@ export class BlockIndex implements IBlockIndex {
     }
     const key = CONTRACT_PREFIX + padBlockNumber(blockNumber) + ":" + address.toLowerCase()
     const addrKey = CONTRACT_ADDR_PREFIX + address.toLowerCase()
-    await this.db.batch([
+    return [
       { type: "put", key, value: encoder.encode(serializeJSON(record)) },
       { type: "put", key: addrKey, value: encoder.encode(key) },
-    ])
+    ]
+  }
+
+  async registerContract(address: Hex, blockNumber: bigint, txHash: Hex, creator: Hex): Promise<void> {
+    await this.db.batch(this.buildContractOps(address, blockNumber, txHash, creator))
   }
 
   async getContracts(opts?: AddressTxQuery): Promise<ContractRecord[]> {

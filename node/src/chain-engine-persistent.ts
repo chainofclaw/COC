@@ -17,6 +17,7 @@ import { hexToBytes } from "@ethereumjs/util"
 import type { NodeSigner, SignatureVerifier } from "./crypto/signer.ts"
 import { calculateBaseFee, calculateExcessBlobGas, genesisBaseFee, BLOCK_GAS_LIMIT } from "./base-fee.ts"
 import { LevelDatabase } from "./storage/db.ts"
+import type { BatchOp } from "./storage/db.ts"
 import { BlockIndex } from "./storage/block-index.ts"
 import type { TxWithReceipt, IndexedLog, LogFilter } from "./storage/block-index.ts"
 import { PersistentNonceStore } from "./storage/nonce-store.ts"
@@ -370,6 +371,9 @@ export class PersistentChainEngine {
     const confirmedNonces: string[] = []
     let storedBlock: ChainBlock
     const executionTimestamp = BigInt(Math.floor(block.timestampMs / 1000))
+    // Accumulate all DB ops in memory; written as single atomic batch after execution
+    const allDbOps: BatchOp[] = []
+    const executedTxHashes: Hex[] = []
 
     try {
     await this.evm.applyBlockContext({
@@ -397,8 +401,8 @@ export class PersistentChainEngine {
       if (receipt) {
         const receiptLogs = Array.isArray(receipt.logs) ? receipt.logs : []
 
-        // Store transaction with receipt
-        await this.blockIndex.putTransaction(result.txHash as Hex, {
+        // Collect transaction ops (deferred — not written yet)
+        allDbOps.push(...this.blockIndex.buildTransactionOps(result.txHash as Hex, {
           rawTx: raw,
           receipt: {
             transactionHash: receipt.transactionHash as Hex,
@@ -414,7 +418,7 @@ export class PersistentChainEngine {
               data: log.data as Hex,
             })),
           },
-        })
+        }))
 
         // Collect indexed logs
         for (let logIdx = 0; logIdx < receiptLogs.length; logIdx++) {
@@ -431,14 +435,14 @@ export class PersistentChainEngine {
           })
         }
 
-        // Register contract if this is a contract creation tx
+        // Collect contract registration ops (deferred)
         if (!txTo && receipt.contractAddress) {
-          await this.blockIndex.registerContract(
+          allDbOps.push(...this.blockIndex.buildContractOps(
             receipt.contractAddress as Hex,
             block.number,
             result.txHash as Hex,
             txFrom,
-          )
+          ))
         }
 
         totalGasUsed += BigInt(receipt.gasUsed.toString())
@@ -454,8 +458,9 @@ export class PersistentChainEngine {
           gasUsed: String(receipt.gasUsed ?? "0x5208"),
         })
 
-        // Collect nonce marks — applied after all checks pass
+        // Collect nonce marks and tx hashes for mempool removal
         confirmedNonces.push(`tx:${result.txHash}`)
+        executedTxHashes.push(result.txHash as Hex)
       }
     }
 
@@ -509,14 +514,11 @@ export class PersistentChainEngine {
       ...(block.parentBeaconBlockRoot ? { parentBeaconBlockRoot: block.parentBeaconBlockRoot } : {}),
     }
 
-    // Store block and logs
-    await this.blockIndex.putBlock(storedBlock)
-    await this.blockIndex.putLogs(block.number, blockLogs)
-
-    // Mark confirmed transactions only after block is persisted
-    for (const nonce of confirmedNonces) {
-      await this.txNonceStore.markUsed(nonce)
-    }
+    // Append block, log, and nonce ops — then flush everything in a single atomic batch
+    allDbOps.push(...this.blockIndex.buildBlockOps(storedBlock))
+    allDbOps.push(...this.blockIndex.buildLogOps(block.number, blockLogs))
+    allDbOps.push(...this.txNonceStore.buildMarkUsedOps(confirmedNonces))
+    await this.db.batch(allDbOps)
 
     } catch (err) {
       // Revert state trie on any failure to prevent state pollution
@@ -529,14 +531,9 @@ export class PersistentChainEngine {
     // Update finality flags for recent blocks
     await this.updateFinalityFlags()
 
-    // Remove confirmed transactions from mempool
-    for (const raw of block.txs) {
-      try {
-        const parsed = Transaction.from(raw)
-        this.mempool.remove(parsed.hash as Hex)
-      } catch (err) {
-        log.warn("failed to parse tx for mempool removal", { error: String(err) })
-      }
+    // Remove confirmed transactions from mempool (reuse hashes from execution phase)
+    for (const hash of executedTxHashes) {
+      this.mempool.remove(hash)
     }
 
     // Emit events for subscribers (use storedBlock with computed fields)

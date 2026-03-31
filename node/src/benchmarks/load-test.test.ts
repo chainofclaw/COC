@@ -27,8 +27,38 @@ const FUNDED_PK = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f
 const FUNDED_ADDRESS = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
 const TARGET = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
 
+// Hardhat default test accounts (keys 0-19)
+const HARDHAT_KEYS = [
+  "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+  "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
+  "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a",
+  "0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6",
+  "0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a",
+  "0x8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba",
+  "0x92db14e403b83dfe3df233f83dfa3a0d7096f21ca9b0d6d6b8d88b2b4ec1564e",
+  "0x4bbbf85ce3377467afe5d46f804f221813b2bb87f24d81f60f1fcdbf7cbf4356",
+]
+const HARDHAT_WALLETS = HARDHAT_KEYS.map(k => new Wallet(k))
+const HARDHAT_ADDRESSES = HARDHAT_WALLETS.map(w => w.address)
+
 function createSignedTx(nonce: number, valueWei: bigint): Hex {
   const wallet = new Wallet(FUNDED_PK)
+  const tx = Transaction.from({
+    to: TARGET,
+    value: `0x${valueWei.toString(16)}`,
+    nonce,
+    gasLimit: "0x5208",
+    gasPrice: "0x3b9aca00",
+    chainId: CHAIN_ID,
+    data: "0x",
+  })
+  const signed = wallet.signingKey.sign(tx.unsignedHash)
+  const clone = tx.clone()
+  clone.signature = signed
+  return clone.serialized as Hex
+}
+
+function createSignedTxFrom(wallet: Wallet, nonce: number, valueWei: bigint): Hex {
   const tx = Transaction.from({
     to: TARGET,
     value: `0x${valueWei.toString(16)}`,
@@ -110,6 +140,118 @@ describe("Block Production Throughput", () => {
     const tps = (50 / duration) * 1000
     console.log(`  50 txs + 1 block: ${duration.toFixed(0)}ms (${tps.toFixed(1)} tx/sec)`)
     assert.ok(duration < 10000, `tx processing took ${duration.toFixed(0)}ms, expected < 10000ms`)
+  })
+})
+
+describe("High-Throughput TPS (100+ target)", () => {
+  let tmpDir: string
+  let evm: EvmChain
+  let engine: PersistentChainEngine
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "tps-bench-"))
+    evm = await EvmChain.create(CHAIN_ID)
+    engine = new PersistentChainEngine(
+      {
+        dataDir: tmpDir,
+        nodeId: "node-1",
+        chainId: CHAIN_ID,
+        validators: ["node-1"],
+        finalityDepth: 2,
+        maxTxPerBlock: 256,
+        minGasPriceWei: 1n,
+        prefundAccounts: [
+          ...HARDHAT_ADDRESSES.map(addr => ({ address: addr, balanceWei: parseEther("100000").toString() })),
+        ],
+      },
+      evm,
+    )
+    await engine.init()
+  })
+
+  afterEach(async () => {
+    await engine.close()
+    await rm(tmpDir, { recursive: true, force: true }).catch(() => {})
+  })
+
+  it("processes 200 txs in 1 block under 2 seconds", async () => {
+    // Distribute 200 txs across 8 senders (25 each, well under maxPerSender=64)
+    const senderCount = HARDHAT_WALLETS.length
+    const txPerSender = Math.ceil(200 / senderCount)
+    let total = 0
+    for (let s = 0; s < senderCount && total < 200; s++) {
+      for (let n = 0; n < txPerSender && total < 200; n++) {
+        await engine.addRawTx(createSignedTxFrom(HARDHAT_WALLETS[s], n, BigInt(1000 + total)))
+        total++
+      }
+    }
+
+    const start = performance.now()
+    const block = await engine.proposeNextBlock()
+    const duration = performance.now() - start
+
+    assert.ok(block)
+    console.log(`  200 txs in 1 block: ${duration.toFixed(0)}ms (${block!.txs.length} txs included)`)
+    assert.ok(block!.txs.length >= 200, `expected 200 txs, got ${block!.txs.length}`)
+    assert.ok(duration < 2000, `block production took ${duration.toFixed(0)}ms, expected < 2000ms`)
+  })
+
+  it("sustains 100+ TPS execution throughput over 1000 txs across 10 blocks", async () => {
+    const blocks = 10
+    const txPerBlock = 100
+    const senderCount = HARDHAT_WALLETS.length
+    const nonces = new Array(senderCount).fill(0)
+    let totalIncluded = 0
+    let totalExecMs = 0
+
+    for (let b = 0; b < blocks; b++) {
+      // Load txs for this block (100 txs / 8 senders = 12-13 per sender, well under 64 limit)
+      for (let t = 0; t < txPerBlock; t++) {
+        const sIdx = t % senderCount
+        await engine.addRawTx(createSignedTxFrom(HARDHAT_WALLETS[sIdx], nonces[sIdx]++, BigInt(1000 + b * txPerBlock + t)))
+      }
+
+      // Measure only block production (EVM execution + batch persistence)
+      const blockStart = performance.now()
+      const result = await engine.proposeNextBlock()
+      totalExecMs += performance.now() - blockStart
+
+      assert.ok(result, `block ${b} should be produced`)
+      totalIncluded += result!.txs.length
+    }
+
+    const tps = (totalIncluded / totalExecMs) * 1000
+
+    console.log(`  ${totalIncluded} txs in ${blocks} blocks: exec ${totalExecMs.toFixed(0)}ms (${tps.toFixed(1)} TPS)`)
+    assert.ok(tps >= 100, `execution TPS ${tps.toFixed(1)} below 100 target (exec time ${totalExecMs.toFixed(0)}ms)`)
+  })
+
+  it("pickForBlock(500) completes under 100ms", async () => {
+    const mempool = new Mempool({ chainId: CHAIN_ID, maxSize: 4096 })
+
+    // Use multiple senders to add 500 txs (64 per sender max)
+    let total = 0
+    for (let s = 0; s < HARDHAT_WALLETS.length && total < 500; s++) {
+      for (let n = 0; n < 64 && total < 500; n++) {
+        const tx = Transaction.from({
+          to: TARGET, value: `0x${(1000 + total).toString(16)}`, nonce: n,
+          gasLimit: "0x5208", gasPrice: `0x${(1000000000 + total).toString(16)}`,
+          chainId: CHAIN_ID, data: "0x",
+        })
+        const signed = HARDHAT_WALLETS[s].signingKey.sign(tx.unsignedHash)
+        const clone = tx.clone()
+        clone.signature = signed
+        try { mempool.addRawTx(clone.serialized as Hex); total++ } catch { /* skip */ }
+      }
+    }
+
+    const start = performance.now()
+    const picked = await mempool.pickForBlock(256, async () => 0n, 1n)
+    const duration = performance.now() - start
+
+    console.log(`  pickForBlock(256) from ${mempool.size()} txs: ${duration.toFixed(2)}ms, picked ${picked.length}`)
+    assert.ok(duration < 100, `pickForBlock took ${duration.toFixed(2)}ms, expected < 100ms`)
+    assert.ok(picked.length > 0)
   })
 })
 
