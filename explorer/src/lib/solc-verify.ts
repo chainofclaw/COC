@@ -29,18 +29,23 @@ const SOLC_REMOTE_VERSION_TAGS: Record<string, string> = {
   '0.8.24': 'v0.8.24+commit.e11b9ed9',
   '0.8.20': 'v0.8.20+commit.a1b79de6',
 }
-
-// CBOR metadata at the end of compiled bytecode is typically 43-53 bytes.
-// We strip it before comparison since it contains source hashes that differ.
-const METADATA_TAIL_BYTES = 43
+const SOLC_ALLOWED_VERSION_TAGS = new Set(Object.values(SOLC_REMOTE_VERSION_TAGS))
+const COMPILE_WARN_THRESHOLD_MS = Number(process.env.COC_VERIFY_COMPILE_WARN_MS ?? 15000)
+const MAX_SOLC_SOURCE_CHARS = Number(process.env.COC_VERIFY_MAX_SOURCE_CHARS ?? 100_000)
 
 /**
  * Strip CBOR metadata suffix from bytecode for comparison.
  * Solidity appends a CBOR-encoded metadata hash at the end of bytecode.
  */
 function stripMetadata(bytecode: string): string {
-  if (bytecode.length <= METADATA_TAIL_BYTES * 2 + 2) return bytecode
-  return bytecode.slice(0, -(METADATA_TAIL_BYTES * 2))
+  const normalized = bytecode.startsWith('0x') ? bytecode.slice(2) : bytecode
+  if (normalized.length < 4) return bytecode
+  const metadataLengthHex = normalized.slice(-4)
+  const metadataBytes = Number.parseInt(metadataLengthHex, 16)
+  if (!Number.isInteger(metadataBytes) || metadataBytes <= 0) return bytecode
+  const metadataHexLen = (metadataBytes + 2) * 2
+  if (metadataHexLen >= normalized.length) return bytecode
+  return `0x${normalized.slice(0, -metadataHexLen)}`
 }
 
 /**
@@ -64,11 +69,21 @@ export function resolveCompilerVersionTag(compilerVersion: string): string | nul
   return SOLC_REMOTE_VERSION_TAGS[compilerVersion] ?? null
 }
 
+function allowRemoteCompilerLoad(): boolean {
+  if (process.env.COC_SOLC_ALLOW_REMOTE === '1') return true
+  if (process.env.COC_SOLC_ALLOW_REMOTE === '0') return false
+  return process.env.NODE_ENV !== 'production'
+}
+
 /**
  * Verify a deployed contract's source code by recompiling and comparing bytecode.
  */
 export async function verifyContract(params: VerifyParams): Promise<VerifyResult> {
   try {
+    if (!params.sourceCode || params.sourceCode.length > MAX_SOLC_SOURCE_CHARS) {
+      return { verified: false, matchPct: 0, error: 'Source code payload is too large' }
+    }
+
     // Fetch on-chain bytecode
     const onChainBytecode = await rpcCall<string>('eth_getCode', [params.address, 'latest'])
     if (!onChainBytecode || onChainBytecode === '0x') {
@@ -80,28 +95,38 @@ export async function verifyContract(params: VerifyParams): Promise<VerifyResult
       compile: (input: string) => string
     }
     try {
-      const solcModule = await import('solc') as {
+      const { createRequire } = await import('node:module')
+      const require = createRequire(import.meta.url)
+      const solcModule = require('solc') as {
         default?: { compile: (input: string) => string; loadRemoteVersion?: (version: string, callback: (err: Error | null, snapshot: { compile: (input: string) => string } | null) => void) => void }
         compile?: (input: string) => string
         loadRemoteVersion?: (version: string, callback: (err: Error | null, snapshot: { compile: (input: string) => string } | null) => void) => void
       }
       const baseSolc = solcModule.default ?? solcModule
-      const loadRemote = baseSolc.loadRemoteVersion
       const versionTag = resolveCompilerVersionTag(params.compilerVersion)
-      if (versionTag && loadRemote) {
-        // Try loading the specific compiler version; fall back to bundled if unavailable.
-        solc = await new Promise<{ compile: (input: string) => string }>((resolve, reject) => {
+      if (!versionTag || !SOLC_ALLOWED_VERSION_TAGS.has(versionTag)) {
+        return { verified: false, matchPct: 0, error: 'Unsupported compiler version' }
+      }
+
+      solc = baseSolc as { compile: (input: string) => string }
+      const loadRemote = baseSolc.loadRemoteVersion
+      if (allowRemoteCompilerLoad() && loadRemote) {
+        const remoteLoaded = await new Promise<{ compile: (input: string) => string } | null>((resolve) => {
           loadRemote(versionTag, (err, snapshot) => {
             if (err || !snapshot) {
-              // Fall back to bundled solc if remote version fails
-              resolve(baseSolc as { compile: (input: string) => string })
+              resolve(null)
             } else {
               resolve(snapshot)
             }
           })
         })
-      } else {
-        solc = baseSolc as { compile: (input: string) => string }
+        if (remoteLoaded) {
+          solc = remoteLoaded
+        } else if (params.compilerVersion !== '0.8.28' && params.compilerVersion !== 'v0.8.28+commit.7893614a') {
+          return { verified: false, matchPct: 0, error: 'Requested compiler version is unavailable' }
+        }
+      } else if (params.compilerVersion !== '0.8.28' && params.compilerVersion !== 'v0.8.28+commit.7893614a') {
+        return { verified: false, matchPct: 0, error: 'Remote compiler loading is disabled in this environment' }
       }
     } catch {
       return { verified: false, matchPct: 0, error: 'solc compiler not available' }
@@ -125,7 +150,11 @@ export async function verifyContract(params: VerifyParams): Promise<VerifyResult
       },
     }
 
+    const compileStartedAt = Date.now()
     const output = JSON.parse(solc.compile(JSON.stringify(input)))
+    if (Date.now() - compileStartedAt > COMPILE_WARN_THRESHOLD_MS) {
+      return { verified: false, matchPct: 0, error: 'Compilation exceeded server execution budget' }
+    }
 
     // Check for compilation errors
     if (output.errors?.some((e: { severity: string }) => e.severity === 'error')) {
@@ -165,11 +194,11 @@ export async function verifyContract(params: VerifyParams): Promise<VerifyResult
         }
       }
 
-      // Partial match (>95% likely means different metadata only)
       if (matchPct > 95) {
         return {
-          verified: true,
+          verified: false,
           matchPct,
+          error: 'Only partial bytecode match found',
           compiledBytecode: compiledHex,
           onChainBytecode,
         }
