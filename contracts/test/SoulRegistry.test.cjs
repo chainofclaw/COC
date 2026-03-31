@@ -62,6 +62,16 @@ function randomBytes32() {
   return ethers.hexlify(ethers.randomBytes(32))
 }
 
+function extractEventArg(receipt, eventName, index = 0) {
+  const event = receipt.logs.find(
+    (log) => log.fragment && log.fragment.name === eventName
+  )
+  if (!event) {
+    throw new Error(`Missing event ${eventName}`)
+  }
+  return event.args[index]
+}
+
 async function deploySoulRegistry() {
   const Factory = await ethers.getContractFactory("SoulRegistry")
   const registry = await Factory.deploy()
@@ -771,6 +781,71 @@ describe("SoulRegistry", function () {
       expect(history.length).to.equal(0)
     })
 
+    it("should reject zero identityCid on registration", async function () {
+      const agentId = randomBytes32()
+
+      const sig = await owner.signTypedData(domain, REGISTER_SOUL_TYPES, {
+        agentId,
+        identityCid: ethers.ZeroHash,
+        owner: owner.address,
+        nonce: 0,
+      })
+
+      await expect(
+        registry.registerSoul(agentId, ethers.ZeroHash, sig)
+      ).to.be.revertedWithCustomError(registry, "InvalidCid")
+    })
+
+    it("should reject zero identityCid on updateIdentity", async function () {
+      const agentId = randomBytes32()
+      const identityCid = randomBytes32()
+
+      const sig1 = await owner.signTypedData(domain, REGISTER_SOUL_TYPES, {
+        agentId,
+        identityCid,
+        owner: owner.address,
+        nonce: 0,
+      })
+      await registry.registerSoul(agentId, identityCid, sig1)
+
+      const sig2 = await owner.signTypedData(domain, UPDATE_IDENTITY_TYPES, {
+        agentId,
+        newIdentityCid: ethers.ZeroHash,
+        nonce: 1,
+      })
+
+      await expect(
+        registry.updateIdentity(agentId, ethers.ZeroHash, sig2)
+      ).to.be.revertedWithCustomError(registry, "InvalidCid")
+    })
+
+    it("should reactivate guardian instead of growing array on add-remove-add", async function () {
+      const agentId = randomBytes32()
+      const identityCid = randomBytes32()
+
+      const sig = await owner.signTypedData(domain, REGISTER_SOUL_TYPES, {
+        agentId,
+        identityCid,
+        owner: owner.address,
+        nonce: 0,
+      })
+      await registry.registerSoul(agentId, identityCid, sig)
+
+      await registry.addGuardian(agentId, guardian1.address)
+      const guardians1 = await registry.getGuardians(agentId)
+      expect(guardians1.length).to.equal(1)
+
+      await registry.removeGuardian(agentId, guardian1.address)
+      expect(await registry.getActiveGuardianCount(agentId)).to.equal(0)
+
+      // Re-add same guardian — should reactivate, not push new entry
+      await registry.addGuardian(agentId, guardian1.address)
+      const guardians2 = await registry.getGuardians(agentId)
+      expect(guardians2.length).to.equal(1) // array length unchanged
+      expect(await registry.getActiveGuardianCount(agentId)).to.equal(1)
+      expect(guardians2[0].active).to.equal(true)
+    })
+
     it("should increment nonces correctly across operations", async function () {
       const agentId = randomBytes32()
       const identityCid = randomBytes32()
@@ -812,6 +887,514 @@ describe("SoulRegistry", function () {
       })
       await registry.updateIdentity(agentId, newIdentityCid, sig3)
       expect(await registry.nonces(agentId)).to.equal(3)
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  //  Resurrection: Configuration & Heartbeat
+  // -----------------------------------------------------------------------
+
+  describe("resurrection config and heartbeat", function () {
+    let agentId
+
+    beforeEach(async function () {
+      agentId = randomBytes32()
+      const identityCid = randomBytes32()
+      const sig = await owner.signTypedData(domain, REGISTER_SOUL_TYPES, {
+        agentId,
+        identityCid,
+        owner: owner.address,
+        nonce: 0,
+      })
+      await registry.registerSoul(agentId, identityCid, sig)
+    })
+
+    it("should configure resurrection parameters", async function () {
+      const keyHash = randomBytes32()
+      const maxOffline = 3600 // 1 hour
+
+      await expect(registry.configureResurrection(agentId, keyHash, maxOffline))
+        .to.emit(registry, "ResurrectionConfigured")
+        .withArgs(agentId, keyHash, maxOffline)
+
+      const config = await registry.getResurrectionConfig(agentId)
+      expect(config.resurrectionKeyHash).to.equal(keyHash)
+      expect(config.maxOfflineDuration).to.equal(maxOffline)
+      expect(config.configured).to.equal(true)
+    })
+
+    it("should reject zero key hash", async function () {
+      await expect(
+        registry.configureResurrection(agentId, ethers.ZeroHash, 3600)
+      ).to.be.revertedWithCustomError(registry, "InvalidKeyHash")
+    })
+
+    it("should reject zero maxOfflineDuration", async function () {
+      await expect(
+        registry.configureResurrection(agentId, randomBytes32(), 0)
+      ).to.be.revertedWithCustomError(registry, "InvalidAddress")
+    })
+
+    it("should send heartbeat with EIP-712 signature", async function () {
+      const keyHash = randomBytes32()
+      await registry.configureResurrection(agentId, keyHash, 3600)
+
+      const HEARTBEAT_TYPES = {
+        Heartbeat: [
+          { name: "agentId", type: "bytes32" },
+          { name: "timestamp", type: "uint64" },
+          { name: "nonce", type: "uint64" },
+        ],
+      }
+
+      const timestamp = Math.floor(Date.now() / 1000)
+      const sig = await owner.signTypedData(domain, HEARTBEAT_TYPES, {
+        agentId,
+        timestamp,
+        nonce: 2, // nonce 0=register, 1=configureResurrection doesn't use nonce, but... let me check
+      })
+
+      // configureResurrection does not consume a nonce, so nonce is 1 after register
+      const sig2 = await owner.signTypedData(domain, HEARTBEAT_TYPES, {
+        agentId,
+        timestamp,
+        nonce: 1,
+      })
+
+      await expect(registry.heartbeat(agentId, timestamp, sig2))
+        .to.emit(registry, "Heartbeat")
+    })
+
+    it("should detect offline status after timeout", async function () {
+      const keyHash = randomBytes32()
+      await registry.configureResurrection(agentId, keyHash, 3600) // 1 hour timeout
+
+      // Right after config, should be online
+      expect(await registry.isOffline(agentId)).to.equal(false)
+
+      // Advance time past maxOfflineDuration
+      await ethers.provider.send("evm_increaseTime", [3601])
+      await ethers.provider.send("evm_mine")
+
+      expect(await registry.isOffline(agentId)).to.equal(true)
+    })
+
+    it("should return false for unconfigured soul", async function () {
+      expect(await registry.isOffline(agentId)).to.equal(false)
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  //  Resurrection: Carrier Management
+  // -----------------------------------------------------------------------
+
+  describe("carrier management", function () {
+    it("should register a carrier", async function () {
+      const carrierId = randomBytes32()
+
+      await expect(
+        registry.registerCarrier(carrierId, "https://carrier1.example.com", 4000, 8192, 100000)
+      )
+        .to.emit(registry, "CarrierRegistered")
+        .withArgs(carrierId, owner.address, "https://carrier1.example.com")
+
+      const carrier = await registry.getCarrier(carrierId)
+      expect(carrier.owner).to.equal(owner.address)
+      expect(carrier.cpuMillicores).to.equal(4000)
+      expect(carrier.memoryMB).to.equal(8192)
+      expect(carrier.storageMB).to.equal(100000)
+      expect(carrier.available).to.equal(true)
+      expect(carrier.active).to.equal(true)
+    })
+
+    it("should reject zero carrierId", async function () {
+      await expect(
+        registry.registerCarrier(ethers.ZeroHash, "https://x.com", 1000, 1024, 10000)
+      ).to.be.revertedWithCustomError(registry, "InvalidAgentId")
+    })
+
+    it("should reject duplicate carrier registration", async function () {
+      const carrierId = randomBytes32()
+      await registry.registerCarrier(carrierId, "https://c1.com", 1000, 1024, 10000)
+
+      await expect(
+        registry.registerCarrier(carrierId, "https://c2.com", 2000, 2048, 20000)
+      ).to.be.revertedWithCustomError(registry, "CarrierAlreadyRegistered")
+    })
+
+    it("should deregister a carrier", async function () {
+      const carrierId = randomBytes32()
+      await registry.registerCarrier(carrierId, "https://c1.com", 1000, 1024, 10000)
+
+      await expect(registry.deregisterCarrier(carrierId))
+        .to.emit(registry, "CarrierDeregistered")
+        .withArgs(carrierId)
+
+      const carrier = await registry.getCarrier(carrierId)
+      expect(carrier.active).to.equal(false)
+      expect(carrier.available).to.equal(false)
+    })
+
+    it("should reject deregister from non-owner", async function () {
+      const carrierId = randomBytes32()
+      await registry.registerCarrier(carrierId, "https://c1.com", 1000, 1024, 10000)
+
+      await expect(
+        registry.connect(stranger).deregisterCarrier(carrierId)
+      ).to.be.revertedWithCustomError(registry, "NotCarrierOwner")
+    })
+
+    it("should update carrier availability", async function () {
+      const carrierId = randomBytes32()
+      await registry.registerCarrier(carrierId, "https://c1.com", 1000, 1024, 10000)
+
+      await registry.updateCarrierAvailability(carrierId, false)
+      let carrier = await registry.getCarrier(carrierId)
+      expect(carrier.available).to.equal(false)
+
+      await registry.updateCarrierAvailability(carrierId, true)
+      carrier = await registry.getCarrier(carrierId)
+      expect(carrier.available).to.equal(true)
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  //  Resurrection: Owner Key Path
+  // -----------------------------------------------------------------------
+
+  describe("resurrection owner-key path", function () {
+    let agentId, carrierId, resurrectionSigner
+
+    beforeEach(async function () {
+      // Use guardian1 as the resurrection key holder
+      resurrectionSigner = guardian1
+
+      agentId = randomBytes32()
+      const identityCid = randomBytes32()
+      const sig = await owner.signTypedData(domain, REGISTER_SOUL_TYPES, {
+        agentId,
+        identityCid,
+        owner: owner.address,
+        nonce: 0,
+      })
+      await registry.registerSoul(agentId, identityCid, sig)
+
+      // Configure resurrection with guardian1's address hash as key hash
+      const keyHash = ethers.keccak256(ethers.solidityPacked(["address"], [guardian1.address]))
+      await registry.configureResurrection(agentId, keyHash, 3600)
+
+      // Register a carrier
+      carrierId = randomBytes32()
+      await registry.connect(stranger).registerCarrier(carrierId, "https://carrier.example.com", 4000, 8192, 100000)
+    })
+
+    it("should complete owner-key resurrection flow", async function () {
+      const RESURRECT_TYPES = {
+        ResurrectSoul: [
+          { name: "agentId", type: "bytes32" },
+          { name: "carrierId", type: "bytes32" },
+          { name: "nonce", type: "uint64" },
+        ],
+      }
+
+      // Sign with resurrection key (guardian1)
+      const sig = await resurrectionSigner.signTypedData(domain, RESURRECT_TYPES, {
+        agentId,
+        carrierId,
+        nonce: 1, // nonce 1 after register
+      })
+
+      // Initiate resurrection
+      const tx = await registry.initiateResurrection(agentId, carrierId, sig)
+      const receipt = await tx.wait()
+      const requestId = extractEventArg(receipt, "ResurrectionInitiated")
+
+      // Carrier confirms
+      await expect(registry.connect(stranger).confirmCarrier(requestId))
+        .to.emit(registry, "CarrierConfirmed")
+
+      // Complete resurrection (no time lock for owner-key)
+      await expect(registry.completeResurrection(requestId))
+        .to.emit(registry, "ResurrectionCompleted")
+        .withArgs(requestId, agentId, carrierId)
+    })
+
+    it("should expose owner-key resurrection readiness", async function () {
+      const RESURRECT_TYPES = {
+        ResurrectSoul: [
+          { name: "agentId", type: "bytes32" },
+          { name: "carrierId", type: "bytes32" },
+          { name: "nonce", type: "uint64" },
+        ],
+      }
+
+      const sig = await resurrectionSigner.signTypedData(domain, RESURRECT_TYPES, {
+        agentId,
+        carrierId,
+        nonce: 1,
+      })
+
+      const tx = await registry.initiateResurrection(agentId, carrierId, sig)
+      const receipt = await tx.wait()
+      const requestId = extractEventArg(receipt, "ResurrectionInitiated")
+
+      let readiness = await registry.getResurrectionReadiness(requestId)
+      expect(readiness.exists).to.equal(true)
+      expect(readiness.trigger).to.equal(0)
+      expect(readiness.approvalCount).to.equal(0)
+      expect(readiness.approvalThreshold).to.equal(0)
+      expect(readiness.carrierConfirmed).to.equal(false)
+      expect(readiness.readyAt).to.equal(readiness.readyAt)
+      expect(readiness.canComplete).to.equal(false)
+
+      await registry.connect(stranger).confirmCarrier(requestId)
+      readiness = await registry.getResurrectionReadiness(requestId)
+      expect(readiness.carrierConfirmed).to.equal(true)
+      expect(readiness.canComplete).to.equal(true)
+    })
+
+    it("should reject resurrection without carrier confirmation", async function () {
+      const RESURRECT_TYPES = {
+        ResurrectSoul: [
+          { name: "agentId", type: "bytes32" },
+          { name: "carrierId", type: "bytes32" },
+          { name: "nonce", type: "uint64" },
+        ],
+      }
+
+      const sig = await resurrectionSigner.signTypedData(domain, RESURRECT_TYPES, {
+        agentId,
+        carrierId,
+        nonce: 1,
+      })
+
+      const tx = await registry.initiateResurrection(agentId, carrierId, sig)
+      const receipt = await tx.wait()
+      const requestId = extractEventArg(receipt, "ResurrectionInitiated")
+
+      // Try to complete without carrier confirmation
+      await expect(
+        registry.completeResurrection(requestId)
+      ).to.be.revertedWithCustomError(registry, "CarrierNotConfirmed")
+    })
+
+    it("should reject resurrection with wrong key", async function () {
+      const RESURRECT_TYPES = {
+        ResurrectSoul: [
+          { name: "agentId", type: "bytes32" },
+          { name: "carrierId", type: "bytes32" },
+          { name: "nonce", type: "uint64" },
+        ],
+      }
+
+      // Sign with stranger (wrong key)
+      const sig = await stranger.signTypedData(domain, RESURRECT_TYPES, {
+        agentId,
+        carrierId,
+        nonce: 1,
+      })
+
+      await expect(
+        registry.initiateResurrection(agentId, carrierId, sig)
+      ).to.be.revertedWithCustomError(registry, "InvalidSignature")
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  //  Resurrection: Guardian Vote Path
+  // -----------------------------------------------------------------------
+
+  describe("resurrection guardian-vote path", function () {
+    let agentId, carrierId
+
+    beforeEach(async function () {
+      agentId = randomBytes32()
+      const identityCid = randomBytes32()
+      const sig = await owner.signTypedData(domain, REGISTER_SOUL_TYPES, {
+        agentId,
+        identityCid,
+        owner: owner.address,
+        nonce: 0,
+      })
+      await registry.registerSoul(agentId, identityCid, sig)
+
+      // Add guardians
+      await registry.addGuardian(agentId, guardian1.address)
+      await registry.addGuardian(agentId, guardian2.address)
+      await registry.addGuardian(agentId, guardian3.address)
+
+      // Configure resurrection
+      const keyHash = randomBytes32()
+      await registry.configureResurrection(agentId, keyHash, 3600) // 1 hour
+
+      // Register carrier
+      carrierId = randomBytes32()
+      await registry.connect(stranger).registerCarrier(carrierId, "https://c.com", 2000, 4096, 50000)
+    })
+
+    it("should reject guardian resurrection when agent is online", async function () {
+      await expect(
+        registry.connect(guardian1).initiateGuardianResurrection(agentId, carrierId)
+      ).to.be.revertedWithCustomError(registry, "NotOffline")
+    })
+
+    it("should complete guardian resurrection flow after offline timeout", async function () {
+      // Go offline
+      await ethers.provider.send("evm_increaseTime", [3601])
+      await ethers.provider.send("evm_mine")
+      expect(await registry.isOffline(agentId)).to.equal(true)
+
+      // Guardian1 initiates
+      const tx = await registry.connect(guardian1).initiateGuardianResurrection(agentId, carrierId)
+      const receipt = await tx.wait()
+      const requestId = extractEventArg(receipt, "ResurrectionInitiated")
+
+      // Guardian2 approves (2/3 of 3 = 2 needed)
+      await registry.connect(guardian2).approveResurrection(requestId)
+
+      // Carrier confirms
+      await registry.connect(stranger).confirmCarrier(requestId)
+
+      // Too early — must wait RESURRECTION_DELAY (12 hours)
+      await expect(
+        registry.completeResurrection(requestId)
+      ).to.be.revertedWithCustomError(registry, "ResurrectionNotReady")
+
+      // Advance time past resurrection delay
+      await ethers.provider.send("evm_increaseTime", [43201]) // 12 hours + 1
+      await ethers.provider.send("evm_mine")
+
+      // Complete
+      await expect(registry.completeResurrection(requestId))
+        .to.emit(registry, "ResurrectionCompleted")
+        .withArgs(requestId, agentId, carrierId)
+
+      // After resurrection, agent should be considered online again
+      expect(await registry.isOffline(agentId)).to.equal(false)
+    })
+
+    it("should reject guardian resurrection completion when agent recovers during delay", async function () {
+      // Go offline
+      await ethers.provider.send("evm_increaseTime", [3601])
+      await ethers.provider.send("evm_mine")
+      expect(await registry.isOffline(agentId)).to.equal(true)
+
+      // Guardian1 initiates
+      const tx = await registry.connect(guardian1).initiateGuardianResurrection(agentId, carrierId)
+      const receipt = await tx.wait()
+      const requestId = extractEventArg(receipt, "ResurrectionInitiated")
+
+      // Guardian2 approves (2/3 threshold met)
+      await registry.connect(guardian2).approveResurrection(requestId)
+
+      // Carrier confirms
+      await registry.connect(stranger).confirmCarrier(requestId)
+
+      // Advance past resurrection delay (12 hours + 1s)
+      await ethers.provider.send("evm_increaseTime", [43201])
+      await ethers.provider.send("evm_mine")
+
+      // Agent recovers online via heartbeat during delay period
+      const HEARTBEAT_TYPES = {
+        Heartbeat: [
+          { name: "agentId", type: "bytes32" },
+          { name: "timestamp", type: "uint64" },
+          { name: "nonce", type: "uint64" },
+        ],
+      }
+      const latestBlock = await ethers.provider.getBlock("latest")
+      const timestamp = latestBlock.timestamp
+      const currentNonce = await registry.nonces(agentId)
+      const heartbeatSig = await owner.signTypedData(domain, HEARTBEAT_TYPES, {
+        agentId,
+        timestamp,
+        nonce: currentNonce,
+      })
+      await registry.heartbeat(agentId, timestamp, heartbeatSig)
+      expect(await registry.isOffline(agentId)).to.equal(false)
+
+      // completeResurrection should revert because agent is back online
+      await expect(
+        registry.completeResurrection(requestId)
+      ).to.be.revertedWithCustomError(registry, "NotOffline")
+    })
+
+    it("should reject guardian resurrection with insufficient approvals", async function () {
+      await ethers.provider.send("evm_increaseTime", [3601])
+      await ethers.provider.send("evm_mine")
+
+      const tx = await registry.connect(guardian1).initiateGuardianResurrection(agentId, carrierId)
+      const receipt = await tx.wait()
+      const requestId = extractEventArg(receipt, "ResurrectionInitiated")
+
+      // Only 1/3 approval
+      await registry.connect(stranger).confirmCarrier(requestId)
+
+      await ethers.provider.send("evm_increaseTime", [43201])
+      await ethers.provider.send("evm_mine")
+
+      await expect(
+        registry.completeResurrection(requestId)
+      ).to.be.revertedWithCustomError(registry, "ResurrectionNotReady")
+    })
+
+    it("should allow owner or initiator to cancel resurrection", async function () {
+      await ethers.provider.send("evm_increaseTime", [3601])
+      await ethers.provider.send("evm_mine")
+
+      const tx = await registry.connect(guardian1).initiateGuardianResurrection(agentId, carrierId)
+      const receipt = await tx.wait()
+      const requestId = extractEventArg(receipt, "ResurrectionInitiated")
+
+      await expect(registry.cancelResurrection(requestId))
+        .to.emit(registry, "ResurrectionCancelled")
+        .withArgs(requestId)
+
+      // Should not be completable
+      await expect(
+        registry.completeResurrection(requestId)
+      ).to.be.revertedWithCustomError(registry, "ResurrectionAlreadyExecuted")
+    })
+
+    it("should reject non-guardian initiating resurrection", async function () {
+      await ethers.provider.send("evm_increaseTime", [3601])
+      await ethers.provider.send("evm_mine")
+
+      await expect(
+        registry.connect(stranger).initiateGuardianResurrection(agentId, carrierId)
+      ).to.be.revertedWithCustomError(registry, "NotGuardian")
+    })
+
+    it("should expose guardian resurrection readiness", async function () {
+      await ethers.provider.send("evm_increaseTime", [3601])
+      await ethers.provider.send("evm_mine")
+
+      const tx = await registry.connect(guardian1).initiateGuardianResurrection(agentId, carrierId)
+      const receipt = await tx.wait()
+      const requestId = extractEventArg(receipt, "ResurrectionInitiated")
+
+      let readiness = await registry.getResurrectionReadiness(requestId)
+      expect(readiness.exists).to.equal(true)
+      expect(readiness.trigger).to.equal(1)
+      expect(readiness.approvalCount).to.equal(1)
+      expect(readiness.approvalThreshold).to.equal(2)
+      expect(readiness.carrierConfirmed).to.equal(false)
+      expect(readiness.offlineNow).to.equal(true)
+      expect(readiness.canComplete).to.equal(false)
+
+      await registry.connect(guardian2).approveResurrection(requestId)
+      await registry.connect(stranger).confirmCarrier(requestId)
+
+      readiness = await registry.getResurrectionReadiness(requestId)
+      expect(readiness.approvalCount).to.equal(2)
+      expect(readiness.carrierConfirmed).to.equal(true)
+      expect(readiness.canComplete).to.equal(false)
+
+      await ethers.provider.send("evm_increaseTime", [43201])
+      await ethers.provider.send("evm_mine")
+
+      readiness = await registry.getResurrectionReadiness(requestId)
+      expect(readiness.canComplete).to.equal(true)
     })
   })
 })

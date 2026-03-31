@@ -22,7 +22,7 @@ export class IpfsClient {
   /** Upload a file to IPFS, returns CID string */
   async add(data: Uint8Array): Promise<string> {
     const formData = new FormData()
-    formData.append("file", new Blob([data]))
+    formData.append("file", new Blob([new Uint8Array(data)]))
 
     const res = await fetch(`${this.baseUrl}/api/v0/add`, {
       method: "POST",
@@ -105,8 +105,6 @@ export class IpfsClient {
 
   /** MFS cp — copy CID into MFS path */
   async mfsCp(cid: string, destPath: string): Promise<void> {
-    const params = new URLSearchParams({ arg: [`/ipfs/${cid}`, destPath] as unknown as string })
-    // MFS cp takes two args
     const res = await fetch(
       `${this.baseUrl}/api/v0/files/cp?arg=/ipfs/${cid}&arg=${encodeURIComponent(destPath)}`,
       { method: "POST", signal: AbortSignal.timeout(IPFS_TIMEOUT_MS) },

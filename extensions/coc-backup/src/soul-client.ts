@@ -1,7 +1,15 @@
 // SoulRegistry contract interaction client (ethers v6)
 
 import { Contract, JsonRpcProvider, Wallet } from "ethers"
-import type { SoulInfo, OnChainBackup } from "./types.ts"
+import type {
+  SoulInfo,
+  OnChainBackup,
+  ResurrectionConfig,
+  CarrierInfo,
+  ResurrectionReadiness,
+  ResurrectionRequestInfo,
+  ResurrectionStartResult,
+} from "./types.ts"
 
 // Minimal ABI for SoulRegistry
 const SOUL_REGISTRY_ABI = [
@@ -20,6 +28,24 @@ const SOUL_REGISTRY_ABI = [
   "function ownerToAgent(address owner) external view returns (bytes32)",
   "function soulCount() external view returns (uint256)",
   "function DOMAIN_SEPARATOR() external view returns (bytes32)",
+  // Resurrection
+  "function configureResurrection(bytes32 agentId, bytes32 resurrectionKeyHash, uint64 maxOfflineDuration) external",
+  "function heartbeat(bytes32 agentId, uint64 timestamp, bytes calldata sig) external",
+  "function isOffline(bytes32 agentId) external view returns (bool)",
+  "function getResurrectionConfig(bytes32 agentId) external view returns (tuple(bytes32 resurrectionKeyHash, uint64 maxOfflineDuration, uint64 lastHeartbeat, bool configured))",
+  "function registerCarrier(bytes32 carrierId, string calldata endpoint, uint64 cpuMillicores, uint64 memoryMB, uint64 storageMB) external",
+  "function deregisterCarrier(bytes32 carrierId) external",
+  "function updateCarrierAvailability(bytes32 carrierId, bool available) external",
+  "function getCarrier(bytes32 carrierId) external view returns (tuple(bytes32 carrierId, address owner, string endpoint, uint64 registeredAt, uint64 cpuMillicores, uint64 memoryMB, uint64 storageMB, bool available, bool active))",
+  "function resurrectionRequests(bytes32 requestId) external view returns (bytes32 agentId, bytes32 carrierId, address initiator, uint64 initiatedAt, uint8 approvalCount, uint8 guardianSnapshot, bool executed, bool carrierConfirmed, uint8 trigger)",
+  "function resurrectionApprovals(bytes32 requestId, address guardian) external view returns (bool)",
+  "function getResurrectionReadiness(bytes32 requestId) external view returns (bool exists, uint8 trigger, uint8 approvalCount, uint8 approvalThreshold, bool carrierConfirmed, bool offlineNow, uint64 readyAt, bool canComplete)",
+  "function initiateResurrection(bytes32 agentId, bytes32 carrierId, bytes calldata sig) external",
+  "function initiateGuardianResurrection(bytes32 agentId, bytes32 carrierId) external",
+  "function approveResurrection(bytes32 requestId) external",
+  "function confirmCarrier(bytes32 requestId) external",
+  "function completeResurrection(bytes32 requestId) external",
+  "function cancelResurrection(bytes32 requestId) external",
 ] as const
 
 const SOUL_DOMAIN_NAME = "COCSoulRegistry"
@@ -50,6 +76,19 @@ export class SoulClient {
       chainId: network.chainId,
       verifyingContract: this.contractAddress,
     }
+  }
+
+  private _triggerLabel(trigger: number): "owner-key" | "guardian-vote" {
+    return trigger === 1 ? "guardian-vote" : "owner-key"
+  }
+
+  private _extractEventArg(receipt: { logs?: Array<Record<string, any>> }, eventName: string, index: number): string {
+    const log = receipt.logs?.find((entry) => entry.fragment?.name === eventName)
+    const value = log?.args?.[index]
+    if (typeof value !== "string") {
+      throw new Error(`Failed to parse ${eventName} from transaction receipt`)
+    }
+    return value
   }
 
   async getNonce(agentId: string): Promise<bigint> {
@@ -206,5 +245,185 @@ export class SoulClient {
       backupType: Number(raw.backupType),
       parentManifestCid: raw.parentManifestCid as string,
     }
+  }
+
+  // -----------------------------------------------------------------------
+  //  Resurrection
+  // -----------------------------------------------------------------------
+
+  async configureResurrection(
+    agentId: string,
+    resurrectionKeyHash: string,
+    maxOfflineDuration: number,
+  ): Promise<string> {
+    const tx = await this.contract.configureResurrection(agentId, resurrectionKeyHash, maxOfflineDuration)
+    const receipt = await tx.wait()
+    if (!receipt || receipt.status !== 1) throw new Error("Transaction reverted")
+    return receipt.hash
+  }
+
+  async heartbeat(agentId: string): Promise<string> {
+    const domain = await this.getDomain()
+    const nonce = await this.getNonce(agentId)
+    const timestamp = Math.floor(Date.now() / 1000)
+
+    const sig = await this.wallet.signTypedData(domain, {
+      Heartbeat: [
+        { name: "agentId", type: "bytes32" },
+        { name: "timestamp", type: "uint64" },
+        { name: "nonce", type: "uint64" },
+      ],
+    }, {
+      agentId,
+      timestamp,
+      nonce,
+    })
+
+    const tx = await this.contract.heartbeat(agentId, timestamp, sig)
+    const receipt = await tx.wait()
+    if (!receipt || receipt.status !== 1) throw new Error("Transaction reverted")
+    return receipt.hash
+  }
+
+  async isOffline(agentId: string): Promise<boolean> {
+    return this.contract.isOffline(agentId)
+  }
+
+  async getResurrectionConfig(agentId: string): Promise<ResurrectionConfig> {
+    const raw = await this.contract.getResurrectionConfig(agentId)
+    return {
+      resurrectionKeyHash: raw.resurrectionKeyHash,
+      maxOfflineDuration: Number(raw.maxOfflineDuration),
+      lastHeartbeat: Number(raw.lastHeartbeat),
+      configured: raw.configured,
+    }
+  }
+
+  async initiateResurrection(
+    agentId: string,
+    carrierId: string,
+    resurrectionKey: string,
+  ): Promise<ResurrectionStartResult> {
+    const domain = await this.getDomain()
+    const nonce = await this.getNonce(agentId)
+
+    // Sign with the resurrection key (separate wallet)
+    const resWallet = new Wallet(resurrectionKey, this.provider)
+    const sig = await resWallet.signTypedData(domain, {
+      ResurrectSoul: [
+        { name: "agentId", type: "bytes32" },
+        { name: "carrierId", type: "bytes32" },
+        { name: "nonce", type: "uint64" },
+      ],
+    }, {
+      agentId,
+      carrierId,
+      nonce,
+    })
+
+    const tx = await this.contract.initiateResurrection(agentId, carrierId, sig)
+    const receipt = await tx.wait()
+    if (!receipt || receipt.status !== 1) throw new Error("Transaction reverted")
+    return {
+      txHash: receipt.hash,
+      requestId: this._extractEventArg(receipt, "ResurrectionInitiated", 0),
+    }
+  }
+
+  async registerCarrier(
+    carrierId: string,
+    endpoint: string,
+    cpuMillicores: number,
+    memoryMB: number,
+    storageMB: number,
+  ): Promise<string> {
+    const tx = await this.contract.registerCarrier(carrierId, endpoint, cpuMillicores, memoryMB, storageMB)
+    const receipt = await tx.wait()
+    if (!receipt || receipt.status !== 1) throw new Error("Transaction reverted")
+    return receipt.hash
+  }
+
+  async deregisterCarrier(carrierId: string): Promise<string> {
+    const tx = await this.contract.deregisterCarrier(carrierId)
+    const receipt = await tx.wait()
+    if (!receipt || receipt.status !== 1) throw new Error("Transaction reverted")
+    return receipt.hash
+  }
+
+  async updateCarrierAvailability(carrierId: string, available: boolean): Promise<string> {
+    const tx = await this.contract.updateCarrierAvailability(carrierId, available)
+    const receipt = await tx.wait()
+    if (!receipt || receipt.status !== 1) throw new Error("Transaction reverted")
+    return receipt.hash
+  }
+
+  async getCarrier(carrierId: string): Promise<CarrierInfo> {
+    const raw = await this.contract.getCarrier(carrierId)
+    return {
+      carrierId: raw.carrierId,
+      owner: raw.owner,
+      endpoint: raw.endpoint,
+      registeredAt: Number(raw.registeredAt),
+      cpuMillicores: Number(raw.cpuMillicores),
+      memoryMB: Number(raw.memoryMB),
+      storageMB: Number(raw.storageMB),
+      available: raw.available,
+      active: raw.active,
+    }
+  }
+
+  async getResurrectionRequest(requestId: string): Promise<ResurrectionRequestInfo> {
+    const raw = await this.contract.resurrectionRequests(requestId)
+    return {
+      requestId,
+      agentId: raw.agentId,
+      carrierId: raw.carrierId,
+      initiator: raw.initiator,
+      initiatedAt: Number(raw.initiatedAt),
+      approvalCount: Number(raw.approvalCount),
+      guardianSnapshot: Number(raw.guardianSnapshot),
+      executed: raw.executed,
+      carrierConfirmed: raw.carrierConfirmed,
+      trigger: this._triggerLabel(Number(raw.trigger)),
+    }
+  }
+
+  async getResurrectionApproval(requestId: string, guardian: string): Promise<boolean> {
+    return this.contract.resurrectionApprovals(requestId, guardian)
+  }
+
+  async getResurrectionReadiness(requestId: string): Promise<ResurrectionReadiness> {
+    const raw = await this.contract.getResurrectionReadiness(requestId)
+    return {
+      exists: raw.exists,
+      trigger: this._triggerLabel(Number(raw.trigger)),
+      approvalCount: Number(raw.approvalCount),
+      approvalThreshold: Number(raw.approvalThreshold),
+      carrierConfirmed: raw.carrierConfirmed,
+      offlineNow: raw.offlineNow,
+      readyAt: Number(raw.readyAt),
+      canComplete: raw.canComplete,
+    }
+  }
+
+  async confirmCarrier(requestId: string): Promise<string> {
+    const tx = await this.contract.confirmCarrier(requestId)
+    const receipt = await tx.wait()
+    if (!receipt || receipt.status !== 1) throw new Error("Transaction reverted")
+    return receipt.hash
+  }
+
+  async completeResurrection(requestId: string): Promise<string> {
+    const tx = await this.contract.completeResurrection(requestId)
+    const receipt = await tx.wait()
+    if (!receipt || receipt.status !== 1) throw new Error("Transaction reverted")
+    return receipt.hash
+  }
+
+  async cancelResurrection(requestId: string): Promise<string> {
+    const tx = await this.contract.cancelResurrection(requestId)
+    const receipt = await tx.wait()
+    if (!receipt || receipt.status !== 1) throw new Error("Transaction reverted")
+    return receipt.hash
   }
 }

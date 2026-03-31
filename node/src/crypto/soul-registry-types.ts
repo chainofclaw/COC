@@ -44,3 +44,19 @@ export const UPDATE_IDENTITY_TYPES = {
     { name: "nonce", type: "uint64" },
   ],
 } as const
+
+export const RESURRECT_SOUL_TYPES = {
+  ResurrectSoul: [
+    { name: "agentId", type: "bytes32" },
+    { name: "carrierId", type: "bytes32" },
+    { name: "nonce", type: "uint64" },
+  ],
+} as const
+
+export const HEARTBEAT_TYPES = {
+  Heartbeat: [
+    { name: "agentId", type: "bytes32" },
+    { name: "timestamp", type: "uint64" },
+    { name: "nonce", type: "uint64" },
+  ],
+} as const

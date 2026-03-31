@@ -68,6 +68,9 @@ export async function deploySoulRegistry(
   if (!pk) {
     throw new Error("DEPLOYER_PRIVATE_KEY environment variable required")
   }
+  if (!/^(0x)?[0-9a-fA-F]{64}$/.test(pk)) {
+    throw new Error("Invalid private key format: expected 64 hex characters (with optional 0x prefix)")
+  }
 
   const provider = new JsonRpcProvider(params.rpcUrl)
   const deployer = new Wallet(pk, provider)
@@ -85,12 +88,22 @@ export async function deploySoulRegistry(
   const contract = await factory.deploy(overrides)
 
   const receipt = await contract.deploymentTransaction()?.wait(params.confirmations) as TransactionReceipt | null
+  if (!receipt || receipt.status !== 1) {
+    throw new Error(`Deployment transaction failed: ${receipt ? `status=${receipt.status}` : "no receipt"}`)
+  }
+
   const contractAddress = await contract.getAddress()
+
+  // Verify contract code was deployed
+  const code = await provider.getCode(contractAddress)
+  if (!code || code === "0x") {
+    throw new Error(`No contract code at ${contractAddress} after deployment`)
+  }
 
   return {
     contractAddress,
     transactionHash: contract.deploymentTransaction()?.hash ?? "",
-    blockNumber: receipt?.blockNumber ?? 0,
+    blockNumber: receipt.blockNumber,
     chainId: params.chainId,
   }
 }

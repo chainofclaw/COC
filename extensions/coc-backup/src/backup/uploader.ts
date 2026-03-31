@@ -42,12 +42,12 @@ export async function uploadFiles(
     entries[file.relativePath] = {
       cid,
       hash,
-      sizeBytes: originalSize,
+      sizeBytes: content.length,
       encrypted: file.encrypted,
       category: file.category,
     }
 
-    totalBytes += originalSize
+    totalBytes += content.length
     fileCount++
   }
 

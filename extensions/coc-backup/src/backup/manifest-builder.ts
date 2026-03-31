@@ -10,15 +10,13 @@ type Hex = `0x${string}`
 //  Merkle tree functions (mirroring COC/node/src/ipfs-merkle.ts)
 // -----------------------------------------------------------------------
 
-function keccak256Hex(data: Uint8Array): string {
-  // Use sha256 as keccak256 substitute when not in EVM context
-  // For backup integrity, SHA-256 is sufficient
+function sha256Hex(data: Uint8Array): string {
   return createHash("sha256").update(data).digest("hex")
 }
 
 function hashLeaf(data: Uint8Array): Hex {
   const prefixed = Buffer.concat([Buffer.from([0x00]), data])
-  return `0x${keccak256Hex(prefixed)}` as Hex
+  return `0x${sha256Hex(prefixed)}` as Hex
 }
 
 function hashPair(left: Hex, right: Hex): Hex {
@@ -27,7 +25,7 @@ function hashPair(left: Hex, right: Hex): Hex {
     hexToBytes(left),
     hexToBytes(right),
   ])
-  return `0x${keccak256Hex(data)}` as Hex
+  return `0x${sha256Hex(data)}` as Hex
 }
 
 function hexToBytes(value: Hex): Uint8Array {
@@ -58,13 +56,25 @@ export function buildMerkleRoot(leaves: Hex[]): Hex {
 //  Manifest building
 // -----------------------------------------------------------------------
 
+/** Encode a string field as a length-prefixed buffer (uint32 LE + data) */
+function lengthPrefixed(str: string): Buffer {
+  const data = Buffer.from(str, "utf-8")
+  const len = Buffer.alloc(4)
+  len.writeUInt32LE(data.length, 0)
+  return Buffer.concat([len, data])
+}
+
 /** Compute the Merkle root of all file entries (keyed by CID) */
 export function computeDataMerkleRoot(entries: Record<string, ManifestFileEntry>): string {
   const sortedPaths = Object.keys(entries).sort()
   const leaves = sortedPaths.map((path) => {
     const entry = entries[path]
-    // Leaf = hash of (path + CID + SHA-256 hash)
-    const leafData = Buffer.from(`${path}:${entry.cid}:${entry.hash}`, "utf-8")
+    // Leaf = hash of length-prefixed (path, CID, hash) to prevent ambiguity
+    const leafData = Buffer.concat([
+      lengthPrefixed(path),
+      lengthPrefixed(entry.cid),
+      lengthPrefixed(entry.hash),
+    ])
     return hashLeaf(leafData)
   })
 

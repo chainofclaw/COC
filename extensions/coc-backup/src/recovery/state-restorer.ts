@@ -46,13 +46,23 @@ export async function restoreFromManifestCid(
     logger.info(`Manifest ${i}: Merkle root verified (${manifest.fileCount} files)`)
   }
 
+  const latestManifest = chain[chain.length - 1]
+  const hasEncryptedFiles = Object.values(latestManifest.files).some((entry) => entry.encrypted)
+  if (hasEncryptedFiles && !privateKeyOrPassword.trim()) {
+    throw new Error("Restore blocked: encrypted backup requires a decryption password or private key")
+  }
+
   // 2b. Verify on-chain anchor if SoulClient available
+  let anchorCheckAttempted = false
+  let anchorCheckPassed = false
+  let anchorCheckReason: string | null = null
+  const resolvedAgentId = latestManifest.agentId || null
   if (soul) {
-    const latestManifest = chain[chain.length - 1]
     try {
-      const agentId = await soul.getAgentIdForOwner()
+      const agentId = latestManifest.agentId
       const zeroId = "0x" + "0".repeat(64)
-      if (agentId !== zeroId) {
+      if (agentId && agentId !== zeroId) {
+        anchorCheckAttempted = true
         const onChainBackup = await soul.getLatestBackup(agentId)
         const manifestCidBytes32 = cidToBytes32(manifestCid)
         if (onChainBackup.manifestCid === manifestCidBytes32) {
@@ -61,20 +71,29 @@ export async function restoreFromManifestCid(
             onChainBackup.dataMerkleRoot,
           )
           if (!onChainValid) {
+            anchorCheckReason = "merkle_root_mismatch"
             throw new Error(
               "On-chain anchor verification failed: Merkle root mismatch between manifest and chain",
             )
           }
+          anchorCheckPassed = true
+          anchorCheckReason = "verified"
           logger.info("On-chain anchor verified: Merkle root matches")
         } else {
+          anchorCheckPassed = false
+          anchorCheckReason = "manifest_not_latest_on_chain"
           logger.warn("On-chain anchor check skipped: manifest CID does not match latest on-chain backup")
         }
+      } else {
+        anchorCheckReason = "missing_manifest_agent_id"
       }
     } catch (error) {
       if (String(error).includes("anchor verification failed")) throw error
+      if (!anchorCheckReason) anchorCheckReason = "verification_unavailable"
       logger.warn(`On-chain verification unavailable: ${String(error)}`)
     }
   } else {
+    anchorCheckReason = "no_soul_client"
     logger.warn("No SoulClient provided — skipping on-chain anchor verification")
   }
 
@@ -96,7 +115,6 @@ export async function restoreFromManifestCid(
 
   // 4. Verify restored files against the latest manifest
   logger.info("Verifying restored file integrity...")
-  const latestManifest = chain[chain.length - 1]
   const integrityResult = await verifyRestoredFiles(latestManifest, targetDir)
 
   if (!integrityResult.valid) {
@@ -116,6 +134,11 @@ export async function restoreFromManifestCid(
     totalBytes: downloadResult.totalBytes,
     backupsApplied: chain.length,
     merkleVerified: integrityResult.valid,
+    requestedManifestCid: manifestCid,
+    resolvedAgentId,
+    anchorCheckAttempted,
+    anchorCheckPassed,
+    anchorCheckReason,
   }
 }
 
