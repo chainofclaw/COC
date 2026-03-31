@@ -358,10 +358,10 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     p2pPort: 19780,
     peers: [],
     validators: ["node-1"],
-    blockTimeMs: 3000,
+    blockTimeMs: 1000,
     syncIntervalMs: 5000,
     finalityDepth: 3,
-    maxTxPerBlock: 50,
+    maxTxPerBlock: 256,
     minGasPriceWei: "1",
     prefund: [
       { address: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", balanceEth: "10000" }

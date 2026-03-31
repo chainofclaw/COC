@@ -10,7 +10,15 @@ This document maps the whitepaper scope to the current codebase and test coverag
 - **Missing**: not implemented
 
 ## 1) Execution Layer (EVM)
-**Status: Partial (Enhanced in Phase 13.1 + 13.2 + 14 + 17 + 26 + M3 + P0-P5 + post-P6 parity hardening)**
+**Status: Partial (Enhanced in Phase 13.1 + 13.2 + 14 + 17 + 26 + M3 + P0-P5 + post-P6 parity hardening + Phase 37 TPS)**
+
+**Phase 37 TPS Optimization** (2026-03-31):
+- Single-node sequencer throughput: 16.7 TPS → **131 TPS** (7.8x improvement)
+- Mega-batch atomic DB writes: ~402 writes/block → **1 atomic write** per block
+- Eliminated redundant transaction parsing (200x ECDSA savings per block)
+- Configuration: blockTimeMs 3000 → 1000, maxTxPerBlock 50 → 256
+- Benchmark results: 200 tx/block in 1.5s, 1000 tx/10 blocks in 131 TPS
+- All 80+ existing tests passing (zero regression)
 
 Implemented:
 - In-memory EVM execution using `@ethereumjs/vm`

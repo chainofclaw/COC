@@ -5,13 +5,14 @@
  * Stores nonces in LevelDB with timestamp for automatic cleanup of old entries.
  */
 
-import type { IDatabase } from "./db.ts"
+import type { IDatabase, BatchOp } from "./db.ts"
 
 const NONCE_PREFIX = "n:"
 const CLEANUP_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
 
 export interface INonceStore {
   markUsed(nonce: string): Promise<void>
+  buildMarkUsedOps(nonces: string[]): BatchOp[]
   isUsed(nonce: string): Promise<boolean>
   cleanup(olderThan?: number): Promise<number>
   close(): Promise<void>
@@ -22,6 +23,16 @@ export class PersistentNonceStore implements INonceStore {
 
   constructor(db: IDatabase) {
     this.db = db
+  }
+
+  buildMarkUsedOps(nonces: string[]): BatchOp[] {
+    const timestamp = Date.now().toString()
+    const encoded = new TextEncoder().encode(timestamp)
+    return nonces.map(nonce => ({
+      type: "put" as const,
+      key: NONCE_PREFIX + nonce,
+      value: encoded,
+    }))
   }
 
   async markUsed(nonce: string): Promise<void> {
@@ -72,6 +83,12 @@ export class PersistentNonceStore implements INonceStore {
 export class InMemoryNonceStore implements INonceStore {
   private used = new Set<string>()
   private timestamps = new Map<string, number>()
+
+  buildMarkUsedOps(nonces: string[]): BatchOp[] {
+    // In-memory store does not use BatchOps; this is a no-op for interface compliance.
+    // Callers using InMemoryNonceStore should call markUsed() individually or batch-mark inline.
+    return []
+  }
 
   async markUsed(nonce: string): Promise<void> {
     this.used.add(nonce)
