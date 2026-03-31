@@ -163,7 +163,9 @@ export default function NetworkPage() {
         // Fetch recent blocks
         let filteredBlocks: BlockData[] = []
         if (blockNumber > 0) {
-          const count = Math.min(10, blockNumber + 1)
+          // Recent blocks fetch can be expensive (multiple eth_getBlockByNumber calls).
+          // Reduce to keep UI responsive without generating too many RPC requests.
+          const count = Math.min(3, blockNumber + 1)
           const blocks = await Promise.all(
             Array.from({ length: count }, (_, i) => {
               const blockNum = Math.max(0, blockNumber - i)
@@ -207,7 +209,8 @@ export default function NetworkPage() {
     }
 
     fetchData()
-    const interval = setInterval(fetchData, 15000)
+    // Lower polling cadence to reduce RPC pressure when the server is busy.
+    const interval = setInterval(fetchData, 60000)
     return () => clearInterval(interval)
   }, [])
 

@@ -22,6 +22,10 @@ export function NetworkStats() {
   useEffect(() => {
     let mounted = true
 
+    // Polling these stats too aggressively can overload the RPC node under load.
+    // Aim for near-real-time UX without creating a request "storm".
+    const POLLING_INTERVAL_MS = 30000
+
     async function fetchStats() {
       try {
         const [blockNumber, gasPrice, chainId, syncing, peerCount] = await Promise.all([
@@ -63,7 +67,7 @@ export function NetworkStats() {
     }
 
     fetchStats()
-    const interval = setInterval(fetchStats, 5000)
+    const interval = setInterval(fetchStats, POLLING_INTERVAL_MS)
 
     return () => {
       mounted = false
