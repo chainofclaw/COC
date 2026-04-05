@@ -277,7 +277,19 @@ Status legend:
 - **Three-layer integrity verification** — Implemented — manifest Merkle / disk SHA-256 / on-chain anchor
 - **Path traversal protection** — Implemented — resolve+startsWith in downloader
 - **IPFS CID validation + timeout** — Implemented — format check, 30s AbortSignal
-- **On-chain recovery from CID** — Not implemented — requires CID registry (bytes32→CID mapping)
+- **On-chain recovery from CID** — Implemented — `CidRegistry.sol` + `cid-resolver.ts` three-layer resolution (local→MFS→on-chain)
+- **CidRegistry contract** — Implemented — `COC/contracts/contracts-src/governance/CidRegistry.sol` (permissionless, immutable entries, batch registration)
+- **Binary database backup (SQLite/LanceDB)** — Implemented — `binary-handler.ts` (VACUUM INTO snapshot, directory tar archive)
+- **Execution context snapshots** — Implemented — `context-snapshot.ts` (session metadata capture before each backup)
+- **OpenClaw lifecycle hooks** — Implemented — `session_end`, `before_compaction`, `gateway_stop` hooks in `index.ts`
+- **Automated recovery orchestrator** — Implemented — `orchestrator.ts` (discover → resolve → download → verify → restart)
+- **Carrier daemon** — Implemented — `carrier-daemon.ts` (AbortController shutdown, addRequest→AddRequestResult, concurrency limit, 30s drain timeout)
+- **Offline agent monitor** — Implemented — `offline-monitor.ts` (polls `isOffline()`, online→offline transition detection)
+- **Resurrection state machine** — Implemented — `resurrection-flow.ts` (carrier-side: confirm → waitReadiness → restore → spawn → health → complete, shutdown-aware at every step)
+- **Guardian CLI** — Implemented — `coc-backup guardian initiate/approve/status` (requires guardian EOA)
+- **Carrier CLI** — Implemented — `coc-backup carrier register/submit-request/list` (submit-request wired to daemon.addRequest)
+- **9 agent tools** — Implemented — soul-backup, soul-restore, soul-status, soul-doctor, soul-resurrection, soul-auto-restore, soul-guardian-initiate, soul-guardian-approve, soul-carrier-request
+- **Multi-process role model** — Implemented — owner/guardian/carrier as separate processes with distinct EOAs, matching contract `msg.sender` enforcement
 
 ## DID (Decentralized Identity for AI Agents)
 - **DIDRegistry contract** — Implemented — `COC/contracts/contracts-src/governance/DIDRegistry.sol`
@@ -311,6 +323,11 @@ Status legend:
 - **TPS 100+ optimization (Phase 37)** — Implemented — Single-node sequencer: 16.7 TPS → **131 TPS** via mega-batch atomic DB writes
 - **Op-builder pattern (batch DB operations)** — Implemented (Phase 37) — `COC/node/src/storage/block-index.ts`, `COC/node/src/storage/nonce-store.ts`
 - **Reduced transaction parsing** — Implemented (Phase 37) — Eliminated 200x ECDSA recovery per block (mempool removal reuses execution-phase hashes)
-- **High-throughput benchmarks** — Implemented (Phase 37) — 200 tx/block (1.5s), 1000 tx/10 blocks (131 TPS), pickForBlock(256) latency (1.26ms)
+- **EVM pipeline optimization (Phase 38)** — Implemented — `executeRawTxInBlock()` fast path, ECDSA dedup, `BlockExecutionResult` direct return, batch `evictCaches()` → **133.7 TPS**
+- **State trie batch commit (Phase 39)** — Implemented — Direct `trie.put()` in commit, skip unchanged storageRoot. Sequencer mode (`nodeMode: "sequencer"`)
+- **Rollup services (Phase 39)** — Implemented — Output Proposer, Batcher, `rollup_*` RPC methods
+- **EVM engine abstraction (Phase 40)** — Implemented — `IEvmEngine` interface, `EvmBlockEnv`, `evm-factory.ts`, dual-engine comparison tests (5/5)
+- **revm WASM engine (Phase 40)** — Implemented — Rust revm compiled to WASM (606KB), `RevmEngine` implements `IEvmEngine`, **20,540 TPS raw execution** (154x vs EthereumJS)
+- **High-throughput benchmarks** — Implemented (Phase 37-40) — 1000 tx/10 blocks (133.7 TPS), pickForBlock(256) latency (0.93ms), revm raw (20K TPS)
 - **blockTimeMs config** — Implemented (Phase 37, configurable) — Default 1s (was 3s), min 100ms
-- **maxTxPerBlock config** — Implemented (Phase 37, configurable) — Default 256 (was 50)
+- **maxTxPerBlock config** — Implemented (Phase 38, configurable) — Default 512 (was 50→256→512)
