@@ -124,8 +124,8 @@ class TrieDBAdapter {
   }
 }
 
-const DEFAULT_MAX_CACHED_TRIES = 128
-const DEFAULT_MAX_ACCOUNT_CACHE = 10_000
+const DEFAULT_MAX_CACHED_TRIES = 512
+const DEFAULT_MAX_ACCOUNT_CACHE = 50_000
 
 export class PersistentStateTrie implements IStateTrie {
   private trie: Trie

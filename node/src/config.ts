@@ -365,7 +365,7 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     blockTimeMs: 1000,
     syncIntervalMs: 5000,
     finalityDepth: 3,
-    maxTxPerBlock: 256,
+    maxTxPerBlock: 512,
     minGasPriceWei: "1",
     prefund: [
       { address: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", balanceEth: "10000" }

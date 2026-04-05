@@ -152,7 +152,7 @@ export class ChainEngine {
     if (this.txHashSet.has(decoded.hash as Hex)) {
       throw new Error("tx already confirmed")
     }
-    const tx = this.mempool.addRawTx(rawTx)
+    const tx = this.mempool.addRawTx(rawTx, decoded)
 
     this.events.emitPendingTx({
       hash: tx.hash,
@@ -313,20 +313,24 @@ export class ChainEngine {
     let totalGasUsed = 0n
     const executionTimestamp = BigInt(Math.floor(block.timestampMs / 1000))
     try {
-      await this.evm.applyBlockContext({
+      const blockContext: import("./evm.ts").ExecutionContext = {
         blockNumber: block.number,
         baseFeePerGas: block.baseFee ?? 0n,
         excessBlobGas: block.excessBlobGas,
         parentBeaconBlockRoot: block.parentBeaconBlockRoot ? hexToBytes(block.parentBeaconBlockRoot) : undefined,
         timestamp: executionTimestamp,
-      })
+      }
+      await this.evm.applyBlockContext(blockContext)
+
+      // Pre-compute block-scoped objects once — reuse for all txs in this block
+      const blockCommon = this.evm.getBlockCommon(block.number)
+      const executionBlock = this.evm.getExecutionBlock(blockCommon, blockContext)
+      const baseFee = block.baseFee ?? 0n
+      const blockNumberHex = `0x${block.number.toString(16)}`
+
       for (let i = 0; i < block.txs.length; i++) {
         const raw = block.txs[i]
-        const result = await this.evm.executeRawTx(raw, block.number, i, block.hash, block.baseFee ?? 0n, {
-          excessBlobGas: block.excessBlobGas,
-          parentBeaconBlockRoot: block.parentBeaconBlockRoot ? hexToBytes(block.parentBeaconBlockRoot) : undefined,
-          timestamp: executionTimestamp,
-        })
+        const result = await this.evm.executeRawTxInBlock(raw, blockCommon, executionBlock, block.number, i, block.hash, baseFee, blockNumberHex)
         const receipt = this.evm.getReceipt(result.txHash)
         if (receipt) {
           receipts.push(receipt)
@@ -334,6 +338,9 @@ export class ChainEngine {
         }
         this.txHashSet.add(result.txHash as Hex)
       }
+
+      // Batch evict caches once per block instead of per-tx
+      this.evm.evictCaches()
 
       // Enforce block gas limit
       if (totalGasUsed > BLOCK_GAS_LIMIT) {
