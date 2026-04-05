@@ -390,8 +390,8 @@ export class PersistentChainEngine {
     await this.evm.applyBlockContext(blockContext)
 
     // Pre-compute block-scoped objects once — reuse for all txs in this block
-    const blockCommon = this.evm.getBlockCommon(block.number)
-    const executionBlock = this.evm.getExecutionBlock(blockCommon, blockContext)
+    const blockEnv = this.evm.prepareBlock(block.number, blockContext)
+    const { blockCommon, executionBlock } = blockEnv._internal as { blockCommon: any; executionBlock: any }
     const baseFee = block.baseFee ?? 0n
     const blockNumberHex = `0x${block.number.toString(16)}`
 

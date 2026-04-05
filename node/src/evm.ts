@@ -4,6 +4,7 @@ import { Account, Address, bytesToHex, hexToBytes, bigIntToBytes, bigIntToHex, s
 import { createTxFromRLP, createLegacyTx } from "@ethereumjs/tx"
 import { createBlock } from "@ethereumjs/block"
 import type { PrefundAccount } from "./types.ts"
+import type { EvmBlockEnv, EvmHardfork } from "./evm-types.ts"
 import { PersistentStateManager } from "./storage/persistent-state-manager.ts"
 import type { HardforkScheduleEntry } from "./config.ts"
 import type { CallTrace, CallTraceResult, RpcAccessListItem, TraceOptions, TraceStep, TransactionTrace, TxTraceResult } from "./trace-types.ts"
@@ -278,6 +279,7 @@ export class EvmChain {
 
   /**
    * Pre-compute block-scoped Common object. Call once per block, reuse for all txs.
+   * @deprecated Use prepareBlock() for engine-agnostic API
    */
   getBlockCommon(blockNumber: bigint): ReturnType<typeof createCustomCommon> {
     return this.createExecutionCommon(blockNumber)
@@ -285,15 +287,32 @@ export class EvmChain {
 
   /**
    * Pre-compute block-scoped execution block. Call once per block, reuse for all txs.
+   * @deprecated Use prepareBlock() for engine-agnostic API
    */
   getExecutionBlock(blockCommon: ReturnType<typeof createCustomCommon>, context: ExecutionContext = {}) {
     return this.createExecutionBlock(blockCommon, context)
   }
 
   /**
+   * Engine-agnostic block preparation. Call once per block, pass result to executeRawTxInBlock().
+   * Replaces getBlockCommon() + getExecutionBlock() with a single call that hides engine internals.
+   */
+  prepareBlock(blockNumber: bigint, context: ExecutionContext = {}): EvmBlockEnv {
+    const blockCommon = this.createExecutionCommon(blockNumber)
+    const executionBlock = this.createExecutionBlock(blockCommon, context)
+    return {
+      blockNumber,
+      timestamp: context.timestamp ?? 0n,
+      baseFeePerGas: context.baseFeePerGas ?? 0n,
+      excessBlobGas: context.excessBlobGas,
+      parentBeaconBlockRoot: context.parentBeaconBlockRoot,
+      _internal: { blockCommon, executionBlock },
+    }
+  }
+
+  /**
    * Fast path for block execution: skips per-tx VM setup that applyBlockContext() already did.
    * The caller MUST call applyBlockContext() before the tx loop.
-   * Accepts pre-computed blockNumberHex to avoid repeated BigInt-to-hex conversion.
    */
   async executeRawTxInBlock(
     rawTx: string,
