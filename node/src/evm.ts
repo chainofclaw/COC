@@ -14,6 +14,13 @@ export interface ExecutionResult {
   success: boolean
 }
 
+export interface BlockExecutionResult extends ExecutionResult {
+  receipt: TxReceipt
+  from: string
+  to: string | null
+  contractAddress?: string
+}
+
 export interface EvmLog {
   address: string
   topics: string[]
@@ -267,6 +274,153 @@ export class EvmChain {
     }
 
     return { txHash, gasUsed: result.totalGasSpent, success: result.execResult.exceptionError === undefined }
+  }
+
+  /**
+   * Pre-compute block-scoped Common object. Call once per block, reuse for all txs.
+   */
+  getBlockCommon(blockNumber: bigint): ReturnType<typeof createCustomCommon> {
+    return this.createExecutionCommon(blockNumber)
+  }
+
+  /**
+   * Pre-compute block-scoped execution block. Call once per block, reuse for all txs.
+   */
+  getExecutionBlock(blockCommon: ReturnType<typeof createCustomCommon>, context: ExecutionContext = {}) {
+    return this.createExecutionBlock(blockCommon, context)
+  }
+
+  /**
+   * Fast path for block execution: skips per-tx VM setup that applyBlockContext() already did.
+   * The caller MUST call applyBlockContext() before the tx loop.
+   * Accepts pre-computed blockNumberHex to avoid repeated BigInt-to-hex conversion.
+   */
+  async executeRawTxInBlock(
+    rawTx: string,
+    blockCommon: ReturnType<typeof createCustomCommon>,
+    executionBlock: ReturnType<typeof createBlock>,
+    appliedBlock: bigint,
+    txIndex: number,
+    blockHash: string,
+    baseFeePerGas: bigint,
+    blockNumberHex?: string,
+    knownSender?: string,
+  ): Promise<BlockExecutionResult> {
+    const tx = createTxFromRLP(hexToBytes(rawTx), { common: blockCommon })
+    if (tx.type === 3) {
+      throw new Error("blob transactions (type 3) are not supported")
+    }
+    const result = await runTx(this.vm, { tx, block: executionBlock, skipHardForkValidation: true })
+    const txHash = bytesToHex(tx.hash())
+    this.blockNumber = appliedBlock
+    const bnHex = blockNumberHex ?? `0x${appliedBlock.toString(16)}`
+    const txIdxHex = `0x${txIndex.toString(16)}`
+    const gasUsed = `0x${result.totalGasSpent.toString(16)}`
+    const status = result.execResult.exceptionError === undefined ? "0x1" : "0x0"
+    const rawGasPrice = tx.gasPrice as bigint | undefined
+    const gasPrice = rawGasPrice != null
+      ? rawGasPrice
+      : (() => {
+          const maxFee = (tx.maxFeePerGas ?? 0n) as bigint
+          const maxPriority = (tx.maxPriorityFeePerGas ?? 0n) as bigint
+          const priorityFee = maxFee > baseFeePerGas
+            ? (maxPriority < maxFee - baseFeePerGas ? maxPriority : maxFee - baseFeePerGas)
+            : 0n
+          return baseFeePerGas + priorityFee
+        })()
+    const gasPriceHex = `0x${gasPrice.toString(16)}`
+    const logs = (result.execResult.logs ?? []).map((entry, logIdx) => {
+      const [addressBytes, topicBytes, dataBytes] = entry as [Uint8Array, Uint8Array[], Uint8Array]
+      return {
+        address: bytesToHex(addressBytes),
+        topics: topicBytes.map((topic) => bytesToHex(topic)),
+        data: bytesToHex(dataBytes),
+        blockNumber: bnHex,
+        transactionHash: txHash,
+        transactionIndex: txIdxHex,
+        logIndex: `0x${logIdx.toString(16)}`,
+        removed: false,
+      }
+    })
+
+    const contractAddress = result.createdAddress
+      ? result.createdAddress.toString()
+      : undefined
+
+    // Use pre-computed sender when available (locally proposed blocks) to skip ECDSA recovery
+    const from = knownSender ?? tx.getSenderAddress().toString()
+    const to = tx.to ? tx.to.toString() : null
+    const nonce = tx.nonce ?? 0n
+    const gasLimit = tx.gasLimit ?? 0n
+    const value = tx.value ?? 0n
+    const typeHex = `0x${(tx.type ?? 0).toString(16)}`
+    const txData = tx.data ?? new Uint8Array()
+    const input = txData.length > 0 ? bytesToHex(txData) : "0x"
+    const maxFeePerGas = tx.maxFeePerGas !== undefined ? `0x${tx.maxFeePerGas.toString(16)}` : undefined
+    const maxPriorityFeePerGas = tx.maxPriorityFeePerGas !== undefined
+      ? `0x${tx.maxPriorityFeePerGas.toString(16)}`
+      : undefined
+
+    // Build receipt and tx info — stored in cache (for RPC) and returned directly (for block execution)
+    const receiptObj: TxReceipt = {
+      transactionHash: txHash,
+      blockNumber: bnHex,
+      blockHash,
+      transactionIndex: txIdxHex,
+      cumulativeGasUsed: gasUsed,
+      gasUsed,
+      status,
+      logsBloom: result.bloom ? bytesToHex(result.bloom.bitvector) : "0x" + "0".repeat(512),
+      logs,
+      effectiveGasPrice: gasPriceHex,
+      contractAddress,
+      from,
+      to,
+      type: typeHex,
+    }
+
+    // Skip per-tx cache eviction in block path — call evictCaches() after block completes
+    this.receipts.set(txHash, receiptObj)
+
+    this.txs.set(txHash, {
+      hash: txHash,
+      from,
+      to,
+      nonce: `0x${nonce.toString(16)}`,
+      gas: `0x${gasLimit.toString(16)}`,
+      gasPrice: gasPriceHex,
+      maxFeePerGas,
+      maxPriorityFeePerGas,
+      value: `0x${value.toString(16)}`,
+      input,
+      blockNumber: bnHex,
+      blockHash,
+      transactionIndex: txIdxHex,
+      type: typeHex,
+      chainId: bigIntToHex(this.common.chainId()),
+      v: tx.v !== undefined ? bigIntToHex(tx.v) : "0x0",
+      r: tx.r !== undefined ? bigIntToHex(tx.r) : "0x0",
+      s: tx.s !== undefined ? bigIntToHex(tx.s) : "0x0",
+    })
+
+    return { txHash, gasUsed: result.totalGasSpent, success: result.execResult.exceptionError === undefined, receipt: receiptObj, from, to, contractAddress }
+  }
+
+  /**
+   * Batch evict receipt/tx caches after block execution completes.
+   * Called once per block instead of per-tx to reduce overhead.
+   */
+  evictCaches(): void {
+    while (this.receipts.size > MAX_RECEIPT_CACHE) {
+      const first = this.receipts.keys().next().value
+      if (first === undefined) break
+      this.receipts.delete(first)
+    }
+    while (this.txs.size > MAX_TX_CACHE) {
+      const first = this.txs.keys().next().value
+      if (first === undefined) break
+      this.txs.delete(first)
+    }
   }
 
   async getBalance(address: string, stateRoot?: string): Promise<bigint> {

@@ -260,8 +260,12 @@ export class PersistentChainEngine {
     if (this.nodeSigner) {
       block.signature = this.nodeSigner.sign(`block:${block.hash}`) as Hex
     }
+    // Build sender map from mempool picks to avoid redundant ECDSA in block execution
+    const senderByRawTx = new Map<string, string>()
+    for (const mt of txs) senderByRawTx.set(mt.rawTx, mt.from)
+
     try {
-      await this.applyBlock(block, true)
+      await this.applyBlock(block, true, senderByRawTx)
     } catch (err) {
       log.warn("block application failed, falling back to empty block", { height: nextHeight.toString(), txCount: txs.length, error: String(err) })
       for (const tx of txs) {
@@ -277,7 +281,7 @@ export class PersistentChainEngine {
     return block
   }
 
-  async applyBlock(block: ChainBlock, locallyProposed = false): Promise<void> {
+  async applyBlock(block: ChainBlock, locallyProposed = false, senderByRawTx?: Map<string, string>): Promise<void> {
     // Re-entrant guard (async EVM execution can yield back to event loop)
     if (this.applyingBlock) {
       throw new Error("applyBlock re-entrant call detected")
@@ -376,33 +380,36 @@ export class PersistentChainEngine {
     const executedTxHashes: Hex[] = []
 
     try {
-    await this.evm.applyBlockContext({
+    const blockContext: import("./evm.ts").ExecutionContext = {
       blockNumber: block.number,
       baseFeePerGas: block.baseFee ?? 0n,
       excessBlobGas: block.excessBlobGas,
       parentBeaconBlockRoot: block.parentBeaconBlockRoot ? hexToBytes(block.parentBeaconBlockRoot) : undefined,
       timestamp: executionTimestamp,
-    })
+    }
+    await this.evm.applyBlockContext(blockContext)
+
+    // Pre-compute block-scoped objects once — reuse for all txs in this block
+    const blockCommon = this.evm.getBlockCommon(block.number)
+    const executionBlock = this.evm.getExecutionBlock(blockCommon, blockContext)
+    const baseFee = block.baseFee ?? 0n
+    const blockNumberHex = `0x${block.number.toString(16)}`
 
     for (let i = 0; i < block.txs.length; i++) {
       const raw = block.txs[i]
-      const result = await this.evm.executeRawTx(raw, block.number, i, block.hash, block.baseFee ?? 0n, {
-        excessBlobGas: block.excessBlobGas,
-        parentBeaconBlockRoot: block.parentBeaconBlockRoot ? hexToBytes(block.parentBeaconBlockRoot) : undefined,
-        timestamp: executionTimestamp,
-      })
-      const receipt = this.evm.getReceipt(result.txHash)
+      const sender = senderByRawTx?.get(raw)
+      const result = await this.evm.executeRawTxInBlock(raw, blockCommon, executionBlock, block.number, i, block.hash, baseFee, blockNumberHex, sender)
 
-      // Extract from/to from the raw transaction
-      const txInfo = this.evm.getTransaction(result.txHash)
-      const txFrom = (txInfo?.from ?? "0x0") as Hex
-      const txTo = (txInfo?.to ?? null) as Hex | null
+      // Use directly returned receipt/from/to — no Map lookup needed
+      const receipt = result.receipt
+      const txFrom = (result.from ?? "0x0") as Hex
+      const txTo = (result.to ?? null) as Hex | null
 
-      if (receipt) {
+      {
         const receiptLogs = Array.isArray(receipt.logs) ? receipt.logs : []
 
         // Collect transaction ops (deferred — not written yet)
-        allDbOps.push(...this.blockIndex.buildTransactionOps(result.txHash as Hex, {
+        const txOps = this.blockIndex.buildTransactionOps(result.txHash as Hex, {
           rawTx: raw,
           receipt: {
             transactionHash: receipt.transactionHash as Hex,
@@ -418,7 +425,8 @@ export class PersistentChainEngine {
               data: log.data as Hex,
             })),
           },
-        }))
+        })
+        for (let j = 0; j < txOps.length; j++) allDbOps.push(txOps[j])
 
         // Collect indexed logs
         for (let logIdx = 0; logIdx < receiptLogs.length; logIdx++) {
@@ -436,16 +444,17 @@ export class PersistentChainEngine {
         }
 
         // Collect contract registration ops (deferred)
-        if (!txTo && receipt.contractAddress) {
-          allDbOps.push(...this.blockIndex.buildContractOps(
-            receipt.contractAddress as Hex,
+        if (!txTo && result.contractAddress) {
+          const ctOps = this.blockIndex.buildContractOps(
+            result.contractAddress as Hex,
             block.number,
             result.txHash as Hex,
             txFrom,
-          ))
+          )
+          for (let j = 0; j < ctOps.length; j++) allDbOps.push(ctOps[j])
         }
 
-        totalGasUsed += BigInt(receipt.gasUsed.toString())
+        totalGasUsed += result.gasUsed
 
         // Incremental gas limit check — fail fast before more side effects
         if (totalGasUsed > BLOCK_GAS_LIMIT) {
@@ -515,10 +524,16 @@ export class PersistentChainEngine {
     }
 
     // Append block, log, and nonce ops — then flush everything in a single atomic batch
-    allDbOps.push(...this.blockIndex.buildBlockOps(storedBlock))
-    allDbOps.push(...this.blockIndex.buildLogOps(block.number, blockLogs))
-    allDbOps.push(...this.txNonceStore.buildMarkUsedOps(confirmedNonces))
+    const blockOps = this.blockIndex.buildBlockOps(storedBlock)
+    const logOps = this.blockIndex.buildLogOps(block.number, blockLogs)
+    const nonceOps = this.txNonceStore.buildMarkUsedOps(confirmedNonces)
+    for (let j = 0; j < blockOps.length; j++) allDbOps.push(blockOps[j])
+    for (let j = 0; j < logOps.length; j++) allDbOps.push(logOps[j])
+    for (let j = 0; j < nonceOps.length; j++) allDbOps.push(nonceOps[j])
     await this.db.batch(allDbOps)
+
+    // Batch evict receipt/tx caches once per block instead of per-tx
+    this.evm.evictCaches()
 
     } catch (err) {
       // Revert state trie on any failure to prevent state pollution

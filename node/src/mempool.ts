@@ -73,8 +73,8 @@ export class Mempool {
     this.cfg = { ...DEFAULT_CONFIG, ...config }
   }
 
-  addRawTx(rawTx: Hex): MempoolTx {
-    const tx = Transaction.from(rawTx)
+  addRawTx(rawTx: Hex, preDecoded?: Transaction): MempoolTx {
+    const tx = preDecoded ?? Transaction.from(rawTx)
     if (!tx.from) {
       throw new Error("invalid tx: missing sender")
     }

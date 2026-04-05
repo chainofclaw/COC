@@ -11,7 +11,7 @@ import type { IStateTrie, AccountState } from "./state-trie.ts"
 
 const EMPTY_CODE_HASH = keccak256(new Uint8Array(0))
 
-const MAX_CODE_CACHE_SIZE = 500
+const MAX_CODE_CACHE_SIZE = 2_000
 
 export class PersistentStateManager {
   private readonly trie: IStateTrie
