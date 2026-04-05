@@ -1,7 +1,7 @@
 use revm::{
     primitives::{
         Address, Bytes, ExecutionResult as RevmExecutionResult, Log, Output, TxKind,
-        U256, SpecId, AccountInfo, KECCAK_EMPTY,
+        U256, SpecId, AccountInfo, Bytecode, KECCAK_EMPTY,
     },
     db::InMemoryDB,
     Evm,
@@ -99,6 +99,41 @@ impl RevmInstance {
             .map_err(|e| JsValue::from_str(&format!("invalid address: {}", e)))?;
         let nonce = self.db.accounts.get(&addr).map_or(0u64, |a| a.info.nonce);
         Ok(nonce.to_string())
+    }
+
+    #[wasm_bindgen(js_name = setAccount)]
+    pub fn set_account(&mut self, address: &str, balance: &str, nonce: u64, code_hex: &str) -> Result<(), JsValue> {
+        let addr = Address::from_str(address)
+            .map_err(|e| JsValue::from_str(&format!("invalid address: {}", e)))?;
+        let bal = U256::from_str(balance)
+            .map_err(|e| JsValue::from_str(&format!("invalid balance: {}", e)))?;
+        let code = if code_hex.is_empty() || code_hex == "0x" {
+            None
+        } else {
+            let hex_str = code_hex.strip_prefix("0x").unwrap_or(code_hex);
+            Some(Bytecode::new_raw(Bytes::from(hex::decode(hex_str).unwrap_or_default())))
+        };
+        let info = AccountInfo {
+            balance: bal,
+            nonce,
+            code_hash: code.as_ref().map_or(KECCAK_EMPTY, |c| c.hash_slow()),
+            code,
+        };
+        self.db.insert_account_info(addr, info);
+        Ok(())
+    }
+
+    #[wasm_bindgen(js_name = getCode)]
+    pub fn get_code(&self, address: &str) -> Result<String, JsValue> {
+        let addr = Address::from_str(address)
+            .map_err(|e| JsValue::from_str(&format!("invalid address: {}", e)))?;
+        match self.db.accounts.get(&addr) {
+            Some(acc) => match &acc.info.code {
+                Some(code) => Ok(format!("0x{}", hex::encode(code.bytes()))),
+                None => Ok("0x".to_string()),
+            },
+            None => Ok("0x".to_string()),
+        }
     }
 
     /// Execute a transaction and commit state changes
