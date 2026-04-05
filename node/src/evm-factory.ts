@@ -48,25 +48,10 @@ export async function createEvmEngine(
       }) as Promise<IEvmEngine>
     }
     case "revm": {
-      // Delegate to EthereumJS for now — revm WASM integration is stage 3+
-      // When revm WASM bindings are available, replace with:
-      //   const { RevmEngine } = await import("./revm-engine.ts")
-      //   return RevmEngine.create(chainId, stateManager, opts)
-      const { Hardfork } = await import("@ethereumjs/common")
-      const hardfork = opts?.hardfork
-        ? mapHardfork(opts.hardfork, Hardfork)
-        : undefined
-      const schedule = opts?.hardforkSchedule?.map((e) => ({
-        blockNumber: e.blockNumber,
-        hardfork: mapHardfork(e.hardfork, Hardfork),
-      }))
-      const evm = await EvmChain.create(chainId, stateManager, {
-        hardfork,
-        hardforkSchedule: schedule,
+      const { RevmEngine } = await import("./revm-engine.ts")
+      return RevmEngine.create(chainId, stateManager, {
+        hardfork: opts?.hardfork ?? "shanghai",
       })
-      // Tag the engine for identification
-      ;(evm as unknown as Record<string, string>)._engineType = "revm-proxy"
-      return evm as IEvmEngine
     }
     default:
       throw new Error(`unsupported EVM engine: ${engine}`)
