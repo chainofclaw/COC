@@ -96,8 +96,8 @@ export interface NodeConfig {
   rpcAuthToken?: string
   // Admin RPC methods enabled
   enableAdminRpc: boolean
-  // Node running mode: full (default pruning), archive (no pruning), light (aggressive pruning)
-  nodeMode: "full" | "archive" | "light"
+  // Node running mode: full (default pruning), archive (no pruning), light (aggressive pruning), sequencer (L2 rollup — no consensus overhead)
+  nodeMode: "full" | "archive" | "light" | "sequencer"
   // Block signature enforcement: "off" = ignore, "monitor" = warn, "enforce" = reject
   signatureEnforcement: "off" | "monitor" | "enforce"
   // Governance module
@@ -109,6 +109,8 @@ export interface NodeConfig {
   didRegistryAddress?: string
   didEnabled: boolean
   didAuthMode: "off" | "optional" | "required"
+  // EVM engine selection: "ethereumjs" (stable default) or "revm" (experimental high-performance)
+  evmEngine: "ethereumjs" | "revm"
 }
 
 export async function loadNodeConfig(): Promise<NodeConfig> {
@@ -463,14 +465,32 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     didRegistryAddress: user.didRegistryAddress,
     didEnabled: user.didEnabled ?? false,
     didAuthMode: user.didAuthMode ?? "off",
+    evmEngine: normalizeEvmEngine(process.env.COC_EVM_ENGINE ?? (user as Record<string, unknown>).evmEngine),
     storage: { ...storageDefaults, ...userStorage },
+
+    // Sequencer mode: strip consensus overhead for maximum L2 throughput
+    ...(nodeMode === "sequencer" ? {
+      enableBft: false,
+      enableWireProtocol: false,
+      enableDht: false,
+      enableSnapSync: false,
+      signatureEnforcement: "off" as const,
+      p2pInboundAuthMode: "off" as const,
+    } : {}),
   }
 }
 
-function normalizeNodeMode(input: unknown): "full" | "archive" | "light" {
+function normalizeEvmEngine(input: unknown): "ethereumjs" | "revm" {
+  if (typeof input !== "string") return "ethereumjs"
+  const v = input.trim().toLowerCase()
+  if (v === "revm") return "revm"
+  return "ethereumjs"
+}
+
+function normalizeNodeMode(input: unknown): "full" | "archive" | "light" | "sequencer" {
   if (typeof input !== "string") return "full"
   const v = input.trim().toLowerCase()
-  if (v === "archive" || v === "light") return v
+  if (v === "archive" || v === "light" || v === "sequencer") return v
   return "full"
 }
 
@@ -924,8 +944,8 @@ export function validateConfig(cfg: Partial<NodeConfig>): string[] {
   }
 
   if (cfg.nodeMode !== undefined) {
-    if (cfg.nodeMode !== "full" && cfg.nodeMode !== "archive" && cfg.nodeMode !== "light") {
-      errors.push("nodeMode must be one of: full, archive, light")
+    if (cfg.nodeMode !== "full" && cfg.nodeMode !== "archive" && cfg.nodeMode !== "light" && cfg.nodeMode !== "sequencer") {
+      errors.push("nodeMode must be one of: full, archive, light, sequencer")
     }
   }
 

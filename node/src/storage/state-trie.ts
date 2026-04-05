@@ -315,32 +315,42 @@ export class PersistentStateTrie implements IStateTrie {
   }
 
   async commit(): Promise<string> {
-    // Only commit dirty storage tries — iterate snapshot to avoid Set mutation during iteration
+    // Snapshot and clear dirty set upfront — direct trie.put below won't re-dirty
     const dirtySnapshot = [...this.dirtyAddresses]
+    this.dirtyAddresses.clear()
+
+    const encoder = new TextEncoder()
+
+    // Batch: sync storage roots into account trie for all dirty addresses
     for (const address of dirtySnapshot) {
       const storageTrie = this.storageTries.get(address)
-      if (storageTrie) {
-        const account = await this.get(address)
-        if (account) {
-          const updatedAccount: AccountState = {
-            ...account,
-            storageRoot: bytesToHex(storageTrie.root()),
-          }
-          await this.put(address, updatedAccount)
-        }
+      if (!storageTrie) continue
+
+      // Read from accountCache directly — guaranteed to exist since put() populates it
+      const cached = this.accountCache.get(address)
+      if (!cached) continue
+
+      const newRoot = bytesToHex(storageTrie.root())
+      if (cached.storageRoot === newRoot) continue // No storage change — skip trie write
+
+      const updatedAccount: AccountState = { ...cached, storageRoot: newRoot }
+
+      // Direct trie.put — bypasses this.put() to avoid re-dirtying, cache eviction,
+      // and redundant stateRoot invalidation during the commit loop
+      const json = {
+        nonce: updatedAccount.nonce.toString(),
+        balance: updatedAccount.balance.toString(),
+        storageRoot: updatedAccount.storageRoot,
+        codeHash: updatedAccount.codeHash,
       }
+      await this.trie.put(hexToBytes(address), encoder.encode(JSON.stringify(json)))
+      this.accountCache.set(address, updatedAccount)
     }
 
-    // Delete only processed addresses (not clear()) to preserve addresses
-    // dirtied during the commit loop by the put() calls above
-    for (const address of dirtySnapshot) {
-      this.dirtyAddresses.delete(address)
-    }
     await (this.trie as Trie & { persistRoot?: () => Promise<void> }).persistRoot?.()
     this.lastStateRoot = bytesToHex(this.trie.root())
 
     // Persist state root for recovery across restarts
-    const encoder = new TextEncoder()
     await this.db.put(STATE_ROOT_KEY, encoder.encode(this.lastStateRoot))
 
     return this.lastStateRoot

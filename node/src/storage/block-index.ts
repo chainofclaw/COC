@@ -143,6 +143,16 @@ export class BlockIndex implements IBlockIndex {
     ])
   }
 
+  /**
+   * Update stateRoot on a stored block (deferred stateRoot resolution).
+   */
+  async updateBlockStateRoot(hash: string, stateRoot: string): Promise<void> {
+    const block = await this.getBlockByHash(hash)
+    if (!block) return
+    const updated = { ...block, stateRoot }
+    await this.updateBlock(updated)
+  }
+
   async getBlockByNumber(num: bigint): Promise<ChainBlock | null> {
     const key = BLOCK_BY_NUMBER_PREFIX + num.toString()
     const data = await this.db.get(key)

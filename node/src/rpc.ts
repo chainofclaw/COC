@@ -1700,6 +1700,31 @@ async function handleRpc(
         url: peer.url ?? "unknown",
       }))
     }
+    // --- Rollup RPC namespace ---
+    case "rollup_getOutputAtBlock": {
+      const blockNumber = parseBlockTag(params[0], await Promise.resolve(chain.getHeight()))
+      const block = await Promise.resolve(chain.getBlockByNumber(blockNumber))
+      if (!block || !block.stateRoot) return null
+      const { solidityPackedKeccak256 } = await import("ethers")
+      const outputRoot = solidityPackedKeccak256(
+        ["uint64", "bytes32", "bytes32"],
+        [block.number, block.stateRoot, block.hash],
+      )
+      return {
+        l2BlockNumber: `0x${block.number.toString(16)}`,
+        outputRoot,
+        stateRoot: block.stateRoot,
+        blockHash: block.hash,
+        timestamp: `0x${Math.floor(block.timestampMs / 1000).toString(16)}`,
+      }
+    }
+    case "rollup_getSequencerMode": {
+      const nodeMode = (opts as Record<string, unknown>)?.nodeMode ?? "full"
+      return {
+        sequencerMode: nodeMode === "sequencer",
+        nodeMode,
+      }
+    }
     default:
       throw new Error("method not supported")
   }

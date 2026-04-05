@@ -111,7 +111,13 @@ No regressions in existing functionality:
 - **No dynamic block time**: 1000ms is hardcoded default; can be tuned via config but not adaptive
 - **No mempool prioritization refactor**: Current full-sort + nonce ordering adequate for 256 tx/block; would need heap/priority queue for >> 1000s tx/sec
 
-## Next Phase: Optimistic Rollup Architecture
+## Next Phase: EVM Pipeline Optimization (Phase 38-39)
+
+**Completed** (2026-04-05). See `docs/phase-38-39-tps-optimization.md` for full details.
+
+Key improvements: `executeRawTxInBlock()` fast path, ECDSA dedup, `BlockExecutionResult` direct return, state trie batch commit, cache tuning. 1322 tests passing.
+
+## Future Phase: Optimistic Rollup Architecture
 
 Now that single-node execution layer sustains **100+ TPS**, the path forward is to:
 

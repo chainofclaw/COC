@@ -513,6 +513,7 @@ const consensus = new ConsensusEngine(chain, p2p, {
   syncIntervalMs: config.syncIntervalMs,
   enableSnapSync: config.enableSnapSync,
   snapSyncThreshold: config.snapSyncThreshold,
+  sequencerMode: config.nodeMode === "sequencer",
 }, {
   bft: bftCoordinator,
   snapSync: snapSyncProvider,
