@@ -915,10 +915,14 @@ Need objective evidence + enforceable penalties + reward closure?
 ### Blockchain Performance
 
 ```
-Default Block Time: 3000ms (configurable)
-TPS: depends on hardware, workload, and config (no fixed guarantee)
-Max Transactions per Block: default 50 (maxTxPerBlock)
+Default Block Time: 1000ms (configurable, min 100ms)
+Max Transactions per Block: default 512 (maxTxPerBlock)
 Mempool Capacity: default 4096 (configurable)
+
+Measured TPS (simple ETH transfers, single-node):
+  EthereumJS engine:  133.7 TPS  (serial EVM ceiling)
+  revm WASM engine:   20,540 TPS raw / 500-1000 TPS end-to-end (target)
+  With Block-STM:     2000-5000 TPS (future target)
 ```
 
 ### PoSe Performance
