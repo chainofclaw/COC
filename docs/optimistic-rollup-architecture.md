@@ -28,7 +28,7 @@ COC will evolve from a standalone L1 blockchain into an **Optimistic Rollup** ar
          │        Sequencer (L2) — Current COC Engine            │
          │   ┌────────────────────────────────────────────────┐  │
          │   │  PersistentChainEngine (1s blocks)             │  │
-         │   │  - EVM execution (130+ TPS)                    │  │
+         │   │  - EVM execution (133.7 TPS (EthereumJS) / 500-1000 TPS (revm))                    │  │
          │   │  - User-facing fast finality                   │  │
          │   │  - Reorg risk (1-7 day window)                 │  │
          │   └────────────────────────────────────────────────┘  │
@@ -50,7 +50,7 @@ COC will evolve from a standalone L1 blockchain into an **Optimistic Rollup** ar
 
 **Operational properties**:
 - **Block time**: 1 second
-- **Throughput**: 100-150 TPS (simple transfers; 80-120 TPS mixed workloads)
+- **Throughput**: 133.7 TPS (EthereumJS) / 500-1000 TPS (revm WASM, Phase 40)
 - **Finality**: Sequencer-determined (fast UX, reorg risk)
 - **Canonical chain selection**: Simple height + weight, not BFT
 
@@ -243,7 +243,7 @@ contract DelayedInbox {
 
 | Aspect | Standalone L1 | Optimistic Rollup |
 |--------|---------------|-------------------|
-| **Throughput** | 100-150 TPS (capped by full history) | 100+ TPS (unlimited via compression) |
+| **Throughput** | 133-1000 TPS (EthereumJS/revm) | 500-1000+ TPS (via compression) |
 | **Latency** | 1s block time (fast UX) | 1s block time (same) |
 | **Settlement cost** | Per-block on consensus | 1 L1 tx per 100 blocks (1% cost) |
 | **Finality** | Weight-based (subjective) | 7-day challenge window (objective) |
@@ -280,7 +280,7 @@ contract DelayedInbox {
 ## Roadmap to Production
 
 ```
-Phase 37 ✓ (done) — 100+ TPS single sequencer
+Phase 37-40 ✓ (done) — 133.7 TPS (EthereumJS) + revm WASM engine (20K TPS raw)
        ↓
 Phase 38 (6 weeks) — Output root submission + delayed inbox
        ↓

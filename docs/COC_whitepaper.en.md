@@ -59,7 +59,7 @@ Layer 4: On-Chain Settlement (Smart Contracts)
 **Layer 1 - Execution (Optional EVM)**
 - Execute transactions and smart contracts, maintain state
 - EVM is a runtime, not a decentralization mechanism
-- Block time: configurable (default 3000ms)
+- Block time: configurable (default 1000ms)
 - Max tx/block: configurable (default 50)
 
 **Layer 2 - Consensus (Pluggable)**
@@ -676,10 +676,21 @@ Protocol's long-term goal: rely increasingly on fees and service markets.
 ### 17.1 Blockchain Performance
 
 ```
-Default Block Time: 3000ms (configurable)
-TPS: Depends on hardware, workload, config
-Max Tx/Block: default 50 (configurable)
+Default Block Time: 1000ms (configurable, min 100ms)
+Max Tx/Block: default 512 (configurable)
 Mempool Capacity: default 4096 (configurable)
+
+Measured TPS (simple ETH transfers, single-node sequencer):
+  EthereumJS engine:  133.7 TPS  (Phase 38-39, serial EVM ceiling)
+  revm WASM engine:   20,540 TPS raw execution (Phase 40, 154x speedup)
+  End-to-end target:  500-1000 TPS with revm + persistent state
+
+TPS Optimization Roadmap:
+  Phase 37: Mega-batch DB writes           16.7 → 131 TPS (7.8x)
+  Phase 38: EVM pipeline + ECDSA dedup     → 133.7 TPS
+  Phase 39: State trie batch + sequencer   Architecture ready
+  Phase 40: revm WASM engine               → 500-1000 TPS (target)
+  Future:   Block-STM parallel execution   → 2000-5000 TPS (target)
 ```
 
 ### 17.2 PoSe Performance
@@ -724,7 +735,7 @@ Pin Management: incremental maintenance
 | **Positioning** | Compute + Storage | Pure Storage | Pure Permanent | Pure Storage Svc |
 | **Smart Contracts** | **✓ EVM** | ✗ (FVM) | ✗ (SmartWeave) | ✗ |
 | **Verification** | PoSe (QoS) | PoSt (Ownership) | PoW (Permanence) | Audit |
-| **TPS** | ~1000 | None | None | None |
+| **TPS** | 133-1000+ (revm) | None | None | None |
 
 **Key Distinction**: Filecoin/Arweave are storage specialists; COC integrates execution + storage + verifiable settlement.
 
@@ -744,8 +755,8 @@ Pin Management: incremental maintenance
 | Parameter | Default | Notes |
 |-----------|---------|-------|
 | **Epoch** | 1h | Reward settlement cycle |
-| **Block Time** | 3000ms | Configurable |
-| **Max Tx/Block** | 50 | Configurable |
+| **Block Time** | 1000ms | Configurable (min 100ms) |
+| **Max Tx/Block** | 512 | Configurable |
 | **U Challenges** | 6/node/epoch | Timeout 2.5s, pass ≥80% |
 | **S Challenges** | 2/SN/epoch | Timeout 6s, pass ≥70% |
 | **R Challenges** | 2/RN/epoch | Low weight |
