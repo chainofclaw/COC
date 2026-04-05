@@ -53,6 +53,7 @@ export interface ConsensusConfig {
   syncIntervalMs: number
   enableSnapSync?: boolean
   snapSyncThreshold?: number
+  sequencerMode?: boolean
 }
 
 export type ConsensusStatus = "healthy" | "degraded" | "recovering"
@@ -163,13 +164,16 @@ export class ConsensusEngine {
   start(): void {
     this.startedAtMs = Date.now()
     this.proposeTimer = setInterval(() => void this.tryPropose(), this.cfg.blockTimeMs)
-    this.syncTimer = setInterval(() => void this.trySync(), this.cfg.syncIntervalMs)
-    // Independent degraded timeout check (not gated by tryPropose)
-    this.degradedCheckTimer = setInterval(() => this.checkDegradedTimeout(), 10_000)
     this.proposeTimer.unref()
-    this.syncTimer.unref()
-    this.degradedCheckTimer.unref()
-    void this.trySync()
+
+    // Sequencer mode: skip sync and degraded timers — single validator produces all blocks
+    if (!this.cfg.sequencerMode) {
+      this.syncTimer = setInterval(() => void this.trySync(), this.cfg.syncIntervalMs)
+      this.degradedCheckTimer = setInterval(() => this.checkDegradedTimeout(), 10_000)
+      this.syncTimer.unref()
+      this.degradedCheckTimer.unref()
+      void this.trySync()
+    }
   }
 
   stop(): void {
@@ -241,16 +245,19 @@ export class ConsensusEngine {
 
   private async tryPropose(): Promise<void> {
     if (this.proposeInFlight) return
-    if (this.syncInFlight) return // Don't propose while snap sync is modifying chain state
-    if (this.status === "degraded") {
-      return // degraded timeout handled by independent degradedCheckTimer
-    }
 
-    // Skip proposing while BFT round is active to avoid disrupting in-flight rounds
-    if (this.bft) {
-      const bftState = this.bft.getRoundState()
-      if (bftState.active) {
-        return
+    if (!this.cfg.sequencerMode) {
+      if (this.syncInFlight) return // Don't propose while snap sync is modifying chain state
+      if (this.status === "degraded") {
+        return // degraded timeout handled by independent degradedCheckTimer
+      }
+
+      // Skip proposing while BFT round is active to avoid disrupting in-flight rounds
+      if (this.bft) {
+        const bftState = this.bft.getRoundState()
+        if (bftState.active) {
+          return
+        }
       }
     }
 
