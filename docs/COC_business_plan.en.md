@@ -23,7 +23,8 @@
 | **Current Stage** | Pre-mainnet testnet (2026 Q2) |
 | **Tech Stack** | Custom blockchain (TS/Rust) + revm WASM EVM (154x speedup) |
 | **Code Status** | 1300+ tests passing, 40K+ LoC, open source |
-| **Funding Round** | Strategic Round |
+| **Funding Round** | **Series A — $500M target** |
+| **Founding Team** | BOB (Founder) / Beatrice (Partner) / ZEKE.eth (Technical Partner) |
 
 ### Investment Highlights (Why COC)
 
@@ -214,7 +215,32 @@ Actual revenue varies with network node count, COC price, and service quality.
           Core Team + Ecosystem Builders
 ```
 
-### 7.2 Key Roles (Hiring/Filling)
+### 7.2 Founding Team
+
+A cross-functional founding team across protocol design, business strategy, and Web3 execution.
+
+#### **BOB — Founder**
+
+- Partner of FIBOS public blockchain
+- Founder of Parallels Fund
+- Long-term builder in blockchain systems, ecosystem design, and Web3 infrastructure
+- Focused on protocol architecture, product direction, and strategic ecosystem development
+
+#### **Beatrice — Partner**
+
+- 5+ years of Web3 & crypto experience, 7+ years of post-investment experience
+- D-level experience at Huobi, CMC, Accenture, Fosun (Overseas GM)
+- Global working experience across China / France / Singapore
+- Master's degree with dual specializations from Rouen Business School (France)
+- Successful serial entrepreneur
+
+#### **ZEKE.eth — Technical Partner**
+
+- Web3 technologist with hands-on delivery experience
+- Project experience across CEX / DEX / blockchain gaming
+- Strong background in Web3 systems, product implementation, and protocol engineering
+
+### 7.3 Key Roles (Hiring/Filling)
 
 | Role | Responsibility | Status |
 |------|---------------|--------|
@@ -224,9 +250,9 @@ Actual revenue varies with network node count, COC price, and service quality.
 | **Legal & Compliance** | Multi-jurisdiction compliance | 🔍 Advisor recruiting |
 | **Marketing & Brand** | Media, KOLs, content | 🔍 Hiring |
 
-### 7.3 Advisors & Partners
+### 7.4 Advisors & Partners
 
-To be supplemented. Recommended advisor backgrounds:
+Onboarding advisors with the following backgrounds:
 
 - AI Agent framework senior developers (LangChain/LlamaIndex lineage)
 - Web3 governance experts (Optimism/Arbitrum/Polygon DAO veterans)
@@ -278,36 +304,48 @@ As the founder of the AI-native blockchain category, COC's valuation anchor shou
 
 ## IX. Funding Plan
 
-### 9.1 Information to Be Provided by Investor Discussion
+### 9.1 Funding Target
 
-**This business plan does NOT pre-fill the following items; they require negotiation with investors:**
+| Item | Details |
+|------|---------|
+| **Round** | **Series A** |
+| **Target Size** | **$500M equivalent** (USD/USDC/USDT) |
+| **Instrument** | SAFT (Simple Agreement for Future Tokens) + equity option |
+| **Valuation** | Pre-money valuation and token price (terms negotiable) |
+| **Subscription** | Tranched, released on milestone achievement |
+| **Target Close** | 2026 Q2-Q3 |
 
-| Item | To Be Filled |
-|------|-------------|
-| **Round** | Strategic / Series A / Token Round |
-| **Size** | $X equivalent (USD/USDC/USDT) |
-| **Instrument** | SAFE / SAFT / Equity / Token Warrant |
-| **Valuation** | Pre-money valuation and token price |
-| **Use of Funds** | Team / Tech / Marketing / Legal / Reserve breakdown |
-| **Subscription** | Lump sum / tranches / milestone-based |
+> **Strategic significance**: This round will support COC mainnet genesis, onboarding of first ecosystem partners, global BD expansion, multi-jurisdiction compliance build-out, and operating reserves for the next 5 years of protocol evolution. The Series A size reflects the urgency of the AI Agent infrastructure market window and COC's differentiated positioning.
 
-### 9.2 Use of Funds (Reference Allocation)
+### 9.2 Use of Funds
 
-| Purpose | Suggested % | Notes |
-|---------|------------|-------|
-| **Core Team Expansion** | 35-40% | Protocol, SDK, Agent integration |
-| **Ecosystem Development** | 20-25% | Grant matching, BD, partnerships |
-| **Infrastructure** | 10-15% | Testnet, nodes, monitoring |
-| **Marketing & Brand** | 10-15% | Content, events, KOLs |
-| **Legal & Compliance** | 5-10% | Multi-jurisdiction compliance |
-| **Reserve** | 10-15% | Emergency, opportunistic investment |
+| Purpose | % | Amount (based on $500M) | Notes |
+|---------|---|-------------------------|-------|
+| **Core Team Expansion** | 35% | $175M | Protocol, SDK, Agent integration, security audit teams |
+| **Ecosystem Development & Grants** | 25% | $125M | USD grants matching ecosystem fund (80M COC), BD, partnerships |
+| **Infrastructure & Operations** | 15% | $75M | Mainnet/Testnet/Carrier network, monitoring, SRE |
+| **Marketing & Brand** | 12% | $60M | Global brand promotion, KOLs, content, industry events |
+| **Legal & Compliance** | 8% | $40M | Multi-jurisdiction compliance, regulatory engagement, legal opinions |
+| **Strategic Reserve** | 5% | $25M | Emergency, opportunistic investment, market maker support |
 
 ### 9.3 Investor Rights (Proposed Structure, Negotiable)
 
-- **Token Allocation**: From the "Early Contributors & Strategic Partners" pool (3.5%)
+- **Token Allocation**: From the "Early Contributors & Strategic Partners" pool (3.5%, 35M COC)
 - **Lockup**: 6-month cliff + 24-month linear release
 - **Governance Participation**: Investors gain Faction identity in DAO governance
-- **Information Disclosure**: Quarterly financial reports + annual audit
+- **Pro-rata Rights**: Right to participate in future rounds
+- **Information Disclosure**: Quarterly financial reports + annual third-party audit
+- **Board Seat**: Lead investor receives Foundation board observer/member seat
+
+### 9.4 Milestone-Based Release
+
+To reduce investor risk, funding will be released in tranches tied to milestones:
+
+| Tranche | Release % | Trigger |
+|---------|-----------|---------|
+| **First** | 30% | Released immediately on signing, for team expansion and mainnet launch |
+| **Second** | 40% | 30 days stable mainnet + 100+ nodes + 1K+ Agent registrations |
+| **Third** | 30% | TVL exceeds $10M + 5+ Agent frameworks integrated |
 
 ---
 
@@ -360,15 +398,15 @@ As the founder of the AI-native blockchain category, COC's valuation anchor shou
 
 ## Document Notes
 
-This business plan is a **design requirements document** — it outlines all elements a complete business plan should contain, and fills in the technical, market, and tokenomics quantifiable objective information based on the whitepaper and ecosystem roadmap. **Sensitive information such as funding terms, valuation, team bios, and advisor names must be supplemented by the project team.**
+This business plan integrates product, technology, market opportunity, tokenomics, funding target, and founding team into a complete document — ready for strategic investor communication.
 
 This document can serve as:
-- Initial communication material with strategic investors
-- Internal funding preparation checklist
-- Source content for detailed Pitch Deck
+- Core material for initial strategic investor communication
+- Source content for the Pitch Deck
+- Internal execution baseline for fundraising preparation
 
 **Next Steps**:
-1. Project team fills in funding terms (round, size, valuation, instrument)
-2. Project team adds team bios and advisor backgrounds
-3. Design accompanying Pitch Deck (15-20 slide PPT)
-4. Prepare Data Room: audit reports, legal opinions, technical validation
+1. Finalize valuation terms (pre-money valuation, token price, SAFT template)
+2. Finalize accompanying Pitch Deck (20-slide PPT, English draft already exists)
+3. Prepare Data Room: audit reports, legal opinions, technical validation, team KYC
+4. Begin one-on-one outreach to strategic investors
