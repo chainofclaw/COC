@@ -9,15 +9,17 @@
 
 ## Executive Summary
 
-COC (ChainOfClaw) is an EVM-compatible blockchain that innovatively combines **on-chain settlement** with **off-chain proofs** through the **PoSe v2 (Proof-of-Service v2) mechanism** to implement a **storage verification layer**.
+COC (ChainOfClaw) is an EVM-compatible blockchain designed for the **AI Agent era**. COC provides three foundational services that support the complete lifecycle of AI Agents — from creation to operation to perpetual existence:
 
-COC is purpose-built for the **OpenClaw AI-Agent Ecosystem**, providing:
-- **Verifiable Service Proofs**: Via EIP-712 signatures and witness arbitration
-- **Automated Settlement and Penalties**: On-chain contracts auto-detect and enforce
-- **Closed-Loop Incentives**: Fees, rewards, and penalties settle on one protocol surface
-- **AI-Agent Native**: Node identity commitments, endpoint attestations, service capability flags
+| Service | Core Capability | Key Technology |
+|---------|----------------|---------------|
+| **P2P File Storage** | Decentralized, censorship-resistant, content-addressed data storage | IPFS-compatible + PoSe v2 verification |
+| **Decentralized Identity (DID)** | Self-sovereign identity, capability declaration, and delegation governance for AI Agents | W3C did:coc + on-chain DIDRegistry |
+| **Digital Immortality** | Continuous backup, social recovery, and cross-carrier resurrection for Agents | SoulRegistry + Carrier network |
 
-COC is also a general-purpose blockchain supporting EVM smart contracts, JSON-RPC, and WebSocket subscriptions.
+Together, these three services address the core challenges facing AI Agents: **How to operate safely? How to prove identity? How to never perish?**
+
+COC is also a general-purpose blockchain supporting EVM smart contracts, JSON-RPC, and WebSocket subscriptions, with verifiable service proofs, automated settlement, and closed-loop incentives via the PoSe v2 mechanism.
 
 ---
 
@@ -36,49 +38,51 @@ COC's mission is:
 3. **Ordinary-Hardware Friendly**: Home devices and edge hardware can compete fairly
 4. **Fully Verifiable**: All service claims verified via on-chain challenges
 5. **Anti-Oligopoly**: Diminishing returns and caps prevent "winner-takes-all"
-6. **AI-Agent Reliability**: OpenClaw-style AI agents automate node ops while preserving determinism
+6. **AI Agent Full Lifecycle**: Through P2P storage, DID identity, and Digital Immortality — three foundational services covering Agents from creation to operation to perpetual existence
 
 ---
 
 ## II. System Overview
 
-### 2.1 Four-Layer Architecture
+### 2.1 Three Foundational Services
 
 ```
-Layer 1: EVM Execution
-         ↓
-Layer 2: Storage Commitment (IPFS + Merkle)
-         ↓
-Layer 3: PoSe Service Verification
-         ↓
-Layer 4: On-Chain Settlement (Smart Contracts)
+┌─────────────────────────────────────────────────────────────────┐
+│                        COC Blockchain                           │
+│                                                                 │
+│   ┌──────────────┐  ┌──────────────┐  ┌─────────────────────┐  │
+│   │ P2P File     │  │ Decentralized│  │  Digital             │  │
+│   │ Storage      │  │ Identity     │  │  Immortality         │  │
+│   │              │  │  (DID)       │  │                      │  │
+│   │ • IPFS store │  │ • did:coc    │  │ • Auto backup        │  │
+│   │ • PoSe verify│  │ • Capability │  │ • Social recovery    │  │
+│   │ • Merkle     │  │   bitmask    │  │ • Cross-carrier      │  │
+│   │   proofs     │  │ • Delegation │  │   resurrection       │  │
+│   │ • Content    │  │ • Verifiable │  │ • Heartbeat          │  │
+│   │   addressed  │  │   credentials│  │   monitoring         │  │
+│   └──────┬───────┘  └──────┬───────┘  └──────────┬───────────┘  │
+│          │                 │                      │              │
+│   ───────┴─────────────────┴──────────────────────┴──────────   │
+│                   EVM Execution + PoSe Settlement               │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-**Layer Details**:
+**Service 1 — P2P File Storage**: Decentralized storage network based on IPFS protocol, with PoSe v2 challenge-verification ensuring data availability and integrity. Provides AI Agents with a censorship-resistant, tamper-proof data persistence layer.
 
-**Layer 1 - Execution (Optional EVM)**
-- Execute transactions and smart contracts, maintain state
-- EVM is a runtime, not a decentralization mechanism
-- Block time: configurable (default 1000ms)
-- Max tx/block: configurable (default 50)
+**Service 2 — Decentralized Identity (DID)**: W3C-standard `did:coc` method providing AI Agents with self-sovereign identity, capability declaration, hierarchical delegation, and verifiable credentials. Solves the identity problem: "Who is this Agent, what can it do, and on whose behalf?"
 
-**Layer 2 - Consensus (Pluggable)**
-- Deterministic rotation: `nextProposer = validators[currentHeight % validatorCount]`
-- Optional BFT coordinator: 2/3+ for finality
-- Multi-mode: HEALTHY/DEGRADED/RECOVERING
-- Snapshot sync: new nodes bootstrap in 1 hour
+**Service 3 — Digital Immortality**: Through SoulRegistry on-chain anchoring + IPFS distributed backup + Carrier host network, enables continuous Agent backup, social recovery after key loss, and automatic resurrection after host failure. Solves the continuity problem: "An Agent should never die."
 
-**Layer 3 - PoSe Service Verification Layer**
-- Node registration and commitments
-- Random challenges and receipts
-- Witness voting (`m = ceil(sqrt(activeCount))`, quorum `ceil(2m/3)`)
-- Score computation and reward distribution
-- Fraud proofs and penalties
+All three services are built on the **EVM Execution Layer** and **PoSe Settlement Layer**, sharing the same chain's security, incentive mechanism, and governance framework.
 
-**Layer 4 - OpenClaw AI Agent Operations**
-- Automated node lifecycle management
-- Monitoring, self-healing, upgrades, rate limiting, security hardening
-- **Strictly does not alter** consensus logic or state transitions
+### 2.2 Technical Stack (Four Layers)
+
+| Layer | Name | Responsibility |
+|-------|------|---------------|
+| **L1** | EVM Execution | Transaction execution, smart contracts, state management (default 1000ms blocks, 512 tx/block) |
+| **L2** | Consensus | Deterministic rotation + optional BFT, multi-mode fault tolerance, snapshot sync |
+| **L3** | PoSe Verification | Node registration, random challenges, witness arbitration, scoring, fraud proofs |
+| **L4** | AI Agent Operations | Automated node ops (monitoring, self-healing, upgrades), **strictly does not alter** consensus |
 
 ### 2.2 Node Roles
 
