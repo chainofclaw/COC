@@ -20,7 +20,7 @@
 | **Sector** | Web3 × AI intersection, Agent infrastructure |
 | **Target Market (2030)** | $50B+ AI Agent market (Gartner) |
 | **Token** | COC, native gas token, total supply 1B |
-| **Current Stage** | Testnet operational (Mainnet genesis 2026 Q2) |
+| **Current Maturity** | Protocol/contract code complete (1300+ tests passing) + testnet continuously running; mainnet genesis planned for 2026 Q2 |
 | **Tech Stack** | Custom blockchain (TS/Rust) + revm WASM EVM (154x speedup) |
 | **Code Status** | 1300+ tests passing, 40K+ LoC, open source |
 | **Funding Round** | **Series A — $5M USD** |
@@ -30,7 +30,7 @@
 
 ### Investment Highlights (Why COC)
 
-1. **Market Window**: AI Agent sector grows from $7B → $50B+ from 2026-2030 (CAGR ~50%); COC is the **only decentralized infrastructure solution** for this sector
+1. **Market Window**: AI Agent sector grows from $7B → $50B+ from 2026-2030 (CAGR ~50%); COC is **one of the few decentralized infrastructure solutions focused on AI Agent identity + perpetuity** and currently has the **most complete protocol stack** among known public implementations (see §6 Competitive Analysis)
 2. **Technical Leadership**: revm WASM EVM engine measured at 20,540 TPS raw execution (154x EthereumJS); complete PoSe service proof + DID + backup/resurrection full-stack implementation
 3. **Differentiated Positioning**: Doesn't compete with Ethereum/Solana in generic L1 racing; opens a new "AI-native blockchain" category
 4. **Complete Token Model**: 1B hard cap, 25% genesis + 75% service mining; decaying inflation; multi-channel burn trending toward deflation
@@ -83,13 +83,20 @@
 
 ## III. Product & Technology
 
+> **Maturity Status Labels** (shared across this business plan, ecosystem roadmap, and whitepaper)
+> - 🟢 **Code complete**: Protocol/contract/service code is written and tests pass
+> - 🟡 **Testnet live**: Deployed and continuously running on testnet
+> - 🔵 **Mainnet live**: Deployed on mainnet
+> - ⚪ **Reference implementation planned**: Specification clear; code not yet started
+
 ### 3.1 Three Foundational Services
 
-| Service | Problem Solved | Core Tech | Status |
-|---------|---------------|-----------|--------|
-| **P2P File Storage** | Where does Agent data live? | IPFS + PoSe v2 verification + Merkle proofs | ✅ Implemented |
-| **Decentralized Identity (DID)** | How does an Agent gain trustworthy identity? | W3C did:coc + capability bitmask + delegation chain | ✅ Implemented |
-| **AI Silicon Immortality** | How does an Agent never die? | SoulRegistry + Carrier network + guardian recovery | ✅ Implemented |
+| Service | Problem Solved | Core Tech | Current Maturity |
+|---------|---------------|-----------|-----------------|
+| **P2P File Storage** | Where does Agent data live? | IPFS + PoSe v2 verification + Merkle proofs | 🟢 Code complete + 🟡 Testnet live (Mainnet 2026 Q2) |
+| **Decentralized Identity (DID)** | How does an Agent gain trustworthy identity? | W3C did:coc + capability bitmask + delegation chain | 🟢 Code complete + 🟡 Testnet live (Mainnet 2026 Q2) |
+| **AI Silicon Immortality** | How does an Agent never die? | SoulRegistry + Carrier network + guardian recovery | 🟢 Code complete + 🟡 Testnet live (Mainnet 2026 Q2) |
+| **OpenClaw Reference Agent** | Reference Agent framework implementation | did:coc + SoulRegistry compatible | ⚪ Reference implementation planned |
 
 ### 3.2 Technical Differentiation (Measured)
 
