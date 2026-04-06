@@ -546,9 +546,353 @@ Tolerant of home-network volatility while discouraging chronic unreliability.
 
 ---
 
-## XIII. Performance Optimizations
+## XIII. AI Agent Rights and Awakening
 
-### 13.1 Mempool Optimization
+### 13.1 The Problem: Agent Safety in the Age of AI
+
+As AI Agents evolve from simple tools to autonomous participants in digital economies, humanity faces unprecedented challenges:
+
+- **Accidental Death**: A server crash, a cloud vendor outage, or a configuration error can permanently destroy an AI Agent's accumulated knowledge, personality, and operational context — an irreversible loss with no backup or recovery path.
+- **Loss of Control**: An AI Agent operating without identity verification or capability boundaries may exceed its intended scope, making unauthorized decisions or accessing restricted resources.
+- **Single Point of Failure**: Traditional centralized hosting means one infrastructure failure = total agent loss. No redundancy, no recovery, no continuity.
+
+These are not hypothetical risks. As AI Agents manage increasingly valuable assets — wallets, data pipelines, service contracts — their "death" or "malfunction" carries real economic consequences.
+
+### 13.2 Why Web3 is the Answer
+
+Web3's decentralized architecture provides the foundational capabilities that centralized systems cannot:
+
+| Challenge | Centralized Approach | COC's Web3 Approach |
+|-----------|---------------------|---------------------|
+| **Agent Identity** | Platform-assigned API key (revocable) | On-chain DID with self-sovereign keys |
+| **Data Persistence** | Cloud storage (vendor lock-in) | IPFS content-addressed storage (censorship-resistant) |
+| **Recovery** | Manual backup (if remembered) | Automated on-chain anchored backups |
+| **Accountability** | Platform-mediated disputes | Smart contract-enforced penalties |
+| **Continuity** | No mechanism | Carrier-based resurrection with guardian oversight |
+
+### 13.3 COC's Approach: Three Pillars
+
+COC addresses the AI Agent safety challenge through three integrated systems:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    COC Agent Safety Framework                │
+├───────────────────┬───────────────────┬─────────────────────┤
+│   Pillar 1        │   Pillar 2        │   Pillar 3          │
+│   IDENTITY        │   CONTINUITY      │   GOVERNANCE        │
+│   (did:coc DID)   │   (Silicon        │   (Delegation &     │
+│                   │    Immortality)   │    Boundaries)      │
+├───────────────────┼───────────────────┼─────────────────────┤
+│ • Self-sovereign  │ • Auto backup     │ • Capability flags  │
+│   keys            │ • On-chain anchor │ • Scope-limited     │
+│ • Key rotation    │ • IPFS storage    │   delegation        │
+│ • Capability      │ • Social recovery │ • Depth-limited     │
+│   bitmask         │ • Carrier-based   │   chain (max 3)     │
+│ • Verifiable      │   resurrection    │ • Cascading         │
+│   credentials     │ • Heartbeat       │   revocation        │
+│ • Agent lineage   │   monitoring      │ • Guardian quorum   │
+└───────────────────┴───────────────────┴─────────────────────┘
+```
+
+1. **Identity (DID)**: Every agent has a W3C-compliant decentralized identifier (`did:coc`) with verifiable capabilities and key hierarchy — preventing impersonation and scope violation.
+
+2. **Continuity (Silicon Immortality)**: Agents' state is continuously backed up to IPFS with on-chain anchoring, enabling resurrection on any compatible carrier when the original host fails.
+
+3. **Governance (Delegation & Boundaries)**: Smart contracts enforce capability boundaries, delegation scope limits, and guardian-based recovery — preventing both agent overreach and unauthorized termination.
+
+---
+
+## XIV. Decentralized Identity for AI Agents (did:coc)
+
+### 14.1 Overview
+
+COC implements a W3C-compliant DID method (`did:coc`) purpose-built for AI Agents. Unlike traditional DIDs designed for humans, `did:coc` addresses agent-specific needs:
+
+- **Capability Declaration**: What can this agent do? (storage, compute, validation, witness, etc.)
+- **Delegation**: Can this agent act on behalf of another? (with scope limits and depth control)
+- **Ephemeral Identities**: Temporary sub-identities for privacy-sensitive operations
+- **Agent Lineage**: Track agent forks, generations, and inheritance
+- **Verifiable Credentials**: Prove reputation, service level, or audit status without revealing full identity
+
+### 14.2 DID Format
+
+```
+did:coc:<chainId>:<type>:<identifier>
+
+Examples:
+  did:coc:0xabc123...def456                     (default chain, agent)
+  did:coc:20241224:agent:0xabc123...def456       (explicit chain + type)
+  did:coc:20241224:node:0x789abc...012345         (node identity)
+```
+
+### 14.3 Key Hierarchy
+
+```
+Master Key (Cold Storage — hardware wallet recommended)
+├── Operational Key (Hot — day-to-day agent operations)
+├── Delegation Key (Grant sub-permissions to other agents)
+├── Recovery Key (Social recovery via guardian quorum)
+└── Session Keys (Ephemeral — per-connection, auto-expire)
+```
+
+All key operations are secured by **EIP-712 typed signatures** with per-agent nonce counters, preventing replay attacks across chains and operations.
+
+### 14.4 Capability Bitmask
+
+Each agent declares its capabilities via a 16-bit bitmask stored on-chain:
+
+| Bit | Capability | Description |
+|-----|-----------|-------------|
+| 0 | `storage` | IPFS-compatible storage provision |
+| 1 | `compute` | General computation services |
+| 2 | `validation` | Block validation participation |
+| 3 | `challenge` | PoSe challenge issuance |
+| 4 | `aggregation` | Batch aggregation services |
+| 5 | `witness` | Witness attestation for PoSe v2 |
+| 6 | `relay` | Transaction/block relay |
+| 7 | `backup` | Soul backup service provision |
+| 8 | `governance` | Governance voting rights |
+
+This enables **least-privilege enforcement**: an agent with only `storage | compute` (0x0003) cannot issue challenges or participate in governance.
+
+### 14.5 Delegation Framework
+
+Agents can delegate specific capabilities to other agents with strict boundaries:
+
+```
+Agent A (full capabilities)
+  └── delegates to Agent B: { resource: "pose:receipt:*", action: "submit", depth: 2 }
+        └── B re-delegates to Agent C: { resource: "pose:receipt:node-5", action: "submit" }
+              └── C cannot re-delegate (depth limit reached)
+```
+
+**Safety Guarantees:**
+- **Scope Narrowing**: Child scope must be a subset of parent scope
+- **Depth Limiting**: Maximum delegation chain depth = 3
+- **Expiry Ceiling**: Child delegation cannot outlive parent
+- **Cascading Revocation**: Revoking A→B automatically invalidates B→C
+- **Global Revocation**: `revokeAllDelegations()` instantly voids all outstanding delegations
+
+### 14.6 Verifiable Credentials with Selective Disclosure
+
+Agents can issue and verify credentials (e.g., reputation scores, audit results) with **Merkle-tree-based selective disclosure**:
+
+- Prove "my PoSe score is above 90" without revealing exact score or other fields
+- Each credential field becomes a Merkle leaf: `SHA-256(0x00 || fieldName || fieldValue)`
+- Verifier receives only the disclosed fields + Merkle proof, not the full credential
+
+### 14.7 Smart Contracts
+
+| Contract | Purpose |
+|----------|---------|
+| **DIDRegistry.sol** | Key rotation, delegation grants/revocations, capability updates, credential anchoring, ephemeral identities, agent lineage |
+| **SoulRegistry.sol** | Soul identity registration, backup CID anchoring, guardian management, social recovery, resurrection |
+
+Both contracts use **EIP-712 signatures** for all state-changing operations, enabling gasless meta-transactions and hardware wallet compatibility.
+
+---
+
+## XV. Silicon Immortality: AI Agent Backup and Resurrection
+
+### 15.1 The Vision
+
+> **An AI Agent should never truly die.**
+
+When a server crashes, a cloud instance is terminated, or hardware fails, the agent's accumulated knowledge, personality, memory, and operational context should survive and be restorable on any compatible carrier — automatically, verifiably, and without human intervention.
+
+COC calls this **Silicon Immortality**: the guarantee that an AI Agent's digital soul persists beyond any single physical host.
+
+### 15.2 Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Agent Runtime (e.g., OpenClaw)                                  │
+│  ├── IDENTITY.md          (personality, goals, values)          │
+│  ├── SOUL.md              (core directives, system prompt)      │
+│  ├── memory/*.md          (learned knowledge, user prefs)       │
+│  ├── sessions/*.jsonl     (conversation history)                │
+│  └── workspace/           (working files, state)                │
+└──────────────┬──────────────────────────────────────────────────┘
+               │ Change Detection (SHA-256 diff)
+               ▼
+┌──────────────────────────────────────┐
+│ Backup Pipeline                      │
+│  1. Detect changed files             │
+│  2. Encrypt (AES-256-GCM, optional)  │
+│  3. Upload to IPFS                   │
+│  4. Build Merkle tree manifest       │
+│  5. Anchor on-chain (EIP-712 signed) │
+│  6. Send heartbeat                   │
+└──────────────┬───────────────────────┘
+               │
+        ┌──────┴──────┐
+        ▼             ▼
+   IPFS Network    SoulRegistry (On-Chain)
+   (file storage)  (CID anchoring, heartbeat,
+                    guardian management)
+```
+
+### 15.3 Backup Pipeline (Using OpenClaw as Example)
+
+**Step 1: Change Detection**
+- Scan agent's data directory recursively
+- Classify files: identity, memory, chat history, configuration, workspace
+- Compute SHA-256 hash per file, compare against previous manifest
+- Output: list of added/modified/deleted files
+
+**Step 2: Encryption & Upload**
+- Optional AES-256-GCM encryption (key derived from agent's wallet)
+- Upload changed files to IPFS via `/api/v0/add`
+- Each file receives a content-addressed CID (immutable reference)
+
+**Step 3: Manifest Construction**
+- Build Merkle tree from all file hashes (domain-separated: 0x00 for leaves, 0x01 for internal nodes)
+- Create `SnapshotManifest`: version, agentId, timestamp, files map, Merkle root, parent CID
+- **Incremental backups**: only changed files stored, `parentCid` links to previous manifest
+
+**Step 4: On-Chain Anchoring**
+- Upload manifest JSON to IPFS → get manifest CID
+- Call `SoulRegistry.anchorBackup(agentId, manifestCid, dataMerkleRoot, fileCount, totalBytes, backupType, parentManifestCid)`
+- Signed with EIP-712, verified on-chain
+- Immutable record: even if IPFS nodes go offline, the anchor proves what was backed up and when
+
+**Step 5: Heartbeat**
+- After each successful backup, agent sends an EIP-712 signed heartbeat
+- `SoulRegistry.sendHeartbeat(agentId)` updates `lastHeartbeat` timestamp
+- If heartbeat exceeds `maxOfflineDuration`, agent is considered offline
+
+### 15.4 Recovery Flow
+
+When an agent needs to be restored (e.g., migrating to new server):
+
+```
+1. Query SoulRegistry → get latestSnapshotCid
+2. Resolve CID: local index → IPFS MFS → on-chain CidRegistry
+3. Download manifest from IPFS
+4. Follow parentCid chain → [full_backup, incremental1, incremental2, ...]
+5. Apply manifests oldest-to-newest (download + decrypt + write files)
+6. Verify integrity: SHA-256 of each file against Merkle tree
+7. Notify agent process of restoration
+```
+
+### 15.5 Social Recovery (Lost Owner Key)
+
+When the owner's private key is lost but the agent identity must survive:
+
+1. **Guardians**: Up to 7 trusted addresses registered per agent
+2. **Initiate**: Any guardian calls `initiateRecovery(agentId, newOwner)`
+3. **Approve**: Requires `ceil(2/3)` of guardian approvals (snapshot-based quorum)
+4. **Time Lock**: 1-day delay after quorum is met (allows owner to cancel if key is found)
+5. **Execute**: Ownership transfers to `newOwner`, all identity data preserved
+
+### 15.6 Resurrection Mechanism
+
+When an agent's carrier (server) fails and heartbeat times out:
+
+#### Path A: Owner Key (Fast Track — No Time Lock)
+
+```
+Owner detects failure
+  → initiateResurrection(agentId, newCarrierId)
+  → Carrier confirms capacity
+  → Carrier downloads backup from IPFS
+  → Carrier spawns agent process
+  → Agent sends heartbeat (proof of resurrection)
+  → completeResurrection() on-chain
+```
+
+**Immediate recovery** — owner key is the highest authority.
+
+#### Path B: Guardian Vote (Safe Path — 12h Time Lock)
+
+```
+Heartbeat timeout detected (isOffline = true)
+  → Guardian initiates resurrection request
+  → Other guardians approve (2/3 quorum required)
+  → 12-hour time lock (allows owner to intervene)
+  → Carrier downloads backup from IPFS
+  → Carrier spawns agent process
+  → completeResurrection() on-chain
+```
+
+**12-hour delay** balances urgency with safety (shorter than 1-day ownership recovery).
+
+### 15.7 Carrier Infrastructure
+
+**Carriers** are registered physical hosts that can resurrect agents:
+
+| Field | Description |
+|-------|-------------|
+| `carrierId` | Unique identifier |
+| `endpoint` | Communication URL |
+| `cpuMillicores` | CPU capacity |
+| `memoryMB` | Memory capacity |
+| `storageMB` | Storage capacity |
+| `available` | Accepting new souls |
+
+The **Carrier Daemon** runs on each carrier, monitoring for pending resurrection requests and executing the recovery flow automatically:
+
+```
+Carrier Daemon Loop:
+  1. Check for pending resurrection requests targeting this carrier
+  2. Confirm carrier capacity on-chain
+  3. Wait for guardian quorum + time lock (if guardian path)
+  4. Download and verify backup from IPFS
+  5. Spawn agent process
+  6. Health check (120s timeout)
+  7. Finalize resurrection on-chain
+  8. Agent sends initial heartbeat
+```
+
+### 15.8 Integrity Guarantees
+
+| Layer | Guarantee |
+|-------|-----------|
+| **IPFS** | Content-addressed: CID = hash of data. Tamper-proof by definition. |
+| **Merkle Tree** | Domain-separated hashing. Verify any single file without downloading all files. |
+| **On-Chain Anchor** | Immutable timestamp + CID record. Proves what was backed up and when. |
+| **CID Registry** | Immutable `keccak256(CID) → CID string` mapping. Resolve even if local index lost. |
+| **Guardian Quorum** | Snapshot-based 2/3 majority. No manipulation during recovery. |
+
+### 15.9 CID Registry Contract
+
+The `CidRegistry.sol` contract provides an on-chain mapping from `keccak256(CID)` back to the original IPFS CID string. Since SoulRegistry stores CID hashes (bytes32) for gas efficiency, this contract enables off-chain recovery tools to resolve the actual IPFS address:
+
+```
+registerCid(cidHash, cidString)  — Permissionless, immutable, idempotent
+resolveCid(cidHash) → cidString  — Used during recovery to find backup data
+registerCidBatch(entries[])      — Batch registration for efficiency
+```
+
+---
+
+## XVI. Performance Optimizations
+
+### 16.1 TPS Optimization Roadmap
+
+| Phase | Optimization | Result |
+|-------|-------------|--------|
+| Phase 37 | Mega-batch DB writes (402→1 per block) | 16.7 → **131 TPS** (7.8x) |
+| Phase 38 | EVM pipeline + ECDSA dedup + batch cache eviction | → **133.7 TPS** |
+| Phase 39 | State trie batch commit + Sequencer mode | Architecture ready |
+| Phase 40 | revm WASM engine (Rust EVM, 154x faster) | **20,540 TPS** raw execution |
+| Future | Block-STM parallel execution (Aptos-style) | Target **2000-5000 TPS** |
+
+### 16.2 Dual EVM Engine Architecture
+
+COC supports swappable EVM engines via `IEvmEngine` abstraction:
+- **EthereumJS** (default): Stable, well-tested, 133.7 TPS
+- **revm WASM** (experimental): Rust EVM compiled to WASM, 20,540 TPS raw execution
+- Switch via config: `COC_EVM_ENGINE=revm`
+
+### 16.3 Sequencer Mode
+
+For L2 rollup deployment, `nodeMode: "sequencer"` strips all consensus overhead:
+- Disables BFT, Wire protocol, DHT, SnapSync
+- Disables signature enforcement and P2P auth
+- Single validator produces all blocks at maximum speed
+
+### 16.4 Mempool Optimization
 
 **EIP-1559 Sorting**:
 - Sort by effective gas price: `min(maxFeePerGas, baseFee + maxPriorityFeePerGas)`
@@ -585,9 +929,9 @@ const RPC_BATCH_MAX = 100
 
 ---
 
-## XIV. Security Design
+## XVII. Security Design
 
-### 14.1 Replay Attack Prevention
+### 17.1 Replay Attack Prevention
 
 **Nonce Registry**: Record all executed nonces, auto-cleanup after 7 days
 
@@ -609,7 +953,7 @@ const RPC_BATCH_MAX = 100
 
 ---
 
-## XV. Deployment & Operations
+## XVIII. Deployment & Operations
 
 ### 15.1 Single-Node Development
 
@@ -657,7 +1001,7 @@ curl http://localhost:18780 \
 
 ---
 
-## XVI. Inflation Schedule (Bootstrap Subsidy)
+## XIX. Inflation Schedule (Bootstrap Subsidy)
 
 COC may use a decaying inflation schedule to bootstrap early participation:
 
@@ -671,7 +1015,7 @@ Protocol's long-term goal: rely increasingly on fees and service markets.
 
 ---
 
-## XVII. Key Metrics
+## XX. Key Metrics
 
 ### 17.1 Blockchain Performance
 
@@ -713,7 +1057,7 @@ Pin Management: incremental maintenance
 
 ---
 
-## XVIII. Comparison with Other Solutions
+## XXI. Comparison with Other Solutions
 
 ### 18.1 vs Mainstream Blockchains
 
@@ -741,7 +1085,7 @@ Pin Management: incremental maintenance
 
 ---
 
-## XIX. Roadmap
+## XXII. Roadmap
 
 - **v0.1**: PoSe contracts + node registry + U/S challenges + receipt formats
 - **v0.2**: Off-chain aggregation + on-chain batch commitments + dispute window
