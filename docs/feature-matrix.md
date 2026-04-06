@@ -261,7 +261,7 @@ Status legend:
 - **Governance self-vote removal** — Implemented — `COC/node/src/validator-governance.ts`
 - **PoSeManager v-value check** — Implemented — `COC/contracts/settlement/PoSeManager.sol`
 
-## Soul Identity & Recovery (Silicon Immortality)
+## Soul Identity & Recovery (AI Silicon Immortality)
 - **SoulRegistry contract** — Implemented — `COC/contracts/contracts-src/governance/SoulRegistry.sol`
 - **Soul registration (EIP-712)** — Implemented — `SoulRegistry.sol` registerSoul
 - **Backup CID anchoring** — Implemented — `SoulRegistry.sol` anchorBackup (full + incremental)
