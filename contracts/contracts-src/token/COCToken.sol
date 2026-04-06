@@ -3,12 +3,20 @@ pragma solidity ^0.8.24;
 
 /**
  * @title COCToken
- * @notice ERC-20 token for the ChainOfClaw blockchain with controlled minting.
+ * @notice Supply tracking and emission control for the COC native token.
+ *
+ * COC is the chain's native gas token (like BNB on BNB Chain). This contract
+ * tracks supply accounting and controls PoSe mining emission — it does NOT handle
+ * transfers (native token transfers use EVM's built-in value transfer mechanism).
  *
  * - Total supply cap: 1,000,000,000 COC (1 billion)
- * - Genesis mint: 200,000,000 COC (20%) to designated wallets
- * - Remaining 800,000,000 COC (80%) released via PoSe mining through authorized minter
- * - EIP-1559 base fee burn and PoSe slash burn reduce circulating supply over time
+ * - Genesis mint: 250,000,000 COC (25%) to designated wallets
+ * - Remaining 750,000,000 COC (75%) released via PoSe mining through authorized minter
+ * - EIP-1559 base fee burn directly reduces native COC supply
+ * - PoSe slash burn reduces circulating supply over time
+ *
+ * Note: In Solidity, `ether` keyword means 10^18 (the smallest unit), NOT Ethereum.
+ * On this chain, 1 ether = 1 COC = 10^18 wei (COC's smallest unit).
  */
 contract COCToken {
     string public constant name = "ChainOfClaw";

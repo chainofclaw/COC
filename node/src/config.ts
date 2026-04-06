@@ -40,7 +40,7 @@ export interface NodeConfig {
   finalityDepth: number
   maxTxPerBlock: number
   minGasPriceWei: string
-  prefund: Array<{ address: string; balanceEth: string }>
+  prefund: Array<{ address: string; balanceCoc?: string; balanceEth?: string }>
   poseEpochMs: number
   poseMaxChallengesPerEpoch: number
   poseNonceRegistryPath: string
@@ -100,6 +100,9 @@ export interface NodeConfig {
   nodeMode: "full" | "archive" | "light" | "sequencer"
   // Block signature enforcement: "off" = ignore, "monitor" = warn, "enforce" = reject
   signatureEnforcement: "off" | "monitor" | "enforce"
+  // DID identity contracts (optional — enables coc_resolveDid RPC)
+  soulRegistryAddress?: string
+  didRegistryAddress?: string
   // Governance module
   enableGovernance: boolean
   validatorStakes: Array<{ id: string; address: string; stake: string }>
@@ -294,6 +297,12 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     ?? (typeof (user as Record<string, unknown>).rpcAuthToken === "string"
       ? (user as Record<string, unknown>).rpcAuthToken as string : undefined)
 
+  // DID identity contract addresses
+  const soulRegistryAddress = process.env.COC_SOUL_REGISTRY_ADDRESS
+    ?? (user as Record<string, unknown>).soulRegistryAddress as string | undefined
+  const didRegistryAddress = process.env.COC_DID_REGISTRY_ADDRESS
+    ?? (user as Record<string, unknown>).didRegistryAddress as string | undefined
+
   // Admin RPC namespace
   const enableAdminRpc = parseBooleanFlag(
     process.env.COC_ENABLE_ADMIN_RPC ?? (user as Record<string, unknown>).enableAdminRpc,
@@ -370,7 +379,7 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     maxTxPerBlock: 512,
     minGasPriceWei: "1",
     prefund: [
-      { address: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", balanceEth: "10000" }
+      { address: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", balanceCoc: "10000" }
     ],
     poseEpochMs: 60 * 60 * 1000,
     poseMaxChallengesPerEpoch: 200,
@@ -454,6 +463,8 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     wireBind,
     rpcAuthToken,
     enableAdminRpc,
+    soulRegistryAddress,
+    didRegistryAddress,
     nodeMode,
     hardfork,
     hardforkSchedule,
@@ -462,7 +473,6 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     enableGovernance,
     validatorStakes,
     validatorAddresses,
-    didRegistryAddress: user.didRegistryAddress,
     didEnabled: user.didEnabled ?? false,
     didAuthMode: user.didAuthMode ?? "off",
     evmEngine: normalizeEvmEngine(process.env.COC_EVM_ENGINE ?? (user as Record<string, unknown>).evmEngine),

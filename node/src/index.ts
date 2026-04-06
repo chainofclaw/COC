@@ -55,7 +55,7 @@ const config = await loadNodeConfig()
 
 const prefund = (config.prefund || []).map((entry) => ({
   address: entry.address,
-  balanceWei: parseEther(entry.balanceEth).toString(),
+  balanceWei: parseEther(entry.balanceCoc ?? entry.balanceEth ?? "0").toString(),
 }))
 
 const usePersistent = config.storage.backend === "leveldb"
@@ -551,6 +551,28 @@ const poseChallengerAuthorizer = poseChallengerDynamicResolver
     })
   : undefined
 
+// DID identity layer (optional — requires contract addresses in config)
+// Uses in-process EVM callRaw() for contract reads — no HTTP loopback, no auth issues
+let didResolverInstance: { resolve: (did: string) => Promise<unknown> } | undefined
+let didDataProviderInstance: ReturnType<typeof import("./did/did-data-provider.ts").createContractDIDDataProvider> | undefined
+if (config.soulRegistryAddress && config.didRegistryAddress) {
+  const { createContractDIDDataProvider } = await import("./did/did-data-provider.ts")
+  const { createDIDResolver } = await import("./did/did-resolver.ts")
+  const ethCall = async (to: string, data: string): Promise<string> => {
+    const result = await evm.callRaw({ to, data })
+    return result.returnValue
+  }
+  const didProvider = createContractDIDDataProvider({
+    soulRegistryAddress: config.soulRegistryAddress,
+    didRegistryAddress: config.didRegistryAddress,
+    ethCall,
+  })
+  const resolver = createDIDResolver({ defaultChainId: config.chainId, provider: didProvider })
+  didResolverInstance = resolver
+  didDataProviderInstance = didProvider
+  console.log(`[DID] Resolver configured: SoulRegistry=${config.soulRegistryAddress}, DIDRegistry=${config.didRegistryAddress}`)
+}
+
 startRpcServer(
   config.rpcBind,
   config.rpcPort,
@@ -580,6 +602,8 @@ startRpcServer(
     getBftEquivocations: (sinceMs: number) => bftEvidenceStore.peek().filter(
       (e) => (e.rawEvidence?.detectedAtMs ?? 0) > sinceMs
     ),
+    didResolver: didResolverInstance,
+    didDataProvider: didDataProviderInstance,
   },
   {
     authToken: config.rpcAuthToken,
@@ -589,8 +613,11 @@ startRpcServer(
 
 // Start WebSocket RPC server for real-time subscriptions
 // Bind bftCoordinator into the handler closure so WS RPC can access BFT state (e.g. coc_bftRoundState)
+const wsDidOpts: Record<string, unknown> = {}
+if (didResolverInstance) wsDidOpts.didResolver = didResolverInstance
+if (didDataProviderInstance) wsDidOpts.didDataProvider = didDataProviderInstance
 const wsHandleRpcMethod = (method: string, params: unknown[], cId: number, e: EvmChain, c: IChainEngine, p: P2PNode) =>
-  handleRpcMethod(method, params, cId, e, c, p, bftCoordinator)
+  handleRpcMethod(method, params, cId, e, c, p, bftCoordinator, Object.keys(wsDidOpts).length > 0 ? wsDidOpts : undefined)
 const wsServer = startWsRpcServer(
   { port: config.wsPort, bind: config.wsBind, authToken: config.rpcAuthToken },
   config.chainId,
