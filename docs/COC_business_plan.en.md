@@ -24,7 +24,8 @@
 | **Tech Stack** | Custom blockchain (TS/Rust) + revm WASM EVM (154x speedup) |
 | **Code Status** | 1300+ tests passing, 40K+ LoC, open source |
 | **Funding Round** | **Series A — $5M USD** |
-| **Target FDV** | $100M-$200M (negotiable) |
+| **Target Pre-money FDV** | $150M-$250M (negotiable) |
+| **Implied Token Price** | $0.15-$0.25 / COC |
 | **Founding Team** | BOB (Founder) / Beatrice (Partner) / ZEKE.eth (Technical Partner) |
 
 ### Investment Highlights (Why COC)
@@ -311,51 +312,54 @@ As the founder of the AI-native blockchain category, COC's valuation anchor shou
 |------|---------|
 | **Round** | **Series A** |
 | **Target Size** | **$5,000,000 (5M USD equivalent)** |
-| **Target Pre-money FDV** | **$100M-$200M** (range, negotiable) |
-| **Implied Token Price** | **$0.10-$0.20 / COC** (based on 1B total supply) |
+| **Target Pre-money FDV** | **$150M-$250M** (range negotiable) |
+| **Implied Token Price** | **$0.15-$0.25 / COC** (based on 1B total supply) |
 | **Instrument** | SAFT (Simple Agreement for Future Tokens) + equity option |
 | **Subscription** | Tranched, released on milestone achievement |
 | **Target Close** | 2026 Q2-Q3 |
 
-**Valuation Anchoring**:
+**Valuation Anchoring Logic**:
 
-| Scenario | Pre-money FDV | Implied Token Price | $5M = COC Tokens | % of Total Supply |
-|----------|---------------|---------------------|------------------|-------------------|
-| Conservative | $100M | $0.10 | 50M COC | 5.0% |
-| Neutral | $150M | $0.15 | 33M COC | 3.3% |
-| Optimistic | $200M | $0.20 | 25M COC | 2.5% |
+| Scenario | Pre-money FDV | Implied Token Price | $5M Token Allocation | % of Total Supply | % of Pool |
+|---------|---------------|---------------------|---------------------|-------------------|-----------|
+| Conservative | $150M | $0.15 | 33M COC | 3.3% | ~94% |
+| Neutral | $200M | $0.20 | 25M COC | 2.5% | ~71% |
+| Optimistic | $250M | $0.25 | 20M COC | 2.0% | ~57% |
 
-> **Strategic significance**: $5M Series A is the appropriate funding size for an early-stage Web3 × AI project, sufficient to support 12-18 months of core team operations, mainnet launch, first ecosystem partnerships, and multi-jurisdiction compliance build-out. COC chooses a "lean" Series A over over-funding to preserve token allocation flexibility — letting genuine market demand drive subsequent rounds.
+> Note: "Pool" refers to the "Early Contributors & Strategic Partners" pool in §8.1 (3.5%, 35M COC). All valuation scenarios ensure investor token demand stays within the pool cap.
+
+> **Strategic significance**: A $5M Series A is the right size for an early-stage Web3 × AI project, sufficient to support 12-18 months of core team operations, mainnet launch, first wave of ecosystem partnerships, and multi-jurisdiction compliance build-out. COC chooses a "small and focused" Series A over over-funding to preserve token allocation flexibility and let real market demand drive subsequent rounds. Pre-money FDV is anchored in the $150M-$250M range, consistent with both the L1 blockchain and the AI vertical sector leader positioning, while ensuring investor token demand remains within the 35M pool to avoid diluting other strategic reserves.
 
 ### 9.2 Use of Funds
 
 | Purpose | % | Amount | Notes |
 |---------|---|--------|-------|
-| **Core Team Expansion** | 45% | $2,250,000 | 12-18 months runway for ~10-person core team (protocol, SDK, Agent integration, security audit) |
+| **Core Team Expansion** | 45% | $2,250,000 | 12-18 months of operating ~10-person core team (protocol, SDK, Agent integration, security audit) |
 | **Infrastructure & Operations** | 15% | $750,000 | Mainnet/Testnet/Carrier network, monitoring, SRE, cloud resources |
-| **Ecosystem Development (USD top-up)** | 15% | $750,000 | USD seed for events/KOLs/audits paired with the 80M COC ecosystem fund |
-| **Legal & Compliance** | 10% | $500,000 | Multi-jurisdiction legal opinions, regulatory engagement, SAFT counsel, KYC/AML |
+| **Ecosystem Development (USD match)** | 15% | $750,000 | USD seed funding to complement the 80M COC ecosystem fund — BD, partnership integrations |
+| **Legal & Compliance** | 10% | $500,000 | Multi-jurisdiction legal opinions, regulatory engagement, SAFT legal work, KYC/AML |
 | **Marketing & Brand** | 10% | $500,000 | Global brand promotion, KOLs, content, industry events, CEX listing prep |
-| **Strategic Reserve** | 5% | $250,000 | Emergency, opportunistic spend, market maker outreach |
+| **Strategic Reserve** | 5% | $250,000 | Emergency, opportunistic spending, market maker outreach |
 
 **Key notes**:
-- **Ecosystem USD only 15%**: Main ecosystem grants flow through the 80M COC community fund; USD is reserved for items that cannot be paid in tokens (events, KOLs, compliance audits)
-- **Legal & compliance 10%**: Reflects the cross-domain complexity of Web3 × AI compliance
-- **Team 45%**: Ensures core personnel stability and development velocity — the most critical expense for an early-stage project
+- **Ecosystem USD only 15%**: The bulk of ecosystem funding flows through the 80M COC community fund; USD is reserved for scenarios where token payment is impractical (events, KOLs, compliance audit fees)
+- **Legal & compliance share is relatively high (10%)**: Reflects the compliance complexity of Web3 × AI cross-domain
+- **Team share at 45%**: Ensures core personnel stability and development progress — the most critical line item for an early-stage project
 
-### 9.3 Investor Rights (Proposed Structure, Negotiable)
+### 9.3 Investor Rights
 
-- **Token Allocation**: 25-50M COC (depending on valuation) from the "Early Contributors & Strategic Partners" pool (3.5%, 35M COC)
+**Proposed Structure (Negotiable)**:
+- **Token Allocation**: From the "Early Contributors & Strategic Partners" pool (3.5%, 35M COC), allocate 20-33M COC depending on final valuation (Conservative 33M / Neutral 25M / Optimistic 20M)
 - **Lockup**: 6-month cliff + 24-month linear release
 - **Governance Participation**: Investors gain Faction identity in DAO governance
-- **Pro-rata Rights**: Right to participate in future Series B / Token Sale
+- **Pro-rata Rights**: Right to participate in future Series B / Token Sale rounds
 - **Information Disclosure**: Quarterly financial reports + annual third-party audit
-- **Board Seat**: Lead investor (>$1M) receives Foundation board observer/member seat
+- **Board Seat**: Lead investor (>$1M check) receives Foundation board observer/member seat
 - **Anti-dilution Protection**: Standard Web3 anti-dilution terms (broad-based weighted average)
 
 ### 9.4 Milestone-Based Release
 
-To reduce investor risk, the $5M will be released in three tranches:
+To reduce investor risk, the $5M will be released in three tranches tied to milestones:
 
 | Tranche | % | Amount | Trigger |
 |---------|---|--------|---------|
@@ -369,21 +373,23 @@ Possible paths after Series A:
 
 | Stage | Time | Size | Use |
 |-------|------|------|-----|
-| **Series B** | 2027 | $20M-$50M | Global expansion, enterprise BD, L2 deployments |
+| **Series B** | 2027 | $20M-$50M | Global expansion, enterprise BD, L2 deployment |
 | **Token Public Sale** | 2027-2028 | Market-dependent | DEX/CEX listing, ecosystem liquidity release |
-| **Strategic Round (optional)** | Open ongoing | Major AI enterprise strategic investment | Ecosystem binding |
+| **Strategic Round (optional)** | Continuously open | Strategic AI enterprise investment | Ecosystem alignment |
 
 ---
 
 ## X. Milestones & Timeline
 
+> Aligned with ecosystem roadmap §9.1 KPI table: node count follows blockchain growth curves (conservative), Agent count follows AI industry exponential growth (aggressive), TVL correlates positively with node count.
+
 | Time | Milestone | Verification Metric |
 |------|-----------|---------------------|
-| **2026 Q2** | Mainnet genesis + 100 nodes + 10K Agents | 30 days stable mainnet |
-| **2026 Q4** | SDK + first Grants + 50 Carriers | 5+ Agent frameworks integrated |
-| **2027** | DAO live + 1K nodes + 500K Agents | TVL > $10M |
-| **2028** | Commercial dApps + 5K nodes + 10M Agents | TVL > $100M |
-| **2030** | One of AI industry standards + 20K nodes + 100M Agents | TVL > $1B |
+| **2026 Q2** | Mainnet genesis + PoSe v2 + DID + Soul Registry live | 30 days stable mainnet + 100+ nodes + 1K+ Agents |
+| **2026 Q4** | SDK + first Grants + 50+ Carriers + Explorer live | 200+ nodes + 10K+ Agents + 5+ Agent frameworks integrated |
+| **2027** | DAO governance live + cross-chain bridges + first commercial dApps | 1K+ nodes + 500K+ Agents + TVL > $10M |
+| **2028** | Multi-client + L2 deployments + enterprise customers | 5K+ nodes + 10M+ Agents + TVL > $100M |
+| **2030** | One of AI industry standards + fully decentralized governance | 20K+ nodes + 100M+ Agents + TVL > $1B |
 
 ---
 
@@ -415,9 +421,9 @@ Possible paths after Series A:
 |----------|------|
 | Technical Whitepaper | `docs/COC_whitepaper.en.md` / `.zh.md` |
 | Ecosystem Roadmap | `docs/COC_ecosystem_roadmap.en.md` / `.zh.md` |
-| Code Repository | `github.com/NGPlateform/coc-dev` (private) |
+| Code Repository | `https://github.com/chainofclaw/COC` (public) |
 | Official Domain | `clawchain.io` |
-| Contact Email | (TBD) |
+| Contact Email | invest@clawchain.io |
 | Discord/Telegram | (TBD) |
 
 ---
