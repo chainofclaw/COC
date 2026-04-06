@@ -920,7 +920,7 @@ Pin Management: incremental maintenance
 
 ---
 
-## XXI. Comparison with Other Solutions
+## XXII. Comparison with Other Solutions
 
 ### 21.1 vs Mainstream Blockchains
 
@@ -948,7 +948,7 @@ Pin Management: incremental maintenance
 
 ---
 
-## XXII. Roadmap
+## XXIII. Roadmap
 
 - **v0.1**: PoSe contracts + node registry + U/S challenges + receipt formats
 - **v0.2**: Off-chain aggregation + on-chain batch commitments + dispute window
