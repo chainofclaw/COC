@@ -16,8 +16,8 @@ contract COCToken {
     uint8 public constant decimals = 18;
 
     uint256 public constant TOTAL_SUPPLY_CAP = 1_000_000_000 ether;       // 1B COC
-    uint256 public constant GENESIS_SUPPLY = 200_000_000 ether;            // 20%
-    uint256 public constant MINING_SUPPLY_CAP = 800_000_000 ether;         // 80%
+    uint256 public constant GENESIS_SUPPLY = 250_000_000 ether;            // 25%
+    uint256 public constant MINING_SUPPLY_CAP = 750_000_000 ether;         // 75%
 
     uint256 public totalSupply;
     uint256 public totalMinted;     // Cumulative mining emissions (excludes genesis)

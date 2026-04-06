@@ -436,7 +436,8 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
             uint64 relativeEpoch = epochId >= genesisEpoch ? epochId - genesisEpoch : 0;
             uint256 emission = EmissionSchedule.getEpochEmission(
                 relativeEpoch,
-                cocToken.totalMinted()
+                cocToken.totalMinted(),
+                _activeNodeIds.length
             );
             if (emission > 0) {
                 cocToken.mint(address(this), emission);

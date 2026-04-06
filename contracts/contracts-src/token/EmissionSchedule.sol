@@ -18,15 +18,16 @@ pragma solidity ^0.8.24;
  * Once reached, getEpochEmission() returns 0.
  */
 library EmissionSchedule {
-    uint256 internal constant MINING_SUPPLY_CAP = 800_000_000 ether;  // 800M COC
+    uint256 internal constant MINING_SUPPLY_CAP = 750_000_000 ether;  // 750M COC
     uint256 internal constant EPOCHS_PER_YEAR = 8_760;                 // 365 × 24
     uint256 internal constant BPS = 10_000;
+    uint256 internal constant TARGET_NODE_COUNT = 100;                 // Node activity multiplier target
 
     // Annual emission rates in basis points (of MINING_SUPPLY_CAP)
-    uint256 internal constant RATE_YEAR_0 = 800;   // 8.0%
-    uint256 internal constant RATE_YEAR_1 = 600;   // 6.0%
-    uint256 internal constant RATE_YEAR_2 = 400;   // 4.0%
-    uint256 internal constant RATE_YEAR_3 = 300;   // 3.0%
+    uint256 internal constant RATE_YEAR_0 = 500;   // 5.0%
+    uint256 internal constant RATE_YEAR_1 = 400;   // 4.0%
+    uint256 internal constant RATE_YEAR_2 = 300;   // 3.0%
+    uint256 internal constant RATE_YEAR_3 = 250;   // 2.5%
     uint256 internal constant RATE_TERMINAL = 200; // 2.0%
 
     /**
@@ -37,7 +38,8 @@ library EmissionSchedule {
      */
     function getEpochEmission(
         uint64 epochId,
-        uint256 totalMinted
+        uint256 totalMinted,
+        uint256 activeNodeCount
     ) internal pure returns (uint256 emission) {
         if (totalMinted >= MINING_SUPPLY_CAP) {
             return 0;
@@ -46,8 +48,16 @@ library EmissionSchedule {
         uint256 year = uint256(epochId) / EPOCHS_PER_YEAR;
         uint256 rateBps = _annualRate(year);
 
-        // emission = MINING_SUPPLY_CAP × rateBps / BPS / EPOCHS_PER_YEAR
-        emission = (MINING_SUPPLY_CAP * rateBps) / (BPS * EPOCHS_PER_YEAR);
+        // Base emission = MINING_SUPPLY_CAP × rateBps / BPS / EPOCHS_PER_YEAR
+        uint256 baseEmission = (MINING_SUPPLY_CAP * rateBps) / (BPS * EPOCHS_PER_YEAR);
+
+        // Node activity multiplier: scale by min(activeNodes / TARGET, 1.0)
+        // Prevents few early nodes from capturing excessive tokens
+        if (activeNodeCount < TARGET_NODE_COUNT) {
+            emission = (baseEmission * activeNodeCount) / TARGET_NODE_COUNT;
+        } else {
+            emission = baseEmission;
+        }
 
         // Clamp to remaining supply
         uint256 remaining = MINING_SUPPLY_CAP - totalMinted;
