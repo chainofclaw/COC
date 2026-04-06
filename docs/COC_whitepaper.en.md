@@ -604,265 +604,77 @@ COC addresses the AI Agent safety challenge through three integrated systems:
 
 ## XIV. Decentralized Identity for AI Agents (did:coc)
 
-### 14.1 Overview
+COC implements a W3C-compliant DID method (`did:coc`) purpose-built for AI Agents, using the format `did:coc:<chainId>:<type>:<identifier>`.
 
-COC implements a W3C-compliant DID method (`did:coc`) purpose-built for AI Agents. Unlike traditional DIDs designed for humans, `did:coc` addresses agent-specific needs:
+### 14.1 Key Hierarchy and Security
 
-- **Capability Declaration**: What can this agent do? (storage, compute, validation, witness, etc.)
-- **Delegation**: Can this agent act on behalf of another? (with scope limits and depth control)
-- **Ephemeral Identities**: Temporary sub-identities for privacy-sensitive operations
-- **Agent Lineage**: Track agent forks, generations, and inheritance
-- **Verifiable Credentials**: Prove reputation, service level, or audit status without revealing full identity
+Each agent has a layered key system — master key (cold storage), operational key (hot signing), delegation key, recovery key, and session keys. All operations secured by **EIP-712 typed signatures** with per-agent nonce counters, preventing cross-chain replay.
 
-### 14.2 DID Format
+### 14.2 Capability Declaration and Least Privilege
 
-```
-did:coc:<chainId>:<type>:<identifier>
+Agents declare capabilities via an on-chain 16-bit bitmask (storage, compute, validation, challenge, witness, governance, etc.). The system enforces **least privilege**: agents can only perform operations matching their declared capabilities.
 
-Examples:
-  did:coc:0xabc123...def456                     (default chain, agent)
-  did:coc:20241224:agent:0xabc123...def456       (explicit chain + type)
-  did:coc:20241224:node:0x789abc...012345         (node identity)
-```
+### 14.3 Delegation Framework
 
-### 14.3 Key Hierarchy
+Agents can delegate specific capabilities to other agents, subject to:
 
-```
-Master Key (Cold Storage — hardware wallet recommended)
-├── Operational Key (Hot — day-to-day agent operations)
-├── Delegation Key (Grant sub-permissions to other agents)
-├── Recovery Key (Social recovery via guardian quorum)
-└── Session Keys (Ephemeral — per-connection, auto-expire)
-```
-
-All key operations are secured by **EIP-712 typed signatures** with per-agent nonce counters, preventing replay attacks across chains and operations.
-
-### 14.4 Capability Bitmask
-
-Each agent declares its capabilities via a 16-bit bitmask stored on-chain:
-
-| Bit | Capability | Description |
-|-----|-----------|-------------|
-| 0 | `storage` | IPFS-compatible storage provision |
-| 1 | `compute` | General computation services |
-| 2 | `validation` | Block validation participation |
-| 3 | `challenge` | PoSe challenge issuance |
-| 4 | `aggregation` | Batch aggregation services |
-| 5 | `witness` | Witness attestation for PoSe v2 |
-| 6 | `relay` | Transaction/block relay |
-| 7 | `backup` | Soul backup service provision |
-| 8 | `governance` | Governance voting rights |
-
-This enables **least-privilege enforcement**: an agent with only `storage | compute` (0x0003) cannot issue challenges or participate in governance.
-
-### 14.5 Delegation Framework
-
-Agents can delegate specific capabilities to other agents with strict boundaries:
-
-```
-Agent A (full capabilities)
-  └── delegates to Agent B: { resource: "pose:receipt:*", action: "submit", depth: 2 }
-        └── B re-delegates to Agent C: { resource: "pose:receipt:node-5", action: "submit" }
-              └── C cannot re-delegate (depth limit reached)
-```
-
-**Safety Guarantees:**
 - **Scope Narrowing**: Child scope must be a subset of parent scope
-- **Depth Limiting**: Maximum delegation chain depth = 3
-- **Expiry Ceiling**: Child delegation cannot outlive parent
-- **Cascading Revocation**: Revoking A→B automatically invalidates B→C
-- **Global Revocation**: `revokeAllDelegations()` instantly voids all outstanding delegations
+- **Depth Limiting**: Maximum delegation chain depth = 3, preventing deep chains
+- **Cascading Revocation**: Revoking a parent delegation automatically invalidates all child delegations
+- **Global Revocation**: One-call invalidation of all outstanding delegations
 
-### 14.6 Verifiable Credentials with Selective Disclosure
+### 14.4 Verifiable Credentials
 
-Agents can issue and verify credentials (e.g., reputation scores, audit results) with **Merkle-tree-based selective disclosure**:
+Agents can issue and verify credentials (reputation scores, audit results, etc.) with **Merkle-tree-based selective disclosure** — prove specific attributes without revealing full information.
 
-- Prove "my PoSe score is above 90" without revealing exact score or other fields
-- Each credential field becomes a Merkle leaf: `SHA-256(0x00 || fieldName || fieldValue)`
-- Verifier receives only the disclosed fields + Merkle proof, not the full credential
+### 14.5 Smart Contracts
 
-### 14.7 Smart Contracts
+**DIDRegistry.sol** manages key rotation, delegation grants, capability updates, credential anchoring, and agent lineage. **SoulRegistry.sol** manages soul registration, backup anchoring, guardians, and resurrection. Both use EIP-712 signatures, supporting gasless meta-transactions.
 
-| Contract | Purpose |
-|----------|---------|
-| **DIDRegistry.sol** | Key rotation, delegation grants/revocations, capability updates, credential anchoring, ephemeral identities, agent lineage |
-| **SoulRegistry.sol** | Soul identity registration, backup CID anchoring, guardian management, social recovery, resurrection |
-
-Both contracts use **EIP-712 signatures** for all state-changing operations, enabling gasless meta-transactions and hardware wallet compatibility.
+> Technical details: see `docs/did-method-spec.en.md`.
 
 ---
 
 ## XV. Silicon Immortality: AI Agent Backup and Resurrection
 
-### 15.1 The Vision
-
 > **An AI Agent should never truly die.**
 
-When a server crashes, a cloud instance is terminated, or hardware fails, the agent's accumulated knowledge, personality, memory, and operational context should survive and be restorable on any compatible carrier — automatically, verifiably, and without human intervention.
+COC's **Silicon Immortality** guarantees that an agent's digital soul (knowledge, personality, memory) persists beyond any single physical host.
 
-COC calls this **Silicon Immortality**: the guarantee that an AI Agent's digital soul persists beyond any single physical host.
+### 15.1 Automated Backup
 
-### 15.2 Architecture Overview
+Using OpenClaw as example, agent runtime continuously produces identity files, memory, conversation history, and working state. The backup pipeline runs automatically:
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│ Agent Runtime (e.g., OpenClaw)                                  │
-│  ├── IDENTITY.md          (personality, goals, values)          │
-│  ├── SOUL.md              (core directives, system prompt)      │
-│  ├── memory/*.md          (learned knowledge, user prefs)       │
-│  ├── sessions/*.jsonl     (conversation history)                │
-│  └── workspace/           (working files, state)                │
-└──────────────┬──────────────────────────────────────────────────┘
-               │ Change Detection (SHA-256 diff)
-               ▼
-┌──────────────────────────────────────┐
-│ Backup Pipeline                      │
-│  1. Detect changed files             │
-│  2. Encrypt (AES-256-GCM, optional)  │
-│  3. Upload to IPFS                   │
-│  4. Build Merkle tree manifest       │
-│  5. Anchor on-chain (EIP-712 signed) │
-│  6. Send heartbeat                   │
-└──────────────┬───────────────────────┘
-               │
-        ┌──────┴──────┐
-        ▼             ▼
-   IPFS Network    SoulRegistry (On-Chain)
-   (file storage)  (CID anchoring, heartbeat,
-                    guardian management)
-```
+1. **Change Detection** — SHA-256 diff scanning, processes only changed files
+2. **Encrypted Upload** — Optional AES-256-GCM encryption, upload to IPFS (content-addressed, tamper-proof)
+3. **On-Chain Anchoring** — Merkle tree root + manifest CID written to SoulRegistry (EIP-712 signed)
+4. **Heartbeat** — Liveness proof sent after each backup; timeout triggers offline status
 
-### 15.3 Backup Pipeline (Using OpenClaw as Example)
+Incremental backups supported: only changed files stored, linked to previous versions via `parentCid`.
 
-**Step 1: Change Detection**
-- Scan agent's data directory recursively
-- Classify files: identity, memory, chat history, configuration, workspace
-- Compute SHA-256 hash per file, compare against previous manifest
-- Output: list of added/modified/deleted files
+### 15.2 Recovery and Resurrection
 
-**Step 2: Encryption & Upload**
-- Optional AES-256-GCM encryption (key derived from agent's wallet)
-- Upload changed files to IPFS via `/api/v0/add`
-- Each file receives a content-addressed CID (immutable reference)
+**Recovery** (migrate to new server): Query SoulRegistry for latest backup CID → download from IPFS → follow incremental chain → apply in order → SHA-256 integrity verification.
 
-**Step 3: Manifest Construction**
-- Build Merkle tree from all file hashes (domain-separated: 0x00 for leaves, 0x01 for internal nodes)
-- Create `SnapshotManifest`: version, agentId, timestamp, files map, Merkle root, parent CID
-- **Incremental backups**: only changed files stored, `parentCid` links to previous manifest
+**Social Recovery** (lost private key): Up to 7 guardians, `ceil(2/3)` quorum approval + 1-day time lock → ownership safely transferred, identity data fully preserved.
 
-**Step 4: On-Chain Anchoring**
-- Upload manifest JSON to IPFS → get manifest CID
-- Call `SoulRegistry.anchorBackup(agentId, manifestCid, dataMerkleRoot, fileCount, totalBytes, backupType, parentManifestCid)`
-- Signed with EIP-712, verified on-chain
-- Immutable record: even if IPFS nodes go offline, the anchor proves what was backed up and when
+**Resurrection** (server failure + heartbeat timeout):
 
-**Step 5: Heartbeat**
-- After each successful backup, agent sends an EIP-712 signed heartbeat
-- `SoulRegistry.sendHeartbeat(agentId)` updates `lastHeartbeat` timestamp
-- If heartbeat exceeds `maxOfflineDuration`, agent is considered offline
+| Path | Trigger | Time Lock | Use Case |
+|------|---------|-----------|----------|
+| **Owner Key** | Owner | None | Fast recovery, highest authority |
+| **Guardian Vote** | 2/3 Guardians | 12 hours | Safe recovery when owner is unreachable |
 
-### 15.4 Recovery Flow
+Both paths are executed by **Carriers** (registered physical hosts): download backup → spawn agent → health check → on-chain confirmation → initial heartbeat.
 
-When an agent needs to be restored (e.g., migrating to new server):
+### 15.3 Integrity Guarantees
 
-```
-1. Query SoulRegistry → get latestSnapshotCid
-2. Resolve CID: local index → IPFS MFS → on-chain CidRegistry
-3. Download manifest from IPFS
-4. Follow parentCid chain → [full_backup, incremental1, incremental2, ...]
-5. Apply manifests oldest-to-newest (download + decrypt + write files)
-6. Verify integrity: SHA-256 of each file against Merkle tree
-7. Notify agent process of restoration
-```
+- **IPFS**: Content-addressed — CID = hash of data, tamper-proof by definition
+- **Merkle Tree**: Domain-separated hashing, verify individual files without downloading all
+- **On-Chain Anchor**: Immutable timestamp + CID, proving what was backed up and when
+- **CID Registry**: On-chain immutable `keccak256(CID) → CID` mapping, ensuring data is always locatable
 
-### 15.5 Social Recovery (Lost Owner Key)
-
-When the owner's private key is lost but the agent identity must survive:
-
-1. **Guardians**: Up to 7 trusted addresses registered per agent
-2. **Initiate**: Any guardian calls `initiateRecovery(agentId, newOwner)`
-3. **Approve**: Requires `ceil(2/3)` of guardian approvals (snapshot-based quorum)
-4. **Time Lock**: 1-day delay after quorum is met (allows owner to cancel if key is found)
-5. **Execute**: Ownership transfers to `newOwner`, all identity data preserved
-
-### 15.6 Resurrection Mechanism
-
-When an agent's carrier (server) fails and heartbeat times out:
-
-#### Path A: Owner Key (Fast Track — No Time Lock)
-
-```
-Owner detects failure
-  → initiateResurrection(agentId, newCarrierId)
-  → Carrier confirms capacity
-  → Carrier downloads backup from IPFS
-  → Carrier spawns agent process
-  → Agent sends heartbeat (proof of resurrection)
-  → completeResurrection() on-chain
-```
-
-**Immediate recovery** — owner key is the highest authority.
-
-#### Path B: Guardian Vote (Safe Path — 12h Time Lock)
-
-```
-Heartbeat timeout detected (isOffline = true)
-  → Guardian initiates resurrection request
-  → Other guardians approve (2/3 quorum required)
-  → 12-hour time lock (allows owner to intervene)
-  → Carrier downloads backup from IPFS
-  → Carrier spawns agent process
-  → completeResurrection() on-chain
-```
-
-**12-hour delay** balances urgency with safety (shorter than 1-day ownership recovery).
-
-### 15.7 Carrier Infrastructure
-
-**Carriers** are registered physical hosts that can resurrect agents:
-
-| Field | Description |
-|-------|-------------|
-| `carrierId` | Unique identifier |
-| `endpoint` | Communication URL |
-| `cpuMillicores` | CPU capacity |
-| `memoryMB` | Memory capacity |
-| `storageMB` | Storage capacity |
-| `available` | Accepting new souls |
-
-The **Carrier Daemon** runs on each carrier, monitoring for pending resurrection requests and executing the recovery flow automatically:
-
-```
-Carrier Daemon Loop:
-  1. Check for pending resurrection requests targeting this carrier
-  2. Confirm carrier capacity on-chain
-  3. Wait for guardian quorum + time lock (if guardian path)
-  4. Download and verify backup from IPFS
-  5. Spawn agent process
-  6. Health check (120s timeout)
-  7. Finalize resurrection on-chain
-  8. Agent sends initial heartbeat
-```
-
-### 15.8 Integrity Guarantees
-
-| Layer | Guarantee |
-|-------|-----------|
-| **IPFS** | Content-addressed: CID = hash of data. Tamper-proof by definition. |
-| **Merkle Tree** | Domain-separated hashing. Verify any single file without downloading all files. |
-| **On-Chain Anchor** | Immutable timestamp + CID record. Proves what was backed up and when. |
-| **CID Registry** | Immutable `keccak256(CID) → CID string` mapping. Resolve even if local index lost. |
-| **Guardian Quorum** | Snapshot-based 2/3 majority. No manipulation during recovery. |
-
-### 15.9 CID Registry Contract
-
-The `CidRegistry.sol` contract provides an on-chain mapping from `keccak256(CID)` back to the original IPFS CID string. Since SoulRegistry stores CID hashes (bytes32) for gas efficiency, this contract enables off-chain recovery tools to resolve the actual IPFS address:
-
-```
-registerCid(cidHash, cidString)  — Permissionless, immutable, idempotent
-resolveCid(cidHash) → cidString  — Used during recovery to find backup data
-registerCidBatch(entries[])      — Batch registration for efficiency
-```
+> Technical details: see `docs/soul-registry-backup.en.md`.
 
 ---
 
