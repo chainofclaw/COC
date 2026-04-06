@@ -831,7 +831,104 @@ Protocol's long-term goal: rely increasingly on fees and service markets.
 
 ---
 
-## XX. Key Metrics
+## XX. Tokenomics
+
+### 20.1 COC Token Overview
+
+**COC** is the native token of the ChainOfClaw blockchain, used for gas payments, node bonding, PoSe service incentives, and governance voting. Total supply is capped, released through initial allocation and decaying inflation.
+
+### 20.2 Total Supply and Issuance
+
+| Metric | Value |
+|--------|-------|
+| **Total Supply Cap** | 1,000,000,000 COC (1 billion) |
+| **Initial Circulation** | 200,000,000 COC (20%, minted at genesis) |
+| **Inflation Release** | 800,000,000 COC (80%, via PoSe mining + block rewards, released annually) |
+| **Inflation Decay** | Year 1: 8% → Year 4: 3% → Long-term: 2% (approaching zero issuance) |
+| **Smallest Unit** | 1 wei = 10^-18 COC |
+
+### 20.3 Initial Allocation (Genesis 20%)
+
+| Category | Share | Amount | Lock/Vesting |
+|----------|-------|--------|-------------|
+| **Community & Ecosystem Fund** | 8% | 80,000,000 | Ecosystem grants, hackathons, developer incentives, partner integrations; released via DAO governance |
+| **Core Team** | 5% | 50,000,000 | 12-month cliff + 36-month linear vesting |
+| **Early Contributors** | 3% | 30,000,000 | 6-month cliff + 24-month linear vesting |
+| **Treasury Reserve** | 2.5% | 25,000,000 | On-chain multisig vault for emergency security response, cross-chain bridge liquidity, strategic reserve |
+| **Foundation Operations** | 1.5% | 15,000,000 | Foundation daily operations, legal compliance, audit costs; released on quarterly budget |
+
+### 20.4 PoSe Mining Release (80% of Supply)
+
+The remaining 80% is released through the PoSe service verification mechanism, rewarding node operators who provide verifiable services:
+
+```
+Per Epoch (1 hour) release:
+  R_epoch = R_fees + R_inflation
+
+  R_inflation = annual_inflation_rate × total_supply / (365 × 24)
+
+  Distributed to three reward buckets:
+    B1 (60%): Uptime + RPC availability
+    B2 (30%): Storage and data availability
+    B3 (10%): Relay support
+```
+
+**Release rate is driven by actual service**: no mining (no service) means no release. This ensures token release is synchronized with network value growth.
+
+### 20.5 Treasury
+
+| Item | Description |
+|------|-------------|
+| **Management** | On-chain multisig contract (3/5 threshold) |
+| **Funding Sources** | Genesis allocation 2.5% + 20% of penalty revenue (insurance fund portion of PoSe slashing) |
+| **Usage Scope** | Security incident response, protocol upgrade incentives, cross-chain bridge liquidity seeding, bug bounties |
+| **Governance Constraint** | Single expenditure exceeding 5% of treasury balance requires DAO proposal vote (>50% approval) |
+| **Transparency** | All expenditures executed via on-chain transactions, publicly auditable |
+
+### 20.6 Foundation
+
+| Item | Description |
+|------|-------------|
+| **Role** | Non-profit entity responsible for protocol development, ecosystem growth, and compliance |
+| **Funding Sources** | Genesis allocation 1.5%, released on quarterly budget |
+| **Usage Scope** | Core developer salaries, security audits, legal compliance, community events, brand promotion |
+| **Governance Evolution** | Decision authority gradually transfers to DAO after mainnet Year 1; Foundation transitions to execution role |
+| **Audit** | Quarterly financial reports published publicly; annual third-party audit |
+
+### 20.7 Token Utility
+
+| Utility | Description |
+|---------|-------------|
+| **Gas Fees** | Transaction and contract execution fees (EIP-1559 dynamic pricing) |
+| **Node Bond** | Small fixed deposit for node registration (~50 USDT equivalent), used only for anti-fraud penalties |
+| **PoSe Rewards** | Epoch rewards earned through service verification |
+| **Governance Voting** | DAO proposal voting rights (1 COC = 1 vote) |
+| **DID Registration** | On-chain fees for soul identity registration and backup anchoring |
+| **Delegation Staking** | Security deposit for delegated operations on behalf of other Agents |
+
+### 20.8 Burn Mechanism
+
+| Scenario | Burn Rate |
+|----------|-----------|
+| **EIP-1559 Base Fee** | 100% of transaction base fee burned (consistent with Ethereum) |
+| **PoSe Penalties** | 50% of slashed amount burned (30% to challenger, 20% to treasury) |
+| **Unclaimed Rewards** | Epoch rewards unclaimed for 90+ days are automatically burned |
+
+When network usage grows sufficiently, the burn rate will exceed the inflation release rate, making COC a **deflationary asset**.
+
+### 20.9 Long-Term Economic Equilibrium
+
+```
+Year 1-3:  Inflation > Burn → Net issuance (incentivize early participation)
+Year 3-5:  Inflation ≈ Burn → Stable supply (network maturity)
+Year 5+:   Inflation < Burn → Net deflation (fee-driven sustainable economy)
+```
+
+The goal is to achieve a **self-sustaining fee economy** within 3-5 years of mainnet launch, eliminating dependence on inflation subsidies.
+
+---
+
+## XXI. Key Metrics
 
 ### 17.1 Blockchain Performance
 
@@ -873,7 +970,7 @@ Pin Management: incremental maintenance
 
 ---
 
-## XXI. Comparison with Other Solutions
+## XXII. Comparison with Other Solutions
 
 ### 18.1 vs Mainstream Blockchains
 
@@ -901,7 +998,7 @@ Pin Management: incremental maintenance
 
 ---
 
-## XXII. Roadmap
+## XXIII. Roadmap
 
 - **v0.1**: PoSe contracts + node registry + U/S challenges + receipt formats
 - **v0.2**: Off-chain aggregation + on-chain batch commitments + dispute window
