@@ -976,6 +976,19 @@ Pin Management: incremental maintenance
 | **Fraud Slash** | 50%-100% | Cooldown 14 days |
 | **Chronic Instability Slash** | 5% | After 3 bad epochs |
 
+### Tokenomics Parameters
+
+| Parameter | Value | Notes |
+|-----------|-------|-------|
+| **Total Supply Cap** | 1,000,000,000 COC | Hard cap |
+| **Genesis Allocation** | 250,000,000 COC (25%) | Foundation/Team/Community/Early/Treasury |
+| **Mining Release** | 750,000,000 COC (75%) | Auto-minted via PoSe service verification |
+| **Decay Rate Y0/Y1/Y2/Y3/Y4+** | 5% / 4% / 3% / 2.5% / 2% | Annual inflation rate |
+| **Node Activity Target** | 100 nodes | TARGET_NODE_COUNT |
+| **Reward Claim Window** | 7 days | After expiry: 10% to Foundation, 90% burned |
+| **Treasury Multisig** | 3/5 | 5% per-transaction cap, larger requires DAO |
+| **Foundation Release** | Y1 1.5% + 4.5%/48 months | Quarterly cap 15% |
+
 ---
 
 ## Appendix B - Minimal Contract Interface
