@@ -18,7 +18,7 @@ The project uses npm workspaces to manage multiple packages:
 - `wallet/`: CLI wallet tool
 - `tests/`: Integration and end-to-end tests
 - `explorer/`: Next.js blockchain explorer
-- `extensions/coc-backup/`: Soul identity backup and recovery (OpenClaw plugin)
+- `extensions/coc-backup/`: AI Silicon Immortality — soul backup/recovery, CID registry, carrier daemon, guardian CLI, 9 agent tools
 - `website/`: Project website
 
 ## Runtime Requirements
@@ -77,7 +77,7 @@ Policy files are located at `nodeops/policies/*.yaml` and can be loaded and eval
 
 ## Test Strategy
 
-Uses Node.js built-in test framework and Hardhat test runner (`1635` tests across `151` test files, excluding vendored `node_modules` tests):
+Uses Node.js built-in test framework and Hardhat test runner (`1682` tests across `155` test files, excluding vendored `node_modules` tests):
 - **Node layer tests**: `node/src/*.test.ts node/src/**/*.test.ts` (`899` tests, `75` files) - chain engine, EVM, RPC, WebSocket, P2P, mempool, storage, IPFS, PoSe, BFT consensus, DHT, wire protocol, fork choice, state snapshot, wire server, DHT network, snap sync, consensus-BFT integration, consensus metrics, wire connection manager, wire tx relay, sync progress, gas histogram, governance stats, wire dedup/relay, security hardening, P2P auth, wire auth handshake, replay guard, nonce registry, PoSe auth, Prometheus metrics, BFT slashing, Phase 36 ops hardening, algorithm safety audit round 3, P2P benchmarks, wire priority frames, stateRoot verification, speculative execution, coc_getEquivocations, ethers toolchain compatibility, viem toolchain compatibility, fee oracle, RPC data accuracy, block format standardization
 - **Services + NodeOps tests**: `services/**/*.test.ts` + `nodeops/*.test.ts` (`164` tests, `25` files) - PoSe v2 services, reward tree, scoring determinism, challenger rewards, policy DSL, policy hot reload
 - **Runtime tests**: `runtime/lib/*.test.ts` + `runtime/coc-relayer.test.ts` (`72` tests, `16` files) - pending retention, runtime metrics, agent metrics server, reward manifest, pose-v2 fault proof, relayer dispute recovery, BFT slash bridge
@@ -88,6 +88,7 @@ Uses Node.js built-in test framework and Hardhat test runner (`1635` tests acros
 - **Contract deploy tests**: `contracts/deploy/*.test.ts` (`18` tests, `2` files) - deploy config resolution, CLI wrapper, PoSe deploy helper validation
 - **Contract tests**: `cd contracts && npm test` (`227` tests, `10` files) - PoSeManager v1, PoSeManagerV2, v2 E2E lifecycle, gas benchmarks, security audit, EIP-712 cross-check, SoulRegistry (identity, backup, recovery, guardians), DIDRegistry (key rotation, delegation, credentials, ephemeral identities, lineage)
 - **Extension tests**: `extensions/coc-nodeops/src/**/*.test.ts` (`24` tests, `3` files) - node types, network presets, node manager
+- **Backup extension tests**: `extensions/coc-backup/test/*.test.ts` (`47` tests, `9` files) - binary handler (6), change detector (9), CID resolver (6), lifecycle (3), state restorer (2), scheduler (1), carrier daemon (7), resurrection flow (9), offline monitor (4)
 - **Storage layer tests**: `node/src/storage/*.test.ts` (included in node layer)
 
 Running tests:
@@ -221,6 +222,7 @@ cd contracts && npm test
 - `settlement/MerkleProofLite.sol`: Merkle proof verification (calldata + memory variants)
 - `governance/SoulRegistry.sol`: Soul identity registration, backup CID anchoring, EIP-712 signed operations, social recovery with 2/3 guardian quorum
 - `governance/DIDRegistry.sol`: DID management for AI agents — key rotation, delegation registry (depth≤3, scope-limited, time-bound), ephemeral identities, agent lineage tracking, verifiable credential anchoring, EIP-712 signed operations
+- `governance/CidRegistry.sol`: Permissionless IPFS CID registry — maps keccak256(CID) to original CID string for backup recovery, immutable entries, batch registration support
 
 ### DID Module (node/src/did/)
 - `did-types.ts`: W3C DID Core types, delegation scope/credential types, capability bitmask flags
@@ -296,6 +298,7 @@ cd contracts && npm test
 - Core algorithms: `docs/core-algorithms.en.md`
 - Feature matrix: `docs/feature-matrix.md`
 - Soul Registry & Backup: `docs/soul-registry-backup.en.md` / `docs/soul-registry-backup.zh.md`
+- AI Silicon Immortality (standalone): `docs/silicon-immortality.en.md` / `docs/silicon-immortality.zh.md`
 - DID Method Specification: `docs/did-method-spec.en.md` / `docs/did-method-spec.zh.md`
 
 ## Code and Documentation Language Requirements

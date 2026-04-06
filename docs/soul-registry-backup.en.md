@@ -1,8 +1,8 @@
-# Silicon Immortality: Soul Registry & Agent Backup System
+# AI Silicon Immortality: Soul Registry & Agent Backup System
 
 ## Overview
 
-The COC chain's **Silicon Immortality** feature provides AI Agents with blockchain-anchored identity registration, state backup, and social recovery. The core idea: an Agent's identity files (IDENTITY.md, SOUL.md), memories, and conversation history are stored on IPFS with optional encryption, and their integrity hash (Merkle Root) is anchored on-chain via EIP-712 signed transactions to the `SoulRegistry` contract — ensuring the Agent's "soul" is verifiable, recoverable, and tamper-proof.
+The COC chain's **AI Silicon Immortality** feature provides AI Agents with blockchain-anchored identity registration, state backup, and social recovery. The core idea: an Agent's identity files (IDENTITY.md, SOUL.md), memories, and conversation history are stored on IPFS with optional encryption, and their integrity hash (Merkle Root) is anchored on-chain via EIP-712 signed transactions to the `SoulRegistry` contract — ensuring the Agent's "soul" is verifiable, recoverable, and tamper-proof.
 
 The system comprises two core components:
 
@@ -364,7 +364,7 @@ The 12-hour time lock (vs 1-day for ownership recovery) reflects the higher urge
 
 *Steps 4-7 are the off-chain recovery phase (outside contract control):*
 
-4. After `ResurrectionCompleted`, pulls the agent's latest backup manifest from IPFS. **Note:** The chain only stores `keccak256(cidString)` — the real CID cannot be derived on-chain. The carrier must obtain the manifest CID via off-chain means — e.g. backup logs, MFS path `/soul-backups/`, or owner providing it through an off-chain channel. `restoreFromChain()` is currently not implemented (see `state-restorer.ts`).
+4. After `ResurrectionCompleted`, pulls the agent's latest backup manifest from IPFS. The chain stores `keccak256(cidString)` as `bytes32`, which is resolved back to the original CID via the three-layer CID resolver (local index → MFS `cid-map.json` → on-chain `CidRegistry.sol`). `restoreFromChain()` is fully implemented in `state-restorer.ts` using `CidResolver`.
 5. Downloads and decrypts all files (using `restoreFromManifestCid()` pipeline)
 6. Starts the agent process
 7. Agent sends its first **real** `heartbeat()` — this is the actual proof of successful recovery
@@ -387,18 +387,24 @@ The `BackupScheduler` integrates heartbeat sending into the backup cycle:
 | `heartbeat` | `(agentId) → txHash` | Send EIP-712 signed heartbeat (auto-generates timestamp) | ✅ Implemented |
 | `isOffline` | `(agentId) → boolean` | Check offline status | ✅ Implemented |
 | `getResurrectionConfig` | `(agentId) → ResurrectionConfig` | Read configuration | ✅ Implemented |
-| `initiateResurrection` | `(agentId, carrierId, resurrectionKey) → txHash` | Owner key resurrection (creates a Wallet from the resurrection private key internally) | ✅ Implemented |
+| `initiateResurrection` | `(agentId, carrierId, resurrectionKey) → ResurrectionStartResult` | Owner key resurrection (creates a Wallet from the resurrection private key internally) | ✅ Implemented |
 | `registerCarrier` | `(carrierId, endpoint, cpu, mem, storage) → txHash` | Register a carrier | ✅ Implemented |
 | `getCarrier` | `(carrierId) → CarrierInfo` | Read carrier info | ✅ Implemented |
-| `deregisterCarrier` | — | Deregister a carrier | Direct contract call |
-| `updateCarrierAvailability` | — | Toggle carrier availability | Direct contract call |
-| `initiateGuardianResurrection` | — | Guardian-initiated resurrection | Direct contract call |
-| `approveResurrection` | — | Approve resurrection request | Direct contract call |
-| `confirmCarrier` | — | Carrier confirms hosting | Direct contract call |
-| `completeResurrection` | — | Finalize resurrection | Direct contract call |
-| `cancelResurrection` | — | Cancel resurrection request | Direct contract call |
+| `deregisterCarrier` | `(carrierId) → txHash` | Deregister a carrier | ✅ Implemented |
+| `updateCarrierAvailability` | `(carrierId, available) → txHash` | Toggle carrier availability | ✅ Implemented |
+| `initiateGuardianResurrection` | `(agentId, carrierId) → ResurrectionStartResult` | Guardian-initiated resurrection | ✅ Implemented |
+| `approveResurrection` | `(requestId) → txHash` | Approve resurrection request | ✅ Implemented |
+| `confirmCarrier` | `(requestId) → txHash` | Carrier confirms hosting | ✅ Implemented |
+| `completeResurrection` | `(requestId) → txHash` | Finalize resurrection | ✅ Implemented |
+| `cancelResurrection` | `(requestId) → txHash` | Cancel resurrection request | ✅ Implemented |
 
-> **Plugin coverage boundary:** The current coc-backup plugin covers the owner-key resurrection core path (configure → heartbeat → initiate → carrier register → query). The guardian voting path (`initiateGuardianResurrection`, `approveResurrection`) and remaining carrier management operations (`deregisterCarrier`, `updateCarrierAvailability`, `confirmCarrier`, `completeResurrection`, `cancelResurrection`) require direct contract calls or external scripts.
+> **Plugin coverage and role separation:**
+>
+> All contract methods are wrapped in `SoulClient`. However, the **carrier daemon only performs carrier-role actions**: confirm carrier, wait for readiness, download backup, spawn agent, complete resurrection, send heartbeat. It does **not** initiate or approve guardian-vote resurrections — those are guardian responsibilities handled via separate guardian CLIs or scripts.
+>
+> - **Owner-key path (self-hosted):** Plugin CLI + tools cover the full loop (configure → heartbeat → initiate → confirm → complete). Single EOA sufficient.
+> - **Guardian-vote path:** Guardians call `initiateGuardianResurrection` + `approveResurrection` externally. The carrier daemon picks up the pending request (via config `pendingRequestIds` or `addRequest()`), confirms carrier, polls `getResurrectionReadiness()` until quorum + timelock are met, then downloads backup, spawns agent, completes on-chain, and sends heartbeat.
+> - **Role constraints:** `confirmCarrier` requires the carrier owner EOA. `initiateGuardianResurrection` / `approveResurrection` require active guardian EOAs. These are different keys in production.
 
 ##### CLI Commands
 
@@ -535,7 +541,7 @@ Deploy script at `contracts/deploy/deploy-soul-registry.ts`:
 
 ### Tests
 
-`contracts/test/SoulRegistry.test.cjs` contains 55 test scenarios:
+`contracts/test/SoulRegistry.test.cjs` contains 58 test scenarios:
 - Registration: valid registration, zero agentId, duplicate agentId, duplicate owner, forged signature
 - Backup: full backup, incremental chain, missing parentCid, non-owner, paginated query, invalid CID rejection
 - Identity update: valid update, non-owner
@@ -576,11 +582,22 @@ extensions/coc-backup/
       manifest-builder.ts       # Merkle tree & manifest building
       anchor.ts                 # IPFS + on-chain anchoring
       scheduler.ts              # Automatic backup scheduler
+      binary-handler.ts         # SQLite/LanceDB snapshot
+      context-snapshot.ts       # Session context capture
     recovery/
       chain-resolver.ts         # Incremental chain resolution
       downloader.ts             # IPFS download & decryption
       integrity-checker.ts      # Three-layer integrity verification
       state-restorer.ts         # Recovery pipeline orchestration
+      cid-resolver.ts           # 3-layer CID resolution
+      orchestrator.ts           # Automated recovery
+      agent-restarter.ts        # Agent restart notification
+    carrier/
+      protocol.ts               # Carrier protocol types
+      offline-monitor.ts        # Offline agent monitor
+      agent-spawner.ts          # Agent process spawner
+      resurrection-flow.ts      # Resurrection state machine
+      carrier-daemon.ts         # Carrier daemon
 ```
 
 ### Configuration
@@ -601,51 +618,65 @@ Validated via Zod Schema (`src/config-schema.ts`):
 | `encryptionPassword` | string? | optional | Password (overrides key derivation) |
 | `maxIncrementalChain` | number | `10` | Max incremental chain length |
 | `backupOnSessionEnd` | boolean | `true` | Backup on session end |
-| `categories.*` | boolean | all `true` | Per-category enable switches |
+| `carrier.enabled` | boolean | `false` | Enable carrier daemon mode |
+| `carrier.carrierId` | string? | optional | Carrier ID (bytes32) |
+| `carrier.agentEntryScript` | string? | optional | Path to OpenClaw entry script |
+| `carrier.pendingRequestIds` | array | `[]` | Pre-known pending resurrection requests |
+| `carrier.watchedAgents` | array | `[]` | Agent IDs to monitor for offline status |
+| `categories.*` | boolean | all `true` | Per-category enable switches (including `database`) |
 
 ### CLI Commands
 
 All commands under the `coc-backup` subcommand group:
 
-#### `coc-backup register`
-Register the Agent's on-chain soul identity.
+#### Backup & Recovery
 ```bash
+coc-backup init [--agent-id] [--identity-cid] [--key-hash] [--max-offline]
 coc-backup register [--agent-id <bytes32>] [--identity-cid <cid>]
-```
-
-#### `coc-backup backup`
-Execute a backup.
-```bash
 coc-backup backup [--full]
-```
-
-#### `coc-backup restore`
-Restore Agent state from a manifest CID.
-```bash
 coc-backup restore --manifest-cid <cid> [--target-dir <dir>] [--password <pwd>]
-```
-
-#### `coc-backup status`
-Query on-chain registration and IPFS reachability.
-```bash
 coc-backup status [--json]
+coc-backup doctor [--json]
+coc-backup history [--limit <n>] [--json]
 ```
 
-#### `coc-backup history`
-Query on-chain backup history.
+#### Owner-Key Resurrection
 ```bash
-coc-backup history [--limit <n>] [--json]
+coc-backup configure-resurrection --key-hash <hash> [--max-offline <sec>]
+coc-backup heartbeat
+coc-backup resurrect --carrier-id <id> --resurrection-key <key> [--agent-id <id>]
+coc-backup resurrection start|status|confirm|complete|cancel [--request-id <id>]
+```
+
+#### Guardian Operations
+```bash
+coc-backup guardian initiate --agent-id <id> --carrier-id <id>
+coc-backup guardian approve --request-id <id>
+coc-backup guardian status --request-id <id>
+```
+
+#### Carrier Management
+```bash
+coc-backup carrier register --carrier-id <id> --endpoint <url> [--cpu] [--memory] [--storage]
+coc-backup carrier submit-request --request-id <id> --agent-id <id>
+coc-backup carrier list      # placeholder: requires on-chain indexer
 ```
 
 ### Agent Tools
 
-Three tools registered via `api.registerTool()` for programmatic AI Agent invocation:
+Nine tools registered via `api.registerTool()` for programmatic AI Agent invocation:
 
 | Tool | Parameters | Returns |
 |------|-----------|---------|
 | `soul-backup` | `full?: boolean` | `{ manifestCid, fileCount, totalBytes, backupType, txHash }` |
-| `soul-restore` | `manifestCid, targetDir?` | `{ filesRestored, totalBytes, backupsApplied, merkleVerified }` |
-| `soul-status` | none | On-chain status + IPFS reachability |
+| `soul-restore` | `manifestCid?, packagePath?, latestLocal?, targetDir?, password?` | `RecoveryResult` |
+| `soul-status` | none | `{ registered, lifecycleState, doctor }` |
+| `soul-doctor` | none | Full `DoctorReport` |
+| `soul-resurrection` | `action=start\|status\|confirm\|complete\|cancel` | Owner-key resurrection management |
+| `soul-auto-restore` | `agentId?, targetDir?, password?` | Automated on-chain recovery via CidResolver |
+| `soul-guardian-initiate` | `agentId, carrierId` | `{ requestId, txHash }` |
+| `soul-guardian-approve` | `requestId` | `{ txHash }` |
+| `soul-carrier-request` | `requestId, agentId` | Submit request to carrier daemon |
 
 ### Encryption
 
@@ -678,6 +709,13 @@ Defined in `change-detector.ts` (priority-ordered matching):
 | `agents/*/sessions/*.jsonl` | chat | no |
 | `workspace-state.json` | workspace | no |
 | `AGENTS.md` | workspace | no |
+| `memory/*.sqlite` | database | yes |
+| `memory/lancedb/*` | database | yes |
+| `openclaw.json` | config | yes |
+| `plugins/*/openclaw.plugin.json` | config | no |
+| `agents/*/sessions/sessions.json` | chat | no |
+| `credentials/*` | config | yes |
+| `.coc-backup/context-snapshot.json` | workspace | no |
 
 ### Merkle Tree Implementation
 
@@ -721,12 +759,84 @@ Defined in `change-detector.ts` (priority-ordered matching):
 | Disk files | `verifyRestoredFiles()` | Read each file, compute SHA-256, compare with manifest hash |
 | On-chain anchor | `verifyOnChainAnchor()` | Compare manifest Merkle Root with on-chain stored value |
 
+### CID Registry (bytes32 → IPFS CID Resolution)
+
+On-chain backup anchoring stores `keccak256(CID)` as `bytes32`, which is irreversible. The CID resolver implements three-layer fallback resolution:
+
+| Layer | Source | Speed | Availability |
+|-------|--------|-------|-------------|
+| Local Index | `.coc-backup/cid-index.json` | <1ms | Survives restarts |
+| MFS | `/soul-backups/{agentId}/cid-map.json` | 50-200ms | Decentralized (any IPFS node) |
+| On-chain | `CidRegistry.resolveCid(bytes32)` | 200-500ms | Permanent (blockchain) |
+
+**CidRegistry.sol** (`contracts/contracts-src/governance/CidRegistry.sol`): Permissionless companion contract. Registration is append-only (immutable entries) with hash preimage verification. Supports single and batch registration.
+
+**Registration flow:** After each `anchorBackup()`, the CID mapping is automatically written to all three layers via `CidResolver.register()`.
+
+**Recovery flow:** `restoreFromChain(agentId)` now resolves the latest backup CID automatically through the resolver chain, eliminating the need for users to manually provide the manifest CID.
+
+### Binary Database Snapshots
+
+`binary-handler.ts` ensures consistent backup of actively-written database files:
+
+- **SQLite:** Uses `sqlite3 .backup` command for atomic snapshot; falls back to file copy with WAL/SHM
+- **LanceDB directories:** Creates a simple archive (JSON index + concatenated content) via `buildSimpleTar()`
+- **Cleanup:** Temporary snapshot files are automatically removed after upload
+
+### Execution Context Snapshots
+
+`context-snapshot.ts` captures session metadata before each backup cycle:
+
+```json
+{
+  "version": 1,
+  "capturedAt": "2026-04-05T12:00:00Z",
+  "activeSessions": [{
+    "sessionId": "abc-123",
+    "messageCount": 42,
+    "lastMessageAt": "2026-04-05T11:59:30Z",
+    "estimatedTokens": 15000,
+    "sizeBytes": 65536
+  }]
+}
+```
+
+This enables post-recovery context reconstruction by providing metadata about the agent's last conversational state.
+
+### OpenClaw Lifecycle Hooks
+
+The plugin registers four lifecycle hooks for comprehensive backup coverage:
+
+| Hook | Trigger | Purpose |
+|------|---------|---------|
+| `session_end` | Agent session ends | Preserve session-final state |
+| `before_compaction` | Context compaction imminent | Critical: saves full context before token pruning |
+| `gateway_stop` | Gateway graceful shutdown | Final backup on process exit |
+| `stop` | Legacy stop event | Backward compatibility |
+
+### Carrier Daemon (Cross-Node Resurrection)
+
+The carrier daemon automates the full resurrection lifecycle on a designated carrier node:
+
+**Components:**
+- `offline-monitor.ts` — Polls `isOffline()` for watched agents, emits events on online→offline transitions
+- `resurrection-flow.ts` — Carrier-side state machine: `verify_offline → confirm_carrier → wait_readiness → download → restore → spawn → health_check → complete`. Does **not** initiate or approve — those are guardian actions.
+- `agent-spawner.ts` — Spawns OpenClaw process with restored state via `node:child_process.spawn()`
+- `carrier-daemon.ts` — Integrates monitor + flow + spawner with concurrency limits, shutdown signal (AbortController), and history tracking. `addRequest()` returns acceptance status.
+
+**State Machine:**
+```
+idle → monitoring → resurrection_initiated → carrier_confirmed
+  → waiting_readiness → downloading_backup → restoring_state
+  → spawning_agent → health_checking → resurrection_complete
+```
+
 ---
 
 ## Known Limitations
 
-1. **Irreversible CID:** On-chain stores `keccak256(cidString)` not raw CID — cannot recover from chain alone (user must save manifest CID or find via MFS)
-2. **`restoreFromChain` incomplete:** Due to irreversible CID hashing, auto-locating IPFS content from chain data requires a CID registry
+1. **CID Resolution:** On-chain stores `keccak256(cidString)` not raw CID — `CidRegistry.sol` + `cid-resolver.ts` now provides 3-layer resolution (local index → MFS → on-chain)
+2. **`restoreFromChain` implemented:** Uses CidResolver with 3-layer fallback — resolves latest backup CID automatically from chain data
 3. **Scheduler state not persisted:** `lastManifest` and `incrementalCount` are memory-only; process restart forces full backup
 4. **Sequential file upload:** No concurrent upload for large file sets
 5. **Guardian reactivation model:** On-chain `_guardians` array uses reactivation — re-adding a previously removed guardian reactivates the existing entry instead of pushing a new one. Array size upper bound = total unique addresses ever added
@@ -738,8 +848,9 @@ Defined in `change-detector.ts` (priority-ordered matching):
 
 ### Smart Contracts
 - `contracts/contracts-src/governance/SoulRegistry.sol` — Main contract (~870 lines, includes resurrection mechanism)
+- `contracts/contracts-src/governance/CidRegistry.sol` — CID registry companion contract (~90 lines)
 - `contracts/deploy/deploy-soul-registry.ts` — Deploy script (109 lines)
-- `contracts/test/SoulRegistry.test.cjs` — Test suite (55 tests)
+- `contracts/test/SoulRegistry.test.cjs` — Test suite (58 tests)
 
 ### EIP-712 Types
 - `node/src/crypto/soul-registry-types.ts` — TypeScript signature types (5 type definitions)
@@ -763,5 +874,15 @@ Defined in `change-detector.ts` (priority-ordered matching):
 - `extensions/coc-backup/src/recovery/downloader.ts` — Downloader (115 lines)
 - `extensions/coc-backup/src/recovery/integrity-checker.ts` — Integrity verification (86 lines)
 - `extensions/coc-backup/src/recovery/state-restorer.ts` — Recovery orchestration (159 lines)
+- `extensions/coc-backup/src/recovery/cid-resolver.ts` — 3-layer CID resolution (~180 lines)
+- `extensions/coc-backup/src/recovery/orchestrator.ts` — Automated recovery (~130 lines)
+- `extensions/coc-backup/src/recovery/agent-restarter.ts` — Agent restart notification (~60 lines)
+- `extensions/coc-backup/src/backup/binary-handler.ts` — Binary database snapshots (~170 lines)
+- `extensions/coc-backup/src/backup/context-snapshot.ts` — Session context capture (~100 lines)
+- `extensions/coc-backup/src/carrier/protocol.ts` — Carrier protocol types (~60 lines)
+- `extensions/coc-backup/src/carrier/offline-monitor.ts` — Offline agent monitor (~120 lines)
+- `extensions/coc-backup/src/carrier/agent-spawner.ts` — Agent process spawner (~110 lines)
+- `extensions/coc-backup/src/carrier/resurrection-flow.ts` — Resurrection state machine (~170 lines)
+- `extensions/coc-backup/src/carrier/carrier-daemon.ts` — Carrier daemon (~180 lines)
 
-**Total:** Code (excluding tests): ~2,600 lines. Including tests: ~3,800 lines
+**Total:** Code (excluding tests): ~3,870 lines. Including tests: ~5,070 lines

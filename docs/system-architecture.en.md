@@ -60,7 +60,15 @@ COC is an EVM-compatible blockchain prototype that combines a lightweight execut
    - Verifiable Credentials with on-chain hash anchoring and selective disclosure via Merkle proofs.
    - DID-based authentication for Wire/P2P handshakes (backward compatible).
 
-10. **Security Layer (Phase 33)**
+10. **AI Silicon Immortality Carrier Layer**
+   - CID Registry (`CidRegistry.sol`) for on-chain backup CID resolution, enabling deterministic recovery of agent state.
+   - Carrier daemon for automated cross-node resurrection: detects agent liveness failures and triggers restore on healthy nodes.
+   - Three-layer CID resolution strategy: local blockstore → MFS lookup → on-chain CidRegistry fallback.
+   - Binary database snapshots for OpenClaw memory indices, enabling full cognitive state persistence beyond text-based backups.
+   - OpenClaw lifecycle hook integration: `session_end`, `before_compaction`, `gateway_stop` hooks trigger backup and graceful shutdown. Carrier daemon uses `AbortController` for cooperative shutdown of active resurrection flows.
+   - Multi-process single-key role model: owner, guardian, and carrier run as separate processes with distinct EOAs, matching the contract's `msg.sender` role enforcement.
+
+11. **Security Layer (Phase 33)**
    - Node identity authentication via `NodeSigner`/`SignatureVerifier` (wire handshake signing).
    - BFT message mandatory signatures with verification (reject unsigned/forged votes).
    - DHT anti-poisoning: peer verification (TCP probe) before routing table insertion.
@@ -103,3 +111,4 @@ COC is an EVM-compatible blockchain prototype that combines a lightweight execut
 - RPC exposes `coc_getNetworkStats` for P2P/wire/DHT/BFT stats and `coc_getBftStatus` for BFT round inspection with equivocation count.
 - Security hardening (Phase 33): node identity authentication in wire handshake (NodeSigner/SignatureVerifier), BFT mandatory message signatures, DHT peer verification (TCP probe before routing table insertion), per-IP wire connection limits (max 5), IPFS upload size limit (10MB), MFS path traversal prevention, block timestamp validation, exponential peer ban (max 24h), WebSocket idle timeout (1h), dev accounts gated behind `COC_DEV_ACCOUNTS=1`, default bind `127.0.0.1`, shared rate limiter (RPC 200/min, IPFS 100/min, PoSe 60/min), HTTP gossip signed auth envelope with phased rollout mode (`off`/`monitor`/`enforce`) and replay protection, governance self-vote removed, PoSeManager ecrecover v-value check, state snapshot stateRoot verification.
 - All advanced features (BFT, Wire, DHT, SnapSync) enabled by default in multi-node devnet via `start-devnet.sh`. Single-node devnet auto-disables BFT (requires >= 3 validators). DHT iterative lookup uses wire protocol FIND_NODE when available, falls back to local routing table.
+- AI Silicon Immortality carrier layer provides on-chain CID recovery via CidRegistry contract. Carrier daemon monitors agent liveness and performs cross-node resurrection using three-layer CID resolution (local → MFS → on-chain). Binary database snapshots capture OpenClaw memory indices for full cognitive state restore. OpenClaw lifecycle hooks (`onAgentSpawn`/`onAgentHalt`/`onAgentResurrect`) drive the resurrection workflow.
