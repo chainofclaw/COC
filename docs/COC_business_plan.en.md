@@ -20,7 +20,7 @@
 | **Sector** | Web3 × AI intersection, Agent infrastructure |
 | **Target Market (2030)** | $50B+ AI Agent market (Gartner) |
 | **Token** | COC, native gas token, total supply 1B |
-| **Current Stage** | Pre-mainnet testnet (2026 Q2) |
+| **Current Stage** | Testnet operational (Mainnet genesis 2026 Q2) |
 | **Tech Stack** | Custom blockchain (TS/Rust) + revm WASM EVM (154x speedup) |
 | **Code Status** | 1300+ tests passing, 40K+ LoC, open source |
 | **Funding Round** | **Series A — $5M USD** |
@@ -95,7 +95,7 @@
 
 | Metric | COC | Comparable Chains |
 |--------|-----|------------------|
-| **TPS (single node)** | 133.7 (EthereumJS) → 20,540 (revm WASM raw) | Polygon 65, BSC 60 |
+| **TPS (single node)** | 133 (EthereumJS) → 20,540 (revm WASM raw) | Polygon 65, BSC 60 |
 | **Node entry barrier** | ~$50 USDT bond | ETH 2.0: 32 ETH (~$80K) |
 | **EVM compatibility** | Full + dual hot-swap engines | EthereumJS only |
 | **AI-native features** | DID + backup + resurrection | None |
@@ -140,27 +140,32 @@ Assumptions:
 - 60% to B1 (uptime/RPC) → 22.5M COC
 - Equal distribution: 225,000 COC/node
 
-At $0.10/COC assumption:
-- Annual revenue: ~$22,500
-- Monthly revenue: ~$1,875
-- One-time bond: $50
-- Monthly hardware cost: $200 (home server)
-- Net income: ~$1,675/month
+Price scenario comparison:
+                       $0.10/COC      $0.15/COC        $0.20/COC
+                       (early-stage)  (Series A anchor)  (neutral)
+  Annual revenue       $22,500        $33,750           $45,000
+  Monthly revenue      $1,875         $2,813            $3,750
+  Monthly hardware     $200           $200              $200
+  Net income (month)   $1,675         $2,613            $3,550
+  Bond (one-time)      $50            $50               $50
 ```
 
-Actual revenue varies with network node count, COC price, and service quality.
+> Note: $0.10 reflects an early-stage market float assumption; $0.15-$0.20 correspond to the implied prices under §9.1 Series A valuation scenarios, reflecting the project's valuation of long-term SAFT-locked tokens. Actual revenue varies with network node count, COC price, and service quality.
 
 ---
 
 ## V. Go-to-Market Strategy
 
-### 5.1 Three-Phase GTM
+### 5.1 Four-Phase GTM
+
+> One-to-one mapping with the four-phase roadmap in ecosystem roadmap §2:
 
 | Phase | Time | Key Actions | Target Audience |
 |-------|------|------------|-----------------|
-| **Seed** | 2026 Q1-Q2 | Mainnet launch + 100 genesis nodes + OpenClaw reference | Early adopters, Web3 enthusiasts |
+| **Genesis** | 2026 Q1-Q2 | Mainnet genesis + 100+ nodes + PoSe v2 + DID + Soul Registry | Early adopters, Web3 enthusiasts |
 | **Sprouting** | 2026 Q3-Q4 | SDKs + hackathons + first Grants + Carrier expansion | AI Agent developers |
-| **Growth** | 2027+ | DAO live + cross-chain bridges + enterprise onboarding | Enterprises, commercial dApps |
+| **Growth** | 2027 | DAO live + cross-chain bridges + Agent marketplace + commercial dApps | Commercial dApp teams, paying users |
+| **Maturity** | 2028+ | Multi-client + L2 deployments + enterprise integration + full decentralization | Large enterprises, AI industry ecosystem |
 
 ### 5.2 Priority Partnership Targets
 
@@ -400,6 +405,8 @@ Possible paths after Series A:
 | Risk | Probability | Impact | Mitigation |
 |------|------------|--------|-----------|
 | **AI Agent industry growth slower than expected** | Medium | Severe | Protocol neutrality; serves any Agent framework |
+| **Lack of killer app** | Medium | Severe | Focus on 3-5 flagship projects + 80M COC ecosystem grants |
+| **Slow developer adoption** | High | Severe | Generous Grants + hackathons + excellent docs + SDKs |
 | **Strong competition emerges** | Medium | Medium | First-mover + network effects + continued tech leadership |
 | **Smart contract vulnerabilities** | Medium | Severe | Tier-1 audit + Bug Bounty + treasury reserve |
 | **Regulatory uncertainty** | High | Medium | Multi-jurisdiction strategy + legal compliance |
