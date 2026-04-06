@@ -23,7 +23,8 @@
 | **Current Stage** | Pre-mainnet testnet (2026 Q2) |
 | **Tech Stack** | Custom blockchain (TS/Rust) + revm WASM EVM (154x speedup) |
 | **Code Status** | 1300+ tests passing, 40K+ LoC, open source |
-| **Funding Round** | **Series A — $500M target** |
+| **Funding Round** | **Series A — $5M USD** |
+| **Target FDV** | $100M-$200M (negotiable) |
 | **Founding Team** | BOB (Founder) / Beatrice (Partner) / ZEKE.eth (Technical Partner) |
 
 ### Investment Highlights (Why COC)
@@ -309,43 +310,68 @@ As the founder of the AI-native blockchain category, COC's valuation anchor shou
 | Item | Details |
 |------|---------|
 | **Round** | **Series A** |
-| **Target Size** | **$500M equivalent** (USD/USDC/USDT) |
+| **Target Size** | **$5,000,000 (5M USD equivalent)** |
+| **Target Pre-money FDV** | **$100M-$200M** (range, negotiable) |
+| **Implied Token Price** | **$0.10-$0.20 / COC** (based on 1B total supply) |
 | **Instrument** | SAFT (Simple Agreement for Future Tokens) + equity option |
-| **Valuation** | Pre-money valuation and token price (terms negotiable) |
 | **Subscription** | Tranched, released on milestone achievement |
 | **Target Close** | 2026 Q2-Q3 |
 
-> **Strategic significance**: This round will support COC mainnet genesis, onboarding of first ecosystem partners, global BD expansion, multi-jurisdiction compliance build-out, and operating reserves for the next 5 years of protocol evolution. The Series A size reflects the urgency of the AI Agent infrastructure market window and COC's differentiated positioning.
+**Valuation Anchoring**:
+
+| Scenario | Pre-money FDV | Implied Token Price | $5M = COC Tokens | % of Total Supply |
+|----------|---------------|---------------------|------------------|-------------------|
+| Conservative | $100M | $0.10 | 50M COC | 5.0% |
+| Neutral | $150M | $0.15 | 33M COC | 3.3% |
+| Optimistic | $200M | $0.20 | 25M COC | 2.5% |
+
+> **Strategic significance**: $5M Series A is the appropriate funding size for an early-stage Web3 × AI project, sufficient to support 12-18 months of core team operations, mainnet launch, first ecosystem partnerships, and multi-jurisdiction compliance build-out. COC chooses a "lean" Series A over over-funding to preserve token allocation flexibility — letting genuine market demand drive subsequent rounds.
 
 ### 9.2 Use of Funds
 
-| Purpose | % | Amount (based on $500M) | Notes |
-|---------|---|-------------------------|-------|
-| **Core Team Expansion** | 35% | $175M | Protocol, SDK, Agent integration, security audit teams |
-| **Ecosystem Development & Grants** | 25% | $125M | USD grants matching ecosystem fund (80M COC), BD, partnerships |
-| **Infrastructure & Operations** | 15% | $75M | Mainnet/Testnet/Carrier network, monitoring, SRE |
-| **Marketing & Brand** | 12% | $60M | Global brand promotion, KOLs, content, industry events |
-| **Legal & Compliance** | 8% | $40M | Multi-jurisdiction compliance, regulatory engagement, legal opinions |
-| **Strategic Reserve** | 5% | $25M | Emergency, opportunistic investment, market maker support |
+| Purpose | % | Amount | Notes |
+|---------|---|--------|-------|
+| **Core Team Expansion** | 45% | $2,250,000 | 12-18 months runway for ~10-person core team (protocol, SDK, Agent integration, security audit) |
+| **Infrastructure & Operations** | 15% | $750,000 | Mainnet/Testnet/Carrier network, monitoring, SRE, cloud resources |
+| **Ecosystem Development (USD top-up)** | 15% | $750,000 | USD seed for events/KOLs/audits paired with the 80M COC ecosystem fund |
+| **Legal & Compliance** | 10% | $500,000 | Multi-jurisdiction legal opinions, regulatory engagement, SAFT counsel, KYC/AML |
+| **Marketing & Brand** | 10% | $500,000 | Global brand promotion, KOLs, content, industry events, CEX listing prep |
+| **Strategic Reserve** | 5% | $250,000 | Emergency, opportunistic spend, market maker outreach |
+
+**Key notes**:
+- **Ecosystem USD only 15%**: Main ecosystem grants flow through the 80M COC community fund; USD is reserved for items that cannot be paid in tokens (events, KOLs, compliance audits)
+- **Legal & compliance 10%**: Reflects the cross-domain complexity of Web3 × AI compliance
+- **Team 45%**: Ensures core personnel stability and development velocity — the most critical expense for an early-stage project
 
 ### 9.3 Investor Rights (Proposed Structure, Negotiable)
 
-- **Token Allocation**: From the "Early Contributors & Strategic Partners" pool (3.5%, 35M COC)
+- **Token Allocation**: 25-50M COC (depending on valuation) from the "Early Contributors & Strategic Partners" pool (3.5%, 35M COC)
 - **Lockup**: 6-month cliff + 24-month linear release
 - **Governance Participation**: Investors gain Faction identity in DAO governance
-- **Pro-rata Rights**: Right to participate in future rounds
+- **Pro-rata Rights**: Right to participate in future Series B / Token Sale
 - **Information Disclosure**: Quarterly financial reports + annual third-party audit
-- **Board Seat**: Lead investor receives Foundation board observer/member seat
+- **Board Seat**: Lead investor (>$1M) receives Foundation board observer/member seat
+- **Anti-dilution Protection**: Standard Web3 anti-dilution terms (broad-based weighted average)
 
 ### 9.4 Milestone-Based Release
 
-To reduce investor risk, funding will be released in tranches tied to milestones:
+To reduce investor risk, the $5M will be released in three tranches:
 
-| Tranche | Release % | Trigger |
-|---------|-----------|---------|
-| **First** | 30% | Released immediately on signing, for team expansion and mainnet launch |
-| **Second** | 40% | 30 days stable mainnet + 100+ nodes + 1K+ Agent registrations |
-| **Third** | 30% | TVL exceeds $10M + 5+ Agent frameworks integrated |
+| Tranche | % | Amount | Trigger |
+|---------|---|--------|---------|
+| **First** | 40% | $2,000,000 | Released immediately on signing, for core team expansion and mainnet launch |
+| **Second** | 35% | $1,750,000 | 30 days stable mainnet + 100+ nodes + 1K+ Agent registrations |
+| **Third** | 25% | $1,250,000 | TVL exceeds $10M + 5+ Agent frameworks integrated |
+
+### 9.5 Subsequent Funding Roadmap
+
+Possible paths after Series A:
+
+| Stage | Time | Size | Use |
+|-------|------|------|-----|
+| **Series B** | 2027 | $20M-$50M | Global expansion, enterprise BD, L2 deployments |
+| **Token Public Sale** | 2027-2028 | Market-dependent | DEX/CEX listing, ecosystem liquidity release |
+| **Strategic Round (optional)** | Open ongoing | Major AI enterprise strategic investment | Ecosystem binding |
 
 ---
 
