@@ -20,7 +20,7 @@
 | **Sector** | Web3 × AI intersection, Agent infrastructure |
 | **Target Market (2030)** | $50B+ AI Agent market (Gartner) |
 | **Token** | COC, native gas token, total supply 1B |
-| **Current Maturity** | Protocol/contract code complete (1300+ tests passing) + testnet continuously running; mainnet genesis planned for 2026 Q2 |
+| **Current Maturity** | As of 2026-04-06: 🟢 Protocol/contract code complete (1300+ tests passing) + 🟡 testnet continuously running + 🔵 **Mainnet not yet live** (genesis target: June 2026) |
 | **Tech Stack** | Custom blockchain (TS/Rust) + revm WASM EVM (154x speedup) |
 | **Code Status** | 1300+ tests passing, 40K+ LoC, open source |
 | **Funding Round** | **Series A — $5M USD** |
@@ -93,9 +93,9 @@
 
 | Service | Problem Solved | Core Tech | Current Maturity |
 |---------|---------------|-----------|-----------------|
-| **P2P File Storage** | Where does Agent data live? | IPFS + PoSe v2 verification + Merkle proofs | 🟢 Code complete + 🟡 Testnet live (Mainnet 2026 Q2) |
-| **Decentralized Identity (DID)** | How does an Agent gain trustworthy identity? | W3C did:coc + capability bitmask + delegation chain | 🟢 Code complete + 🟡 Testnet live (Mainnet 2026 Q2) |
-| **AI Silicon Immortality** | How does an Agent never die? | SoulRegistry + Carrier network + guardian recovery | 🟢 Code complete + 🟡 Testnet live (Mainnet 2026 Q2) |
+| **P2P File Storage** | Where does Agent data live? | IPFS + PoSe v2 verification + Merkle proofs | 🟢 Code complete + 🟡 Testnet live (Mainnet not yet live, target: June 2026) |
+| **Decentralized Identity (DID)** | How does an Agent gain trustworthy identity? | W3C did:coc + capability bitmask + delegation chain | 🟢 Code complete + 🟡 Testnet live (Mainnet not yet live, target: June 2026) |
+| **AI Silicon Immortality** | How does an Agent never die? | SoulRegistry + Carrier network + guardian recovery | 🟢 Code complete + 🟡 Testnet live (Mainnet not yet live, target: June 2026) |
 | **OpenClaw Reference Agent** | Reference Agent framework implementation | did:coc + SoulRegistry compatible | ⚪ Reference implementation planned |
 
 ### 3.2 Technical Differentiation (Measured)
