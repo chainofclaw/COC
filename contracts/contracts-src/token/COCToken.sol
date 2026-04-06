@@ -28,8 +28,10 @@ contract COCToken {
     uint256 public constant MINING_SUPPLY_CAP = 750_000_000 ether;         // 75%
 
     uint256 public totalSupply;
-    uint256 public totalMinted;     // Cumulative mining emissions (excludes genesis)
-    uint256 public totalBurned;
+    uint256 public totalMinted;             // Cumulative mining emissions (excludes genesis)
+    uint256 public totalBurned;             // All burns (slash + base fee + manual)
+    uint256 public totalBurnedFromBaseFee;  // Subset: cumulative EIP-1559 base fee burns
+    uint256 public totalBurnedFromSlash;    // Subset: cumulative PoSe slash burns
 
     address public owner;
     address public minter;          // PoSeManagerV2 — sole authorized minter
@@ -42,6 +44,8 @@ contract COCToken {
     event MinterUpdated(address indexed oldMinter, address indexed newMinter);
     event Mint(address indexed to, uint256 amount);
     event Burn(address indexed from, uint256 amount);
+    event BaseFeeBurnRecorded(uint64 indexed blockNumber, uint256 amount);
+    event SlashBurnRecorded(uint64 indexed epochId, uint256 amount);
 
     error ExceedsSupplyCap();
     error ExceedsMiningCap();
@@ -164,6 +168,31 @@ contract COCToken {
         return true;
     }
 
+    // ── Burn Audit (categorized recording) ──────────────────────────
+
+    /**
+     * @notice Record an EIP-1559 base fee burn for on-chain auditability.
+     *         The actual COC supply reduction happens at the EVM/protocol level
+     *         (since COC is the native token); this function records the
+     *         cumulative amount for transparency. Only the minter (PoSeManagerV2
+     *         or a dedicated reporter) can call.
+     */
+    function recordBaseFeeBurn(uint64 blockNumber, uint256 amount) external onlyMinter {
+        totalBurnedFromBaseFee += amount;
+        totalBurned += amount;
+        emit BaseFeeBurnRecorded(blockNumber, amount);
+    }
+
+    /**
+     * @notice Record a PoSe slash burn for on-chain auditability.
+     *         Called by PoSeManagerV2 when slashing burns a portion of a node's bond.
+     */
+    function recordSlashBurn(uint64 epochId, uint256 amount) external onlyMinter {
+        totalBurnedFromSlash += amount;
+        totalBurned += amount;
+        emit SlashBurnRecorded(epochId, amount);
+    }
+
     // ── View Helpers ────────────────────────────────────────────────
 
     function remainingMiningSupply() external view returns (uint256) {
@@ -172,5 +201,22 @@ contract COCToken {
 
     function circulatingSupply() external view returns (uint256) {
         return totalSupply;
+    }
+
+    /**
+     * @notice Get a breakdown of cumulative burns by source.
+     */
+    function burnBreakdown() external view returns (
+        uint256 totalBurnedAll,
+        uint256 fromBaseFee,
+        uint256 fromSlash,
+        uint256 fromManual
+    ) {
+        totalBurnedAll = totalBurned;
+        fromBaseFee = totalBurnedFromBaseFee;
+        fromSlash = totalBurnedFromSlash;
+        fromManual = totalBurned > (totalBurnedFromBaseFee + totalBurnedFromSlash)
+            ? totalBurned - totalBurnedFromBaseFee - totalBurnedFromSlash
+            : 0;
     }
 }
