@@ -6,8 +6,16 @@ import {PoSeTypes} from "./PoSeTypes.sol";
 import {PoSeTypesV2} from "./PoSeTypesV2.sol";
 import {PoSeManagerStorage} from "./PoSeManagerStorage.sol";
 import {MerkleProofLite} from "./MerkleProofLite.sol";
+import {EmissionSchedule} from "../token/EmissionSchedule.sol";
+
+interface ICOCToken {
+    function mint(address to, uint256 amount) external;
+    function totalMinted() external view returns (uint256);
+    function burn(uint256 amount) external;
+}
 
 contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
+    using EmissionSchedule for uint64;
     uint16 internal constant BPS_DENOMINATOR = 10_000;
     uint16 public constant SLASH_EPOCH_CAP_BPS = 500;      // 5% per epoch
     uint16 public constant SLASH_BURN_BPS = 5000;           // 50% burned
@@ -35,6 +43,13 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
     bytes32 public DOMAIN_SEPARATOR;
     bool public allowEmptyWitnessSubmission = false;
     uint256 private _challengeCounter;
+
+    // --- Token emission ---
+    ICOCToken public cocToken;
+    uint64 public genesisEpoch;          // First epoch (for year calculation)
+    bool public emissionEnabled;
+
+    event EmissionMinted(uint64 indexed epochId, uint256 amount);
 
     // Active node tracking for witness set selection
     bytes32[] internal _activeNodeIds;
@@ -68,6 +83,19 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
             )
         );
         challengeBondMin = _challengeBondMin;
+    }
+
+    /**
+     * @notice Enable PoSe mining emission. Sets the COC token contract and records
+     *         the genesis epoch for year-based decay calculation.
+     * @param token       Address of the COCToken contract
+     * @param _genesisEpoch  The epoch ID when mining begins (current epoch)
+     */
+    function enableEmission(address token, uint64 _genesisEpoch) external onlyOwner {
+        require(token != address(0), "zero token address");
+        cocToken = ICOCToken(token);
+        genesisEpoch = _genesisEpoch;
+        emissionEnabled = true;
     }
 
     // --- Node registration (reuse v1 logic, extended with active node tracking) ---
@@ -398,12 +426,28 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
         // v2: empty epochs are allowed (validCount can be 0)
         epochValidBatchCount[epochId] = validCount;
         epochRewardRoots[epochId] = rewardRoot;
-        epochTotalReward[epochId] = totalReward;
         epochSlashTotal[epochId] = slashTotal;
         epochTreasuryDelta[epochId] = treasuryDelta;
         epochFinalized[epochId] = true;
 
-        // Deduct rewards from pool
+        // --- PoSe Mining Emission: mint new tokens into reward pool ---
+        if (emissionEnabled && address(cocToken) != address(0)) {
+            // Epoch offset from genesis determines the year for decay rate
+            uint64 relativeEpoch = epochId >= genesisEpoch ? epochId - genesisEpoch : 0;
+            uint256 emission = EmissionSchedule.getEpochEmission(
+                relativeEpoch,
+                cocToken.totalMinted()
+            );
+            if (emission > 0) {
+                cocToken.mint(address(this), emission);
+                rewardPoolBalance += emission;
+                emit EmissionMinted(epochId, emission);
+            }
+        }
+
+        // Deduct rewards from pool (now includes freshly minted tokens)
+        epochTotalReward[epochId] = totalReward;
+        if (totalReward > rewardPoolBalance) revert RewardPoolInsufficient();
         if (totalReward > 0) {
             rewardPoolBalance -= totalReward;
         }
