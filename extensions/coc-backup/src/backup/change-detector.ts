@@ -21,6 +21,18 @@ const FILE_RULES: Array<{ pattern: RegExp; category: FileCategory; encrypt: bool
   { pattern: /^agents\/.*\/sessions\/.*\.jsonl$/, category: "chat", encrypt: false },
   { pattern: /^workspace-state\.json$/, category: "workspace", encrypt: false },
   { pattern: /^AGENTS\.md$/, category: "workspace", encrypt: false },
+  // Database files (SQLite memory index, LanceDB vector store)
+  { pattern: /^memory\/[^/]+\.sqlite$/, category: "database", encrypt: true },
+  { pattern: /^memory\/lancedb\/.*/, category: "database", encrypt: true },
+  // OpenClaw config and plugin manifests
+  { pattern: /^openclaw\.json$/, category: "config", encrypt: true },
+  { pattern: /^plugins\/.*\/openclaw\.plugin\.json$/, category: "config", encrypt: false },
+  // Session registry
+  { pattern: /^agents\/.*\/sessions\/sessions\.json$/, category: "chat", encrypt: false },
+  // Credentials
+  { pattern: /^credentials\/.*/, category: "config", encrypt: true },
+  // Context snapshot
+  { pattern: /^\.coc-backup\/context-snapshot\.json$/, category: "workspace", encrypt: false },
 ]
 
 function classifyFile(relativePath: string): { category: FileCategory; encrypt: boolean } | null {
@@ -49,7 +61,7 @@ async function scanFiles(baseDir: string, config: CocBackupConfig): Promise<File
       const fullPath = join(dir, entry.name)
       if (entry.isDirectory()) {
         // Skip hidden dirs except .claude
-        if (entry.name.startsWith(".") && entry.name !== ".claude") continue
+        if (entry.name.startsWith(".") && entry.name !== ".claude" && entry.name !== ".coc-backup") continue
         await walk(fullPath)
       } else if (entry.isFile()) {
         const relPath = relative(baseDir, fullPath)

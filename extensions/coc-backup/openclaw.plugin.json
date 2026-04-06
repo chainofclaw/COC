@@ -5,11 +5,28 @@
   "description": "Blockchain-backed soul identity backup and recovery for OpenClaw agents",
   "entry": "./index.ts",
   "commands": ["coc-backup"],
-  "tools": ["soul-backup", "soul-restore", "soul-status"],
+  "tools": [
+    "soul-backup", "soul-restore", "soul-status", "soul-doctor",
+    "soul-resurrection", "soul-auto-restore",
+    "soul-guardian-initiate", "soul-guardian-approve", "soul-carrier-request",
+    "soul-guardian-manage", "soul-recovery-initiate", "soul-recovery-approve"
+  ],
   "hooks": {
+    "session_end": {
+      "enabled": true,
+      "description": "Backup when agent session ends"
+    },
+    "before_compaction": {
+      "enabled": true,
+      "description": "Backup before context compaction to preserve full state"
+    },
+    "gateway_stop": {
+      "enabled": true,
+      "description": "Final backup on gateway shutdown"
+    },
     "stop": {
       "enabled": true,
-      "description": "Auto-backup on session end"
+      "description": "Legacy: auto-backup on stop"
     }
   }
 }

@@ -4,6 +4,7 @@
 import type { SoulClient } from "../soul-client.ts"
 import type { IpfsClient } from "../ipfs-client.ts"
 import type { RecoveryResult, SnapshotManifest } from "../types.ts"
+import type { CidResolver } from "./cid-resolver.ts"
 import { resolveChainFromCid } from "./chain-resolver.ts"
 import { applyManifestChain } from "./downloader.ts"
 import { verifyManifestMerkleRoot, verifyRestoredFiles, verifyOnChainAnchor } from "./integrity-checker.ts"
@@ -154,6 +155,7 @@ export async function restoreFromChain(
   privateKeyOrPassword: string,
   isPassword: boolean,
   logger: Logger,
+  cidResolver?: CidResolver,
 ): Promise<RecoveryResult> {
   logger.info(`Looking up soul on-chain: ${agentId}`)
 
@@ -172,11 +174,46 @@ export async function restoreFromChain(
   )
 
   // The latest snapshot CID is stored as bytes32 (keccak256 of CID string)
-  // We need the actual CID string to retrieve from IPFS
-  // This requires maintaining a local CID mapping or using MFS paths
-  throw new Error(
-    "On-chain recovery requires a CID registry mapping bytes32 -> IPFS CID. " +
-    "Use restoreFromManifestCid() with the known manifest CID instead. " +
-    "The manifest CID can be found in the backup logs or MFS at /soul-backups/",
+  // Use the CID resolver to map bytes32 back to the original IPFS CID
+  const latestBackup = await soul.getLatestBackup(agentId)
+  const cidHash = latestBackup.manifestCid
+
+  if (!cidResolver) {
+    throw new Error(
+      "On-chain recovery requires a CID resolver. " +
+      "Use restoreFromManifestCid() with the known manifest CID instead, " +
+      "or configure a CID resolver (local index, MFS, or on-chain CidRegistry).",
+    )
+  }
+
+  const manifestCid = await cidResolver.resolve(cidHash)
+  if (!manifestCid) {
+    throw new Error(
+      `Cannot resolve CID for hash ${cidHash}. ` +
+      "The local CID index, MFS, and on-chain registry have no matching entry. " +
+      "Use restoreFromManifestCid() with the known CID, " +
+      "or check MFS at /soul-backups/ for the manifest.",
+    )
+  }
+
+  // Verify integrity: the resolved CID must hash to the on-chain value
+  const verifiedHash = cidToBytes32(manifestCid)
+  if (verifiedHash !== cidHash) {
+    throw new Error(
+      `CID integrity verification failed: resolved CID ${manifestCid} ` +
+      `hashes to ${verifiedHash}, expected ${cidHash}`,
+    )
+  }
+
+  logger.info(`Resolved manifest CID: ${manifestCid} (from hash ${cidHash})`)
+
+  return restoreFromManifestCid(
+    manifestCid,
+    targetDir,
+    ipfs,
+    privateKeyOrPassword,
+    isPassword,
+    logger,
+    soul,
   )
 }

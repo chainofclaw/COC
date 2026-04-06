@@ -9,6 +9,7 @@ import type {
   SnapshotManifest,
 } from "../types.ts"
 import { detectChanges } from "./change-detector.ts"
+import { captureContextSnapshot } from "./context-snapshot.ts"
 import { uploadFiles, carryOverEntries } from "./uploader.ts"
 import { buildManifest } from "./manifest-builder.ts"
 import { anchorBackup } from "./anchor.ts"
@@ -192,6 +193,13 @@ export class BackupScheduler {
         heartbeatError: null,
         backup: null,
       }
+    }
+
+    // Capture execution context snapshot before detecting changes
+    try {
+      await captureContextSnapshot(baseDir)
+    } catch (error) {
+      this.logger.warn(`Context snapshot failed (non-fatal): ${String(error)}`)
     }
 
     // Determine if we should do full or incremental

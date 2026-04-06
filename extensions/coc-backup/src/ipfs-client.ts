@@ -113,4 +113,45 @@ export class IpfsClient {
       throw new Error(`IPFS mfs cp failed: ${res.status} ${await res.text()}`)
     }
   }
+
+  /** MFS read — read file content from MFS path */
+  async mfsRead(path: string): Promise<string> {
+    const params = new URLSearchParams({ arg: path })
+    const res = await fetch(`${this.baseUrl}/api/v0/files/read?${params}`, {
+      method: "POST",
+      signal: AbortSignal.timeout(IPFS_TIMEOUT_MS),
+    })
+    if (!res.ok) {
+      throw new Error(`IPFS mfs read failed: ${res.status} ${await res.text()}`)
+    }
+    return res.text()
+  }
+
+  /** MFS write — write content to MFS path */
+  async mfsWrite(path: string, content: string): Promise<void> {
+    const params = new URLSearchParams({ arg: path, create: "true", truncate: "true" })
+    const formData = new FormData()
+    formData.append("file", new Blob([content]))
+    const res = await fetch(`${this.baseUrl}/api/v0/files/write?${params}`, {
+      method: "POST",
+      body: formData,
+      signal: AbortSignal.timeout(IPFS_TIMEOUT_MS),
+    })
+    if (!res.ok) {
+      throw new Error(`IPFS mfs write failed: ${res.status} ${await res.text()}`)
+    }
+  }
+
+  /** MFS rm — remove file or directory from MFS */
+  async mfsRm(path: string, recursive = false): Promise<void> {
+    const params = new URLSearchParams({ arg: path })
+    if (recursive) params.set("recursive", "true")
+    const res = await fetch(`${this.baseUrl}/api/v0/files/rm?${params}`, {
+      method: "POST",
+      signal: AbortSignal.timeout(IPFS_TIMEOUT_MS),
+    })
+    if (!res.ok) {
+      throw new Error(`IPFS mfs rm failed: ${res.status} ${await res.text()}`)
+    }
+  }
 }

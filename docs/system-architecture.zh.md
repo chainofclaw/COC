@@ -60,7 +60,15 @@ COC 是一个 EVM 兼容的区块链原型，结合轻量执行层与 PoSe（Pro
    - 可验证凭证：链上哈希锚定 + 基于 Merkle 证明的选择性披露。
    - Wire/P2P 握手的 DID 认证（向后兼容）。
 
-10. **安全层（Phase 33）**
+10. **硅基永生载体层**
+   - CID 注册表（`CidRegistry.sol`）提供链上备份 CID 解析，实现 agent 状态的确定性恢复。
+   - 载体守护进程（Carrier daemon）实现自动跨节点复活：检测 agent 存活性故障并在健康节点上触发恢复。
+   - 三层 CID 解析策略：本地 blockstore → MFS 查找 → 链上 CidRegistry 回退。
+   - 二进制数据库快照用于 OpenClaw 记忆索引持久化，支持超越文本备份的完整认知状态持久化。
+   - OpenClaw 生命周期钩子集成：`session_end`、`before_compaction`、`gateway_stop` 钩子触发备份和优雅关闭。载体守护进程使用 `AbortController` 实现活跃复活流程的协作式关闭。
+   - 多进程单密钥角色模型：owner、guardian、carrier 作为独立进程运行，各自持有不同 EOA，与合约 `msg.sender` 角色验证对齐。
+
+11. **安全层（Phase 33）**
    - 节点身份认证：通过 `NodeSigner`/`SignatureVerifier` 对 Wire 握手签名。
    - BFT 消息强制签名与验证（拒绝无签名/伪造投票）。
    - DHT 防投毒：节点加入路由表前先进行 TCP 连接探测验证。
@@ -103,3 +111,4 @@ COC 是一个 EVM 兼容的区块链原型，结合轻量执行层与 PoSe（Pro
 - RPC 提供 `coc_getNetworkStats`（P2P/Wire/DHT/BFT 统计）和 `coc_getBftStatus`（BFT 轮次状态含等价检测计数）。
 - 安全加固（Phase 33）：Wire 握手节点身份认证（NodeSigner/SignatureVerifier）、BFT 强制消息签名、DHT 节点验证（加入路由表前 TCP 探测）、每 IP Wire 连接限制（最多 5）、IPFS 上传大小限制（10MB）、MFS 路径遍历防护、区块时间戳验证、节点指数 ban（最长 24h）、WebSocket 空闲超时（1h）、开发账户需 `COC_DEV_ACCOUNTS=1`、默认绑定 `127.0.0.1`、共享速率限制器（RPC 200/min, IPFS 100/min, PoSe 60/min）、HTTP gossip 签名认证信封（`off`/`monitor`/`enforce` 灰度模式 + 防重放）、治理自投票移除、PoSeManager ecrecover v 值校验、状态快照 stateRoot 校验。
 - 所有高级功能（BFT、Wire、DHT、SnapSync）在多节点 devnet 中通过 `start-devnet.sh` 默认启用。单节点 devnet 自动禁用 BFT（需要 >= 3 验证者）。DHT 迭代查找使用 Wire 协议 FIND_NODE（可用时），回退到本地路由表。
+- 硅基永生载体层通过 CidRegistry 合约提供链上 CID 恢复。载体守护进程监控 agent 存活性，使用三层 CID 解析（本地 → MFS → 链上）执行跨节点复活。二进制数据库快照捕获 OpenClaw 记忆索引，实现完整认知状态恢复。OpenClaw 生命周期钩子（`onAgentSpawn`/`onAgentHalt`/`onAgentResurrect`）驱动复活工作流。

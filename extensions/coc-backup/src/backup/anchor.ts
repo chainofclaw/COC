@@ -4,6 +4,7 @@ import { keccak256, toUtf8Bytes } from "ethers"
 import type { IpfsClient } from "../ipfs-client.ts"
 import type { SoulClient } from "../soul-client.ts"
 import type { SnapshotManifest, BackupResult } from "../types.ts"
+import type { CidResolver } from "../recovery/cid-resolver.ts"
 
 const ZERO_BYTES32 = "0x" + "0".repeat(64)
 
@@ -21,6 +22,7 @@ export async function anchorBackup(
   manifest: SnapshotManifest,
   ipfs: IpfsClient,
   soul: SoulClient,
+  cidResolver?: CidResolver,
 ): Promise<BackupResult> {
   // 1. Upload manifest to IPFS
   const manifestCid = await ipfs.addManifest(manifest)
@@ -63,6 +65,15 @@ export async function anchorBackup(
     await ipfs.mfsCp(manifestCid, `${mfsDir}/manifest.json`)
   } catch {
     // MFS organization is best-effort, don't fail the backup
+  }
+
+  // 5. Register CID mapping for future recovery (bytes32 -> IPFS CID)
+  if (cidResolver) {
+    try {
+      await cidResolver.register(manifestCidBytes32, manifestCid)
+    } catch {
+      // CID registration is best-effort; local state still has the CID
+    }
   }
 
   return {

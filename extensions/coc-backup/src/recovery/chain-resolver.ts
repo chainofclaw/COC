@@ -4,6 +4,7 @@
 import type { SoulClient } from "../soul-client.ts"
 import type { IpfsClient } from "../ipfs-client.ts"
 import type { SnapshotManifest, OnChainBackup } from "../types.ts"
+import type { CidResolver } from "./cid-resolver.ts"
 import { cidToBytes32 } from "../backup/anchor.ts"
 
 const ZERO_BYTES32 = "0x" + "0".repeat(64)
@@ -22,6 +23,7 @@ export async function resolveBackupChain(
   agentId: string,
   soul: SoulClient,
   ipfs: IpfsClient,
+  cidResolver?: CidResolver,
 ): Promise<BackupChainEntry[]> {
   const backupCount = await soul.getBackupCount(agentId)
   if (backupCount === 0) {
@@ -70,7 +72,7 @@ export async function resolveBackupChain(
     // The manifest CID is stored as keccak256(CID string) on-chain
     // We need to download from IPFS using the actual CID
     // For now, we search through manifests
-    const manifest = await findManifestByCidHash(backup.manifestCid, ipfs, allBackups)
+    const manifest = await findManifestByCidHash(backup.manifestCid, ipfs, cidResolver)
     result.push({
       onChain: backup,
       manifest,
@@ -82,24 +84,39 @@ export async function resolveBackupChain(
 }
 
 /**
- * Find and download a manifest from IPFS.
- * Since on-chain stores keccak256(CID), we need a CID registry or
- * to store the original CID in the manifest itself.
- *
- * In practice, the manifest CID is stored in the manifest files
- * within the MFS backup directory structure.
+ * Resolve a bytes32 CID hash back to the original IPFS CID and fetch the manifest.
+ * Uses CidResolver's three-layer fallback (local index → MFS → on-chain).
  */
 async function findManifestByCidHash(
-  _cidHash: string,
-  _ipfs: IpfsClient,
-  _allBackups: OnChainBackup[],
+  cidHash: string,
+  ipfs: IpfsClient,
+  cidResolver?: CidResolver,
 ): Promise<SnapshotManifest> {
-  // This is a placeholder — in production, we'd maintain a local CID registry
-  // or use MFS paths to resolve the original CID
-  throw new Error(
-    "Direct CID resolution from bytes32 hash requires a CID registry. " +
-    "Use restoreFromManifestCid() with the known CID instead.",
-  )
+  if (!cidResolver) {
+    throw new Error(
+      "Direct CID resolution from bytes32 hash requires a CID resolver. " +
+      "Use restoreFromManifestCid() with the known CID instead, " +
+      "or configure a CID resolver.",
+    )
+  }
+
+  const cid = await cidResolver.resolve(cidHash)
+  if (!cid) {
+    throw new Error(
+      `Cannot resolve CID for hash ${cidHash}. ` +
+      "Check local index, MFS paths, or on-chain CidRegistry.",
+    )
+  }
+
+  // Verify integrity
+  const verified = cidToBytes32(cid)
+  if (verified !== cidHash) {
+    throw new Error(
+      `CID integrity check failed: ${cid} hashes to ${verified}, expected ${cidHash}`,
+    )
+  }
+
+  return ipfs.catManifest(cid)
 }
 
 /**

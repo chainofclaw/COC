@@ -12,7 +12,7 @@ export interface FileState {
   category: FileCategory
 }
 
-export type FileCategory = "identity" | "memory" | "chat" | "config" | "workspace"
+export type FileCategory = "identity" | "memory" | "chat" | "config" | "workspace" | "database"
 
 export interface ChangeSet {
   added: FileState[]
@@ -91,6 +91,27 @@ export interface OnChainBackup {
   totalBytes: number
   backupType: number
   parentManifestCid: string
+}
+
+// Guardian types
+
+export interface GuardianInfo {
+  guardian: string    // address
+  addedAt: number     // unix timestamp
+  active: boolean
+}
+
+// Social recovery types
+
+export interface RecoveryRequestInfo {
+  requestId: string
+  agentId: string
+  newOwner: string
+  initiator: string
+  initiatedAt: number
+  approvalCount: number
+  guardianSnapshot: number
+  executed: boolean
 }
 
 // Resurrection types

@@ -1,6 +1,6 @@
 // SoulRegistry contract interaction client (ethers v6)
 
-import { Contract, JsonRpcProvider, Wallet } from "ethers"
+import { Contract, FetchRequest, JsonRpcProvider, Wallet } from "ethers"
 import type {
   SoulInfo,
   OnChainBackup,
@@ -46,6 +46,13 @@ const SOUL_REGISTRY_ABI = [
   "function confirmCarrier(bytes32 requestId) external",
   "function completeResurrection(bytes32 requestId) external",
   "function cancelResurrection(bytes32 requestId) external",
+  // Social recovery
+  "function initiateRecovery(bytes32 agentId, address newOwner) external",
+  "function approveRecovery(bytes32 requestId) external",
+  "function completeRecovery(bytes32 requestId) external",
+  "function cancelRecovery(bytes32 requestId) external",
+  "function recoveryRequests(bytes32 requestId) external view returns (bytes32 agentId, address newOwner, address initiator, uint64 initiatedAt, uint8 approvalCount, uint8 guardianSnapshot, bool executed)",
+  "function recoveryApprovals(bytes32 requestId, address guardian) external view returns (bool)",
 ] as const
 
 const SOUL_DOMAIN_NAME = "COCSoulRegistry"
@@ -57,8 +64,14 @@ export class SoulClient {
   private readonly contract: Contract
   private readonly contractAddress: string
 
-  constructor(rpcUrl: string, contractAddress: string, privateKey: string) {
-    this.provider = new JsonRpcProvider(rpcUrl)
+  constructor(rpcUrl: string, contractAddress: string, privateKey: string, rpcAuthToken?: string) {
+    if (rpcAuthToken) {
+      const fetchReq = new FetchRequest(rpcUrl)
+      fetchReq.setHeader("Authorization", `Bearer ${rpcAuthToken}`)
+      this.provider = new JsonRpcProvider(fetchReq)
+    } else {
+      this.provider = new JsonRpcProvider(rpcUrl)
+    }
     this.wallet = new Wallet(privateKey, this.provider)
     this.contract = new Contract(contractAddress, SOUL_REGISTRY_ABI, this.wallet)
     this.contractAddress = contractAddress
@@ -406,6 +419,26 @@ export class SoulClient {
     }
   }
 
+  async initiateGuardianResurrection(
+    agentId: string,
+    carrierId: string,
+  ): Promise<ResurrectionStartResult> {
+    const tx = await this.contract.initiateGuardianResurrection(agentId, carrierId)
+    const receipt = await tx.wait()
+    if (!receipt || receipt.status !== 1) throw new Error("Transaction reverted")
+    return {
+      txHash: receipt.hash,
+      requestId: this._extractEventArg(receipt, "ResurrectionInitiated", 0),
+    }
+  }
+
+  async approveResurrection(requestId: string): Promise<string> {
+    const tx = await this.contract.approveResurrection(requestId)
+    const receipt = await tx.wait()
+    if (!receipt || receipt.status !== 1) throw new Error("Transaction reverted")
+    return receipt.hash
+  }
+
   async confirmCarrier(requestId: string): Promise<string> {
     const tx = await this.contract.confirmCarrier(requestId)
     const receipt = await tx.wait()
@@ -425,5 +458,87 @@ export class SoulClient {
     const receipt = await tx.wait()
     if (!receipt || receipt.status !== 1) throw new Error("Transaction reverted")
     return receipt.hash
+  }
+
+  // -----------------------------------------------------------------------
+  //  Guardian Management
+  // -----------------------------------------------------------------------
+
+  async addGuardian(agentId: string, guardian: string): Promise<string> {
+    const tx = await this.contract.addGuardian(agentId, guardian)
+    const receipt = await tx.wait()
+    if (!receipt || receipt.status !== 1) throw new Error("Transaction reverted")
+    return receipt.hash
+  }
+
+  async removeGuardian(agentId: string, guardian: string): Promise<string> {
+    const tx = await this.contract.removeGuardian(agentId, guardian)
+    const receipt = await tx.wait()
+    if (!receipt || receipt.status !== 1) throw new Error("Transaction reverted")
+    return receipt.hash
+  }
+
+  async listGuardians(agentId: string): Promise<{
+    guardians: Array<{ guardian: string; addedAt: number; active: boolean }>
+    activeCount: number
+  }> {
+    const [raw, activeCount] = await Promise.all([
+      this.contract.getGuardians(agentId),
+      this.contract.getActiveGuardianCount(agentId),
+    ])
+    const guardians = raw.map((g: Record<string, unknown>) => ({
+      guardian: g.guardian as string,
+      addedAt: Number(g.addedAt),
+      active: g.active as boolean,
+    }))
+    return { guardians, activeCount: Number(activeCount) }
+  }
+
+  // -----------------------------------------------------------------------
+  //  Social Recovery
+  // -----------------------------------------------------------------------
+
+  async initiateRecovery(agentId: string, newOwner: string): Promise<string> {
+    const tx = await this.contract.initiateRecovery(agentId, newOwner)
+    const receipt = await tx.wait()
+    if (!receipt || receipt.status !== 1) throw new Error("Transaction reverted")
+    return this._extractEventArg(receipt, "RecoveryInitiated", 0)
+  }
+
+  async approveRecovery(requestId: string): Promise<string> {
+    const tx = await this.contract.approveRecovery(requestId)
+    const receipt = await tx.wait()
+    if (!receipt || receipt.status !== 1) throw new Error("Transaction reverted")
+    return receipt.hash
+  }
+
+  async completeRecovery(requestId: string): Promise<string> {
+    const tx = await this.contract.completeRecovery(requestId)
+    const receipt = await tx.wait()
+    if (!receipt || receipt.status !== 1) throw new Error("Transaction reverted")
+    return receipt.hash
+  }
+
+  async cancelRecovery(requestId: string): Promise<string> {
+    const tx = await this.contract.cancelRecovery(requestId)
+    const receipt = await tx.wait()
+    if (!receipt || receipt.status !== 1) throw new Error("Transaction reverted")
+    return receipt.hash
+  }
+
+  async getRecoveryRequest(requestId: string): Promise<{
+    agentId: string; newOwner: string; initiator: string
+    initiatedAt: number; approvalCount: number; guardianSnapshot: number; executed: boolean
+  }> {
+    const raw = await this.contract.recoveryRequests(requestId)
+    return {
+      agentId: raw.agentId,
+      newOwner: raw.newOwner,
+      initiator: raw.initiator,
+      initiatedAt: Number(raw.initiatedAt),
+      approvalCount: Number(raw.approvalCount),
+      guardianSnapshot: Number(raw.guardianSnapshot),
+      executed: raw.executed,
+    }
   }
 }
