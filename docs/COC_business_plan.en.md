@@ -1,0 +1,374 @@
+# COC (ChainOfClaw) Business Plan
+
+**Audience**: Strategic investors, ecosystem partners, venture capital firms
+**Version**: v1.0
+**Date**: 2026-04-06
+**Companion Documents**: `COC_whitepaper.en.md` (Technical Whitepaper) + `COC_ecosystem_roadmap.en.md` (Ecosystem Roadmap)
+
+---
+
+## I. Executive Summary
+
+### One-Sentence Positioning
+> **COC is the decentralized infrastructure for the AI Agent era — providing identity, storage, and immortality for Agents, granting AI an unstoppable "soul".**
+
+### Core Data Card
+
+| Item | Details |
+|------|---------|
+| **Category** | EVM-compatible blockchain + AI Agent infrastructure |
+| **Sector** | Web3 × AI intersection, Agent infrastructure |
+| **Target Market (2030)** | $50B+ AI Agent market (Gartner) |
+| **Token** | COC, native gas token, total supply 1B |
+| **Current Stage** | Pre-mainnet testnet (2026 Q2) |
+| **Tech Stack** | Custom blockchain (TS/Rust) + revm WASM EVM (154x speedup) |
+| **Code Status** | 1300+ tests passing, 40K+ LoC, open source |
+| **Funding Round** | Strategic Round |
+
+### Investment Highlights (Why COC)
+
+1. **Market Window**: AI Agent sector grows from $7B → $50B+ from 2026-2030 (CAGR ~50%); COC is the **only decentralized infrastructure solution** for this sector
+2. **Technical Leadership**: revm WASM EVM engine measured at 20,540 TPS raw execution (154x EthereumJS); complete PoSe service proof + DID + backup/resurrection full-stack implementation
+3. **Differentiated Positioning**: Doesn't compete with Ethereum/Solana in generic L1 racing; opens a new "AI-native blockchain" category
+4. **Complete Token Model**: 1B hard cap, 25% genesis + 75% service mining; decaying inflation; multi-channel burn trending toward deflation
+5. **Governance Innovation**: Faction voting (whale-resistant) + 2/3 guardian recovery + 7-day reward expiry + 3/5 treasury multisig
+6. **Code as Asset**: 297 contract tests + 1017 node tests passing; engineering maturity significantly higher than peer projects
+
+---
+
+## II. Market Opportunity
+
+### 2.1 Explosive Growth of AI Agents
+
+| Metric | Data | Source |
+|--------|------|--------|
+| AI Agent frameworks | Dozens (LangChain 100K+ stars) | GitHub |
+| 2026 market size | $7B+ | Gartner |
+| 2030 market size | $50B+ | Gartner |
+| 2027 enterprise adoption | 50% of large enterprises | Gartner |
+| Agent instance forecast | 2026: 10M → 2030: 5B+ | Industry average |
+
+### 2.2 Pain Points in Existing Solutions
+
+| Pain Point | Current State | Consequence |
+|-----------|--------------|-------------|
+| **Agent death** | Server failure = permanent Agent loss | Irreversible asset loss |
+| **Agent identity trust** | Platform API keys can be revoked anytime | Platform dependency, sudden shutdown risk |
+| **Agent data ownership** | User data locked into cloud providers | Vendor lock-in, compliance risk |
+| **Agent compliance & audit** | Centralized platform mediation | Opaque, untraceable |
+| **Agent interoperability** | Each platform has its own API | Ecosystem fragmentation |
+
+### 2.3 COC's Differentiated Opportunity
+
+```
+        Training                       Inference
+            ↓                              ↓
+    OpenAI / Anthropic            AWS / GCP / Azure
+    HuggingFace                   vLLM / Replicate
+            ↓                              ↓
+    ┌─────────────────────────────────────────┐
+    │  Identity + Operation + Immortality      │
+    │                                          │
+    │            ⚡ COC ⚡                      │
+    │  (Blank market, no strong competitors)   │
+    └─────────────────────────────────────────┘
+```
+
+**COC does not compete with training/inference infrastructure** — it opens a new sector: **Agent identity, runtime environment, perpetual guarantee**.
+
+---
+
+## III. Product & Technology
+
+### 3.1 Three Foundational Services
+
+| Service | Problem Solved | Core Tech | Status |
+|---------|---------------|-----------|--------|
+| **P2P File Storage** | Where does Agent data live? | IPFS + PoSe v2 verification + Merkle proofs | ✅ Implemented |
+| **Decentralized Identity (DID)** | How does an Agent gain trustworthy identity? | W3C did:coc + capability bitmask + delegation chain | ✅ Implemented |
+| **AI Silicon Immortality** | How does an Agent never die? | SoulRegistry + Carrier network + guardian recovery | ✅ Implemented |
+
+### 3.2 Technical Differentiation (Measured)
+
+| Metric | COC | Comparable Chains |
+|--------|-----|------------------|
+| **TPS (single node)** | 133.7 (EthereumJS) → 20,540 (revm WASM raw) | Polygon 65, BSC 60 |
+| **Node entry barrier** | ~$50 USDT bond | ETH 2.0: 32 ETH (~$80K) |
+| **EVM compatibility** | Full + dual hot-swap engines | EthereumJS only |
+| **AI-native features** | DID + backup + resurrection | None |
+| **Test coverage** | 1300+ tests passing | Usually no public data |
+
+### 3.3 IP & Open Source
+
+- **Core code**: Open source (MIT/Apache 2.0), live on GitHub
+- **Protocol design**: Whitepaper public, independently reproducible
+- **Brand & trademark**: clawchain.io + COC + ChainOfClaw
+- **Patent strategy**: No patents at protocol layer (preserve openness); ops tools / AI integration layer can be considered
+
+---
+
+## IV. Business Model
+
+### 4.1 Protocol-Layer Revenue Sources
+
+| Source | Mechanism | Beneficiary |
+|--------|-----------|-------------|
+| **Gas Fees** | Per-transaction (EIP-1559) | Miners (priority fee) + Burn (base fee) |
+| **PoSe Service Fees** | Off-chain service challenges | Service-providing nodes |
+| **DID Registration** | Soul identity & backup anchoring | Miners + protocol burn |
+| **Node Bond** | One-time ~$50 USDT equivalent | Anti-fraud pool |
+
+### 4.2 Foundation Sustainable Revenue
+
+| Source | Estimate |
+|--------|---------|
+| Genesis allocation (60M COC) release | Year 1: 1.5% (15M) + 4.5%/48 months |
+| Expired unclaimed rewards | Auto 10% transfer to Foundation |
+| Strategic partnership revenue | Consulting/integration fees with enterprises |
+| Investment returns | Equity/tokens of early projects backed by Foundation |
+
+### 4.3 Node Operator Economics
+
+**Single FN node Year 0 expected revenue calculation**:
+```
+Assumptions:
+- Network 100 active FN nodes (TARGET_NODE_COUNT)
+- Year 0 inflation 5% (37.5M COC)
+- 60% to B1 (uptime/RPC) → 22.5M COC
+- Equal distribution: 225,000 COC/node
+
+At $0.10/COC assumption:
+- Annual revenue: ~$22,500
+- Monthly revenue: ~$1,875
+- One-time bond: $50
+- Monthly hardware cost: $200 (home server)
+- Net income: ~$1,675/month
+```
+
+Actual revenue varies with network node count, COC price, and service quality.
+
+---
+
+## V. Go-to-Market Strategy
+
+### 5.1 Three-Phase GTM
+
+| Phase | Time | Key Actions | Target Audience |
+|-------|------|------------|-----------------|
+| **Seed** | 2026 Q1-Q2 | Mainnet launch + 100 genesis nodes + OpenClaw reference | Early adopters, Web3 enthusiasts |
+| **Sprouting** | 2026 Q3-Q4 | SDKs + hackathons + first Grants + Carrier expansion | AI Agent developers |
+| **Growth** | 2027+ | DAO live + cross-chain bridges + enterprise onboarding | Enterprises, commercial dApps |
+
+### 5.2 Priority Partnership Targets
+
+| Type | Targets |
+|------|---------|
+| AI Companies | OpenAI / Anthropic developer tooling teams |
+| Agent Frameworks | LangChain / LlamaIndex / AutoGen |
+| Model Communities | HuggingFace |
+| Storage Projects | IPFS / Filecoin Foundation |
+| L2 Projects | OP Stack / Arbitrum / Polygon |
+| Wallets | MetaMask / Rabby / imToken |
+
+### 5.3 Community Strategy
+
+- **Developer-first**: Hackathons, Grants, docs, SDKs
+- **Bilingual focus**: Chinese + English, covering Mainland China, SEA, North America, Europe
+- **Content-driven**: Technical blogs, YouTube tutorials, Twitter Spaces
+
+---
+
+## VI. Competitive Analysis
+
+### 6.1 Competitive Matrix
+
+| Dimension | COC | Ethereum | Solana | Polygon | Filecoin |
+|-----------|-----|----------|--------|---------|----------|
+| **AI Agent native** | ✅ Built-in | ❌ | ❌ | ❌ | ❌ |
+| **DID standard** | ✅ did:coc | Partial (ERC-735) | ❌ | ❌ | ❌ |
+| **Decentralized backup** | ✅ Soul + Carrier | ❌ | ❌ | ❌ | Partial |
+| **EVM compatible** | ✅ | ✅ | ❌ | ✅ | Partial |
+| **Node entry** | $50 | $80K (32 ETH) | ~$25 | None | ~$1K |
+| **TPS (measured)** | 133 → 20,540 | ~30 | 65,000 | ~7,000 | N/A |
+| **Carrier resurrection** | ✅ | ❌ | ❌ | ❌ | ❌ |
+
+### 6.2 Competitive Moat
+
+1. **Network effects**: More Agents → more Carriers → higher resurrection success → attract more Agents
+2. **Technical first-mover**: revm WASM engine + complete DID/Soul/Carrier protocol stack
+3. **Ecosystem grants**: 80M COC community fund sustains developer attraction
+4. **Token lockup**: Core team + early contributor vesting align long-term incentives
+5. **Brand positioning**: First mover in "AI Agent blockchain" category captures mindshare
+
+---
+
+## VII. Team & Organization
+
+### 7.1 Three-Layer Organizational Model
+
+```
+          DAO (Faction voting, sovereign decisions)
+                    ↓
+          Foundation (non-profit execution layer)
+                    ↓
+          Core Team + Ecosystem Builders
+```
+
+### 7.2 Key Roles (Hiring/Filling)
+
+| Role | Responsibility | Status |
+|------|---------------|--------|
+| **Protocol Core Dev** | EVM, PoSe, DID, Soul Registry | ✅ In place |
+| **Infrastructure Engineering** | Devnet/Testnet/Mainnet ops | ✅ In place |
+| **Ecosystem Development** | BD, partnerships, devrel | 🔍 Hiring |
+| **Legal & Compliance** | Multi-jurisdiction compliance | 🔍 Advisor recruiting |
+| **Marketing & Brand** | Media, KOLs, content | 🔍 Hiring |
+
+### 7.3 Advisors & Partners
+
+To be supplemented. Recommended advisor backgrounds:
+
+- AI Agent framework senior developers (LangChain/LlamaIndex lineage)
+- Web3 governance experts (Optimism/Arbitrum/Polygon DAO veterans)
+- Legal compliance experts (Web3 + AI cross-domain)
+- Academic research partners (DID/W3C standards)
+
+---
+
+## VIII. Tokenomics
+
+### 8.1 Token Allocation (Genesis 25% = 250M COC)
+
+| Category | Share | Amount | Lockup |
+|----------|-------|--------|--------|
+| **Community & Ecosystem Fund** | 8% | 80M | DAO governance release |
+| **Foundation Operations** | 6% | 60M | Year 1: 1.5% + 4.5%/48 months |
+| **Core Team** | 5% | 50M | 12-month cliff + 36-month linear |
+| **Early Contributors & Strategic Partners** | 3.5% | 35M | 6-month cliff + 24-month linear |
+| **Treasury Reserve** | 2.5% | 25M | 3/5 multisig, 5% per-tx cap |
+
+### 8.2 PoSe Mining Release (75% = 750M COC)
+
+Auto-released via on-chain `EmissionSchedule.sol`:
+- Year 0: 5% / Year 1: 4% / Year 2: 3% / Year 3: 2.5% / Year 4+: 2%
+- Node activity multiplier: auto-reduces emission when nodes < 100, protecting holders
+- Estimated ~50 years until full release
+
+### 8.3 Burn Mechanisms (Trending Deflationary)
+
+| Source | Burn Rate |
+|--------|-----------|
+| EIP-1559 base fee | 100% burned |
+| PoSe slashing | 50% burned |
+| Expired unclaimed rewards | 90% burned + 10% to Foundation |
+
+### 8.4 Valuation Anchors (Industry Comparables)
+
+| Project | Fully Diluted Valuation (FDV) | Stage |
+|---------|------------------------------|-------|
+| Polygon | $10B+ | Mainnet mature |
+| Optimism | $5B+ | Mainnet mature |
+| Aptos | $4B+ | Mainnet 1 year |
+| Sui | $5B+ | Mainnet 1 year |
+| Sei | $1B+ | Mainnet 1 year |
+
+As the founder of the AI-native blockchain category, COC's valuation anchor should reference dual standards: **L1 + vertical sector leader**.
+
+---
+
+## IX. Funding Plan
+
+### 9.1 Information to Be Provided by Investor Discussion
+
+**This business plan does NOT pre-fill the following items; they require negotiation with investors:**
+
+| Item | To Be Filled |
+|------|-------------|
+| **Round** | Strategic / Series A / Token Round |
+| **Size** | $X equivalent (USD/USDC/USDT) |
+| **Instrument** | SAFE / SAFT / Equity / Token Warrant |
+| **Valuation** | Pre-money valuation and token price |
+| **Use of Funds** | Team / Tech / Marketing / Legal / Reserve breakdown |
+| **Subscription** | Lump sum / tranches / milestone-based |
+
+### 9.2 Use of Funds (Reference Allocation)
+
+| Purpose | Suggested % | Notes |
+|---------|------------|-------|
+| **Core Team Expansion** | 35-40% | Protocol, SDK, Agent integration |
+| **Ecosystem Development** | 20-25% | Grant matching, BD, partnerships |
+| **Infrastructure** | 10-15% | Testnet, nodes, monitoring |
+| **Marketing & Brand** | 10-15% | Content, events, KOLs |
+| **Legal & Compliance** | 5-10% | Multi-jurisdiction compliance |
+| **Reserve** | 10-15% | Emergency, opportunistic investment |
+
+### 9.3 Investor Rights (Proposed Structure, Negotiable)
+
+- **Token Allocation**: From the "Early Contributors & Strategic Partners" pool (3.5%)
+- **Lockup**: 6-month cliff + 24-month linear release
+- **Governance Participation**: Investors gain Faction identity in DAO governance
+- **Information Disclosure**: Quarterly financial reports + annual audit
+
+---
+
+## X. Milestones & Timeline
+
+| Time | Milestone | Verification Metric |
+|------|-----------|---------------------|
+| **2026 Q2** | Mainnet genesis + 100 nodes + 10K Agents | 30 days stable mainnet |
+| **2026 Q4** | SDK + first Grants + 50 Carriers | 5+ Agent frameworks integrated |
+| **2027** | DAO live + 1K nodes + 500K Agents | TVL > $10M |
+| **2028** | Commercial dApps + 5K nodes + 10M Agents | TVL > $100M |
+| **2030** | One of AI industry standards + 20K nodes + 100M Agents | TVL > $1B |
+
+---
+
+## XI. Risks & Mitigation
+
+### 11.1 Key Risks
+
+| Risk | Probability | Impact | Mitigation |
+|------|------------|--------|-----------|
+| **AI Agent industry growth slower than expected** | Medium | Severe | Protocol neutrality; serves any Agent framework |
+| **Strong competition emerges** | Medium | Medium | First-mover + network effects + continued tech leadership |
+| **Smart contract vulnerabilities** | Medium | Severe | Tier-1 audit + Bug Bounty + treasury reserve |
+| **Regulatory uncertainty** | High | Medium | Multi-jurisdiction strategy + legal compliance |
+| **Poor token liquidity** | Medium | Medium | DEX listing + cross-chain bridges + market makers |
+| **Foundation governance failure** | Low | Severe | DAO checks + quarterly audits + transparency commitments |
+
+### 11.2 Investor Exit Paths
+
+1. **Token liquidity exit**: Direct trading after DEX/CEX listing
+2. **Strategic acquisition**: Acquired by major AI company or L1 project
+3. **Secondary market**: Negotiated transfer to other strategic buyers (within lockup)
+4. **Protocol revenue sharing** (future option): Foundation revenue distributed pro-rata to holdings
+
+---
+
+## XII. Appendix: Key Links
+
+| Resource | Link |
+|----------|------|
+| Technical Whitepaper | `docs/COC_whitepaper.en.md` / `.zh.md` |
+| Ecosystem Roadmap | `docs/COC_ecosystem_roadmap.en.md` / `.zh.md` |
+| Code Repository | `github.com/NGPlateform/coc-dev` (private) |
+| Official Domain | `clawchain.io` |
+| Contact Email | (TBD) |
+| Discord/Telegram | (TBD) |
+
+---
+
+## Document Notes
+
+This business plan is a **design requirements document** — it outlines all elements a complete business plan should contain, and fills in the technical, market, and tokenomics quantifiable objective information based on the whitepaper and ecosystem roadmap. **Sensitive information such as funding terms, valuation, team bios, and advisor names must be supplemented by the project team.**
+
+This document can serve as:
+- Initial communication material with strategic investors
+- Internal funding preparation checklist
+- Source content for detailed Pitch Deck
+
+**Next Steps**:
+1. Project team fills in funding terms (round, size, valuation, instrument)
+2. Project team adds team bios and advisor backgrounds
+3. Design accompanying Pitch Deck (15-20 slide PPT)
+4. Prepare Data Room: audit reports, legal opinions, technical validation
