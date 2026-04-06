@@ -158,9 +158,10 @@ describe("Gas Benchmarks: Treasury", function () {
   let treasury
 
   beforeEach(async function () {
-    const [owner] = await ethers.getSigners()
+    const signers = await ethers.getSigners()
+    const signerAddrs = signers.slice(0, 5).map(s => s.address)
     const Treasury = await ethers.getContractFactory("Treasury")
-    treasury = await Treasury.deploy(owner.address)
+    treasury = await Treasury.deploy(signerAddrs, signers[0].address)
     await treasury.waitForDeployment()
   })
 
@@ -174,14 +175,20 @@ describe("Gas Benchmarks: Treasury", function () {
     expect(receipt.gasUsed).to.be.lessThan(50000n)
   })
 
-  it("withdraw gas < 60k", async function () {
-    const [owner] = await ethers.getSigners()
-    await owner.sendTransaction({
+  it("propose+confirm+execute gas reasonable", async function () {
+    const signers = await ethers.getSigners()
+    await signers[0].sendTransaction({
       to: await treasury.getAddress(),
       value: ethers.parseEther("1"),
     })
-    const tx = await treasury.withdraw(owner.address, ethers.parseEther("0.5"), 1)
+    // Propose (signer 0)
+    await treasury.connect(signers[0]).proposeWithdrawal(signers[0].address, ethers.parseEther("0.01"))
+    // Confirm (signers 1, 2)
+    await treasury.connect(signers[1]).confirmWithdrawal(0)
+    await treasury.connect(signers[2]).confirmWithdrawal(0)
+    // Execute
+    const tx = await treasury.connect(signers[0]).executeWithdrawal(0)
     const receipt = await tx.wait()
-    expect(receipt.gasUsed).to.be.lessThan(60000n)
+    expect(receipt.gasUsed).to.be.lessThan(100000n)
   })
 })

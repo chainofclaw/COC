@@ -18,9 +18,11 @@ describe("Governance Contracts", function () {
     governanceDAO = await GovernanceDAO.deploy(await factionRegistry.getAddress())
     await governanceDAO.waitForDeployment()
 
-    // Deploy Treasury
+    // Deploy Treasury (3/5 multisig)
     const Treasury = await ethers.getContractFactory("Treasury")
-    treasury = await Treasury.deploy(await governanceDAO.getAddress())
+    const signers5 = await ethers.getSigners()
+    const signerAddrs = signers5.slice(0, 5).map(s => s.address)
+    treasury = await Treasury.deploy(signerAddrs, await governanceDAO.getAddress())
     await treasury.waitForDeployment()
 
     // Set treasury in governance
@@ -182,43 +184,47 @@ describe("Governance Contracts", function () {
     })
   })
 
-  describe("Treasury", function () {
+  describe("Treasury (3/5 multisig)", function () {
     it("should receive deposits", async function () {
       await owner.sendTransaction({
         to: await treasury.getAddress(),
         value: ethers.parseEther("1.0"),
       })
-      expect(await treasury.balance()).to.equal(ethers.parseEther("1.0"))
+      expect(await treasury.getBalance()).to.equal(ethers.parseEther("1.0"))
     })
 
-    it("should allow governance to withdraw", async function () {
-      // Fund treasury
+    it("should allow 3/5 multisig withdrawal", async function () {
+      const signers = await ethers.getSigners()
       await owner.sendTransaction({
         to: await treasury.getAddress(),
         value: ethers.parseEther("1.0"),
       })
-
+      // Propose (signer 0)
+      await treasury.connect(signers[0]).proposeWithdrawal(human1.address, ethers.parseEther("0.01"))
+      // Confirm (signers 1, 2)
+      await treasury.connect(signers[1]).confirmWithdrawal(0)
+      await treasury.connect(signers[2]).confirmWithdrawal(0)
+      // Execute
       const balBefore = await ethers.provider.getBalance(human1.address)
-      await treasury.connect(owner).withdraw(human1.address, ethers.parseEther("0.5"), 1)
+      await treasury.connect(signers[0]).executeWithdrawal(0)
       const balAfter = await ethers.provider.getBalance(human1.address)
-
-      expect(balAfter - balBefore).to.equal(ethers.parseEther("0.5"))
+      expect(balAfter - balBefore).to.equal(ethers.parseEther("0.01"))
     })
 
-    it("should reject withdrawal from non-governance", async function () {
+    it("should reject proposal from non-signer", async function () {
       await owner.sendTransaction({
         to: await treasury.getAddress(),
         value: ethers.parseEther("1.0"),
       })
-
+      const nonSigner = (await ethers.getSigners())[9]
       await expect(
-        treasury.connect(human1).withdraw(human1.address, ethers.parseEther("0.5"), 1)
-      ).to.be.revertedWithCustomError(treasury, "NotGovernance")
+        treasury.connect(nonSigner).proposeWithdrawal(human1.address, ethers.parseEther("0.5"))
+      ).to.be.revertedWithCustomError(treasury, "NotSigner")
     })
 
-    it("should reject withdrawal exceeding balance", async function () {
+    it("should reject proposal exceeding balance", async function () {
       await expect(
-        treasury.connect(owner).withdraw(human1.address, ethers.parseEther("1.0"), 1)
+        treasury.connect(owner).proposeWithdrawal(human1.address, ethers.parseEther("1.0"))
       ).to.be.revertedWithCustomError(treasury, "InsufficientBalance")
     })
   })
