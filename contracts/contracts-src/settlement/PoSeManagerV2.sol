@@ -48,8 +48,16 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
     ICOCToken public cocToken;
     uint64 public genesisEpoch;          // First epoch (for year calculation)
     bool public emissionEnabled;
+    address public foundationAddress;    // Receives 10% of expired unclaimed rewards
+
+    // --- Reward expiry ---
+    uint256 public constant REWARD_CLAIM_WINDOW = 7 days;
+    uint16 public constant EXPIRED_FOUNDATION_BPS = 1000;   // 10% to foundation
+    mapping(uint64 => uint256) public epochFinalizedAt;      // epochId → block.timestamp
+    mapping(uint64 => bool) public epochSwept;               // epochId → swept flag
 
     event EmissionMinted(uint64 indexed epochId, uint256 amount);
+    event ExpiredRewardsSwept(uint64 indexed epochId, uint256 toFoundation, uint256 burned);
 
     // Active node tracking for witness set selection
     bytes32[] internal _activeNodeIds;
@@ -96,6 +104,11 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
         cocToken = ICOCToken(token);
         genesisEpoch = _genesisEpoch;
         emissionEnabled = true;
+    }
+
+    function setFoundationAddress(address _foundation) external onlyOwner {
+        require(_foundation != address(0), "zero foundation address");
+        foundationAddress = _foundation;
     }
 
     // --- Node registration (reuse v1 logic, extended with active node tracking) ---
@@ -429,6 +442,7 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
         epochSlashTotal[epochId] = slashTotal;
         epochTreasuryDelta[epochId] = treasuryDelta;
         epochFinalized[epochId] = true;
+        epochFinalizedAt[epochId] = block.timestamp;
 
         // --- PoSe Mining Emission: mint new tokens into reward pool ---
         if (emissionEnabled && address(cocToken) != address(0)) {
@@ -466,6 +480,7 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
         if (!epochFinalized[epochId]) revert InvalidBatch();
         if (amount == 0) revert InvalidBatch();
         if (rewardClaimed[epochId][nodeId]) revert AlreadyClaimed();
+        require(block.timestamp <= epochFinalizedAt[epochId] + REWARD_CLAIM_WINDOW, "claim window expired");
 
         // Compute reward leaf hash: keccak256(abi.encodePacked(epochId, nodeId, amount))
         bytes32 leaf = keccak256(abi.encodePacked(epochId, nodeId, amount));
@@ -496,6 +511,41 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
         if (msg.value == 0) revert InsufficientBond();
         insuranceBalance += msg.value;
         emit InsuranceDeposited(msg.sender, msg.value);
+    }
+
+    /**
+     * @notice Sweep unclaimed rewards after the 7-day claim window.
+     *         10% goes to Foundation, 90% is burned via COCToken.burn().
+     *         Can be called by anyone after the claim window expires.
+     */
+    function sweepExpiredRewards(uint64 epochId) external {
+        require(epochFinalized[epochId], "epoch not finalized");
+        require(!epochSwept[epochId], "already swept");
+        require(block.timestamp > epochFinalizedAt[epochId] + REWARD_CLAIM_WINDOW, "claim window active");
+
+        uint256 total = epochTotalReward[epochId];
+        uint256 claimed = epochClaimedReward[epochId];
+        uint256 unclaimed = total > claimed ? total - claimed : 0;
+
+        epochSwept[epochId] = true;
+
+        if (unclaimed == 0) return;
+
+        uint256 toFoundation = (unclaimed * EXPIRED_FOUNDATION_BPS) / BPS_DENOMINATOR;
+        uint256 toBurn = unclaimed - toFoundation;
+
+        // Transfer 10% to Foundation
+        if (toFoundation > 0 && foundationAddress != address(0)) {
+            (bool ok,) = payable(foundationAddress).call{value: toFoundation}("");
+            require(ok, "foundation transfer failed");
+        }
+
+        // Burn 90% via COCToken (if emission enabled and token set)
+        if (toBurn > 0 && emissionEnabled && address(cocToken) != address(0)) {
+            cocToken.burn(toBurn);
+        }
+
+        emit ExpiredRewardsSwept(epochId, toFoundation, toBurn);
     }
 
     // --- Witness set computation ---

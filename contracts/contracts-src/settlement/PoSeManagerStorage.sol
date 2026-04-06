@@ -8,7 +8,7 @@ abstract contract PoSeManagerStorage {
     uint64 public constant DISPUTE_WINDOW_EPOCHS = 2;
     uint64 public constant UNBOND_DELAY_EPOCHS = 7 * 24; // 7 days in hours
     bytes32 public constant SLASHER_ROLE = keccak256("SLASHER_ROLE");
-    uint256 public constant MIN_BOND = 0.1 ether;
+    uint256 public constant MIN_BOND = 0.02 ether; // ~50 USDT equivalent
     uint8 public constant MAX_NODES_PER_OPERATOR = 5;
 
     address public owner;

@@ -454,7 +454,7 @@ describe("PoSeManager: Extended Coverage", function () {
       const balAfter = await ethers.provider.getBalance(operator.address)
 
       // Should receive back the bond minus gas
-      expect(balAfter + gasUsed - balBefore).to.equal(ethers.parseEther("0.1"))
+      expect(balAfter + gasUsed - balBefore).to.equal(ethers.parseEther("0.02"))
     })
 
     it("cannot withdraw without unbond request", async function () {
@@ -610,9 +610,9 @@ describe("PoSeManager: Extended Coverage", function () {
       const maxNodes = await manager.MAX_NODES_PER_OPERATOR()
       expect(maxNodes).to.equal(5)
 
-      // Verify progressive bond calculation: 0.1, 0.2, 0.4, 0.8, 1.6 ETH
+      // Verify progressive bond calculation: 0.02, 0.04, 0.08, 0.16, 0.32 ETH
       const [, user1] = await ethers.getSigners()
-      expect(await manager.requiredBond(user1.address)).to.equal(ethers.parseEther("0.1"))
+      expect(await manager.requiredBond(user1.address)).to.equal(ethers.parseEther("0.02"))
     })
 
     it("reverts with duplicate endpoint commitment", async function () {
@@ -749,8 +749,8 @@ describe("PoSeManager: Extended Coverage", function () {
 
     it("requiredBond returns progressive amounts", async function () {
       const [, user1] = await ethers.getSigners()
-      // First node: 0.1 ETH
-      expect(await manager.requiredBond(user1.address)).to.equal(ethers.parseEther("0.1"))
+      // First node: 0.02 ETH
+      expect(await manager.requiredBond(user1.address)).to.equal(ethers.parseEther("0.02"))
     })
   })
 

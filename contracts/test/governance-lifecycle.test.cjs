@@ -32,7 +32,9 @@ describe("Governance Lifecycle: Prowl Testnet Proposals", function () {
     await dao.waitForDeployment()
 
     const Treasury = await ethers.getContractFactory("Treasury")
-    treasury = await Treasury.deploy(await dao.getAddress())
+    const signers5 = await ethers.getSigners()
+    const signerAddrs = signers5.slice(0, 5).map(s => s.address)
+    treasury = await Treasury.deploy(signerAddrs, await dao.getAddress())
     await treasury.waitForDeployment()
     await dao.setTreasury(await treasury.getAddress())
 
