@@ -22,12 +22,22 @@ function createConfig(dataDir: string): CocBackupConfig {
     encryptionPassword: undefined,
     maxIncrementalChain: 10,
     backupOnSessionEnd: true,
+    carrier: {
+      enabled: false,
+      workDir: "/tmp/coc-resurrections",
+      watchedAgents: [],
+      pendingRequestIds: [],
+      pollIntervalMs: 60_000,
+      readinessTimeoutMs: 86_400_000,
+      readinessPollMs: 30_000,
+    },
     categories: {
       identity: true,
       config: true,
       memory: true,
       chat: true,
       workspace: true,
+      database: true,
     },
   }
 }

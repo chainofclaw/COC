@@ -7,6 +7,8 @@ import type { CocBackupConfig } from "../config-schema.ts"
 import type { SoulClient } from "../soul-client.ts"
 import type { IpfsClient } from "../ipfs-client.ts"
 import type { BackupScheduler } from "../backup/scheduler.ts"
+import type { CarrierDaemon } from "../carrier/carrier-daemon.ts"
+import type { DIDClient } from "../did-client.ts"
 import type { DoctorReport } from "../types.ts"
 import { restoreFromManifestCid } from "../recovery/state-restorer.ts"
 import { buildDoctorReport, resolveRestorePlan, runInitFlow } from "../lifecycle.ts"
@@ -167,6 +169,8 @@ export function registerBackupCommands(
   ipfs: IpfsClient,
   scheduler: BackupScheduler,
   logger: Logger,
+  getDaemon?: () => CarrierDaemon | null,
+  didClient?: DIDClient,
 ): void {
   const cmd = program.command("coc-backup").description("COC soul backup and recovery")
 
@@ -562,4 +566,487 @@ export function registerBackupCommands(
     .action(async () => {
       console.log("Carrier list requires an on-chain indexer (not yet implemented)")
     })
+
+  carrierCmd
+    .command("submit-request")
+    .description("Submit a pending resurrection request to the local carrier daemon")
+    .requiredOption("--request-id <id>", "Resurrection request ID (bytes32)")
+    .requiredOption("--agent-id <id>", "Agent ID (bytes32)")
+    .action(async (opts) => {
+      const daemon = getDaemon?.()
+      if (!daemon) {
+        logger.error("Carrier daemon is not running. Enable carrier mode in plugin config (carrier.enabled = true).")
+        process.exit(1)
+      }
+      const result = daemon.addRequest(opts.requestId, opts.agentId)
+      if (!result.accepted) {
+        logger.error(`Request rejected: ${result.reason}`)
+        process.exit(1)
+      }
+      console.log(`Request accepted by carrier daemon:`)
+      console.log(`  Request ID: ${opts.requestId}`)
+      console.log(`  Agent ID:   ${opts.agentId}`)
+    })
+
+  // Guardian commands (separate from carrier commands)
+  const guardianCmd = cmd.command("guardian").description("Guardian-side resurrection operations")
+
+  guardianCmd
+    .command("initiate")
+    .description("Guardian: initiate resurrection for an offline agent")
+    .requiredOption("--agent-id <id>", "Agent ID (bytes32)")
+    .requiredOption("--carrier-id <id>", "Target carrier ID (bytes32)")
+    .action(async (opts) => {
+      try {
+        const result = await soul.initiateGuardianResurrection(opts.agentId, opts.carrierId)
+        console.log("Guardian resurrection initiated!")
+        console.log(`  Request ID: ${result.requestId}`)
+        console.log(`  TX Hash:    ${result.txHash}`)
+        console.log(`\nNext: other guardians should run 'coc-backup guardian approve --request-id ${result.requestId}'`)
+      } catch (error) {
+        logger.error(`Guardian initiation failed: ${String(error)}`)
+        process.exit(1)
+      }
+    })
+
+  guardianCmd
+    .command("approve")
+    .description("Guardian: approve a pending resurrection request")
+    .requiredOption("--request-id <id>", "Resurrection request ID (bytes32)")
+    .action(async (opts) => {
+      try {
+        const txHash = await soul.approveResurrection(opts.requestId)
+        console.log("Resurrection approved!")
+        console.log(`  Request ID: ${opts.requestId}`)
+        console.log(`  TX Hash:    ${txHash}`)
+      } catch (error) {
+        logger.error(`Guardian approval failed: ${String(error)}`)
+        process.exit(1)
+      }
+    })
+
+  guardianCmd
+    .command("status")
+    .description("Check readiness of a resurrection request")
+    .requiredOption("--request-id <id>", "Resurrection request ID (bytes32)")
+    .action(async (opts) => {
+      try {
+        const readiness = await soul.getResurrectionReadiness(opts.requestId)
+        console.log(`Request: ${opts.requestId}`)
+        console.log(`  Exists:     ${readiness.exists}`)
+        console.log(`  Trigger:    ${readiness.trigger}`)
+        console.log(`  Approvals:  ${readiness.approvalCount}/${readiness.approvalThreshold}`)
+        console.log(`  Carrier OK: ${readiness.carrierConfirmed}`)
+        console.log(`  Offline:    ${readiness.offlineNow}`)
+        console.log(`  Can Complete: ${readiness.canComplete}`)
+      } catch (error) {
+        logger.error(`Status check failed: ${String(error)}`)
+        process.exit(1)
+      }
+    })
+
+  // Guardian management subcommands
+  guardianCmd
+    .command("add")
+    .description("Add a guardian to the agent's soul")
+    .option("--agent-id <id>", "Agent ID (bytes32). Defaults to wallet's agent.")
+    .requiredOption("--guardian <address>", "Guardian Ethereum address")
+    .action(async (opts) => {
+      try {
+        const agentId = opts.agentId ?? await soul.getAgentIdForOwner()
+        const txHash = await soul.addGuardian(agentId, opts.guardian)
+        console.log(`Guardian added!`)
+        console.log(`  Agent:    ${agentId}`)
+        console.log(`  Guardian: ${opts.guardian}`)
+        console.log(`  TX Hash:  ${txHash}`)
+      } catch (error) {
+        logger.error(`Add guardian failed: ${String(error)}`)
+        process.exit(1)
+      }
+    })
+
+  guardianCmd
+    .command("remove")
+    .description("Remove a guardian from the agent's soul")
+    .option("--agent-id <id>", "Agent ID (bytes32). Defaults to wallet's agent.")
+    .requiredOption("--guardian <address>", "Guardian Ethereum address")
+    .action(async (opts) => {
+      try {
+        const agentId = opts.agentId ?? await soul.getAgentIdForOwner()
+        const txHash = await soul.removeGuardian(agentId, opts.guardian)
+        console.log(`Guardian removed!`)
+        console.log(`  Agent:    ${agentId}`)
+        console.log(`  Guardian: ${opts.guardian}`)
+        console.log(`  TX Hash:  ${txHash}`)
+      } catch (error) {
+        logger.error(`Remove guardian failed: ${String(error)}`)
+        process.exit(1)
+      }
+    })
+
+  guardianCmd
+    .command("list")
+    .description("List guardians for an agent")
+    .option("--agent-id <id>", "Agent ID (bytes32). Defaults to wallet's agent.")
+    .action(async (opts) => {
+      try {
+        const agentId = opts.agentId ?? await soul.getAgentIdForOwner()
+        const { guardians, activeCount } = await soul.listGuardians(agentId)
+        console.log(`Guardians for ${agentId} (${activeCount} active):`)
+        for (const g of guardians) {
+          const status = g.active ? "ACTIVE" : "INACTIVE"
+          console.log(`  ${g.guardian} [${status}] added ${new Date(g.addedAt * 1000).toISOString()}`)
+        }
+      } catch (error) {
+        logger.error(`List guardians failed: ${String(error)}`)
+        process.exit(1)
+      }
+    })
+
+  // Social recovery subcommands
+  const recoveryCmd = cmd.command("recovery").description("Social recovery (guardian-initiated owner migration)")
+
+  recoveryCmd
+    .command("initiate")
+    .description("Guardian: initiate owner recovery for an agent")
+    .requiredOption("--agent-id <id>", "Agent ID (bytes32)")
+    .requiredOption("--new-owner <address>", "New owner Ethereum address")
+    .action(async (opts) => {
+      try {
+        const requestId = await soul.initiateRecovery(opts.agentId, opts.newOwner)
+        console.log("Recovery initiated!")
+        console.log(`  Request ID: ${requestId}`)
+        console.log(`  Agent:      ${opts.agentId}`)
+        console.log(`  New Owner:  ${opts.newOwner}`)
+        console.log(`\nNext: other guardians should run 'coc-backup recovery approve --request-id ${requestId}'`)
+      } catch (error) {
+        logger.error(`Recovery initiation failed: ${String(error)}`)
+        process.exit(1)
+      }
+    })
+
+  recoveryCmd
+    .command("approve")
+    .description("Guardian: approve a pending recovery request")
+    .requiredOption("--request-id <id>", "Recovery request ID (bytes32)")
+    .action(async (opts) => {
+      try {
+        const txHash = await soul.approveRecovery(opts.requestId)
+        console.log(`Recovery approved!`)
+        console.log(`  Request ID: ${opts.requestId}`)
+        console.log(`  TX Hash:    ${txHash}`)
+      } catch (error) {
+        logger.error(`Recovery approval failed: ${String(error)}`)
+        process.exit(1)
+      }
+    })
+
+  recoveryCmd
+    .command("complete")
+    .description("Complete a recovery after quorum + timelock satisfied")
+    .requiredOption("--request-id <id>", "Recovery request ID (bytes32)")
+    .action(async (opts) => {
+      try {
+        const txHash = await soul.completeRecovery(opts.requestId)
+        console.log(`Recovery completed! Ownership transferred.`)
+        console.log(`  Request ID: ${opts.requestId}`)
+        console.log(`  TX Hash:    ${txHash}`)
+      } catch (error) {
+        logger.error(`Recovery completion failed: ${String(error)}`)
+        process.exit(1)
+      }
+    })
+
+  recoveryCmd
+    .command("cancel")
+    .description("Owner: cancel a pending recovery request")
+    .requiredOption("--request-id <id>", "Recovery request ID (bytes32)")
+    .action(async (opts) => {
+      try {
+        const txHash = await soul.cancelRecovery(opts.requestId)
+        console.log(`Recovery cancelled.`)
+        console.log(`  Request ID: ${opts.requestId}`)
+        console.log(`  TX Hash:    ${txHash}`)
+      } catch (error) {
+        logger.error(`Recovery cancel failed: ${String(error)}`)
+        process.exit(1)
+      }
+    })
+
+  recoveryCmd
+    .command("status")
+    .description("Check status of a recovery request")
+    .requiredOption("--request-id <id>", "Recovery request ID (bytes32)")
+    .action(async (opts) => {
+      try {
+        const req = await soul.getRecoveryRequest(opts.requestId)
+        console.log(`Recovery Request: ${opts.requestId}`)
+        console.log(`  Agent:          ${req.agentId}`)
+        console.log(`  New Owner:      ${req.newOwner}`)
+        console.log(`  Initiator:      ${req.initiator}`)
+        console.log(`  Approvals:      ${req.approvalCount}/${Math.ceil(req.guardianSnapshot * 2 / 3)}`)
+        console.log(`  Executed:       ${req.executed}`)
+        console.log(`  Initiated At:   ${new Date(req.initiatedAt * 1000).toISOString()}`)
+      } catch (error) {
+        logger.error(`Recovery status failed: ${String(error)}`)
+        process.exit(1)
+      }
+    })
+
+  // DID management commands (requires DIDClient)
+  if (didClient) {
+    const didCmd = cmd.command("did").description("DID identity management (DIDRegistry operations)")
+
+    didCmd
+      .command("add-key")
+      .description("Add a verification method to the DID Document")
+      .requiredOption("--agent-id <id>", "Agent ID (bytes32)")
+      .requiredOption("--key-id <id>", "Key identifier (bytes32)")
+      .requiredOption("--key-address <addr>", "Key Ethereum address")
+      .requiredOption("--purpose <mask>", "Key purpose bitmask (1=auth, 2=assertion, 4=capInvoke, 8=capDelegate)")
+      .action(async (opts) => {
+        try {
+          const txHash = await didClient.addVerificationMethod(
+            opts.agentId, opts.keyId, opts.keyAddress, parseInt(opts.purpose),
+          )
+          console.log(`Verification method added!`)
+          console.log(`  Key ID:   ${opts.keyId}`)
+          console.log(`  TX Hash:  ${txHash}`)
+        } catch (error) {
+          logger.error(`Add key failed: ${String(error)}`)
+          process.exit(1)
+        }
+      })
+
+    didCmd
+      .command("revoke-key")
+      .description("Revoke a verification method")
+      .requiredOption("--agent-id <id>", "Agent ID (bytes32)")
+      .requiredOption("--key-id <id>", "Key identifier (bytes32)")
+      .action(async (opts) => {
+        try {
+          const txHash = await didClient.revokeVerificationMethod(opts.agentId, opts.keyId)
+          console.log(`Verification method revoked!`)
+          console.log(`  TX Hash: ${txHash}`)
+        } catch (error) {
+          logger.error(`Revoke key failed: ${String(error)}`)
+          process.exit(1)
+        }
+      })
+
+    didCmd
+      .command("delegate")
+      .description("Grant a delegation to another agent")
+      .requiredOption("--delegator <id>", "Delegator agent ID (bytes32)")
+      .requiredOption("--delegatee <id>", "Delegatee agent ID (bytes32)")
+      .requiredOption("--scope <hash>", "Scope hash (bytes32)")
+      .requiredOption("--expires <ts>", "Expiration unix timestamp")
+      .option("--parent <id>", "Parent delegation ID (bytes32)", "0x" + "0".repeat(64))
+      .option("--depth <n>", "Delegation depth (0-3)", "1")
+      .action(async (opts) => {
+        try {
+          const txHash = await didClient.grantDelegation(
+            opts.delegator, opts.delegatee, opts.parent,
+            opts.scope, parseInt(opts.expires), parseInt(opts.depth),
+          )
+          console.log(`Delegation granted!`)
+          console.log(`  TX Hash: ${txHash}`)
+        } catch (error) {
+          logger.error(`Delegate failed: ${String(error)}`)
+          process.exit(1)
+        }
+      })
+
+    didCmd
+      .command("revoke-delegation")
+      .description("Revoke a delegation")
+      .requiredOption("--delegation-id <id>", "Delegation ID (bytes32)")
+      .action(async (opts) => {
+        try {
+          const txHash = await didClient.revokeDelegation(opts.delegationId)
+          console.log(`Delegation revoked!`)
+          console.log(`  TX Hash: ${txHash}`)
+        } catch (error) {
+          logger.error(`Revoke delegation failed: ${String(error)}`)
+          process.exit(1)
+        }
+      })
+
+    didCmd
+      .command("keys")
+      .description("List active verification methods for an agent")
+      .requiredOption("--agent-id <id>", "Agent ID (bytes32)")
+      .action(async (opts) => {
+        try {
+          const methods = await didClient.getVerificationMethods(opts.agentId)
+          console.log(`Verification methods for ${opts.agentId}:`)
+          for (const vm of methods) {
+            console.log(`  ${vm.keyId} → ${vm.keyAddress} [purpose=${vm.keyPurpose}] ${vm.active ? "ACTIVE" : "REVOKED"}`)
+          }
+        } catch (error) {
+          logger.error(`List keys failed: ${String(error)}`)
+          process.exit(1)
+        }
+      })
+
+    didCmd
+      .command("delegations")
+      .description("List delegations for an agent")
+      .requiredOption("--agent-id <id>", "Agent ID (bytes32)")
+      .action(async (opts) => {
+        try {
+          const delegations = await didClient.getDelegations(opts.agentId)
+          console.log(`Delegations for ${opts.agentId}:`)
+          for (const d of delegations) {
+            const status = d.revoked ? "REVOKED" : "ACTIVE"
+            console.log(`  ${d.delegationId} → ${d.delegatee} [scope=${d.scopeHash.slice(0, 10)}...] ${status}`)
+          }
+        } catch (error) {
+          logger.error(`List delegations failed: ${String(error)}`)
+          process.exit(1)
+        }
+      })
+
+    didCmd
+      .command("update-doc")
+      .description("Update the DID document CID on-chain")
+      .requiredOption("--agent-id <id>", "Agent ID (bytes32)")
+      .requiredOption("--document-cid <hash>", "New document CID hash (bytes32)")
+      .action(async (opts) => {
+        try {
+          const txHash = await didClient.updateDIDDocument(opts.agentId, opts.documentCid)
+          console.log(`DID document updated!`)
+          console.log(`  TX Hash: ${txHash}`)
+        } catch (error) {
+          logger.error(`Update DID document failed: ${String(error)}`)
+          process.exit(1)
+        }
+      })
+
+    didCmd
+      .command("revoke-all-delegations")
+      .description("Emergency: revoke all delegations for an agent")
+      .requiredOption("--agent-id <id>", "Agent ID (bytes32)")
+      .action(async (opts) => {
+        try {
+          const txHash = await didClient.revokeAllDelegations(opts.agentId)
+          console.log(`All delegations revoked!`)
+          console.log(`  TX Hash: ${txHash}`)
+        } catch (error) {
+          logger.error(`Revoke all delegations failed: ${String(error)}`)
+          process.exit(1)
+        }
+      })
+
+    didCmd
+      .command("anchor-credential")
+      .description("Anchor a verifiable credential on-chain")
+      .requiredOption("--credential-hash <hash>", "Credential hash (bytes32)")
+      .requiredOption("--issuer <id>", "Issuer agent ID (bytes32)")
+      .requiredOption("--subject <id>", "Subject agent ID (bytes32)")
+      .requiredOption("--credential-cid <hash>", "Credential CID hash (bytes32)")
+      .requiredOption("--expires <ts>", "Expiration unix timestamp")
+      .action(async (opts) => {
+        try {
+          const txHash = await didClient.anchorCredential(
+            opts.credentialHash, opts.issuer, opts.subject,
+            opts.credentialCid, parseInt(opts.expires),
+          )
+          console.log(`Credential anchored!`)
+          console.log(`  TX Hash: ${txHash}`)
+        } catch (error) {
+          logger.error(`Anchor credential failed: ${String(error)}`)
+          process.exit(1)
+        }
+      })
+
+    didCmd
+      .command("revoke-credential")
+      .description("Revoke a verifiable credential")
+      .requiredOption("--credential-id <id>", "Credential ID (bytes32)")
+      .action(async (opts) => {
+        try {
+          const txHash = await didClient.revokeCredential(opts.credentialId)
+          console.log(`Credential revoked!`)
+          console.log(`  TX Hash: ${txHash}`)
+        } catch (error) {
+          logger.error(`Revoke credential failed: ${String(error)}`)
+          process.exit(1)
+        }
+      })
+
+    didCmd
+      .command("record-lineage")
+      .description("Record agent lineage (fork relationship)")
+      .requiredOption("--agent-id <id>", "Agent ID (bytes32)")
+      .requiredOption("--parent <id>", "Parent agent ID (bytes32)")
+      .requiredOption("--fork-height <n>", "Fork block height")
+      .requiredOption("--generation <n>", "Generation number")
+      .action(async (opts) => {
+        try {
+          const txHash = await didClient.recordLineage(
+            opts.agentId, opts.parent,
+            parseInt(opts.forkHeight), parseInt(opts.generation),
+          )
+          console.log(`Lineage recorded!`)
+          console.log(`  TX Hash: ${txHash}`)
+        } catch (error) {
+          logger.error(`Record lineage failed: ${String(error)}`)
+          process.exit(1)
+        }
+      })
+
+    didCmd
+      .command("update-capabilities")
+      .description("Update capability bitmask for an agent")
+      .requiredOption("--agent-id <id>", "Agent ID (bytes32)")
+      .requiredOption("--capabilities <mask>", "Capability bitmask (uint16)")
+      .action(async (opts) => {
+        try {
+          const txHash = await didClient.updateCapabilities(opts.agentId, parseInt(opts.capabilities))
+          console.log(`Capabilities updated!`)
+          console.log(`  TX Hash: ${txHash}`)
+        } catch (error) {
+          logger.error(`Update capabilities failed: ${String(error)}`)
+          process.exit(1)
+        }
+      })
+
+    didCmd
+      .command("create-ephemeral")
+      .description("Create an ephemeral sub-identity")
+      .requiredOption("--parent <id>", "Parent agent ID (bytes32)")
+      .requiredOption("--ephemeral-id <id>", "Ephemeral identity ID (bytes32)")
+      .requiredOption("--ephemeral-address <addr>", "Ephemeral address")
+      .requiredOption("--scope <hash>", "Scope hash (bytes32)")
+      .requiredOption("--expires <ts>", "Expiration unix timestamp")
+      .action(async (opts) => {
+        try {
+          const txHash = await didClient.createEphemeralIdentity(
+            opts.parent, opts.ephemeralId, opts.ephemeralAddress,
+            opts.scope, parseInt(opts.expires),
+          )
+          console.log(`Ephemeral identity created!`)
+          console.log(`  TX Hash: ${txHash}`)
+        } catch (error) {
+          logger.error(`Create ephemeral identity failed: ${String(error)}`)
+          process.exit(1)
+        }
+      })
+
+    didCmd
+      .command("deactivate-ephemeral")
+      .description("Deactivate an ephemeral sub-identity")
+      .requiredOption("--ephemeral-id <id>", "Ephemeral identity ID (bytes32)")
+      .action(async (opts) => {
+        try {
+          const txHash = await didClient.deactivateEphemeralIdentity(opts.ephemeralId)
+          console.log(`Ephemeral identity deactivated!`)
+          console.log(`  TX Hash: ${txHash}`)
+        } catch (error) {
+          logger.error(`Deactivate ephemeral failed: ${String(error)}`)
+          process.exit(1)
+        }
+      })
+  }
 }

@@ -4,6 +4,8 @@ import { readFile } from "node:fs/promises"
 import type { IpfsClient } from "../ipfs-client.ts"
 import { encrypt, sha256Hex } from "../crypto.ts"
 import type { FileState, ManifestFileEntry } from "../types.ts"
+import { snapshotBinaryFile } from "./binary-handler.ts"
+import type { BinarySnapshot } from "./binary-handler.ts"
 
 export interface UploadResult {
   entries: Record<string, ManifestFileEntry>
@@ -27,28 +29,39 @@ export async function uploadFiles(
   let fileCount = 0
 
   for (const file of files) {
-    let content = await readFile(file.absolutePath)
-    const hash = sha256Hex(content)
-    const originalSize = content.length
-
-    if (file.encrypted) {
-      const keyOrPassword = encryptionPassword ?? privateKey
-      const isPassword = encryptionPassword !== undefined
-      content = Buffer.from(encrypt(content, keyOrPassword, isPassword))
+    // For database files, create a consistent snapshot first
+    let snapshot: BinarySnapshot | null = null
+    let readPath = file.absolutePath
+    if (file.category === "database") {
+      snapshot = await snapshotBinaryFile(file.absolutePath, file.category)
+      readPath = snapshot.tempPath
     }
 
-    const cid = await ipfs.add(content)
+    try {
+      let content = await readFile(readPath)
+      const hash = sha256Hex(content)
 
-    entries[file.relativePath] = {
-      cid,
-      hash,
-      sizeBytes: content.length,
-      encrypted: file.encrypted,
-      category: file.category,
+      if (file.encrypted) {
+        const keyOrPassword = encryptionPassword ?? privateKey
+        const isPassword = encryptionPassword !== undefined
+        content = Buffer.from(encrypt(content, keyOrPassword, isPassword))
+      }
+
+      const cid = await ipfs.add(content)
+
+      entries[file.relativePath] = {
+        cid,
+        hash,
+        sizeBytes: content.length,
+        encrypted: file.encrypted,
+        category: file.category,
+      }
+
+      totalBytes += content.length
+      fileCount++
+    } finally {
+      if (snapshot) await snapshot.cleanup()
     }
-
-    totalBytes += content.length
-    fileCount++
   }
 
   return { entries, totalBytes, fileCount }

@@ -66,7 +66,8 @@ function constantTimeEqual(a: string, b: string): boolean {
   return equal && bufA.length === bufB.length
 }
 
-function jsonStringify(obj: unknown): string {
+/** JSON stringify that serializes bigint values as hex strings (EVM RPC convention). */
+export function jsonStringify(obj: unknown): string {
   return JSON.stringify(obj, (_key, value) =>
     typeof value === "bigint" ? `0x${value.toString(16)}` : value
   )
@@ -180,6 +181,15 @@ interface RpcRuntimeOptions {
   rewardManifestDir?: string
   getBftEquivocations?: (sinceMs: number) => Array<{ rawEvidence?: Record<string, unknown>; [key: string]: unknown }>
   getSyncProgress?: () => Promise<{ syncing: boolean; currentHeight: bigint; highestPeerHeight: bigint; startingHeight: bigint }>
+  didResolver?: { resolve: (did: string) => Promise<unknown> }
+  didDataProvider?: {
+    getCapabilities(id: string): Promise<number>
+    getFullDelegations(id: string): Promise<Array<Record<string, unknown>>>
+    getLineage?(id: string): Promise<unknown>
+    getVerificationMethods?(id: string): Promise<unknown[]>
+    getDIDDocumentUpdatedAt?(id: string): Promise<number>
+    getCredentialAnchor?(id: string): Promise<unknown>
+  }
 }
 
 export function startRpcServer(
@@ -300,6 +310,12 @@ export function startRpcServer(
         if (runtimeOptions?.getSyncProgress) {
           rpcOpts.getSyncProgress = runtimeOptions.getSyncProgress
         }
+        if (runtimeOptions?.didResolver) {
+          rpcOpts.didResolver = runtimeOptions.didResolver
+        }
+        if (runtimeOptions?.didDataProvider) {
+          rpcOpts.didDataProvider = runtimeOptions.didDataProvider
+        }
         const scopedOpts = Object.keys(rpcOpts).length > 0 ? rpcOpts : undefined
         const MAX_BATCH_SIZE = 100
         // Batch RPC: charge rate limit for each item in the batch, not just the outer request.
@@ -381,10 +397,11 @@ export async function handleRpcMethod(
   chain: IChainEngine,
   p2p: P2PNode,
   bftCoordinator?: BftCoordinator,
+  opts?: Record<string, unknown>,
 ): Promise<unknown> {
   const payload = { method, params, id: null, jsonrpc: "2.0" as const }
   const filters = new Map<string, PendingFilter>()
-  return handleRpc(payload, chainId, evm, chain, p2p, filters, bftCoordinator)
+  return handleRpc(payload, chainId, evm, chain, p2p, filters, bftCoordinator, opts)
 }
 
 async function handleRpc(
@@ -1724,6 +1741,63 @@ async function handleRpc(
         sequencerMode: nodeMode === "sequencer",
         nodeMode,
       }
+    }
+    // ── DID Identity Layer ──────────────────────────────────────
+    case "coc_resolveDid": {
+      const didResolver = opts?.didResolver as { resolve: (did: string) => Promise<{ didDocument: unknown; didResolutionMetadata: unknown }> } | undefined
+      if (!didResolver) throw new Error("DID resolver not configured (set soulRegistryAddress + didRegistryAddress)")
+      const did = String((payload.params ?? [])[0] ?? "")
+      if (!did) throw new Error("missing DID parameter")
+      return didResolver.resolve(did)
+    }
+    case "coc_getDIDDocument": {
+      const didResolver = opts?.didResolver as { resolve: (did: string) => Promise<{ didDocument: unknown }> } | undefined
+      if (!didResolver) throw new Error("DID resolver not configured")
+      const agentId = String((payload.params ?? [])[0] ?? "")
+      if (!agentId) throw new Error("missing agentId parameter")
+      const result = await didResolver.resolve(`did:coc:${agentId}`)
+      return result.didDocument ?? null
+    }
+    case "coc_getAgentCapabilities": {
+      const didProvider = opts?.didDataProvider
+      if (!didProvider) throw new Error("DID data provider not configured")
+      const agentId = String((payload.params ?? [])[0] ?? "")
+      if (!agentId) throw new Error("missing agentId parameter")
+      const bitmask = await didProvider.getCapabilities(agentId)
+      // Import inline to avoid top-level dependency
+      const { capabilityBitmaskToNames } = await import("./did/did-types.ts")
+      return { capabilities: capabilityBitmaskToNames(bitmask), bitmask }
+    }
+    case "coc_getDelegations": {
+      const didProvider = opts?.didDataProvider
+      if (!didProvider) throw new Error("DID data provider not configured")
+      const agentId = String((payload.params ?? [])[0] ?? "")
+      if (!agentId) throw new Error("missing agentId parameter")
+      return didProvider.getFullDelegations(agentId)
+    }
+    case "coc_getAgentLineage": {
+      const didProvider = opts?.didDataProvider
+      if (!didProvider?.getLineage) throw new Error("DID data provider not configured")
+      const agentId = String((payload.params ?? [])[0] ?? "")
+      if (!agentId) throw new Error("missing agentId parameter")
+      return didProvider.getLineage(agentId)
+    }
+    case "coc_getVerificationMethods": {
+      const didProvider = opts?.didDataProvider
+      if (!didProvider?.getVerificationMethods) throw new Error("DID data provider not configured")
+      const agentId = String((payload.params ?? [])[0] ?? "")
+      if (!agentId) throw new Error("missing agentId parameter")
+      return didProvider.getVerificationMethods(agentId)
+    }
+    case "coc_getCredentialAnchor": {
+      // Checks the on-chain credential anchor only: existence, revocation, expiry.
+      // Does NOT verify VC content, signatures, or proofs — use verifiable-credentials.ts
+      // for full credential verification.
+      const didProvider = opts?.didDataProvider
+      if (!didProvider?.getCredentialAnchor) throw new Error("DID data provider not configured")
+      const credentialId = String((payload.params ?? [])[0] ?? "")
+      if (!credentialId) throw new Error("missing credentialId parameter")
+      return didProvider.getCredentialAnchor(credentialId)
     }
     default:
       throw new Error("method not supported")
