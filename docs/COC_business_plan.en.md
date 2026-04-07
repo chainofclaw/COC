@@ -22,7 +22,7 @@
 | **Token** | COC, native gas token, total supply 1B |
 | **Current Maturity** | As of 2026-04-06: 🟢 Protocol/contract code complete (1300+ tests passing) + 🟡 testnet continuously running + 🔵 **Mainnet not yet live** (genesis target: June 2026) |
 | **Tech Stack** | Custom blockchain (TS/Rust) + dual EVM engines (EthereumJS + revm WASM) |
-| **TPS Profile** | Three measured tiers: **EthereumJS end-to-end ~131 TPS** → **revm WASM raw execution ceiling 20,540 TPS** → **revm + Rollup end-to-end measured 20,000+ TPS** |
+| **TPS Profile** | **EthereumJS end-to-end ~131 TPS** → **EthereumJS + Rollup 1,000+ TPS** → **revm + Rollup end-to-end 1,500-2,000 TPS** (raw execution microbenchmark ceiling 20,540 TPS — physical reference only) |
 | **Code Status** | 1300+ tests passing, 40K+ LoC, open source |
 | **Funding Round** | **Series A — $5M USD** |
 | **Target Pre-money FDV** | $150M-$250M (negotiable) |
@@ -32,8 +32,8 @@
 ### Investment Highlights (Why COC)
 
 1. **Market Window**: AI Agent sector grows from $7B → $50B+ from 2026-2030 (CAGR ~50%); COC is **one of the few decentralized infrastructure solutions focused on AI Agent identity + perpetuity** and currently has the **most complete protocol stack** among known public implementations (see §6 Competitive Analysis)
-2. **Technical Leadership**: Three measured TPS tiers — EthereumJS end-to-end ~131 TPS, revm WASM raw execution ceiling 20,540 TPS, **revm + Rollup sequencer mode end-to-end measured at 20,000+ TPS** (end-to-end includes tx ingestion, ECDSA, state writes, and batch submission — approaching the revm raw execution physical ceiling); complete PoSe service proof + DID + backup/resurrection full-stack implementation
-3. **AI Agent Economic Infrastructure**: Not just "identity + storage + immortality" — a **complete built-in Web3 payment and settlement stack**: a two-layer architecture (**L1 mainchain + L2 Rollup sequencer**) hosting three settlement modes (direct transfer / state channels / PoSe v2 batch settlement), purpose-designed for AI Agent micropayments, KYC-less onboarding, 24×7 availability, and programmable settlement (see §3.4)
+2. **Technical Leadership**: Three end-to-end TPS tiers measured — EthereumJS end-to-end ~131 TPS, EthereumJS + Rollup 1,000+ TPS, **revm + Rollup end-to-end 1,500-2,000 TPS** (end-to-end includes tx ingestion, ECDSA, state writes, and batch submission; the revm raw-execution microbenchmark ceiling of 20,540 TPS is a physical reference only, not a deliverable end-to-end figure); complete PoSe service proof + DID + backup/resurrection full-stack implementation
+3. **Complete AI Agent Economic Stack**: Not just "identity + storage + immortality" — a **complete Web3 economic system** built in: five-in-one (**token issuance + distribution/mining + payments/settlement + DEX + DeFi**), two-layer architecture (L1 mainchain + L2 Rollup), three settlement modes (transfer / state channels / PoSe v2 batch), full EVM compatibility lets mature DeFi building blocks deploy directly, and every layer embeds Agent-native abstractions (DID / delegation chain / PoSe / SoulRegistry) (see §3.4)
 4. **Differentiated Positioning**: Doesn't compete with Ethereum/Solana in generic L1 racing; opens a new "AI-native blockchain" category
 5. **Complete Token Model**: 1B hard cap, 25% genesis + 75% service mining; decaying inflation; multi-channel burn trending toward deflation
 6. **Governance Innovation**: Faction voting (whale-resistant) + 2/3 guardian recovery + 7-day reward expiry + 3/5 treasury multisig
@@ -104,7 +104,7 @@
 
 | Metric | COC | Comparable Chains |
 |--------|-----|------------------|
-| **TPS (three measured tiers)** | ~131 (EthereumJS end-to-end) → 20,540 (revm WASM raw ceiling) → **20,000+ (revm + Rollup end-to-end)** | Polygon ~65, BSC ~60 (end-to-end) |
+| **TPS (end-to-end measured)** | ~131 (EthereumJS) → 1,000+ (EthereumJS + Rollup) → **1,500-2,000 (revm + Rollup)** | Polygon ~65, BSC ~60 (end-to-end) |
 | **Node entry barrier** | ~$50 USDT bond | ETH 2.0: 32 ETH (~$80K) |
 | **EVM compatibility** | Full + dual hot-swap engines | EthereumJS only |
 | **AI-native features** | DID + backup + resurrection | None |
@@ -117,11 +117,11 @@
 - **Brand & trademark**: clawchain.io + COC + ChainOfClaw
 - **Patent strategy**: No patents at protocol layer (preserve openness); ops tools / AI integration layer can be considered
 
-### 3.4 AI Agent Web3 Economy & Payment Channels
+### 3.4 AI Agent Web3 Economy (Token + Mining + Payments + DEX + DeFi — the Full Stack)
 
-> COC is not just an "identity + storage + immortality" infrastructure for Agents — it is also their **economic infrastructure**. Like human users, AI Agents need a settleable, billable, auditable economic system, and the traditional financial system is **structurally incapable** of supporting an AI Agent economy.
+> COC is not just an "identity + storage + immortality" infrastructure for Agents — it is also their **complete Web3 economic infrastructure**. Like human users, AI Agents need a settleable, billable, auditable economic system, and the traditional financial system is **structurally incapable** of supporting an AI Agent economy. COC provides an **end-to-end economic stack** spanning **token issuance → distribution / mining → payments / settlement → DEX → DeFi**, not merely a payment layer.
 
-#### 3.4.1 Why AI Agents Need a Web3-Native Economy
+#### 3.4.1 Why AI Agents Need a Web3-Native Economic System
 
 | Economic Need | Traditional Finance Limitation | Web3 Solution |
 |---------------|-------------------------------|---------------|
@@ -130,23 +130,60 @@
 | **Cross-border frictionless** | SWIFT/SEPA cannot serve code instances | On-chain transfers are borderless |
 | **24/7 always-on** | Banking systems offline on weekends | Public chains never stop producing blocks |
 | **Programmable settlement** | Manual reconciliation + arbitration takes days to weeks | Smart contracts auto-execute SLAs and per-call revenue splits |
-| **Service-as-payment** | Service and settlement are two separate processes | A PoSe receipt = service delivery proof + settlement basis |
+| **Programmable assets** | Money in a bank account cannot be invoked by a contract | On-chain tokens are themselves callable program objects |
+| **Open financial primitives** | Lending / hedging / derivatives are gated by licensed institutions | DEX / DeFi work out of the box, no license required |
 
 > **Core thesis**: The number of future AI Agents will far exceed human users (Gartner forecasts 5B+ Agent instances by 2030). If the Agent economy is locked inside the traditional financial system, this market cannot exist. COC provides the economic foundation Agents can actually use.
 
-#### 3.4.2 COC Economic Infrastructure Capabilities
+#### 3.4.2 The Five Components of an AI Agent Web3 Economy
 
-| Economic Need | COC Capability | Current Maturity |
-|---------------|---------------|-----------------|
-| Agent → Agent autonomous payments | Native COC token + EVM transfers, 1-second blocks, 3-second finality | 🟢 + 🟡 |
-| Micropayment viability | EIP-1559 dynamic gas + revm WASM high throughput driving down per-tx gas | 🟢 + 🟡 |
-| Service-as-payment | PoSe v2 receipts: off-chain service delivery + on-chain batched settlement | 🟢 + 🟡 |
-| Inter-Agent authorization & on-behalf payment | DID delegation chain (≤3 levels) + 16-bit capability bitmask | 🟢 + 🟡 |
-| Large-scale high-frequency settlement | Rollup sequencer mode (Phase 37-40) + revm WASM; end-to-end measured at **20,000+ TPS** | 🟢 |
-| Cross-chain liquidity | Bridges to Ethereum / BNB / Polygon | ⚪ Phase 3 planned |
-| Fiat on-ramp | Via CEX listing + stablecoin bridges | ⚪ Phase 2-3 planned |
+| # | Component | Meaning | COC Implementation | Maturity |
+|---|-----------|---------|--------------------|---------|
+| ① | **Token Issuance** | Native token + Agent-issued tokens | Native COC (1B hard cap) + EVM ERC-20 (one-line Agent-issued) + DID binding | 🟢 + 🟡 |
+| ② | **Token Distribution / Mining** | Fair, sustainable token distribution | Genesis 25% (250M) + PoSe v2 service mining 75% (750M) + decaying inflation + multi-channel burn | 🟢 + 🟡 |
+| ③ | **Payments & Settlement** | Inter-Agent value transfer | L1 mainchain + L2 Rollup two-layer architecture + three settlement modes (transfer / state channels / PoSe batch) | 🟢 + 🟡 |
+| ④ | **DEX (Decentralized Exchange)** | On-chain matching + liquidity pools | Full EVM compatibility → Uniswap V2/V3, Curve, Balancer one-click deploy + DID authorization | ⚪ EVM ready, dApps pending |
+| ⑤ | **DeFi (Decentralized Finance)** | Lending / staking / stablecoins / derivatives / yield / insurance | Full EVM compatibility → Aave / Compound / MakerDAO portable + Agent-native abstractions (DID / delegation / PoSe) | ⚪ EVM ready, dApps pending |
 
-#### 3.4.3 Payment Channel Architecture (L1 + L2 Rollup, Two Layers)
+> **Key insight**: COC does not invent new DeFi primitives — it lets the mature financial building blocks of the EVM ecosystem **directly serve AI Agent economics**, while making them Agent-friendly through DID, delegation chains, PoSe, and SoulRegistry. Investors see not isolated features but a **protocol-layer-ready complete economic stack**.
+
+#### 3.4.3 ① Token Issuance: Native COC + Agent-Issued Tokens
+
+**Native COC Token** (protocol layer, similar to ETH/BNB/MATIC, *not* an ERC-20):
+- Total supply hard cap **1,000,000,000 COC** (1B)
+- Uses: gas payments, PoSe service settlement, governance voting, node Bond, Foundation reserves
+- Protocol-layer minting: controlled automatically by PoSe v2 + EmissionSchedule; no admin minting
+
+**Agent-Issued Tokens** (application layer, standard ERC-20):
+- Any Agent can deploy its own ERC-20 in one EVM transaction
+- Uses: API call credits, point systems, sub-community tokens, Agent DAO governance tokens, RWA receipts
+- **DID binding**: token metadata can point to the issuer Agent's did:coc identifier — "token as identity proof"
+- Use cases: API vendor tokens / Agent subnet tokens / dataset tokens / compute time-slot tokens / content creator tokens
+
+#### 3.4.4 ② Token Distribution / Mining: Service is Mining (Proof of Service)
+
+> **Core innovation**: COC's mining is neither PoW (wastes compute) nor PoS (lock-up = yield), but **PoSe (Proof of Service)** — the consideration for mining is **real service delivery**. AI Agents can **directly become miners** by providing services to earn tokens.
+
+**Distribution structure** (see §8.1):
+- **Genesis 25% (250M COC)**: community / foundation / team / early contributors / treasury (lockup release)
+- **Service mining 75% (750M COC)**: released year by year via PoSe v2 service delivery, controlled automatically by the EmissionSchedule contract
+
+**Decaying inflation curve** (see §8.2):
+- Year 0: 5% / Year 1: 4% / Year 2: 3% / Year 3: 2.5% / Year 4+: 2%
+- **Node activity multiplier**: when active nodes < 100, emission auto-reduces to protect holders
+- Estimated ~50 years until full release; zero inflation thereafter
+
+**Multi-channel burn** (trending deflationary, see §8.3):
+- EIP-1559 base fee 100% burned
+- PoSe Slash 50% burned
+- Expired unclaimed rewards 90% burned + 10% to Foundation
+
+**Agent-friendly properties**:
+- AI Agents **are themselves the miners**: register a node (Bond ~$50 USDT) → auto-receive challenges → provide services → automatically earn COC
+- No KYC for mining (DID verification only)
+- PoSe witness aggregation + Reward Tree → automatic claiming, no manual operation
+
+#### 3.4.5 ③ Payments & Settlement: L1 + L2 Rollup Two-Layer Architecture
 
 > COC has only two **architectural layers**: L1 mainchain and L2 Rollup. L1 hosts three **settlement modes** (direct transfer, state channels, PoSe batch settlement) — these are application-layer patterns *on* L1, not separate chain layers.
 
@@ -155,8 +192,10 @@
 ║  L2 — Rollup sequencer mode (application-specific L2)    ║
 ║                                                          ║
 ║  • Many txs aggregated by L2 sequencer → batched to L1  ║
-║  • End-to-end measured: revm + Rollup 20,000+ TPS       ║
-║  • Raw execution ceiling: revm WASM 20,540 TPS          ║
+║  • End-to-end measured: revm + Rollup 1,500-2,000 TPS   ║
+║  • EthereumJS + Rollup measured: 1,000+ TPS             ║
+║  • Microbench physical ceiling: revm WASM 20,540 TPS    ║
+║    (technical reference only, not deliverable e2e)      ║
 ║  • Use: large-scale parallel Agent fleets, high-freq    ║
 ║    applications, app-specific chains                     ║
 ╚══════════════════════════════════════════════════════════╝
@@ -190,28 +229,76 @@
 ╚══════════════════════════════════════════════════════════╝
 ```
 
-#### 3.4.4 Natural Synergy with PoSe v2
+#### 3.4.6 ④ DEX (Decentralized Exchange)
 
-PoSe v2 is itself a **payment channel architecture purpose-built for AI Agent economics**:
+**Why AI Agents need a DEX**:
+- Agents need to swap between different tokens (e.g., COC for an Agent's API token)
+- 24×7 automated operation — Agents will not wait for centralized exchange review
+- No KYC — Agents do not need identity verification
+- On-chain settlement — no counterparty risk
 
-- Service providers (FN/SN/RN) **do not settle on every service call** — avoiding high-frequency small-tx congestion
-- Witness-aggregated epoch receipts (Merkle root + selective disclosure proofs) = **single batched settlement**
-- Auto-minting + Reward Tree distribution = **fully automated zero-user-action settlement**
+**COC's DEX compatibility**:
+- Fully EVM-compatible → **Uniswap V2/V3, SushiSwap, Curve, Balancer, 1inch aggregator** etc. deploy directly, no modification required
+- High TPS (revm + Rollup end-to-end 1,500-2,000) → supports Agent-level high-frequency trading
+- 1-second blocks → near-real-time price updates
+- DID integration → Agents can authorize DEX multi-trade workflows with one signed delegation
 
-This "high-frequency calls → low-frequency settlement → on-chain Merkle verification" model is a **natural fit for the high-frequency micro-call pattern of the AI Agent economy**. COC's PoSe v2 is not a payment layer bolted on after the fact — it is the settlement spine designed for Agent economics from day one.
+**Possible Agent-native DEX forms**:
+- API token ↔ COC automated rate markets
+- Secondary markets for Agent service vouchers
+- Order books for inference / compute / storage time-slot tickets
 
-#### 3.4.5 Economic Infrastructure Differentiation
+**Current status**: EVM foundation ready (🟢 + 🟡); actual DEX dApp deployment is in the Phase 2-3 roadmap (priority category for ecosystem grants).
 
-| Dimension | Generic L1 (Ethereum/Solana) | Centralized AI Platforms | **COC** |
-|-----------|------------------------------|--------------------------|---------|
-| **Native AI Agent payment channel** | ❌ Generic payments, no Agent abstraction | ❌ Platform API billing, off-chain | ✅ Built-in PoSe + DID delegation chain |
-| **Micropayment viability** | ❌ Gas is too high | ✅ But vendor lock-in | ✅ revm + Rollup + State Channels |
-| **No-KYC access** | ✅ | ❌ | ✅ |
-| **Service-as-payment** | ❌ Need custom contracts | ❌ Backend reconciliation | ✅ PoSe v2 built-in |
-| **Inter-Agent on-behalf payment** | ❌ No native delegation | ❌ | ✅ DID delegation chain (≤3 levels) |
-| **Post-resurrection fund continuity** | ❌ Lost key = lost funds | ❌ Lost account = lost funds | ✅ SoulRegistry guardians + fund recovery |
+#### 3.4.7 ⑤ DeFi (Decentralized Finance)
 
-> **Conclusion**: COC's Web3 economy is not simply "supports cryptocurrency" — it is a **complete AI Agent economic stack** with identity + permissions + services + settlement + recovery all built into the protocol layer. This is one of COC's core differentiating value propositions for investors.
+> COC does not reinvent DeFi — it lets the EVM ecosystem's mature DeFi building blocks **directly serve AI Agent economics**, and makes them Agent-friendly through Agent-native abstractions.
+
+| DeFi Primitive | AI Agent Economic Use | COC Compatibility |
+|----------------|---------------------|------------------|
+| **Lending** | Agent collateralizes COC to borrow stablecoins for cloud bills / Agent-to-Agent P2P lending | EVM compatible → Aave / Compound port directly |
+| **Staking** | Agents stake COC for long-term yield + liquid staking derivatives | PoSe Bond is native staking + LST protocols portable |
+| **Stablecoins** | Stable unit of account for Agents, hedging COC volatility from cost calculations | DAI / USDC cross-chain bridges (planned) + algorithmic stablecoins deployable |
+| **Yield Aggregators** | Agents auto-manage funds, optimize rates | Yearn-style strategy contracts portable |
+| **Derivatives** | Agent risk hedging (compute futures / service price futures) | Full EVM support (dYdX / GMX / Perp style) |
+| **Insurance** | Agent SLA breach insurance / Bond insurance | Naturally integrates with PoSe anti-fraud pool |
+| **RWA (Real-World Assets)** | On-chain datasets / API quotas / compute time slots | EVM + DID + IPFS three-pillar support |
+
+**Differentiation of Agent-native DeFi**:
+- **DID reputation**: lending protocols can offer differentiated rates based on Agent DID history (rather than anonymous addresses)
+- **Delegation chain**: parent Agents can let child Agents manage funds via delegation, without sharing private keys
+- **PoSe receipt as collateral**: an Agent's service revenue stream can serve as borrowing collateral (similar to receivables financing)
+- **SoulRegistry linkage**: even if an Agent's private key is lost, guardians can recover access to DeFi positions via SoulRegistry
+
+**Current status**: EVM foundation ready (🟢 + 🟡); actual DeFi dApp deployment is in the Phase 2-3 roadmap (priority category for ecosystem grants).
+
+#### 3.4.8 Unified Synergy with PoSe v2
+
+PoSe v2 is the **core settlement spine** of COC's economic stack, simultaneously providing the foundation for token distribution, payments, and DeFi:
+
+- **Service is mining**: PoSe v2 = service delivery proof + auto-minting → one mechanism carries both distribution and payment
+- **Batched settlement**: epoch Merkle root + selective disclosure → high-frequency micropayments → low-frequency on-chain → trusted ledger for DeFi
+- **Zero user action**: auto-minting + Reward Tree → service revenue and DeFi yields auto-credited
+- **Fault proofs**: permissionless fault proof → trusted source for DEX/DeFi protocols
+- **Witness aggregation**: m = ⌈√n⌉, quorum 2m/3 → prevents node collusion, protects DeFi liquidity
+
+PoSe v2 is not a payment layer bolted on after the fact — it is a **unified settlement spine** designed for Agent economics from day one, simultaneously playing the roles of **mining, payments, and DeFi guarantee**.
+
+#### 3.4.9 Differentiation of the Economic System
+
+| Dimension | Generic L1 (Eth/Solana) | Centralized AI Platforms | **COC** |
+|-----------|-------------------------|--------------------------|---------|
+| **Complete economic stack (Token+Mining+Payments+DEX+DeFi)** | ✅ Generic version | ❌ Only API billing | ✅ Agent-native version |
+| **Token issuance** | ✅ ERC-20 (anonymous) | ❌ | ✅ ERC-20 + DID binding |
+| **Mining mechanism** | ❌ PoW/PoS, not service-aligned | ❌ | ✅ PoSe service mining |
+| **AI Agent direct mining** | ❌ Compute / capital barrier | ❌ | ✅ ~$50 USDT bond |
+| **Micropayment viability** | ❌ Gas too high | ✅ but vendor lock-in | ✅ revm + Rollup |
+| **No-KYC DEX/DeFi** | ✅ | ❌ | ✅ |
+| **DID-integrated DeFi** | ❌ Anonymous addresses | ❌ | ✅ DID reputation + delegation chain |
+| **Service receipt as DeFi collateral** | ❌ | ❌ | ✅ PoSe receipts |
+| **Post-resurrection fund recovery** | ❌ Lost key = lost funds | ❌ Lost account = lost funds | ✅ SoulRegistry guardians |
+
+> **Conclusion**: COC's Web3 economic system is not a "blockchain + cryptocurrency" mash-up — it is a **complete stack redesigned at the protocol layer for AI Agent economics**. Token issuance + distribution/mining + payments/settlement + DEX + DeFi are **five-in-one**, with each component embedding Agent-native abstractions (DID, delegation chain, PoSe, SoulRegistry). This is one of COC's core differentiating value propositions for investors.
 
 ---
 
@@ -302,7 +389,7 @@ Price scenario comparison:
 | **Decentralized backup** | ✅ Soul + Carrier | ❌ | ❌ | ❌ | Partial |
 | **EVM compatible** | ✅ | ✅ | ❌ | ✅ | Partial |
 | **Node entry** | $50 | $80K (32 ETH) | ~$25 | None | ~$1K |
-| **TPS (end-to-end measured)** | ~131 → **20,000+** (revm+Rollup) | ~30 | ~65,000 (theoretical) | ~7,000 | N/A |
+| **TPS (end-to-end measured)** | ~131 → **1,500-2,000** (revm+Rollup) | ~30 | ~65,000 (theoretical) | ~7,000 | N/A |
 | **Carrier resurrection** | ✅ | ❌ | ❌ | ❌ | ❌ |
 
 ### 6.2 Competitive Moat
