@@ -543,17 +543,17 @@ As one of the few protocol-stack-complete early players in the AI Agent decentra
 
 | Purpose | % | Amount | Notes |
 |---------|---|--------|-------|
-| **Core Team Expansion** | 45% | $2,250,000 | 12-18 months of operating ~10-person core team (protocol, SDK, Agent integration, security audit) |
-| **Infrastructure & Operations** | 15% | $750,000 | Mainnet/Testnet/Carrier network, monitoring, SRE, cloud resources |
+| **Core Team Expansion** | 30% | $1,500,000 | 12-18 months of operating ~10-person core team (protocol, SDK, Agent integration, security audit) |
+| **Infrastructure & Operations** | 30% | $1,500,000 | Mainnet/Testnet/Carrier network, monitoring, SRE, cloud resources |
 | **Ecosystem Development (USD match)** | 15% | $750,000 | USD seed funding to complement the 80M COC ecosystem fund — BD, partnership integrations |
 | **Legal & Compliance** | 10% | $500,000 | Multi-jurisdiction legal opinions, regulatory engagement, SAFT legal work, KYC/AML |
 | **Marketing & Brand** | 10% | $500,000 | Global brand promotion, KOLs, content, industry events, CEX listing prep |
 | **Strategic Reserve** | 5% | $250,000 | Emergency, opportunistic spending, market maker outreach |
 
 **Key notes**:
+- **Team and Infrastructure each at 30%**: Maintains core personnel stability while giving the operations / Carrier network build-out / monitoring / SRE / cloud-resource lines an adequate budget — the period around mainnet genesis is the critical window for node stability, network expansion, and data availability
 - **Ecosystem USD only 15%**: The bulk of ecosystem funding flows through the 80M COC community fund; USD is reserved for scenarios where token payment is impractical (events, KOLs, compliance audit fees)
 - **Legal & compliance share is relatively high (10%)**: Reflects the compliance complexity of Web3 × AI cross-domain
-- **Team share at 45%**: Ensures core personnel stability and development progress — the most critical line item for an early-stage project
 
 ### 9.3 Investor Rights
 
