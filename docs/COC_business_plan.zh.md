@@ -22,7 +22,7 @@
 | **代币** | COC，原生 Gas 代币，总供应 10 亿 |
 | **当前成熟度** | 截至 2026-04-06: 🟢 协议/合约代码已完成 + 🟡 测试网持续运行；尚未达到 🔵 主网运行状态 (创世目标 2026 年 6 月) |
 | **技术栈** | 自研区块链 (TS/Rust) + 双 EVM 引擎 (EthereumJS + revm WASM) |
-| **TPS 性能** | **EthereumJS 端到端 ~131 TPS** → **revm 端到端 1,500-2,000 TPS** (Phase 40 实测，无 Rollup) → **revm + Rollup 中期目标 ~5K-10K TPS** (已超越所有 EVM L2 当前实测；行业对照: Base ~159, Arbitrum ~20-400, Solana ~1,140-4,000) |
+| **TPS 性能** | **EthereumJS 端到端 ~131 TPS** → **revm 端到端 1,500-2,000 TPS** (Phase 40 实测，无 Rollup) → **revm + Rollup 中期目标 ~5K-10K TPS** (达成后将超越所有 EVM L2 当前实测；行业对照: Base ~159, Arbitrum ~20-400, Solana ~1,140-4,000) |
 | **代码状态** | 1300+ 测试通过，4 万行代码，开源 |
 | **融资轮次** | **Series A — $5M USD** |
 | **目标 Pre-money FDV** | $150M-$250M (待协商) |
@@ -236,7 +236,7 @@
 
 **COC 的 DEX 兼容性**:
 - 完全 EVM 兼容 → **Uniswap V2/V3、SushiSwap、Curve、Balancer、1inch 聚合器** 等可直接部署，无需修改
-- 高 TPS（revm 端到端 1,500-2,000；叠加 Rollup 中期目标 ~5K-10K TPS，已超越所有现有 EVM L2 实测）→ 支撑 Agent 级别的高频交易
+- 高 TPS（revm 端到端 1,500-2,000；叠加 Rollup 中期目标 ~5K-10K TPS，达成后将超越所有现有 EVM L2 实测）→ 支撑 Agent 级别的高频交易
 - 1 秒出块 → 准实时报价更新
 - DID 集成 → Agent 可通过委托链一次签名授权 DEX 完成多笔操作
 
@@ -620,13 +620,14 @@ Series A 之后的可能路径：
 | 代码仓库 | `https://github.com/chainofclaw/COC` (public) |
 | 官方域名 | `clawchain.io` |
 | 联系邮箱 | invest@clawchain.io |
-| Discord/Telegram | (待补充) |
+
+> 注: 官方社区频道 (Discord / Telegram / Twitter) 计划在主网创世前 (2026 Q2) 建立，详见下方"下一步"清单。
 
 ---
 
 ## 文档说明
 
-本商业计划书基于白皮书与生态规划，整合了产品技术、市场机会、代币经济、融资目标、创始团队等完整要素，可直接用于与战略投资者沟通。
+本商业计划书基于白皮书与生态规划，整合了产品技术、市场机会、代币经济、融资目标、创始团队等完整要素。**在完成下方"下一步"清单中的最终条款补全后，可用于与战略投资者沟通**。
 
 本文档可作为：
 - 与战略投资者初次沟通的核心材料
@@ -637,4 +638,5 @@ Series A 之后的可能路径：
 1. 完善估值条款（Pre-money 估值、Token 价格、SAFT 模板）
 2. 设计配套 Pitch Deck (20 页 PPT，已有英文版基础)
 3. 准备数据室 (Data Room)：审计报告、法律意见、技术验证、团队 KYC
-4. 启动战略投资者一对一沟通
+4. 建立官方社区频道 (Discord / Telegram / Twitter, 2026 Q2 前)
+5. 启动战略投资者一对一沟通

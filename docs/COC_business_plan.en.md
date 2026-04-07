@@ -241,7 +241,7 @@
 
 **COC's DEX compatibility**:
 - Fully EVM-compatible → **Uniswap V2/V3, SushiSwap, Curve, Balancer, 1inch aggregator** etc. deploy directly, no modification required
-- High TPS (revm end-to-end 1,500-2,000; with Rollup, mid-term target ~5K-10K TPS, surpassing all current EVM L2 measured throughput) → supports Agent-level high-frequency trading
+- High TPS (revm end-to-end 1,500-2,000; with Rollup, mid-term target ~5K-10K TPS, which would surpass all current EVM L2 measured throughput) → supports Agent-level high-frequency trading
 - 1-second blocks → near-real-time price updates
 - DID integration → Agents can authorize DEX multi-trade workflows with one signed delegation
 
@@ -625,13 +625,14 @@ Possible paths after Series A:
 | Code Repository | `https://github.com/chainofclaw/COC` (public) |
 | Official Domain | `clawchain.io` |
 | Contact Email | invest@clawchain.io |
-| Discord/Telegram | (TBD) |
+
+> Note: official community channels (Discord / Telegram / Twitter) are planned to launch before mainnet genesis (2026 Q2). See the "Next Steps" checklist below.
 
 ---
 
 ## Document Notes
 
-This business plan integrates product, technology, market opportunity, tokenomics, funding target, and founding team into a complete document — ready for strategic investor communication.
+This business plan integrates product, technology, market opportunity, tokenomics, funding target, and founding team into a complete document. **Once the items in the "Next Steps" checklist below are finalized, it is ready for strategic investor communication.**
 
 This document can serve as:
 - Core material for initial strategic investor communication
@@ -642,4 +643,5 @@ This document can serve as:
 1. Finalize valuation terms (pre-money valuation, token price, SAFT template)
 2. Finalize accompanying Pitch Deck (20-slide PPT, English draft already exists)
 3. Prepare Data Room: audit reports, legal opinions, technical validation, team KYC
-4. Begin one-on-one outreach to strategic investors
+4. Launch official community channels (Discord / Telegram / Twitter) before 2026 Q2
+5. Begin one-on-one outreach to strategic investors
