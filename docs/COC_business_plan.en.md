@@ -20,7 +20,7 @@
 | **Sector** | Web3 × AI intersection, Agent infrastructure |
 | **Target Market (2030)** | $50B+ AI Agent market (Gartner) |
 | **Token** | COC, native gas token, total supply 1B |
-| **Current Maturity** | As of 2026-04-06: 🟢 Protocol/contract code complete + 🟡 testnet continuously running; 🔵 mainnet-live status not yet reached (genesis target: June 2026) |
+| **Current Maturity** | As of 2026-04-06: 🟢 Protocol/contract code complete + 🟡 testnet continuously running; Mainnet not yet live (genesis target: June 2026) |
 | **Tech Stack** | Custom blockchain (TS/Rust) + dual EVM engines (EthereumJS + revm WASM) |
 | **TPS — current measured** | EthereumJS end-to-end ~131 TPS; revm end-to-end 1,500-2,000 TPS (Phase 40, without Rollup) |
 | **TPS — mid-term target** | revm + Rollup end-to-end ~5K-10K TPS (target; would surpass all current EVM L2 measured throughput once achieved) |
@@ -81,7 +81,7 @@
     └─────────────────────────────────────────┘
 ```
 
-**COC does not compete with training/inference infrastructure** — it opens a new sector: **Agent identity, runtime standards, perpetual guarantee**. Of these, identity (DID), storage (P2P), and immortality (SoulRegistry) — the three foundational services — have reached code-complete + testnet-live status; the runtime-side protocol interfaces (PoSe + DID + delegation chain) are also ready, but the reference runtime implementation (OpenClaw) is still planned — see the §3.1 maturity table.
+**COC does not compete with training/inference infrastructure** — it opens a new sector: **Agent identity, runtime standards, perpetual guarantee**. Of these, identity (DID), storage (P2P), and immortality (SoulRegistry) — the three foundational services — have reached code-complete + testnet-live status; the runtime-side protocol interfaces (PoSe + DID + delegation chain) are also ready, and OpenClaw, as the first widely adopted AI Agent prioritized for COC support, is already integrated with the COC network and operates as an important storage-service provider node — see the §3.1 maturity table.
 
 ---
 
@@ -100,7 +100,7 @@
 | **P2P File Storage** | Where does Agent data live? | IPFS + PoSe v2 verification + Merkle proofs | 🟢 Code complete + 🟡 Testnet live (Mainnet not yet live, target: June 2026) |
 | **Decentralized Identity (DID)** | How does an Agent gain trustworthy identity? | W3C did:coc + capability bitmask + delegation chain | 🟢 Code complete + 🟡 Testnet live (Mainnet not yet live, target: June 2026) |
 | **AI Silicon Immortality** | How does an Agent never die? | SoulRegistry + Carrier network + guardian recovery | 🟢 Code complete + 🟡 Testnet live (Mainnet not yet live, target: June 2026) |
-| **OpenClaw Reference Agent** | Reference Agent framework implementation | did:coc + SoulRegistry compatible | ⚪ Reference implementation planned |
+| **OpenClaw Reference Agent** | Priority-supported Agent runtime / reference implementation | did:coc + SoulRegistry compatible + storage-service provider integration | 🟢 Code complete + 🟡 Network-integrated (active storage-service provider node in the current COC network) |
 
 ### 3.2 Technical Differentiation (Measured)
 
@@ -324,7 +324,7 @@ PoSe v2 is not a payment layer bolted on after the fact — it is a **unified se
 | **DID Registration** | Soul identity & backup anchoring | Miners + protocol burn |
 | **Node Bond** | One-time ~$50 USDT equivalent | Anti-fraud pool |
 
-### 4.2 Foundation Sustainable Revenue
+### 4.2 Foundation Operating Funding Sources
 
 | Source | Estimate |
 |--------|---------|
@@ -332,6 +332,8 @@ PoSe v2 is not a payment layer bolted on after the fact — it is a **unified se
 | Expired unclaimed rewards | Auto 10% transfer to Foundation |
 | Strategic partnership revenue | Consulting/integration fees with enterprises |
 | Investment returns | Equity/tokens of early projects backed by Foundation |
+
+> These cash flows belong to the Foundation execution layer and are earmarked for protocol operations, ecosystem development, compliance, and treasury management under DAO oversight and Foundation bylaws. They are not an automatic distribution promise to token holders or investors.
 
 ### 4.3 Node Operator Economics
 
@@ -560,10 +562,10 @@ As one of the few protocol-stack-complete early players in the AI Agent decentra
 **Proposed Structure (Negotiable)**:
 - **Token Allocation**: From the "Early Contributors & Strategic Partners" pool (3.5%, 35M COC), allocate 20-33M COC depending on final valuation (Conservative 33M / Neutral 25M / Optimistic 20M)
 - **Lockup**: 6-month cliff + 24-month linear release
-- **Governance Participation**: Investors gain Faction identity in DAO governance
+- **Governance Participation**: Investors may participate in DAO governance through an investor Faction or equivalent governance identity, but sovereign decisions remain subject to DAO rules and do not carry investor-specific veto rights by default
 - **Pro-rata Rights**: Right to participate in future Series B / Token Sale rounds
 - **Information Disclosure**: Quarterly financial reports + annual third-party audit
-- **Board Seat**: Lead investor (>$1M check) receives Foundation board observer/member seat
+- **Board Seat**: Lead investor (>$1M check) receives a Foundation board observer seat; any formal voting board membership would require separate legal/governance approval and is not assumed by default
 - **Anti-dilution Protection**: Standard Web3 anti-dilution terms (broad-based weighted average)
 
 ### 9.4 Milestone-Based Release
