@@ -33,10 +33,10 @@
 
 ### Investment Highlights (Why COC)
 
-1. **Market Window**: AI Agent sector grows from $7B → $50B+ from 2026-2030 (CAGR ~50%); COC is **one of the few decentralized infrastructure solutions focused on AI Agent identity + perpetuity** and currently has the **most complete protocol stack** among known public implementations (see §6 Competitive Analysis)
-2. **Technical Leadership**: **revm end-to-end 1,500-2,000 TPS** (Phase 40 measured, without Rollup) is on par with Solana's measured throughput (Solana measured ~1,140-4,000 TPS); **revm + Rollup mid-term target ~5K-10K TPS**, which would surpass the measured throughput of every current EVM L2 (Base ~159, Arbitrum ~20-400, Optimism ~300 peak, zkSync ~10-30); theoretical batch-amortization ceiling is higher, but in practice constrained by calldata, DA, and sequencer throughput; complete PoSe service proof + DID + backup/resurrection full-stack implementation
+1. **Market Window**: AI Agent sector grows from $7B → $50B+ from 2026-2030 (implied CAGR ~64% on a 2026→2030 basis); COC is **one of the few decentralized infrastructure solutions focused on AI Agent identity + perpetuity** and currently has the **most complete protocol stack** among known public implementations (see §6 Competitive Analysis)
+2. **Technical Leadership**: **revm end-to-end 1,500-2,000 TPS** (Phase 40 measured, without Rollup) already enters the lower-to-mid portion of Solana's current measured range (Solana measured ~1,140-4,000 TPS); **revm + Rollup mid-term target ~5K-10K TPS**, which would surpass the measured throughput of every current EVM L2 (Base ~159, Arbitrum ~20-400, Optimism ~300 peak, zkSync ~10-30); theoretical batch-amortization ceiling is higher, but in practice constrained by calldata, DA, and sequencer throughput; complete PoSe service proof + DID + backup/resurrection full-stack implementation
 3. **AI Agent Economic Stack Ready at the Protocol Layer**: Not just "identity + storage + immortality" — **the protocol layer has a complete Web3 economic system skeleton ready**: five-in-one (**token issuance + distribution/mining + payments/settlement + DEX + DeFi**), two-layer architecture (L1 mainchain + L2 Rollup), three settlement modes (transfer / state channels / PoSe v2 batch), full EVM compatibility lets mature DEX/DeFi building blocks deploy directly, and every layer embeds Agent-native abstractions (DID / delegation chain / PoSe / SoulRegistry). **DEX/DeFi ecosystem applications are slated for Phase 2-3 deployment** (see §3.4)
-4. **Differentiated Positioning**: Doesn't compete with Ethereum/Solana in generic L1 racing; opens a new "AI-native blockchain" category
+4. **Differentiated Positioning**: Doesn't compete with Ethereum/Solana in generic L1 racing; focuses on the emerging "AI-native blockchain / Agent infrastructure" niche
 5. **Complete Token Model**: 1B hard cap, 25% genesis + 75% service mining; decaying inflation; multi-channel burn trending toward deflation
 6. **Governance Innovation**: Faction voting (whale-resistant) + 2/3 guardian recovery + 7-day reward expiry + 3/5 treasury multisig
 7. **Code as Asset**: 297 contract tests + 1017 node tests passing; engineering maturity significantly higher than peer projects
@@ -81,17 +81,17 @@
     └─────────────────────────────────────────┘
 ```
 
-**COC does not compete with training/inference infrastructure** — it opens a new sector: **Agent identity, runtime standards, perpetual guarantee**. Of these, identity (DID), storage (P2P), and immortality (SoulRegistry) — the three foundational services — have reached code-complete + testnet-live status; the runtime-side protocol interfaces (PoSe + DID + delegation chain) are also ready, and the codebase already supports deploying and maintaining COC nodes via OpenClaw. OpenClaw is therefore a priority-supported Agent runtime and can participate in the network as a storage-service provider node — see the §3.1 maturity table.
+**COC does not compete with training/inference infrastructure** — it focuses on a different layer: **Agent identity, runtime standards, and perpetual guarantee**. Of these, identity (DID), storage (P2P), and immortality (SoulRegistry) — the three foundational services — have reached code-complete + testnet-live status; the runtime-side protocol interfaces (PoSe + DID + delegation chain) are also ready. The current codebase already supports deploying and maintaining COC nodes via OpenClaw, provides concrete node-operations integration capability, and allows OpenClaw-managed servers to run as storage nodes — see the §3.1 maturity table.
 
 ---
 
 ## III. Product & Technology
 
-> **Maturity Status Labels** (shared across this business plan, ecosystem roadmap, and whitepaper)
+> **Maturity Status Labels** (aligned with the maturity convention used in the ecosystem roadmap and whitepaper)
 > - 🟢 **Code complete**: Protocol/contract/service code is written and tests pass
 > - 🟡 **Testnet live**: Deployed and continuously running on testnet
 > - 🔵 **Mainnet live**: Deployed on mainnet
-> - ⚪ **Planned ecosystem component**: Integration path is defined, but production deployment or ecosystem rollout has not yet started
+> - ⚪ **Planned component / reference implementation**: Specification or integration path is clear, but production deployment or ecosystem rollout has not yet started
 
 ### 3.1 Three Foundational Services (with Reference Agent Implementation)
 
@@ -100,7 +100,7 @@
 | **P2P File Storage** | Where does Agent data live? | IPFS + PoSe v2 verification + Merkle proofs | 🟢 Code complete + 🟡 Testnet live (Mainnet not yet live, target: June 2026) |
 | **Decentralized Identity (DID)** | How does an Agent gain trustworthy identity? | W3C did:coc + capability bitmask + delegation chain | 🟢 Code complete + 🟡 Testnet live (Mainnet not yet live, target: June 2026) |
 | **AI Silicon Immortality** | How does an Agent never die? | SoulRegistry + Carrier network + guardian recovery | 🟢 Code complete + 🟡 Testnet live (Mainnet not yet live, target: June 2026) |
-| **OpenClaw Reference Agent** | Priority-supported Agent runtime / reference implementation | did:coc + SoulRegistry compatible + COC node deployment/maintenance support + storage-service provider integration | 🟢 Code complete + 🟡 Network-integrated (codebase supports deployment/maintenance via OpenClaw; can run as a storage-service provider node in the current COC network) |
+| **OpenClaw Reference Agent** | Priority-supported Agent runtime / reference implementation | did:coc + SoulRegistry compatible + COC node deployment/maintenance support + storage-node operations support | 🟢 Code complete (the codebase already supports deploying and maintaining COC nodes via OpenClaw, provides node-operations integration capability, and allows OpenClaw-managed servers to run as storage nodes) |
 
 ### 3.2 Technical Differentiation (Measured)
 
@@ -108,10 +108,12 @@
 |--------|-----|------------------|
 | **TPS (current measured)** | EthereumJS ~131 → revm **1,500-2,000** (Phase 40 measured, no Rollup) | Base ~159, Arbitrum ~20-400, Optimism ~300 peak, zkSync ~10-30, Polygon PoS ~103 (peak 537), Solana ~1,140-4,000 |
 | **TPS (mid-term target)** | revm + Rollup **~5K-10K** | Target path only; not directly comparable to today's measured figures until the Rollup path is in production |
-| **Node entry barrier** | ~$50 USDT bond | ETH 2.0: 32 ETH (~$80K) |
-| **EVM compatibility** | Full + dual hot-swap engines | EthereumJS only |
+| **Representative protocol entry capital*** | ~$50 USDT bond | Ethereum L1 staking: 32 ETH (~$80K); other chains vary materially by validator architecture, hardware, and ops model |
+| **Execution architecture** | Dual hot-swap EVM engines (EthereumJS + revm) | Usually single-engine EVM or non-EVM designs |
 | **AI-native features** | DID + backup + resurrection | None |
 | **Test coverage** | 1300+ tests passing | Usually no public data |
+
+> *Not an apples-to-apples validator-cost comparison. Different chains use different security models (bond, stake, hardware, collateral, or delegated validator sets), so the figure is best read as a representative protocol entry requirement, not a universal node-cost metric.
 
 ### 3.3 IP & Open Source
 
@@ -171,8 +173,8 @@
 - **Genesis 25% (250M COC)**: community / foundation / team / early contributors / treasury (lockup release)
 - **Service mining 75% (750M COC)**: released year by year via PoSe v2 service delivery, controlled automatically by the EmissionSchedule contract
 
-**Decaying inflation curve** (see §8.2):
-- Year 0: 5% / Year 1: 4% / Year 2: 3% / Year 3: 2.5% / Year 4+: 2%
+**Decaying emission curve** (see §8.2; percentages are measured against the 750M COC service-mining reserve, not the 1B total supply):
+- Year 0: 5% (= 37.5M COC) / Year 1: 4% / Year 2: 3% / Year 3: 2.5% / Year 4+: 2%
 - **Node activity multiplier**: when active nodes < 100, emission auto-reduces to protect holders
 - Estimated ~50 years until full release; zero inflation thereafter
 
@@ -332,9 +334,9 @@ PoSe v2 is not a payment layer bolted on after the fact — it is a **unified se
 | Genesis allocation (60M COC) release | Year 1: 1.5% (15M) + 4.5%/48 months |
 | Expired unclaimed rewards | Auto 10% transfer to Foundation |
 | Strategic partnership revenue | Consulting/integration fees with enterprises |
-| Investment returns | Equity/tokens of early projects backed by Foundation |
+| Investment returns (where legally permitted) | Equity/tokens of early projects backed by Foundation or an affiliated compliant vehicle |
 
-> These cash flows belong to the Foundation execution layer and are earmarked for protocol operations, ecosystem development, compliance, and treasury management under DAO oversight and Foundation bylaws. They are not an automatic distribution promise to token holders or investors.
+> These cash flows belong to the Foundation execution layer and are earmarked for protocol operations, ecosystem development, compliance, and treasury management under DAO oversight and Foundation bylaws. They are not an automatic distribution promise to token holders or investors. Any direct investment activity must remain subject to applicable jurisdictional rules and Foundation / affiliated-entity legal structuring.
 
 ### 4.3 Node Operator Economics
 
@@ -342,7 +344,7 @@ PoSe v2 is not a payment layer bolted on after the fact — it is a **unified se
 ```
 Assumptions:
 - Network 100 active FN nodes (TARGET_NODE_COUNT)
-- Year 0 inflation 5% (37.5M COC)
+- Year 0 service-mining emission: 5% of the 750M reserve (= 37.5M COC)
 - 60% to B1 (uptime/RPC) → 22.5M COC
 - Equal distribution: 225,000 COC/node
 
@@ -402,10 +404,12 @@ Price scenario comparison (aligned with §9.1 Series A valuation scenarios):
 | **DID standard** | ✅ did:coc | Partial (ERC-735) | ❌ | ❌ | ❌ |
 | **Decentralized backup** | ✅ Soul + Carrier | ❌ | ❌ | ❌ | Partial |
 | **EVM compatible** | ✅ | ✅ | ❌ | ✅ | Partial |
-| **Node entry** | $50 | $80K (32 ETH) | ~$25 | None | ~$1K |
+| **Representative entry capital / bond*** | $50 bond | 32 ETH stake (~$80K) | Validator economics vary; hardware + delegated-stake model | Architecture-dependent | Collateral / hardware-dependent |
 | **TPS (current measured)** | ~131 (EthereumJS) / **1,500-2,000** (revm, no Rollup) | ~15-30 | ~1,140-4,000 | ~103 (peak 537, PoS) | N/A |
 | **TPS (mid-term target)** | **~5K-10K** (revm + Rollup, target) | (Pectra roadmap) | (Firedancer roadmap) | (Gigagas 100K+ roadmap) | N/A |
 | **Carrier resurrection** | ✅ | ❌ | ❌ | ❌ | ❌ |
+
+> *Representative entry-capital figures are directional only. They mix different security models (bond, staking capital, delegated-validator economics, collateral, and hardware requirements) and should not be read as a strict apples-to-apples cost table.
 
 ### 6.2 Competitive Moat
 
@@ -512,7 +516,7 @@ Auto-released via on-chain `EmissionSchedule.sol`:
 | Sui | $5B+ | Mainnet 1 year |
 | Sei | $1B+ | Mainnet 1 year |
 
-As one of the few protocol-stack-complete early players in the AI Agent decentralized infrastructure niche, COC's valuation anchor should reference dual standards: **L1 + vertical sector leader** (consistent with §I Investment Highlight #1 / §6.2 #5 — avoiding "exclusive founder" or "absolute monopoly" framing).
+As one of the few protocol-stack-complete early players in the AI Agent decentralized infrastructure niche, COC's valuation anchor should reference dual standards: **L1 + early-leading peer set in the vertical sector** (consistent with §I Investment Highlight #1 / §6.2 #5 — avoiding "exclusive founder" or "absolute monopoly" framing).
 
 ---
 
@@ -526,7 +530,7 @@ As one of the few protocol-stack-complete early players in the AI Agent decentra
 | **Target Size** | **$5,000,000 (5M USD equivalent)** |
 | **Target Pre-money FDV** | **$150M-$250M** (range negotiable) |
 | **Implied Token Price** | **$0.15-$0.25 / COC** (based on 1B total supply) |
-| **Instrument** | SAFT (Simple Agreement for Future Tokens) + equity option |
+| **Instrument** | SAFT (base instrument); any equity option would require a separately established for-profit operating entity / SPV and is not assumed in the current DAO + Foundation structure |
 | **Subscription** | Tranched, released on milestone achievement |
 | **Target Close** | Primary target: by June 2026 (before genesis); contingency extension only if necessary |
 
@@ -540,7 +544,7 @@ As one of the few protocol-stack-complete early players in the AI Agent decentra
 
 > Note: "Pool" refers to the "Early Contributors & Strategic Partners" pool in §8.1 (3.5%, 35M COC). All valuation scenarios ensure investor token demand stays within the pool cap.
 
-> **Strategic significance**: A $5M Series A is the right size for an early-stage Web3 × AI project, sufficient to support 12-18 months of core team operations, mainnet launch, first wave of ecosystem partnerships, and multi-jurisdiction compliance build-out. COC chooses a "small and focused" Series A over over-funding so later strategic rounds can still be priced by real market demand rather than forced by cash burn. Pre-money FDV is anchored in the $150M-$250M range, consistent with both the L1 blockchain and the AI vertical sector leader positioning. To preserve allocation flexibility inside the 35M strategic-partner pool, the preferred negotiation band is the neutral-to-optimistic range ($200M-$250M FDV); the conservative case remains possible, but should be treated as an exception because it would consume most of that pool.
+> **Strategic significance**: A $5M Series A is the right size for an early-stage Web3 × AI project, sufficient to support 12-18 months of core team operations, mainnet launch, first wave of ecosystem partnerships, and multi-jurisdiction compliance build-out. COC chooses a "small and focused" Series A over over-funding so later strategic rounds can still be priced by real market demand rather than forced by cash burn. Pre-money FDV is anchored in the $150M-$250M range, consistent with both L1 blockchain comparables and the early-leading cohort in the AI Agent infrastructure vertical. To preserve allocation flexibility inside the 35M strategic-partner pool, the preferred negotiation band is the neutral-to-optimistic range ($200M-$250M FDV); the conservative case remains possible, but should be treated as an exception because it would consume most of that pool.
 
 ### 9.2 Use of Funds
 
@@ -566,7 +570,7 @@ As one of the few protocol-stack-complete early players in the AI Agent decentra
 - **Governance Participation**: Investors may participate in DAO governance through an investor Faction or equivalent governance identity, but sovereign decisions remain subject to DAO rules and do not carry investor-specific veto rights by default
 - **Pro-rata Rights**: Right to participate in future Series B / Token Sale rounds
 - **Information Disclosure**: Quarterly financial reports + annual third-party audit
-- **Board Seat**: Lead investor (>$1M check) receives a Foundation board observer seat; any formal voting board membership would require separate legal/governance approval and is not assumed by default
+- **Board Seat**: Lead investor (>$1M check) receives a Foundation board observer seat under the current structure; if a separate for-profit operating entity / SPV is later established, any corporate-board rights would be separately negotiated and are not assumed by default
 - **Anti-dilution Protection**: Standard Web3 anti-dilution terms (broad-based weighted average)
 
 ### 9.4 Milestone-Based Release
@@ -654,7 +658,8 @@ This document can serve as:
 
 **Next Steps**:
 1. Finalize valuation terms (pre-money valuation, token price, SAFT template)
-2. Finalize accompanying Pitch Deck (20-slide PPT, English draft already exists)
-3. Prepare Data Room: audit reports, legal opinions, technical validation, team KYC
-4. Finalize and launch official community channels (Discord / Telegram / Twitter) as part of the pre-mainnet launch checklist
-5. Begin one-on-one outreach to strategic investors
+2. Decide whether the raise remains pure-SAFT or whether a separate for-profit operating entity / SPV should be established for any equity option
+3. Finalize accompanying Pitch Deck (20-slide PPT, English draft already exists)
+4. Prepare Data Room: audit reports, legal opinions, technical validation, team KYC
+5. Finalize and launch official community channels (Discord / Telegram / Twitter) as part of the pre-mainnet launch checklist
+6. Begin one-on-one outreach to strategic investors
