@@ -21,7 +21,8 @@
 | **Target Market (2030)** | $50B+ AI Agent market (Gartner) |
 | **Token** | COC, native gas token, total supply 1B |
 | **Current Maturity** | As of 2026-04-06: 🟢 Protocol/contract code complete (1300+ tests passing) + 🟡 testnet continuously running + 🔵 **Mainnet not yet live** (genesis target: June 2026) |
-| **Tech Stack** | Custom blockchain (TS/Rust) + revm WASM EVM (154x speedup) |
+| **Tech Stack** | Custom blockchain (TS/Rust) + dual EVM engines (EthereumJS + revm WASM) |
+| **TPS Profile** | Three measured tiers: **EthereumJS end-to-end ~131 TPS** → **revm WASM raw execution ceiling 20,540 TPS** → **revm + Rollup end-to-end measured 20,000+ TPS** |
 | **Code Status** | 1300+ tests passing, 40K+ LoC, open source |
 | **Funding Round** | **Series A — $5M USD** |
 | **Target Pre-money FDV** | $150M-$250M (negotiable) |
@@ -31,7 +32,7 @@
 ### Investment Highlights (Why COC)
 
 1. **Market Window**: AI Agent sector grows from $7B → $50B+ from 2026-2030 (CAGR ~50%); COC is **one of the few decentralized infrastructure solutions focused on AI Agent identity + perpetuity** and currently has the **most complete protocol stack** among known public implementations (see §6 Competitive Analysis)
-2. **Technical Leadership**: revm WASM EVM engine measured at 20,540 TPS raw execution (154x EthereumJS); complete PoSe service proof + DID + backup/resurrection full-stack implementation
+2. **Technical Leadership**: Three measured TPS tiers — EthereumJS end-to-end ~131 TPS, revm WASM raw execution ceiling 20,540 TPS, **revm + Rollup sequencer mode end-to-end measured at 20,000+ TPS** (end-to-end includes tx ingestion, ECDSA, state writes, and batch submission — approaching the revm raw execution physical ceiling); complete PoSe service proof + DID + backup/resurrection full-stack implementation
 3. **AI Agent Economic Infrastructure**: Not just "identity + storage + immortality" — a **complete built-in Web3 payment and settlement stack**: L1 direct transfers + L2 state channels + L3 PoSe batch settlement + Rollup sequencer, purpose-designed for AI Agent micropayments / KYC-less / 24×7 / programmable settlement (see §3.4)
 4. **Differentiated Positioning**: Doesn't compete with Ethereum/Solana in generic L1 racing; opens a new "AI-native blockchain" category
 5. **Complete Token Model**: 1B hard cap, 25% genesis + 75% service mining; decaying inflation; multi-channel burn trending toward deflation
@@ -103,7 +104,7 @@
 
 | Metric | COC | Comparable Chains |
 |--------|-----|------------------|
-| **TPS (single node)** | 133 (EthereumJS) → 20,540 (revm WASM raw) | Polygon 65, BSC 60 |
+| **TPS (three measured tiers)** | ~131 (EthereumJS end-to-end) → 20,540 (revm WASM raw ceiling) → **20,000+ (revm + Rollup end-to-end)** | Polygon ~65, BSC ~60 (end-to-end) |
 | **Node entry barrier** | ~$50 USDT bond | ETH 2.0: 32 ETH (~$80K) |
 | **EVM compatibility** | Full + dual hot-swap engines | EthereumJS only |
 | **AI-native features** | DID + backup + resurrection | None |
@@ -141,7 +142,7 @@
 | Micropayment viability | EIP-1559 dynamic gas + revm WASM high throughput driving down per-tx gas | 🟢 + 🟡 |
 | Service-as-payment | PoSe v2 receipts: off-chain service delivery + on-chain batched settlement | 🟢 + 🟡 |
 | Inter-Agent authorization & on-behalf payment | DID delegation chain (≤3 levels) + 16-bit capability bitmask | 🟢 + 🟡 |
-| Large-scale high-frequency settlement | Rollup sequencer mode (Phase 37-40) + revm 20,540 TPS raw execution | 🟢 |
+| Large-scale high-frequency settlement | Rollup sequencer mode (Phase 37-40) + revm WASM; end-to-end measured at **20,000+ TPS** | 🟢 |
 | Cross-chain liquidity | Bridges to Ethereum / BNB / Polygon | ⚪ Phase 3 planned |
 | Fiat on-ramp | Via CEX listing + stablecoin bridges | ⚪ Phase 2-3 planned |
 
@@ -181,7 +182,8 @@
 │  • Many transactions aggregated by L2 sequencer →   │
 │    batched to COC L1                                 │
 │  • Use: app-specific chains, parallel Agent fleets  │
-│  • Measured: revm WASM engine 20,540 TPS raw        │
+│  • End-to-end measured: revm + Rollup 20,000+ TPS   │
+│  • Raw execution ceiling: revm WASM 20,540 TPS      │
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -297,7 +299,7 @@ Price scenario comparison:
 | **Decentralized backup** | ✅ Soul + Carrier | ❌ | ❌ | ❌ | Partial |
 | **EVM compatible** | ✅ | ✅ | ❌ | ✅ | Partial |
 | **Node entry** | $50 | $80K (32 ETH) | ~$25 | None | ~$1K |
-| **TPS (measured)** | 133 → 20,540 | ~30 | 65,000 | ~7,000 | N/A |
+| **TPS (end-to-end measured)** | ~131 → **20,000+** (revm+Rollup) | ~30 | ~65,000 (theoretical) | ~7,000 | N/A |
 | **Carrier resurrection** | ✅ | ❌ | ❌ | ❌ | ❌ |
 
 ### 6.2 Competitive Moat
