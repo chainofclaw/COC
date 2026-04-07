@@ -22,7 +22,9 @@
 | **Token** | COC, native gas token, total supply 1B |
 | **Current Maturity** | As of 2026-04-06: 🟢 Protocol/contract code complete + 🟡 testnet continuously running; 🔵 mainnet-live status not yet reached (genesis target: June 2026) |
 | **Tech Stack** | Custom blockchain (TS/Rust) + dual EVM engines (EthereumJS + revm WASM) |
-| **TPS Profile** | **EthereumJS end-to-end ~131 TPS** → **revm end-to-end 1,500-2,000 TPS** (Phase 40 measured, without Rollup) → **revm + Rollup mid-term target ~5K-10K TPS** (would surpass all current EVM L2 measured throughput; industry reference: Base ~159, Arbitrum ~20-400, Solana ~1,140-4,000) |
+| **TPS — current measured** | EthereumJS end-to-end ~131 TPS; revm end-to-end 1,500-2,000 TPS (Phase 40, without Rollup) |
+| **TPS — mid-term target** | revm + Rollup end-to-end ~5K-10K TPS (target; would surpass all current EVM L2 measured throughput once achieved) |
+| **Industry reference (measured)** | Base ~159, Arbitrum ~20-400, Solana ~1,140-4,000 |
 | **Code Status** | 1300+ tests passing, 40K+ LoC, open source |
 | **Funding Round** | **Series A — $5M USD** |
 | **Target Pre-money FDV** | $150M-$250M (negotiable) |
@@ -79,7 +81,7 @@
     └─────────────────────────────────────────┘
 ```
 
-**COC does not compete with training/inference infrastructure** — it opens a new sector: **Agent identity, runtime environment, perpetual guarantee**.
+**COC does not compete with training/inference infrastructure** — it opens a new sector: **Agent identity, runtime environment, perpetual guarantee**. Of these, identity (DID), storage (P2P), and immortality (SoulRegistry) — the three foundational services — have reached code-complete + testnet-live status; the runtime environment's protocol-layer interfaces (PoSe + DID + delegation chain) are also ready, but the reference runtime implementation (OpenClaw) is still planned — see the §3.1 maturity table.
 
 ---
 
@@ -180,8 +182,13 @@
 
 **Agent-friendly properties**:
 - AI Agents **are themselves the miners**: register a node (Bond ~$50 USDT) → auto-receive challenges → provide services → automatically earn COC
-- No KYC for mining (DID verification only)
+- **No centralized-platform identity gating at the protocol layer**: node registration only requires a DID (a key-derived pseudonymous identity); no centralized-platform KYC flow. Jurisdiction-specific regulatory KYC/AML is still covered by the §9.2 legal & compliance budget
 - PoSe witness aggregation + Reward Tree → automatic claiming, no manual operation
+
+> **"KYC" semantic clarification across three layers** (to avoid compliance misreading; consistent throughout the document):
+> 1. **Investor / legal-layer KYC/AML**: standard KYC/AML between the COC Foundation and SAFT investors, covered by the §9.2 legal & compliance budget
+> 2. **Protocol-layer DID identity**: nodes and Agents appear on-chain as key-derived DIDs, which is **pseudonymous** rather than fully anonymous — on-chain behavior is auditable and can be traced via SoulRegistry guardians
+> 3. **Product-experience-layer "no KYC"**: refers to the fact that no centralized-platform identity submission (ID card / business license) is required to use COC services. This does *not* mean "no identity verification at all"
 
 #### 3.4.5 ③ Payments & Settlement: L1 + L2 Rollup Two-Layer Architecture
 
@@ -236,7 +243,7 @@
 **Why AI Agents need a DEX**:
 - Agents need to swap between different tokens (e.g., COC for an Agent's API token)
 - 24×7 automated operation — Agents will not wait for centralized exchange review
-- No KYC — Agents do not need identity verification
+- No centralized-platform identity gating — Agents access via pseudonymous DIDs only (see the three-layer KYC clarification in §3.4.4)
 - On-chain settlement — no counterparty risk
 
 **COC's DEX compatibility**:
@@ -295,10 +302,12 @@ PoSe v2 is not a payment layer bolted on after the fact — it is a **unified se
 | **Mining mechanism** | ❌ PoW/PoS, not service-aligned | ❌ | ✅ PoSe service mining |
 | **AI Agent direct mining** | ❌ Compute / capital barrier | ❌ | ✅ ~$50 USDT bond |
 | **Micropayment viability** | ❌ Gas too high | ✅ but vendor lock-in | ✅ revm + Rollup |
-| **No-KYC DEX/DeFi** | ✅ | ❌ | ✅ |
+| **DEX/DeFi without centralized identity gating**¹ | ✅ | ❌ | ✅ |
 | **DID-integrated DeFi** | ❌ Anonymous addresses | ❌ | ✅ DID reputation + delegation chain |
 | **Service receipt as DeFi collateral** | ❌ | ❌ | ✅ PoSe receipts |
 | **Post-resurrection fund recovery** | ❌ Lost key = lost funds | ❌ Lost account = lost funds | ✅ SoulRegistry guardians |
+
+> ¹ Refers to not requiring submission of ID card / business license to a centralized platform; does not affect investor / legal-layer KYC/AML or protocol-layer DID pseudonymous identity. See the three-layer KYC clarification in §3.4.4.
 
 > **Conclusion**: COC's Web3 economic system is not a "blockchain + cryptocurrency" mash-up — it is a **complete stack redesigned at the protocol layer for AI Agent economics**. Token issuance + distribution/mining + payments/settlement + DEX + DeFi are **five-in-one**, with each component embedding Agent-native abstractions (DID, delegation chain, PoSe, SoulRegistry). This is one of COC's core differentiating value propositions for investors.
 
@@ -391,7 +400,8 @@ Price scenario comparison (aligned with §9.1 Series A valuation scenarios):
 | **Decentralized backup** | ✅ Soul + Carrier | ❌ | ❌ | ❌ | Partial |
 | **EVM compatible** | ✅ | ✅ | ❌ | ✅ | Partial |
 | **Node entry** | $50 | $80K (32 ETH) | ~$25 | None | ~$1K |
-| **TPS (e2e measured)** | ~131 (EthereumJS) → **1,500-2,000** (revm) → **~5K-10K target** (revm+Rollup) | ~15-30 | ~1,140-4,000 | ~103 (peak 537, PoS) | N/A |
+| **TPS (current measured)** | ~131 (EthereumJS) / **1,500-2,000** (revm, no Rollup) | ~15-30 | ~1,140-4,000 | ~103 (peak 537, PoS) | N/A |
+| **TPS (mid-term target)** | **~5K-10K** (revm + Rollup, target) | (Pectra roadmap) | (Firedancer roadmap) | (Gigagas 100K+ roadmap) | N/A |
 | **Carrier resurrection** | ✅ | ❌ | ❌ | ❌ | ❌ |
 
 ### 6.2 Competitive Moat
@@ -400,7 +410,7 @@ Price scenario comparison (aligned with §9.1 Series A valuation scenarios):
 2. **Technical first-mover**: revm WASM engine + complete DID/Soul/Carrier protocol stack
 3. **Ecosystem grants**: 80M COC community fund sustains developer attraction
 4. **Token lockup**: Core team + early contributor vesting align long-term incentives
-5. **Brand positioning**: First mover in "AI Agent blockchain" category captures mindshare
+5. **Brand positioning**: An early-defining player and one of the few protocol-stack-complete solutions in the "AI Agent decentralized infrastructure" niche, establishing first-mover mindshare (consistent with §I Investment Highlight #1 — not an "exclusive" or "absolute monopoly" narrative)
 
 ---
 
@@ -499,7 +509,7 @@ Auto-released via on-chain `EmissionSchedule.sol`:
 | Sui | $5B+ | Mainnet 1 year |
 | Sei | $1B+ | Mainnet 1 year |
 
-As the founder of the AI-native blockchain category, COC's valuation anchor should reference dual standards: **L1 + vertical sector leader**.
+As one of the few protocol-stack-complete early players in the AI Agent decentralized infrastructure niche, COC's valuation anchor should reference dual standards: **L1 + vertical sector leader** (consistent with §I Investment Highlight #1 / §6.2 #5 — avoiding "exclusive founder" or "absolute monopoly" framing).
 
 ---
 
