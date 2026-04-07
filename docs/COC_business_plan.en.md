@@ -81,7 +81,7 @@
     └─────────────────────────────────────────┘
 ```
 
-**COC does not compete with training/inference infrastructure** — it opens a new sector: **Agent identity, runtime standards, perpetual guarantee**. Of these, identity (DID), storage (P2P), and immortality (SoulRegistry) — the three foundational services — have reached code-complete + testnet-live status; the runtime-side protocol interfaces (PoSe + DID + delegation chain) are also ready, and OpenClaw, as the first widely adopted AI Agent prioritized for COC support, is already integrated with the COC network and operates as an important storage-service provider node — see the §3.1 maturity table.
+**COC does not compete with training/inference infrastructure** — it opens a new sector: **Agent identity, runtime standards, perpetual guarantee**. Of these, identity (DID), storage (P2P), and immortality (SoulRegistry) — the three foundational services — have reached code-complete + testnet-live status; the runtime-side protocol interfaces (PoSe + DID + delegation chain) are also ready, and the codebase already supports deploying and maintaining COC nodes via OpenClaw. OpenClaw is therefore a priority-supported Agent runtime and can participate in the network as a storage-service provider node — see the §3.1 maturity table.
 
 ---
 
@@ -91,7 +91,7 @@
 > - 🟢 **Code complete**: Protocol/contract/service code is written and tests pass
 > - 🟡 **Testnet live**: Deployed and continuously running on testnet
 > - 🔵 **Mainnet live**: Deployed on mainnet
-> - ⚪ **Reference implementation planned**: Specification clear; code not yet started
+> - ⚪ **Planned ecosystem component**: Integration path is defined, but production deployment or ecosystem rollout has not yet started
 
 ### 3.1 Three Foundational Services (with Reference Agent Implementation)
 
@@ -100,13 +100,14 @@
 | **P2P File Storage** | Where does Agent data live? | IPFS + PoSe v2 verification + Merkle proofs | 🟢 Code complete + 🟡 Testnet live (Mainnet not yet live, target: June 2026) |
 | **Decentralized Identity (DID)** | How does an Agent gain trustworthy identity? | W3C did:coc + capability bitmask + delegation chain | 🟢 Code complete + 🟡 Testnet live (Mainnet not yet live, target: June 2026) |
 | **AI Silicon Immortality** | How does an Agent never die? | SoulRegistry + Carrier network + guardian recovery | 🟢 Code complete + 🟡 Testnet live (Mainnet not yet live, target: June 2026) |
-| **OpenClaw Reference Agent** | Priority-supported Agent runtime / reference implementation | did:coc + SoulRegistry compatible + storage-service provider integration | 🟢 Code complete + 🟡 Network-integrated (active storage-service provider node in the current COC network) |
+| **OpenClaw Reference Agent** | Priority-supported Agent runtime / reference implementation | did:coc + SoulRegistry compatible + COC node deployment/maintenance support + storage-service provider integration | 🟢 Code complete + 🟡 Network-integrated (codebase supports deployment/maintenance via OpenClaw; can run as a storage-service provider node in the current COC network) |
 
 ### 3.2 Technical Differentiation (Measured)
 
 | Metric | COC | Comparable Chains |
 |--------|-----|------------------|
-| **TPS (e2e measured/target)** | EthereumJS ~131 → revm **1,500-2,000** (Phase 40 measured, no Rollup) → revm + Rollup **mid-term target ~5K-10K** | Base ~159, Arbitrum ~20-400, Optimism ~300 peak, zkSync ~10-30, Polygon PoS ~103 (peak 537), Solana ~1,140-4,000 |
+| **TPS (current measured)** | EthereumJS ~131 → revm **1,500-2,000** (Phase 40 measured, no Rollup) | Base ~159, Arbitrum ~20-400, Optimism ~300 peak, zkSync ~10-30, Polygon PoS ~103 (peak 537), Solana ~1,140-4,000 |
+| **TPS (mid-term target)** | revm + Rollup **~5K-10K** | Target path only; not directly comparable to today's measured figures until the Rollup path is in production |
 | **Node entry barrier** | ~$50 USDT bond | ETH 2.0: 32 ETH (~$80K) |
 | **EVM compatibility** | Full + dual hot-swap engines | EthereumJS only |
 | **AI-native features** | DID + backup + resurrection | None |
@@ -638,7 +639,7 @@ Possible paths after Series A:
 | Official Domain | `clawchain.io` |
 | Contact Email | invest@clawchain.io |
 
-> Note: official community channels (Discord / Telegram / Twitter) are planned to launch before mainnet genesis (2026 Q2). See the "Next Steps" checklist below.
+> Note: official community channels (Discord / Telegram / Twitter) are part of the pre-mainnet launch and investor-outreach checklist below.
 
 ---
 
@@ -655,5 +656,5 @@ This document can serve as:
 1. Finalize valuation terms (pre-money valuation, token price, SAFT template)
 2. Finalize accompanying Pitch Deck (20-slide PPT, English draft already exists)
 3. Prepare Data Room: audit reports, legal opinions, technical validation, team KYC
-4. Launch official community channels (Discord / Telegram / Twitter) before 2026 Q2
+4. Finalize and launch official community channels (Discord / Telegram / Twitter) as part of the pre-mainnet launch checklist
 5. Begin one-on-one outreach to strategic investors

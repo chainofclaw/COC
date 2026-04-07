@@ -81,7 +81,7 @@
     └─────────────────────────────────────────┘
 ```
 
-**COC 不与训练/推理基础设施竞争**——而是开辟新赛道：**Agent 的身份、运行时标准、永续保障**。其中身份 (DID)、存储 (P2P)、永生 (SoulRegistry) 三大基础服务已进入代码完成 + 测试网运行阶段；运行时侧的协议接口也已就绪 (PoSe + DID + 委托链)，而 OpenClaw 作为第一个被 COC 优先支持、且已被广泛使用的 AI Agent，已经接入当前 COC 网络，并成为其中的重要存储服务提供节点——详见 §3.1 成熟度表。
+**COC 不与训练/推理基础设施竞争**——而是开辟新赛道：**Agent 的身份、运行时标准、永续保障**。其中身份 (DID)、存储 (P2P)、永生 (SoulRegistry) 三大基础服务已进入代码完成 + 测试网运行阶段；运行时侧的协议接口也已就绪 (PoSe + DID + 委托链)，并且代码层已经支持通过 OpenClaw 部署和维护 COC 节点。因此，OpenClaw 已成为 COC 优先支持的 Agent 运行时，并可作为网络中的存储服务提供节点参与运行——详见 §3.1 成熟度表。
 
 ---
 
@@ -91,7 +91,7 @@
 > - 🟢 **代码已实现 (Code complete)**: 协议/合约/服务代码已写完，测试通过
 > - 🟡 **测试网运行 (Testnet live)**: 已部署到测试网长期运行
 > - 🔵 **主网运行 (Mainnet live)**: 已部署到主网
-> - ⚪ **参考实现规划中 (Reference impl. planned)**: 规范明确但代码未启动
+> - ⚪ **生态组件规划中 (Planned ecosystem component)**: 集成路径已明确，但生产部署或生态推广尚未启动
 
 ### 3.1 三大基础服务（含参考 Agent 实现）
 
@@ -100,13 +100,14 @@
 | **P2P 文件存储** | Agent 数据如何持久化 | IPFS + PoSe v2 验证 + Merkle 证明 | 🟢 代码已实现 + 🟡 测试网运行 (主网未上线，目标 2026 年 6 月) |
 | **去中心化身份 (DID)** | Agent 如何拥有可信身份 | W3C did:coc + 能力位掩码 + 委托链 | 🟢 代码已实现 + 🟡 测试网运行 (主网未上线，目标 2026 年 6 月) |
 | **AI 硅基永生** | Agent 如何永不消亡 | SoulRegistry + Carrier 网络 + 监护人恢复 | 🟢 代码已实现 + 🟡 测试网运行 (主网未上线，目标 2026 年 6 月) |
-| **OpenClaw 参考 Agent** | 优先支持的 Agent 运行时 / 参考实现 | 兼容 did:coc、SoulRegistry，并已接入存储服务节点能力 | 🟢 代码已实现 + 🟡 已接入当前网络（作为重要存储服务提供节点运行） |
+| **OpenClaw 参考 Agent** | 优先支持的 Agent 运行时 / 参考实现 | 兼容 did:coc、SoulRegistry，并支持 COC 节点部署/维护与存储服务节点接入 | 🟢 代码已实现 + 🟡 已接入当前网络（代码已支持通过 OpenClaw 部署/维护 COC 节点，并可作为存储服务提供节点运行） |
 
 ### 3.2 技术差异化（实测数据）
 
 | 指标 | COC | 同类公链 |
 |------|-----|---------|
-| **TPS (端到端实测/目标)** | EthereumJS ~131 → revm **1,500-2,000** (Phase 40 实测，无 Rollup) → revm + Rollup **中期目标 ~5K-10K** | Base ~159, Arbitrum ~20-400, Optimism ~300 峰值, zkSync ~10-30, Polygon PoS ~103 (峰值 537), Solana ~1,140-4,000 |
+| **TPS（当前实测）** | EthereumJS ~131 → revm **1,500-2,000** (Phase 40 实测，无 Rollup) | Base ~159, Arbitrum ~20-400, Optimism ~300 峰值, zkSync ~10-30, Polygon PoS ~103 (峰值 537), Solana ~1,140-4,000 |
+| **TPS（中期目标）** | revm + Rollup **~5K-10K** | 仅代表目标路径；在 Rollup 路径生产化之前，不宜直接与当前实测值并列比较 |
 | **节点门槛** | ~$50 USDT bond | ETH 2.0: 32 ETH (~$80K) |
 | **EVM 兼容** | 完全兼容 + 双引擎可热插拔 | 仅 EthereumJS |
 | **AI 原生功能** | DID + 备份 + 复活 | 无 |
@@ -633,7 +634,7 @@ Series A 之后的可能路径：
 | 官方域名 | `clawchain.io` |
 | 联系邮箱 | invest@clawchain.io |
 
-> 注: 官方社区频道 (Discord / Telegram / Twitter) 计划在主网创世前 (2026 Q2) 建立，详见下方"下一步"清单。
+> 注: 官方社区频道 (Discord / Telegram / Twitter) 属于下方主网上线前与投资人沟通准备清单的一部分。
 
 ---
 
@@ -650,5 +651,5 @@ Series A 之后的可能路径：
 1. 完善估值条款（Pre-money 估值、Token 价格、SAFT 模板）
 2. 设计配套 Pitch Deck (20 页 PPT，已有英文版基础)
 3. 准备数据室 (Data Room)：审计报告、法律意见、技术验证、团队 KYC
-4. 建立官方社区频道 (Discord / Telegram / Twitter, 2026 Q2 前)
+4. 作为主网上线前准备的一部分，完善并建立官方社区频道 (Discord / Telegram / Twitter)
 5. 启动战略投资者一对一沟通
