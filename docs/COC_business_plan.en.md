@@ -104,7 +104,7 @@
 
 | Metric | COC | Comparable Chains |
 |--------|-----|------------------|
-| **TPS (e2e measured/target)** | EthereumJS ~131 → revm **1,500-2,000** (Phase 40 measured, no Rollup) → revm + Rollup **mid-term target ~5K-10K** | Base ~159, Arbitrum ~20-400, Optimism ~300 peak, zkSync ~10-30, Solana ~1,140-4,000 |
+| **TPS (e2e measured/target)** | EthereumJS ~131 → revm **1,500-2,000** (Phase 40 measured, no Rollup) → revm + Rollup **mid-term target ~5K-10K** | Base ~159, Arbitrum ~20-400, Optimism ~300 peak, zkSync ~10-30, Polygon PoS ~103 (peak 537), Solana ~1,140-4,000 |
 | **Node entry barrier** | ~$50 USDT bond | ETH 2.0: 32 ETH (~$80K) |
 | **EVM compatibility** | Full + dual hot-swap engines | EthereumJS only |
 | **AI-native features** | DID + backup + resurrection | None |
@@ -391,7 +391,7 @@ Price scenario comparison:
 | **Decentralized backup** | ✅ Soul + Carrier | ❌ | ❌ | ❌ | Partial |
 | **EVM compatible** | ✅ | ✅ | ❌ | ✅ | Partial |
 | **Node entry** | $50 | $80K (32 ETH) | ~$25 | None | ~$1K |
-| **TPS (e2e measured)** | ~131 (EthereumJS) → **1,500-2,000** (revm) → **~5K-10K target** (revm+Rollup) | ~15-30 | ~1,140-4,000 | ~30-50 (PoS) | N/A |
+| **TPS (e2e measured)** | ~131 (EthereumJS) → **1,500-2,000** (revm) → **~5K-10K target** (revm+Rollup) | ~15-30 | ~1,140-4,000 | ~103 (peak 537, PoS) | N/A |
 | **Carrier resurrection** | ✅ | ❌ | ❌ | ❌ | ❌ |
 
 ### 6.2 Competitive Moat
