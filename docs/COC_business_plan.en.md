@@ -20,7 +20,7 @@
 | **Sector** | Web3 × AI intersection, Agent infrastructure |
 | **Target Market (2030)** | $50B+ AI Agent market (Gartner) |
 | **Token** | COC, native gas token, total supply 1B |
-| **Current Maturity** | As of 2026-04-06: 🟢 Protocol/contract code complete (1300+ tests passing) + 🟡 testnet continuously running + 🔵 **Mainnet not yet live** (genesis target: June 2026) |
+| **Current Maturity** | As of 2026-04-06: 🟢 Protocol/contract code complete + 🟡 testnet continuously running + 🔵 **Mainnet not yet live** (genesis target: June 2026) |
 | **Tech Stack** | Custom blockchain (TS/Rust) + dual EVM engines (EthereumJS + revm WASM) |
 | **TPS Profile** | **EthereumJS end-to-end ~131 TPS** → **revm end-to-end 1,500-2,000 TPS** (Phase 40 measured, without Rollup) → **revm + Rollup mid-term target ~5K-10K TPS** (would surpass all current EVM L2 measured throughput; industry reference: Base ~159, Arbitrum ~20-400, Solana ~1,140-4,000) |
 | **Code Status** | 1300+ tests passing, 40K+ LoC, open source |
@@ -91,7 +91,7 @@
 > - 🔵 **Mainnet live**: Deployed on mainnet
 > - ⚪ **Reference implementation planned**: Specification clear; code not yet started
 
-### 3.1 Three Foundational Services
+### 3.1 Three Foundational Services (with Reference Agent Implementation)
 
 | Service | Problem Solved | Core Tech | Current Maturity |
 |---------|---------------|-----------|-----------------|
@@ -334,17 +334,17 @@ Assumptions:
 - 60% to B1 (uptime/RPC) → 22.5M COC
 - Equal distribution: 225,000 COC/node
 
-Price scenario comparison:
-                       $0.10/COC      $0.15/COC        $0.20/COC
-                       (early-stage)  (Series A anchor)  (neutral)
-  Annual revenue       $22,500        $33,750           $45,000
-  Monthly revenue      $1,875         $2,813            $3,750
-  Monthly hardware     $200           $200              $200
-  Net income (month)   $1,675         $2,613            $3,550
-  Bond (one-time)      $50            $50               $50
+Price scenario comparison (aligned with §9.1 Series A valuation scenarios):
+                  $0.10/COC      $0.15/COC          $0.20/COC          $0.25/COC
+                  (early float)  (Series A conserv) (Series A neutral) (Series A optimistic)
+  Annual revenue  $22,500        $33,750            $45,000            $56,250
+  Monthly revenue $1,875         $2,813             $3,750             $4,688
+  Monthly hardware $200          $200               $200               $200
+  Net income/mo   $1,675         $2,613             $3,550             $4,488
+  Bond (one-time) $50            $50                $50                $50
 ```
 
-> Note: $0.10 reflects an early-stage market float assumption; $0.15-$0.20 correspond to the implied prices under §9.1 Series A valuation scenarios, reflecting the project's valuation of long-term SAFT-locked tokens. Actual revenue varies with network node count, COC price, and service quality.
+> Note: $0.10 is a conservative early-stage secondary market float assumption; $0.15 / $0.20 / $0.25 correspond to the conservative ($150M FDV) / neutral ($200M FDV) / optimistic ($250M FDV) implied token prices in §9.1's Series A valuation scenario table. Actual revenue varies with network node count, COC price, and service quality.
 
 ---
 
