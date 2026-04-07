@@ -1,0 +1,24 @@
+{
+  "name": "coc-pdf-build",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Build COC docs (markdown) → PDF using Chrome headless + Noto Sans Mono CJK SC for ASCII frame alignment",
+  "type": "module",
+  "scripts": {
+    "build:bp:zh": "node build.mjs ../../docs/COC_business_plan.zh.md ../../docs/COC_business_plan.zh.pdf",
+    "build:bp:en": "node build.mjs ../../docs/COC_business_plan.en.md ../../docs/COC_business_plan.en.pdf",
+    "build:roadmap:zh": "node build.mjs ../../docs/COC_ecosystem_roadmap.zh.md ../../docs/COC_ecosystem_roadmap.zh.pdf",
+    "build:roadmap:en": "node build.mjs ../../docs/COC_ecosystem_roadmap.en.md ../../docs/COC_ecosystem_roadmap.en.pdf",
+    "build:wp:zh": "node build.mjs ../../docs/COC_whitepaper.zh.md ../../docs/COC_whitepaper.zh.pdf",
+    "build:wp:en": "node build.mjs ../../docs/COC_whitepaper.en.md ../../docs/COC_whitepaper.en.pdf",
+    "build:pitch:zh": "node build.mjs ../../docs/COC_pitch_deck.zh.md ../../docs/COC_pitch_deck.zh.pdf",
+    "build:all": "npm run build:bp:zh && npm run build:bp:en && npm run build:roadmap:zh && npm run build:roadmap:en && npm run build:wp:zh && npm run build:wp:en && npm run build:pitch:zh"
+  },
+  "dependencies": {
+    "markdown-it": "^14.0.0",
+    "markdown-it-anchor": "^9.0.1"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
