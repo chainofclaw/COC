@@ -33,7 +33,7 @@
 
 1. **Market Window**: AI Agent sector grows from $7B → $50B+ from 2026-2030 (CAGR ~50%); COC is **one of the few decentralized infrastructure solutions focused on AI Agent identity + perpetuity** and currently has the **most complete protocol stack** among known public implementations (see §6 Competitive Analysis)
 2. **Technical Leadership**: Three measured TPS tiers — EthereumJS end-to-end ~131 TPS, revm WASM raw execution ceiling 20,540 TPS, **revm + Rollup sequencer mode end-to-end measured at 20,000+ TPS** (end-to-end includes tx ingestion, ECDSA, state writes, and batch submission — approaching the revm raw execution physical ceiling); complete PoSe service proof + DID + backup/resurrection full-stack implementation
-3. **AI Agent Economic Infrastructure**: Not just "identity + storage + immortality" — a **complete built-in Web3 payment and settlement stack**: L1 direct transfers + L2 state channels + L3 PoSe batch settlement + Rollup sequencer, purpose-designed for AI Agent micropayments / KYC-less / 24×7 / programmable settlement (see §3.4)
+3. **AI Agent Economic Infrastructure**: Not just "identity + storage + immortality" — a **complete built-in Web3 payment and settlement stack**: a two-layer architecture (**L1 mainchain + L2 Rollup sequencer**) hosting three settlement modes (direct transfer / state channels / PoSe v2 batch settlement), purpose-designed for AI Agent micropayments, KYC-less onboarding, 24×7 availability, and programmable settlement (see §3.4)
 4. **Differentiated Positioning**: Doesn't compete with Ethereum/Solana in generic L1 racing; opens a new "AI-native blockchain" category
 5. **Complete Token Model**: 1B hard cap, 25% genesis + 75% service mining; decaying inflation; multi-channel burn trending toward deflation
 6. **Governance Innovation**: Faction voting (whale-resistant) + 2/3 guardian recovery + 7-day reward expiry + 3/5 treasury multisig
@@ -146,45 +146,48 @@
 | Cross-chain liquidity | Bridges to Ethereum / BNB / Polygon | ⚪ Phase 3 planned |
 | Fiat on-ramp | Via CEX listing + stablecoin bridges | ⚪ Phase 2-3 planned |
 
-#### 3.4.3 Multi-Layer Payment Channel Architecture
+#### 3.4.3 Payment Channel Architecture (L1 + L2 Rollup, Two Layers)
+
+> COC has only two **architectural layers**: L1 mainchain and L2 Rollup. L1 hosts three **settlement modes** (direct transfer, state channels, PoSe batch settlement) — these are application-layer patterns *on* L1, not separate chain layers.
 
 ```
-┌──────────────────────────────────────────────────────┐
-│  L1 — COC mainchain direct transfer                  │
-│  • 1s blocks + 512 tx/block → ~131 TPS app layer    │
-│  • Use: medium-value, mission-critical, finality    │
-│  • Confirmation: 1-3 seconds                         │
-└──────────────────────────────────────────────────────┘
+╔══════════════════════════════════════════════════════════╗
+║  L2 — Rollup sequencer mode (application-specific L2)    ║
+║                                                          ║
+║  • Many txs aggregated by L2 sequencer → batched to L1  ║
+║  • End-to-end measured: revm + Rollup 20,000+ TPS       ║
+║  • Raw execution ceiling: revm WASM 20,540 TPS          ║
+║  • Use: large-scale parallel Agent fleets, high-freq    ║
+║    applications, app-specific chains                     ║
+╚══════════════════════════════════════════════════════════╝
                           │
+                          │ batch commit
                           ▼
-┌──────────────────────────────────────────────────────┐
-│  L2 — State Channels                                 │
-│  • Lock funds on-chain → off-chain high-freq settle  │
-│  • Use: high-frequency micropayments                 │
-│    (e.g. 100 inference calls per second)             │
-│  • Throughput: unlimited off-chain; on-chain only   │
-│    for open/close                                    │
-│  • Model: Lightning/Raiden style + EVM state machine│
-└──────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌──────────────────────────────────────────────────────┐
-│  L3 — PoSe service batch settlement                  │
-│  • Service nodes collect call receipts → epoch batch│
-│  • Use: service mining, API call billing             │
-│  • Advantage: zero user action, automated, Merkle-  │
-│    provable                                          │
-└──────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌──────────────────────────────────────────────────────┐
-│  Rollup mode — application-specific L2               │
-│  • Many transactions aggregated by L2 sequencer →   │
-│    batched to COC L1                                 │
-│  • Use: app-specific chains, parallel Agent fleets  │
-│  • End-to-end measured: revm + Rollup 20,000+ TPS   │
-│  • Raw execution ceiling: revm WASM 20,540 TPS      │
-└──────────────────────────────────────────────────────┘
+╔══════════════════════════════════════════════════════════╗
+║  L1 — COC mainchain (1s blocks, EVM, ~131 TPS e2e)      ║
+║                                                          ║
+║  Three settlement modes hosted on L1                     ║
+║  (application patterns, not separate layers):            ║
+║                                                          ║
+║  ① Direct Transfer                                       ║
+║     • EVM transfer, 1-3s finality                        ║
+║     • Use: medium-value, mission-critical, finality      ║
+║                                                          ║
+║  ② State Channels                                        ║
+║     • L1 contract locks funds → off-chain high-freq     ║
+║       settlement → single tx on close                    ║
+║     • Use: high-frequency two/multi-party micropayments  ║
+║       (e.g. 100 inference calls per second)              ║
+║     • Model: Lightning / Raiden style + EVM state       ║
+║       machine                                            ║
+║                                                          ║
+║  ③ PoSe v2 service batch settlement                      ║
+║     • Service nodes collect call receipts → per-epoch   ║
+║       Merkle batch settlement                            ║
+║     • Use: service mining, API call billing              ║
+║     • Advantage: zero user action, automated, Merkle-   ║
+║       provable                                           ║
+╚══════════════════════════════════════════════════════════╝
 ```
 
 #### 3.4.4 Natural Synergy with PoSe v2
