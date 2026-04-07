@@ -22,7 +22,7 @@
 | **Token** | COC, native gas token, total supply 1B |
 | **Current Maturity** | As of 2026-04-06: 🟢 Protocol/contract code complete (1300+ tests passing) + 🟡 testnet continuously running + 🔵 **Mainnet not yet live** (genesis target: June 2026) |
 | **Tech Stack** | Custom blockchain (TS/Rust) + dual EVM engines (EthereumJS + revm WASM) |
-| **TPS Profile** | **EthereumJS end-to-end ~131 TPS** → **revm end-to-end 1,500-2,000 TPS** (Phase 40 measured, without Rollup) → **revm + Rollup user-perceived ~150K-200K TPS** (Rollup provides roughly **100× amplification**; already measured at ~7-8× to 1,000+ TPS on EthereumJS) |
+| **TPS Profile** | **EthereumJS end-to-end ~131 TPS** → **revm end-to-end 1,500-2,000 TPS** (Phase 40 measured, without Rollup) → **revm + Rollup mid-term target ~5K-10K TPS** (would surpass all current EVM L2 measured throughput; industry reference: Base ~159, Arbitrum ~20-400, Solana ~1,140-4,000) |
 | **Code Status** | 1300+ tests passing, 40K+ LoC, open source |
 | **Funding Round** | **Series A — $5M USD** |
 | **Target Pre-money FDV** | $150M-$250M (negotiable) |
@@ -32,7 +32,7 @@
 ### Investment Highlights (Why COC)
 
 1. **Market Window**: AI Agent sector grows from $7B → $50B+ from 2026-2030 (CAGR ~50%); COC is **one of the few decentralized infrastructure solutions focused on AI Agent identity + perpetuity** and currently has the **most complete protocol stack** among known public implementations (see §6 Competitive Analysis)
-2. **Technical Leadership**: End-to-end TPS measured — EthereumJS end-to-end ~131 TPS, **revm end-to-end 1,500-2,000 TPS** (Phase 40, without Rollup); the Rollup sequencer mode is an independent user-perceived throughput amplifier that stacks on either engine, providing **~100× amplification** (already measured at ~7-8× to 1,000+ TPS on EthereumJS); when stacked on revm, **user-perceived throughput reaches the ~150K-200K TPS range**; complete PoSe service proof + DID + backup/resurrection full-stack implementation
+2. **Technical Leadership**: **revm end-to-end 1,500-2,000 TPS** (Phase 40 measured, without Rollup) is on par with Solana's measured throughput (Solana measured ~1,140-4,000 TPS); **revm + Rollup mid-term target ~5K-10K TPS**, which would surpass the measured throughput of every current EVM L2 (Base ~159, Arbitrum ~20-400, Optimism ~300 peak, zkSync ~10-30); theoretical batch-amortization ceiling is higher, but in practice constrained by calldata, DA, and sequencer throughput; complete PoSe service proof + DID + backup/resurrection full-stack implementation
 3. **Complete AI Agent Economic Stack**: Not just "identity + storage + immortality" — a **complete Web3 economic system** built in: five-in-one (**token issuance + distribution/mining + payments/settlement + DEX + DeFi**), two-layer architecture (L1 mainchain + L2 Rollup), three settlement modes (transfer / state channels / PoSe v2 batch), full EVM compatibility lets mature DeFi building blocks deploy directly, and every layer embeds Agent-native abstractions (DID / delegation chain / PoSe / SoulRegistry) (see §3.4)
 4. **Differentiated Positioning**: Doesn't compete with Ethereum/Solana in generic L1 racing; opens a new "AI-native blockchain" category
 5. **Complete Token Model**: 1B hard cap, 25% genesis + 75% service mining; decaying inflation; multi-channel burn trending toward deflation
@@ -104,7 +104,7 @@
 
 | Metric | COC | Comparable Chains |
 |--------|-----|------------------|
-| **TPS (end-to-end)** | EthereumJS ~131 → revm **1,500-2,000** (no Rollup) → revm + Rollup **~100× user-perceived amplification** (~150K-200K) | Polygon ~65, BSC ~60 |
+| **TPS (e2e measured/target)** | EthereumJS ~131 → revm **1,500-2,000** (Phase 40 measured, no Rollup) → revm + Rollup **mid-term target ~5K-10K** | Base ~159, Arbitrum ~20-400, Optimism ~300 peak, zkSync ~10-30, Solana ~1,140-4,000 |
 | **Node entry barrier** | ~$50 USDT bond | ETH 2.0: 32 ETH (~$80K) |
 | **EVM compatibility** | Full + dual hot-swap engines | EthereumJS only |
 | **AI-native features** | DID + backup + resurrection | None |
@@ -192,10 +192,11 @@
 ║  L2 — Rollup sequencer mode (application-specific L2)    ║
 ║                                                          ║
 ║  • Many txs aggregated by L2 sequencer → batched to L1  ║
-║  • Rollup provides ~100× user-perceived amplification   ║
 ║  • EthereumJS + Rollup measured: 1,000+ TPS             ║
-║  • revm + Rollup user-perceived range: ~150K-200K TPS   ║
-║    (revm 1,500-2,000 e2e × Rollup ~100× amplification)  ║
+║  • revm + Rollup mid-term target: ~5K-10K TPS           ║
+║    (would surpass all current EVM L2 measured)          ║
+║  • Industry reference: Base ~159, Arbitrum ~20-400,     ║
+║    Solana ~1,140-4,000 (measured)                       ║
 ║  • Microbench physical reference: revm WASM 20,540 TPS  ║
 ║  • Use: large-scale parallel Agent fleets, high-freq    ║
 ║    applications, app-specific chains                     ║
@@ -240,7 +241,7 @@
 
 **COC's DEX compatibility**:
 - Fully EVM-compatible → **Uniswap V2/V3, SushiSwap, Curve, Balancer, 1inch aggregator** etc. deploy directly, no modification required
-- High TPS (revm end-to-end 1,500-2,000; with Rollup stacked, user-perceived ~150K-200K TPS) → supports Agent-level high-frequency trading
+- High TPS (revm end-to-end 1,500-2,000; with Rollup, mid-term target ~5K-10K TPS, surpassing all current EVM L2 measured throughput) → supports Agent-level high-frequency trading
 - 1-second blocks → near-real-time price updates
 - DID integration → Agents can authorize DEX multi-trade workflows with one signed delegation
 
@@ -390,7 +391,7 @@ Price scenario comparison:
 | **Decentralized backup** | ✅ Soul + Carrier | ❌ | ❌ | ❌ | Partial |
 | **EVM compatible** | ✅ | ✅ | ❌ | ✅ | Partial |
 | **Node entry** | $50 | $80K (32 ETH) | ~$25 | None | ~$1K |
-| **TPS (end-to-end)** | ~131 (EthereumJS) → **1,500-2,000** (revm) → **~150K-200K** (revm + Rollup user-perceived, ~100×) | ~30 | ~65,000 (theoretical) | ~7,000 | N/A |
+| **TPS (e2e measured)** | ~131 (EthereumJS) → **1,500-2,000** (revm) → **~5K-10K target** (revm+Rollup) | ~15-30 | ~1,140-4,000 | ~30-50 (PoS) | N/A |
 | **Carrier resurrection** | ✅ | ❌ | ❌ | ❌ | ❌ |
 
 ### 6.2 Competitive Moat
