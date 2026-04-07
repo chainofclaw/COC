@@ -10,7 +10,7 @@
 ## I. Executive Summary
 
 ### One-Sentence Positioning
-> **COC is the decentralized infrastructure for the AI Agent era — providing identity, storage, and immortality for Agents, granting AI an unstoppable "soul".**
+> **COC is a decentralized infrastructure stack for the AI Agent era — providing identity, storage, and immortality primitives for Agents, plus interoperable runtime standards, granting AI an unstoppable "soul".**
 
 ### Core Data Card
 
@@ -74,14 +74,14 @@
     HuggingFace                   vLLM / Replicate
             ↓                              ↓
     ┌─────────────────────────────────────────┐
-    │  Identity + Operation + Immortality      │
+    │  Identity + Runtime Standards + Immortality │
     │                                          │
     │            ⚡ COC ⚡                      │
     │  (One of few decentralized plays here)   │
     └─────────────────────────────────────────┘
 ```
 
-**COC does not compete with training/inference infrastructure** — it opens a new sector: **Agent identity, runtime environment, perpetual guarantee**. Of these, identity (DID), storage (P2P), and immortality (SoulRegistry) — the three foundational services — have reached code-complete + testnet-live status; the runtime environment's protocol-layer interfaces (PoSe + DID + delegation chain) are also ready, but the reference runtime implementation (OpenClaw) is still planned — see the §3.1 maturity table.
+**COC does not compete with training/inference infrastructure** — it opens a new sector: **Agent identity, runtime standards, perpetual guarantee**. Of these, identity (DID), storage (P2P), and immortality (SoulRegistry) — the three foundational services — have reached code-complete + testnet-live status; the runtime-side protocol interfaces (PoSe + DID + delegation chain) are also ready, but the reference runtime implementation (OpenClaw) is still planned — see the §3.1 maturity table.
 
 ---
 
@@ -525,7 +525,7 @@ As one of the few protocol-stack-complete early players in the AI Agent decentra
 | **Implied Token Price** | **$0.15-$0.25 / COC** (based on 1B total supply) |
 | **Instrument** | SAFT (Simple Agreement for Future Tokens) + equity option |
 | **Subscription** | Tranched, released on milestone achievement |
-| **Target Close** | 2026 Q2-Q3 |
+| **Target Close** | Primary target: by June 2026 (before genesis); contingency extension only if necessary |
 
 **Valuation Anchoring Logic**:
 
@@ -537,7 +537,7 @@ As one of the few protocol-stack-complete early players in the AI Agent decentra
 
 > Note: "Pool" refers to the "Early Contributors & Strategic Partners" pool in §8.1 (3.5%, 35M COC). All valuation scenarios ensure investor token demand stays within the pool cap.
 
-> **Strategic significance**: A $5M Series A is the right size for an early-stage Web3 × AI project, sufficient to support 12-18 months of core team operations, mainnet launch, first wave of ecosystem partnerships, and multi-jurisdiction compliance build-out. COC chooses a "small and focused" Series A over over-funding to preserve token allocation flexibility and let real market demand drive subsequent rounds. Pre-money FDV is anchored in the $150M-$250M range, consistent with both the L1 blockchain and the AI vertical sector leader positioning, while ensuring investor token demand remains within the 35M pool to avoid diluting other strategic reserves.
+> **Strategic significance**: A $5M Series A is the right size for an early-stage Web3 × AI project, sufficient to support 12-18 months of core team operations, mainnet launch, first wave of ecosystem partnerships, and multi-jurisdiction compliance build-out. COC chooses a "small and focused" Series A over over-funding so later strategic rounds can still be priced by real market demand rather than forced by cash burn. Pre-money FDV is anchored in the $150M-$250M range, consistent with both the L1 blockchain and the AI vertical sector leader positioning. To preserve allocation flexibility inside the 35M strategic-partner pool, the preferred negotiation band is the neutral-to-optimistic range ($200M-$250M FDV); the conservative case remains possible, but should be treated as an exception because it would consume most of that pool.
 
 ### 9.2 Use of Funds
 
@@ -568,11 +568,11 @@ As one of the few protocol-stack-complete early players in the AI Agent decentra
 
 ### 9.4 Milestone-Based Release
 
-To reduce investor risk, the $5M will be released in three tranches tied to milestones:
+To reduce investor risk, the $5M will be released in three tranches tied to milestones. This schedule assumes signing before mainnet genesis; if closing slips beyond genesis, equivalent relative post-signing / post-mainnet conditions should be used instead of the original calendar target.
 
 | Tranche | % | Amount | Trigger |
 |---------|---|--------|---------|
-| **First** | 40% | $2,000,000 | Released immediately on signing, for core team expansion and mainnet launch |
+| **First** | 40% | $2,000,000 | Released immediately on signing, for final pre-mainnet launch work and initial post-genesis stabilization |
 | **Second** | 35% | $1,750,000 | 30 days stable mainnet + 100+ nodes + 1K+ Agent registrations |
 | **Third** | 25% | $1,250,000 | TVL exceeds $10M + 5+ Agent frameworks integrated |
 
@@ -622,7 +622,7 @@ Possible paths after Series A:
 1. **Token liquidity exit**: Direct trading after DEX/CEX listing
 2. **Strategic acquisition**: Acquired by major AI company or L1 project
 3. **Secondary market**: Negotiated transfer to other strategic buyers (within lockup)
-4. **Protocol revenue sharing** (future option): Foundation revenue distributed pro-rata to holdings
+4. **Future protocol value-accrual mechanisms** (optional, subject to DAO governance and legal structuring): potential buybacks, fee burns, or other token-aligned mechanisms rather than Foundation profit distribution
 
 ---
 
