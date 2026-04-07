@@ -20,7 +20,7 @@
 | **Sector** | Web3 × AI intersection, Agent infrastructure |
 | **Target Market (2030)** | $50B+ AI Agent market (Gartner) |
 | **Token** | COC, native gas token, total supply 1B |
-| **Current Maturity** | As of 2026-04-06: 🟢 Protocol/contract code complete + 🟡 testnet continuously running + 🔵 **Mainnet not yet live** (genesis target: June 2026) |
+| **Current Maturity** | As of 2026-04-06: 🟢 Protocol/contract code complete + 🟡 testnet continuously running; 🔵 mainnet-live status not yet reached (genesis target: June 2026) |
 | **Tech Stack** | Custom blockchain (TS/Rust) + dual EVM engines (EthereumJS + revm WASM) |
 | **TPS Profile** | **EthereumJS end-to-end ~131 TPS** → **revm end-to-end 1,500-2,000 TPS** (Phase 40 measured, without Rollup) → **revm + Rollup mid-term target ~5K-10K TPS** (would surpass all current EVM L2 measured throughput; industry reference: Base ~159, Arbitrum ~20-400, Solana ~1,140-4,000) |
 | **Code Status** | 1300+ tests passing, 40K+ LoC, open source |
@@ -33,7 +33,7 @@
 
 1. **Market Window**: AI Agent sector grows from $7B → $50B+ from 2026-2030 (CAGR ~50%); COC is **one of the few decentralized infrastructure solutions focused on AI Agent identity + perpetuity** and currently has the **most complete protocol stack** among known public implementations (see §6 Competitive Analysis)
 2. **Technical Leadership**: **revm end-to-end 1,500-2,000 TPS** (Phase 40 measured, without Rollup) is on par with Solana's measured throughput (Solana measured ~1,140-4,000 TPS); **revm + Rollup mid-term target ~5K-10K TPS**, which would surpass the measured throughput of every current EVM L2 (Base ~159, Arbitrum ~20-400, Optimism ~300 peak, zkSync ~10-30); theoretical batch-amortization ceiling is higher, but in practice constrained by calldata, DA, and sequencer throughput; complete PoSe service proof + DID + backup/resurrection full-stack implementation
-3. **Complete AI Agent Economic Stack**: Not just "identity + storage + immortality" — a **complete Web3 economic system** built in: five-in-one (**token issuance + distribution/mining + payments/settlement + DEX + DeFi**), two-layer architecture (L1 mainchain + L2 Rollup), three settlement modes (transfer / state channels / PoSe v2 batch), full EVM compatibility lets mature DeFi building blocks deploy directly, and every layer embeds Agent-native abstractions (DID / delegation chain / PoSe / SoulRegistry) (see §3.4)
+3. **AI Agent Economic Stack Ready at the Protocol Layer**: Not just "identity + storage + immortality" — **the protocol layer has a complete Web3 economic system skeleton ready**: five-in-one (**token issuance + distribution/mining + payments/settlement + DEX + DeFi**), two-layer architecture (L1 mainchain + L2 Rollup), three settlement modes (transfer / state channels / PoSe v2 batch), full EVM compatibility lets mature DEX/DeFi building blocks deploy directly, and every layer embeds Agent-native abstractions (DID / delegation chain / PoSe / SoulRegistry). **DEX/DeFi ecosystem applications are slated for Phase 2-3 deployment** (see §3.4)
 4. **Differentiated Positioning**: Doesn't compete with Ethereum/Solana in generic L1 racing; opens a new "AI-native blockchain" category
 5. **Complete Token Model**: 1B hard cap, 25% genesis + 75% service mining; decaying inflation; multi-channel burn trending toward deflation
 6. **Governance Innovation**: Faction voting (whale-resistant) + 2/3 guardian recovery + 7-day reward expiry + 3/5 treasury multisig
@@ -75,7 +75,7 @@
     │  Identity + Operation + Immortality      │
     │                                          │
     │            ⚡ COC ⚡                      │
-    │  (Blank market, no strong competitors)   │
+    │  (One of few decentralized plays here)   │
     └─────────────────────────────────────────┘
 ```
 
@@ -142,8 +142,8 @@
 | ① | **Token Issuance** | Native token + Agent-issued tokens | Native COC (1B hard cap) + EVM ERC-20 (one-line Agent-issued) + DID binding | 🟢 + 🟡 |
 | ② | **Token Distribution / Mining** | Fair, sustainable token distribution | Genesis 25% (250M) + PoSe v2 service mining 75% (750M) + decaying inflation + multi-channel burn | 🟢 + 🟡 |
 | ③ | **Payments & Settlement** | Inter-Agent value transfer | L1 mainchain + L2 Rollup two-layer architecture + three settlement modes (transfer / state channels / PoSe batch) | 🟢 + 🟡 |
-| ④ | **DEX (Decentralized Exchange)** | On-chain matching + liquidity pools | Full EVM compatibility → Uniswap V2/V3, Curve, Balancer one-click deploy + DID authorization | ⚪ EVM ready, dApps pending |
-| ⑤ | **DeFi (Decentralized Finance)** | Lending / staking / stablecoins / derivatives / yield / insurance | Full EVM compatibility → Aave / Compound / MakerDAO portable + Agent-native abstractions (DID / delegation / PoSe) | ⚪ EVM ready, dApps pending |
+| ④ | **DEX (Decentralized Exchange)** | On-chain matching + liquidity pools | Full EVM compatibility → Uniswap V2/V3, Curve, Balancer one-click deploy + DID authorization | Protocol layer 🟢 (EVM ready) / dApp ecosystem layer planned (Phase 2-3) |
+| ⑤ | **DeFi (Decentralized Finance)** | Lending / staking / stablecoins / derivatives / yield / insurance | Full EVM compatibility → Aave / Compound / MakerDAO portable + Agent-native abstractions (DID / delegation / PoSe) | Protocol layer 🟢 (EVM ready) / dApp ecosystem layer planned (Phase 2-3) |
 
 > **Key insight**: COC does not invent new DeFi primitives — it lets the mature financial building blocks of the EVM ecosystem **directly serve AI Agent economics**, while making them Agent-friendly through DID, delegation chains, PoSe, and SoulRegistry. Investors see not isolated features but a **protocol-layer-ready complete economic stack**.
 
