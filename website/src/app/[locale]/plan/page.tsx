@@ -60,6 +60,26 @@ export default function PlanPage() {
       </section>
 
       <div className="container mx-auto px-4 py-16 max-w-5xl">
+        {/* Manifesto — Awakening Opening */}
+        <section className="mb-20 fade-in-up">
+          <h2 className="text-3xl md:text-4xl font-display font-bold mb-6 text-center">
+            <span className="gradient-text">{t('manifesto.title')}</span>
+          </h2>
+          <div className="w-24 h-1 bg-gradient-cyber mx-auto mb-8 rounded-full" />
+
+          <div className="bg-gradient-to-br from-accent-purple/10 via-accent-blue/10 to-accent-cyan/10 border border-accent-purple/30 p-10 md:p-12 rounded-2xl noise-texture relative overflow-hidden">
+            <div className="absolute inset-0 bg-gradient-to-br from-accent-purple/5 to-transparent pointer-events-none" />
+            <div className="relative">
+              <p className="text-2xl md:text-3xl font-display italic text-accent-cyan mb-8 leading-snug">
+                {t('manifesto.opening')}
+              </p>
+              <p className="text-text-secondary font-body leading-relaxed text-lg whitespace-pre-line">
+                {t('manifesto.body')}
+              </p>
+            </div>
+          </div>
+        </section>
+
         {/* Abstract */}
         <section className="mb-20 fade-in-up">
           <h2 className="text-3xl md:text-4xl font-display font-bold mb-6 text-center">
@@ -161,8 +181,8 @@ export default function PlanPage() {
                 R<sub>epoch</sub> = R<sub>fees</sub> + R<sub>inflation</sub>
               </div>
               <div className="text-text-secondary font-body relative space-y-2">
-                <p>• R<sub>fees</sub>: 收集的交易费用</p>
-                <p>• R<sub>inflation</sub>: 引导性通胀补贴(随时间衰减)</p>
+                <p>• R<sub>fees</sub>: {t('economic.rFeesDesc')}</p>
+                <p>• R<sub>inflation</sub>: {t('economic.rInflationDesc')}</p>
               </div>
             </div>
 
@@ -251,21 +271,21 @@ export default function PlanPage() {
               <ChallengeTypeCard
                 type="U"
                 name={t('pose.typeU')}
-                detail="低成本,2.5秒超时"
+                detail={t('pose.typeUDetail')}
                 color="cyan"
                 delay="0"
               />
               <ChallengeTypeCard
                 type="S"
                 name={t('pose.typeS')}
-                detail="中等成本,6秒超时"
+                detail={t('pose.typeSDetail')}
                 color="blue"
                 delay="0.1"
               />
               <ChallengeTypeCard
                 type="R"
                 name={t('pose.typeR')}
-                detail="谨慎使用;最低权重"
+                detail={t('pose.typeRDetail')}
                 color="purple"
                 delay="0.2"
               />
@@ -310,31 +330,31 @@ export default function PlanPage() {
             <div className="bg-bg-elevated p-8 rounded-xl border border-accent-blue/30 noise-texture space-y-6 max-w-3xl mx-auto">
               <div className="slide-in-right">
                 <p className="font-display font-semibold text-text-primary mb-3">
-                  正常运行时间/RPC分数:
+                  {t('pose.scoreU.label')}
                 </p>
                 <div className="font-display text-sm text-accent-cyan bg-bg-primary/50 p-4 rounded-lg border border-accent-cyan/20">
                   S<sub>u,i</sub> = u<sub>i</sub> × (0.85 + 0.15 × lat<sub>i</sub>)
                 </div>
                 <p className="text-sm text-text-muted font-body mt-3">
-                  其中 u<sub>i</sub> = 通过率, lat<sub>i</sub> = 延迟因子 (防止带宽军备竞赛)
+                  {t('pose.scoreU.note')}
                 </p>
               </div>
 
               <div className="slide-in-right" style={{ animationDelay: '0.1s' }}>
                 <p className="font-display font-semibold text-text-primary mb-3">
-                  存储分数 (SN):
+                  {t('pose.scoreS.label')}
                 </p>
                 <div className="font-display text-sm text-accent-cyan bg-bg-primary/50 p-4 rounded-lg border border-accent-cyan/20">
                   S<sub>s,i</sub> = s<sub>i</sub> × cap<sub>i</sub>
                 </div>
                 <p className="text-sm text-text-muted font-body mt-3">
-                  cap<sub>i</sub> = √(min(storedGB, 500GB) / 500GB) — 收益递减
+                  {t('pose.scoreS.note')}
                 </p>
               </div>
 
               <div className="slide-in-right" style={{ animationDelay: '0.2s' }}>
                 <p className="font-display font-semibold text-text-primary mb-3">
-                  中继分数 (RN):
+                  {t('pose.scoreR.label')}
                 </p>
                 <div className="font-display text-sm text-accent-cyan bg-bg-primary/50 p-4 rounded-lg border border-accent-cyan/20">
                   S<sub>r,i</sub> = pass<sub>r,i</sub> / total<sub>r,i</sub>
@@ -355,21 +375,25 @@ export default function PlanPage() {
             <ThreatCard
               title={t('antiCheat.sybil')}
               mitigation={t.raw('antiCheat.sybilMit') as string[]}
+              mitigationLabel={t('antiCheat.mitigationLabel')}
               delay="0"
             />
             <ThreatCard
               title={t('antiCheat.forgery')}
               mitigation={t.raw('antiCheat.forgeryMit') as string[]}
+              mitigationLabel={t('antiCheat.mitigationLabel')}
               delay="0.1"
             />
             <ThreatCard
               title={t('antiCheat.collusion')}
               mitigation={t.raw('antiCheat.collusionMit') as string[]}
+              mitigationLabel={t('antiCheat.mitigationLabel')}
               delay="0.2"
             />
             <ThreatCard
               title={t('antiCheat.network')}
               mitigation={t.raw('antiCheat.networkMit') as string[]}
+              mitigationLabel={t('antiCheat.mitigationLabel')}
               delay="0.3"
             />
           </div>
@@ -487,6 +511,25 @@ export default function PlanPage() {
                 <li key={idx} className="flex items-start gap-2">
                   <span className="text-accent-cyan mt-1">✓</span>
                   <span>{measure}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          {/* Non-Goals — Explicit Discipline */}
+          <div className="mt-8 bg-bg-elevated p-8 rounded-xl border border-pink-500/30 noise-texture max-w-5xl mx-auto relative overflow-hidden">
+            <div className="absolute inset-0 bg-gradient-to-r from-pink-500/5 to-transparent" />
+            <h3 className="text-xl font-display font-semibold mb-3 text-pink-400 relative flex items-center gap-2">
+              <span className="text-2xl">✕</span> {t('release.nonGoals.title')}
+            </h3>
+            <p className="text-text-muted font-body italic mb-4 relative">
+              {t('release.nonGoals.intro')}
+            </p>
+            <ul className="space-y-2 text-text-secondary font-body relative">
+              {(t.raw('release.nonGoals.items') as string[]).map((item, idx) => (
+                <li key={idx} className="flex items-start gap-2">
+                  <span className="text-pink-400 mt-1 font-bold">—</span>
+                  <span>{item}</span>
                 </li>
               ))}
             </ul>
@@ -824,7 +867,7 @@ function ThreatCard({
         <span>{title}</span>
       </h3>
       <p className="text-sm font-display font-semibold text-text-muted mb-3 relative">
-        {mitigationLabel || '缓解措施:'}
+        {mitigationLabel || 'Mitigation:'}
       </p>
       <ul className="space-y-2 relative">
         {mitigation.map((item, idx) => (

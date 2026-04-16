@@ -62,7 +62,7 @@ export default function RoadmapPage() {
             <PhaseCard
               version={t('whitepaper.v0_2.version')}
               title={t('whitepaper.v0_2.title')}
-              status="in-progress"
+              status="completed"
               statusLabel={t('whitepaper.v0_2.status')}
               items={t.raw('whitepaper.v0_2.items') as string[]}
             />
@@ -106,6 +106,24 @@ export default function RoadmapPage() {
               title={t('implementation.features.title')}
               cycles={t.raw('implementation.features.cycles') as { num: number; desc: string }[]}
             />
+          </div>
+        </section>
+
+        {/* Key Milestones Timeline */}
+        <section className="mb-20">
+          <div className="text-center mb-12 fade-in-up">
+            <h2 className="text-3xl md:text-4xl font-display font-bold mb-4">
+              <span className="gradient-text">{t('milestones.title')}</span>
+            </h2>
+            <div className="w-24 h-1 bg-gradient-cyber mx-auto mt-4 rounded-full" />
+          </div>
+          <div className="relative max-w-4xl mx-auto">
+            <div className="absolute left-4 md:left-1/2 md:-translate-x-1/2 top-0 bottom-0 w-px bg-gradient-to-b from-accent-cyan via-accent-blue to-accent-purple opacity-40" />
+            <div className="space-y-6">
+              {(t.raw('milestones.items') as { date: string; label: string; status: string }[]).map((m, idx) => (
+                <MilestoneRow key={idx} date={m.date} label={m.label} status={m.status} delay={(idx * 0.08).toString()} />
+              ))}
+            </div>
           </div>
         </section>
 
@@ -277,6 +295,42 @@ function CycleGroup({ title, cycles }: { title: string; cycles: { num: number; d
             </span>
           </div>
         ))}
+      </div>
+    </div>
+  )
+}
+
+function MilestoneRow({
+  date,
+  label,
+  status,
+  delay,
+}: {
+  date: string
+  label: string
+  status: string
+  delay: string
+}) {
+  const statusColor = {
+    done: { dot: 'bg-accent-cyan', border: 'border-accent-cyan/50', text: 'text-accent-cyan' },
+    active: { dot: 'bg-accent-blue animate-pulse', border: 'border-accent-blue/60', text: 'text-accent-blue' },
+    upcoming: { dot: 'bg-text-muted/40', border: 'border-text-muted/30', text: 'text-text-muted' },
+  }[status] || { dot: 'bg-text-muted/40', border: 'border-text-muted/30', text: 'text-text-muted' }
+
+  return (
+    <div
+      className="relative pl-12 md:pl-0 fade-in-up"
+      style={{ animationDelay: `${delay}s` }}
+    >
+      <div className="md:grid md:grid-cols-2 md:gap-8 items-center">
+        <div className="hidden md:block md:text-right md:pr-8">
+          <span className={`font-display font-bold ${statusColor.text}`}>{date}</span>
+        </div>
+        <div className={`absolute left-2 md:left-1/2 md:-translate-x-1/2 w-5 h-5 rounded-full ${statusColor.dot} border-2 border-bg-primary ring-2 ring-bg-elevated`} />
+        <div className={`md:pl-8 p-4 rounded-xl bg-bg-elevated border ${statusColor.border} noise-texture`}>
+          <div className="md:hidden font-display text-sm mb-1 text-text-muted">{date}</div>
+          <p className="text-text-primary font-body leading-relaxed">{label}</p>
+        </div>
       </div>
     </div>
   )

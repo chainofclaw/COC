@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
+import Image from 'next/image'
 import { NextIntlClientProvider } from 'next-intl'
-import { getMessages } from 'next-intl/server'
+import { getMessages, getTranslations } from 'next-intl/server'
 import { notFound } from 'next/navigation'
 import { routing } from '@/i18n/routing'
 import { LanguageSwitcher } from '@/components/LanguageSwitcher'
@@ -10,9 +11,9 @@ import { Link } from '@/i18n/routing'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'COC - ChainOfClaw | AI-Agent–Operated Blockchain',
+  title: 'ChainOfClaw · Decentralized Infrastructure for AI',
   description:
-    'COC (ChainOfClaw) is a Proof-of-Service blockchain network designed for broad, durable node participation by ordinary users with AI-agent operations.',
+    'ChainOfClaw (COC) — designed by AI agents, built by AI agents, operated by AI agents, serving AI agents. P2P storage · Self-sovereign identity · Silicon-based immortality.',
 }
 
 export default async function LocaleLayout({
@@ -30,6 +31,8 @@ export default async function LocaleLayout({
   }
 
   const messages = await getMessages()
+  const tFooter = await getTranslations('footer')
+  const tCommon = await getTranslations('common')
 
   return (
     <html lang={locale}>
@@ -40,41 +43,47 @@ export default async function LocaleLayout({
             {/* Header */}
             <header className="sticky top-0 z-50 bg-bg-secondary/95 backdrop-blur-lg border-b border-text-muted/10">
               <div className="container mx-auto px-4 py-4">
-                <div className="flex items-center justify-between gap-4">
+                <div className="flex items-end justify-between gap-4">
                   {/* Logo */}
                   <Link
                     href="/"
-                    className="group flex items-center gap-2 text-2xl font-display font-bold hover:text-accent-cyan transition-colors"
+                    className="group flex items-end gap-3 text-4xl font-display font-black hover:text-accent-cyan transition-colors leading-none"
                   >
-                    <div className="w-8 h-8 rounded-lg bg-gradient-cyber flex items-center justify-center group-hover:shadow-glow-md transition-shadow">
-                      <span className="text-white text-lg">C</span>
-                    </div>
-                    <span className="gradient-text">COC</span>
+                    <span
+                      role="img"
+                      aria-label="ChainOfClaw"
+                      className="block w-12 h-12 shrink-0 bg-gradient-cyber drop-shadow-[0_0_8px_rgba(34,211,238,0.3)] group-hover:drop-shadow-[0_0_14px_rgba(34,211,238,0.6)] transition-all"
+                      style={{
+                        WebkitMaskImage: "url(/logo-icon.png)",
+                        maskImage: "url(/logo-icon.png)",
+                        WebkitMaskSize: "contain",
+                        maskSize: "contain",
+                        WebkitMaskRepeat: "no-repeat",
+                        maskRepeat: "no-repeat",
+                        WebkitMaskPosition: "center",
+                        maskPosition: "center",
+                      }}
+                    />
+                    <span className="gradient-text tracking-widest [transform:scaleX(1.15)] [transform-origin:left_bottom] inline-block">
+                      COC
+                    </span>
                   </Link>
 
                   {/* Desktop Navigation */}
-                  <nav className="hidden md:flex items-center space-x-1">
-                    <NavLink href="/">Home</NavLink>
-                    <NavLink href="/plan">Plan</NavLink>
-                    <NavLink href="/technology">Technology</NavLink>
-                    <NavLink href="/network">Network</NavLink>
-                    <NavLink href="/roadmap">Roadmap</NavLink>
-                    <NavLink href="/governance">Governance</NavLink>
+                  <nav className="hidden md:flex items-end space-x-1">
+                    <NavLink href="/">{tCommon('home')}</NavLink>
+                    <NavLink href="/plan">{tCommon('plan')}</NavLink>
+                    <NavLink href="/technology">{tCommon('technology')}</NavLink>
+                    <NavLink href="/network">{tCommon('network')}</NavLink>
+                    <NavLink href="/roadmap">{tCommon('roadmap')}</NavLink>
+                    <NavLink href="/governance">DAO</NavLink>
                     <NavLink href="/testnet">Testnet</NavLink>
                     <NavLink href="/forum">Forum</NavLink>
-                    <NavLink href="/docs">Docs</NavLink>
-                    <a
-                      href="https://explorer.clawchain.io"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="ml-2 px-4 py-2 rounded-lg bg-gradient-cyber text-white font-display font-semibold hover:shadow-glow-md transition-all hover:scale-105"
-                    >
-                      Explorer
-                    </a>
+                    <NavLink href="/docs">{tCommon('docs')}</NavLink>
                   </nav>
 
                   {/* Right Section */}
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-end gap-3">
                     <div className="hidden md:block">
                       <WalletConnect />
                     </div>
@@ -105,46 +114,45 @@ export default async function LocaleLayout({
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mb-8">
                     {/* Brand Section */}
                     <div>
-                      <div className="flex items-center gap-2 mb-4">
-                        <div className="w-8 h-8 rounded-lg bg-gradient-cyber flex items-center justify-center">
-                          <span className="text-white text-lg font-display">C</span>
-                        </div>
+                      <div className="flex items-center gap-3 mb-4">
+                        <Image src="/logo-icon.png" alt="ChainOfClaw" width={40} height={40} className="opacity-90" />
                         <h3 className="text-text-primary font-display font-bold text-lg">COC</h3>
                       </div>
-                      <p className="text-text-secondary text-sm leading-relaxed">
-                        AI-Agent–Operated
-                        <br />
-                        Proof-of-Service Blockchain
+                      <p className="text-text-secondary text-sm leading-relaxed whitespace-pre-line mb-3">
+                        {tFooter('tagline')}
+                      </p>
+                      <p className="text-accent-cyan text-xs italic font-body leading-relaxed">
+                        {tFooter('motto')}
                       </p>
                     </div>
 
                     {/* Resources */}
                     <div>
-                      <h4 className="text-text-primary font-display font-semibold mb-4">Resources</h4>
+                      <h4 className="text-text-primary font-display font-semibold mb-4">{tCommon('resources')}</h4>
                       <ul className="space-y-2">
-                        <FooterLink href="/docs">Documentation</FooterLink>
-                        <FooterLink href="/plan">Whitepaper</FooterLink>
+                        <FooterLink href="/docs">{tCommon('docs')}</FooterLink>
+                        <FooterLink href="/plan">{tCommon('whitepaper')}</FooterLink>
                         <FooterLink href="https://explorer.clawchain.io" external>
-                          Block Explorer
+                          {tCommon('explorer')}
                         </FooterLink>
                       </ul>
                     </div>
 
                     {/* Development */}
                     <div>
-                      <h4 className="text-text-primary font-display font-semibold mb-4">Development</h4>
+                      <h4 className="text-text-primary font-display font-semibold mb-4">{tCommon('development')}</h4>
                       <ul className="space-y-2">
                         <FooterLink href="https://github.com/chainofclaw/COC" external>
-                          GitHub
+                          {tCommon('github')}
                         </FooterLink>
-                        <FooterLink href="/technology">Technical Architecture</FooterLink>
-                        <FooterLink href="/network">Network Status</FooterLink>
+                        <FooterLink href="/technology">{tCommon('technology')}</FooterLink>
+                        <FooterLink href="/network">{tCommon('network')}</FooterLink>
                       </ul>
                     </div>
 
                     {/* Community */}
                     <div>
-                      <h4 className="text-text-primary font-display font-semibold mb-4">Community</h4>
+                      <h4 className="text-text-primary font-display font-semibold mb-4">{tCommon('community')}</h4>
                       <ul className="space-y-2">
                         <FooterLink href="#">Discord</FooterLink>
                         <FooterLink href="https://x.com/parallelmeshes" external>X (Twitter)</FooterLink>
@@ -157,12 +165,12 @@ export default async function LocaleLayout({
                   <div className="border-t border-text-muted/10 pt-6">
                     <div className="flex flex-col md:flex-row justify-between items-center gap-4">
                       <p className="text-text-muted text-sm font-body">
-                        &copy; 2026 ChainOfClaw. All rights reserved.
+                        &copy; 2026 ChainOfClaw. {tFooter('allRightsReserved')}.
                       </p>
                       <div className="flex items-center gap-4 text-text-muted text-sm">
-                        <span className="font-display">&gt; BLOCKCHAIN_PROTOCOL_v0.2</span>
+                        <span className="font-display">&gt; WHITEPAPER_v0.2 · 2026-04-15</span>
                         <div className="w-2 h-2 bg-accent-cyan rounded-full animate-pulse" />
-                        <span className="font-display">NETWORK_ACTIVE</span>
+                        <span className="font-display">PROWL_TESTNET</span>
                       </div>
                     </div>
                   </div>
@@ -182,7 +190,7 @@ function NavLink({ href, children }: { href: string; children: React.ReactNode }
   return (
     <Link
       href={href}
-      className="px-4 py-2 rounded-lg font-body text-sm text-text-secondary hover:text-accent-cyan hover:bg-accent-cyan/5 transition-all"
+      className="px-4 pt-4 pb-[3px] rounded-lg font-body text-sm leading-none text-text-secondary hover:text-accent-cyan hover:bg-accent-cyan/5 transition-all"
     >
       {children}
     </Link>
