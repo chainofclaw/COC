@@ -1,4 +1,4 @@
-import { parseEther, Wallet } from "ethers"
+import { keccak256, parseEther, Wallet } from "ethers"
 import { join } from "node:path"
 import { loadNodeConfig } from "./config.ts"
 import { startRpcServer } from "./rpc.ts"
@@ -215,20 +215,8 @@ const p2p = new P2PNode(
     onBlock: async (block) => {
       try {
         await chain.applyBlock(block)
-      } catch (applyErr) {
-        // If apply failed after partial EVM execution (e.g. tx nonce advanced),
-        // reset EVM state to prevent pollution from leaking into future blocks.
-        if (block.txs.length > 0) {
-          try {
-            const currentHeight = await Promise.resolve(chain.getHeight())
-            await (chain as any).evm?.resetExecution?.()
-            if (currentHeight > 0n && typeof (chain as any).rebuildFromPersisted === "function") {
-              await (chain as any).rebuildFromPersisted(currentHeight)
-            }
-          } catch {
-            // best-effort EVM state recovery
-          }
-        }
+      } catch {
+        // ignore invalid/duplicate blocks from peers
       }
       // Non-proposer nodes: join BFT round for blocks received via gossip
       if (bftCoordinator) {
@@ -375,6 +363,18 @@ if (bftEnabled) {
       wireBftBroadcastFn?.(msg)
     },
     onFinalized: async (block) => {
+      // Always remove finalized block's transactions from mempool, even before
+      // applyBlock succeeds. This prevents other proposers from re-including
+      // already-confirmed transactions in subsequent blocks (mempool desync).
+      if (block.txs.length > 0) {
+        for (const rawTx of block.txs) {
+          try {
+            const txHash = ethers.keccak256(rawTx)
+            chain.mempool.remove(txHash as Hex)
+          } catch { /* best-effort */ }
+        }
+      }
+
       const finalizedBlock = { ...block, bftFinalized: true }
       try {
         await chain.applyBlock(finalizedBlock, true)
@@ -389,18 +389,24 @@ if (bftEnabled) {
               await persistentEngine.blockIndex.updateBlock(updated)
             } else if (!existing) {
               // Block was NOT previously applied — this is a real failure, not a duplicate.
-              // Retry apply after a short delay to allow gossip-applied parent to settle.
-              log.warn("BFT onFinalized: block not found locally, retrying apply", {
+              // Reset EVM and replay from committed state to clear any nonce pollution,
+              // then retry the apply.
+              log.warn("BFT onFinalized: block not found locally, resetting EVM and retrying", {
                 height: block.number.toString(),
                 hash: block.hash,
                 error: String(applyErr),
               })
-              await new Promise((r) => setTimeout(r, 500))
               try {
+                const currentHeight = await Promise.resolve(chain.getHeight())
+                const pe = chain as any
+                if (pe.evm?.resetExecution && pe.rebuildFromPersisted) {
+                  await pe.evm.resetExecution()
+                  if (currentHeight > 0n) await pe.rebuildFromPersisted(currentHeight)
+                }
                 await chain.applyBlock(finalizedBlock, true)
-                log.info("BFT onFinalized: retry apply succeeded", { height: block.number.toString() })
+                log.info("BFT onFinalized: EVM reset + retry apply succeeded", { height: block.number.toString() })
               } catch (retryErr) {
-                log.error("BFT onFinalized: retry apply failed — chain may be stuck", {
+                log.error("BFT onFinalized: retry apply failed after EVM reset", {
                   height: block.number.toString(),
                   hash: block.hash,
                   error: String(retryErr),
@@ -674,17 +680,7 @@ if (config.enableWireProtocol) {
     onBlock: async (block) => {
       try {
         await chain.applyBlock(block)
-      } catch {
-        if (block.txs.length > 0) {
-          try {
-            const currentHeight = await Promise.resolve(chain.getHeight())
-            await (chain as any).evm?.resetExecution?.()
-            if (currentHeight > 0n && typeof (chain as any).rebuildFromPersisted === "function") {
-              await (chain as any).rebuildFromPersisted(currentHeight)
-            }
-          } catch { /* best-effort */ }
-        }
-      }
+      } catch { /* ignore */ }
       if (bftCoordinator) {
         try {
           await bftCoordinator.handleReceivedBlock(block)
