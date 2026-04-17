@@ -215,8 +215,20 @@ const p2p = new P2PNode(
     onBlock: async (block) => {
       try {
         await chain.applyBlock(block)
-      } catch {
-        // ignore invalid/duplicate blocks from peers
+      } catch (applyErr) {
+        // If apply failed after partial EVM execution (e.g. tx nonce advanced),
+        // reset EVM state to prevent pollution from leaking into future blocks.
+        if (block.txs.length > 0) {
+          try {
+            const currentHeight = await Promise.resolve(chain.getHeight())
+            await (chain as any).evm?.resetExecution?.()
+            if (currentHeight > 0n && typeof (chain as any).rebuildFromPersisted === "function") {
+              await (chain as any).rebuildFromPersisted(currentHeight)
+            }
+          } catch {
+            // best-effort EVM state recovery
+          }
+        }
       }
       // Non-proposer nodes: join BFT round for blocks received via gossip
       if (bftCoordinator) {
@@ -663,7 +675,15 @@ if (config.enableWireProtocol) {
       try {
         await chain.applyBlock(block)
       } catch {
-        // ignore
+        if (block.txs.length > 0) {
+          try {
+            const currentHeight = await Promise.resolve(chain.getHeight())
+            await (chain as any).evm?.resetExecution?.()
+            if (currentHeight > 0n && typeof (chain as any).rebuildFromPersisted === "function") {
+              await (chain as any).rebuildFromPersisted(currentHeight)
+            }
+          } catch { /* best-effort */ }
+        }
       }
       if (bftCoordinator) {
         try {

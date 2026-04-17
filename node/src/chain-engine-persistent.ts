@@ -273,6 +273,16 @@ export class PersistentChainEngine {
       for (const tx of txs) {
         this.mempool.remove(tx.hash)
       }
+      // Reset EVM execution state to prevent nonce/balance pollution from the
+      // failed block's partial tx execution leaking into the empty fallback block.
+      // applyBlock's internal checkpoint/revert may not fully clean up if EthereumJS
+      // runTx threw mid-execution without reverting its own checkpoint level.
+      await this.evm.resetExecution()
+      // Replay all committed blocks to restore clean EVM state
+      const currentHeight = await this.getHeight()
+      if (currentHeight > 0n) {
+        await this.rebuildFromPersisted(currentHeight)
+      }
       const emptyBlock = await this.buildBlock(nextHeight, [])
       if (this.nodeSigner) {
         emptyBlock.signature = this.nodeSigner.sign(`block:${emptyBlock.hash}`) as Hex
@@ -367,7 +377,8 @@ export class PersistentChainEngine {
       throw new Error("invalid block hash")
     }
 
-    // Checkpoint state trie for atomic rollback on failure
+    // Checkpoint both EVM stateManager and persistent trie for atomic rollback on failure
+    await this.evm.checkpointState()
     if (this.stateTrie) await this.stateTrie.checkpoint()
 
     // Execute transactions and collect receipts + logs
@@ -480,6 +491,9 @@ export class PersistentChainEngine {
       throw new Error(`block gasUsed mismatch: claimed ${block.gasUsed}, computed ${totalGasUsed}`)
     }
 
+    // Commit EVM stateManager checkpoint (matches the checkpoint() at block start)
+    await this.evm.commitState()
+
     // Create immutable stored block — never mutate the input parameter
     let stateRoot: Hex | undefined
     if (this.stateTrie) {
@@ -538,7 +552,10 @@ export class PersistentChainEngine {
     this.evm.evictCaches()
 
     } catch (err) {
-      // Revert state trie on any failure to prevent state pollution
+      // Revert both EVM stateManager and state trie on failure to prevent state pollution.
+      // Without EVM revert, in-memory nonces/balances remain modified from the failed
+      // block's partial execution, causing subsequent blocks to fail nonce validation.
+      try { await this.evm.revertState() } catch { /* best-effort */ }
       if (this.stateTrie) {
         try { await this.stateTrie.revert() } catch { /* best-effort */ }
       }
