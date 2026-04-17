@@ -228,8 +228,8 @@ export async function runInitWizard(
     ...preset.configOverrides,
   }
 
-  // Validators for validator type: use node name
-  if (nodeType === "validator") {
+  // Validators: use node name for validator and dev types
+  if (nodeType === "validator" || nodeType === "dev") {
     nodeConfig.validators = [name]
   }
 
