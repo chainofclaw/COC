@@ -130,6 +130,7 @@ export class PersistentChainEngine {
         proposer: genesisProposer,
         timestampMs: genesisTimestampMs,
         txs: [],
+        cumulativeWeight: 1n,
       })
       const genesis: ChainBlock = {
         number: 1n,
@@ -139,6 +140,7 @@ export class PersistentChainEngine {
         timestampMs: genesisTimestampMs,
         txs: [],
         finalized: false,
+        cumulativeWeight: 1n,
       }
       await this.blockIndex.putBlock(genesis)
       log.info("genesis block created", { height: "1", hash, proposer: genesisProposer })
@@ -596,18 +598,38 @@ export class PersistentChainEngine {
    */
   async importSnapSyncBlocks(blocks: ChainBlock[]): Promise<boolean> {
     const incomingTip = blocks[blocks.length - 1]
-    if (!incomingTip) return false
+    if (!incomingTip) {
+      log.warn("snap block import rejected: empty block list")
+      return false
+    }
 
     const currentHeight = await this.getHeight()
-    if (BigInt(incomingTip.number) <= currentHeight) return false
+    if (BigInt(incomingTip.number) <= currentHeight) {
+      log.warn("snap block import rejected: incoming tip not ahead", {
+        incomingTip: String(incomingTip.number),
+        currentHeight: currentHeight.toString(),
+      })
+      return false
+    }
     const snapshotStartHeight = BigInt(blocks[0].number)
     // SnapSync block import is append-only to avoid stale hash-index residue
     // from overwriting existing heights without full reindex/replay.
-    if (snapshotStartHeight <= currentHeight) return false
+    if (snapshotStartHeight <= currentHeight) {
+      log.warn("snap block import rejected: snapshot window overlaps local chain", {
+        snapshotStart: snapshotStartHeight.toString(),
+        currentHeight: currentHeight.toString(),
+      })
+      return false
+    }
 
     // Verify internal chain integrity (hashes, parent links); skip proposer
     // check because historical blocks may reference validators no longer active
     if (!this.verifyBlockChain(blocks, true)) {
+      log.warn("snap block import rejected: verifyBlockChain failed", {
+        snapshotStart: snapshotStartHeight.toString(),
+        snapshotEnd: String(incomingTip.number),
+        blockCount: blocks.length,
+      })
       return false
     }
 
@@ -630,6 +652,11 @@ export class PersistentChainEngine {
       }
       await this.blockIndex.putBlock(normalized)
     }
+    log.info("snap block import succeeded", {
+      snapshotStart: snapshotStartHeight.toString(),
+      snapshotEnd: String(incomingTip.number),
+      blockCount: blocks.length,
+    })
     return true
   }
 
@@ -662,25 +689,72 @@ export class PersistentChainEngine {
         parentBeaconBlockRoot: block.parentBeaconBlockRoot,
       })
       if (expectedHash !== block.hash) {
+        log.warn("verifyBlockChain failed: hash mismatch", {
+          index: i,
+          number: String(block.number),
+          expectedHash,
+          actualHash: block.hash,
+        })
         return false
       }
       if (i === 0) {
-        if (BigInt(block.number) === 1n && block.parentHash !== zeroHash()) return false
+        if (BigInt(block.number) === 1n && block.parentHash !== zeroHash()) {
+          log.warn("verifyBlockChain failed: bad genesis parent hash", {
+            index: i,
+            number: String(block.number),
+            parentHash: block.parentHash,
+          })
+          return false
+        }
       } else {
         const prev = blocks[i - 1]
-        if (block.parentHash !== prev.hash) return false
-        if (BigInt(block.number) !== BigInt(prev.number) + 1n) return false
+        if (block.parentHash !== prev.hash) {
+          log.warn("verifyBlockChain failed: parent hash discontinuity", {
+            index: i,
+            number: String(block.number),
+            parentHash: block.parentHash,
+            prevHash: prev.hash,
+          })
+          return false
+        }
+        if (BigInt(block.number) !== BigInt(prev.number) + 1n) {
+          log.warn("verifyBlockChain failed: block number discontinuity", {
+            index: i,
+            number: String(block.number),
+            prevNumber: String(prev.number),
+          })
+          return false
+        }
         // Verify timestamps are monotonically increasing
-        if (Number(block.timestampMs) <= Number(prev.timestampMs)) return false
+        if (Number(block.timestampMs) <= Number(prev.timestampMs)) {
+          log.warn("verifyBlockChain failed: non-monotonic timestamp", {
+            index: i,
+            number: String(block.number),
+            timestampMs: Number(block.timestampMs),
+            prevTimestampMs: Number(prev.timestampMs),
+          })
+          return false
+        }
       }
 
       const prev = i > 0 ? blocks[i - 1] : undefined
       if (!this.hasValidSnapshotWeight(prev, block)) {
+        log.warn("verifyBlockChain failed: invalid snapshot cumulative weight", {
+          index: i,
+          number: String(block.number),
+          cumulativeWeight: block.cumulativeWeight !== undefined ? String(block.cumulativeWeight) : "undefined",
+          prevCumulativeWeight: prev?.cumulativeWeight !== undefined ? String(prev.cumulativeWeight) : "undefined",
+        })
         return false
       }
 
       // Verify proposer is in validator set (skip for SnapSync — historical validators may differ)
       if (!skipProposerCheck && validators.length > 0 && !validators.includes(block.proposer)) {
+        log.warn("verifyBlockChain failed: proposer not in validator set", {
+          index: i,
+          number: String(block.number),
+          proposer: block.proposer,
+        })
         return false
       }
 
@@ -688,6 +762,11 @@ export class PersistentChainEngine {
       if (this.signatureVerifier && block.signature) {
         const canonical = `block:${block.hash}`
         if (!this.signatureVerifier.verifyNodeSig(canonical, block.signature, block.proposer)) {
+          log.warn("verifyBlockChain failed: invalid proposer signature", {
+            index: i,
+            number: String(block.number),
+            proposer: block.proposer,
+          })
           return false
         }
       }
@@ -859,19 +938,22 @@ export class PersistentChainEngine {
   }
 
   private hasValidSnapshotWeight(prev: ChainBlock | undefined, block: ChainBlock): boolean {
-    if (block.cumulativeWeight === undefined) {
-      return prev?.cumulativeWeight === undefined
+    const blockWeight = block.cumulativeWeight !== undefined ? BigInt(block.cumulativeWeight) : undefined
+    const prevWeight = prev?.cumulativeWeight !== undefined ? BigInt(prev.cumulativeWeight) : undefined
+
+    if (blockWeight === undefined) {
+      return prevWeight === undefined
     }
 
     if (!this.governance) {
-      return block.cumulativeWeight === BigInt(block.number)
+      return blockWeight === BigInt(block.number)
     }
 
-    if (!prev || prev.cumulativeWeight === undefined) {
-      return block.cumulativeWeight > 0n
+    if (prevWeight === undefined) {
+      return blockWeight > 0n
     }
 
-    return block.cumulativeWeight > prev.cumulativeWeight
+    return blockWeight > prevWeight
   }
 }
 
