@@ -58,13 +58,18 @@ export default function ContractsPage() {
         await scanForContracts()
       }
     } catch {
-      await scanForContracts()
+      try { await scanForContracts() } catch { /* RPC unreachable, degrade silently */ }
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   async function scanForContracts() {
-    const heightHex = await rpcCall<string>('eth_blockNumber')
+    const heightHex = await rpcCall<string>('eth_blockNumber').catch(() => null)
+    if (!heightHex) {
+      setContracts([])
+      return
+    }
     const height = parseInt(heightHex, 16)
     const fromBlock = Math.max(0, height - 100)
     const found: ContractInfo[] = []

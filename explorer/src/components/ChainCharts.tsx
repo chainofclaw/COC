@@ -97,7 +97,7 @@ export default function ChainCharts({ rpcUrl }: ChainChartsProps) {
     <div className="space-y-6">
       {/* TPS Trend */}
       <div className="bg-white p-4 rounded-lg shadow">
-        <h3 className="text-sm font-medium text-gray-700 mb-3">TPS Trend (Last {tpsData.length} blocks)</h3>
+        <h3 className="text-sm font-medium text-gray-700 mb-3">TPS Trend (Last {blocks.length} blocks)</h3>
         <div className="flex items-end gap-px h-32">
           {tpsData.map(d => (
             <div
