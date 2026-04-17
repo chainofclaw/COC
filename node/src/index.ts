@@ -366,7 +366,7 @@ if (bftEnabled) {
       const finalizedBlock = { ...block, bftFinalized: true }
       try {
         await chain.applyBlock(finalizedBlock, true)
-      } catch {
+      } catch (applyErr) {
         // block may already be applied during propose — persist bftFinalized flag
         const persistentEngine = chain as { blockIndex?: { getBlockByHash(h: string): Promise<ChainBlock | null>; updateBlock(b: ChainBlock): Promise<void> } }
         if (persistentEngine.blockIndex) {
@@ -375,6 +375,25 @@ if (bftEnabled) {
             if (existing && !existing.bftFinalized) {
               const updated = { ...existing, bftFinalized: true }
               await persistentEngine.blockIndex.updateBlock(updated)
+            } else if (!existing) {
+              // Block was NOT previously applied — this is a real failure, not a duplicate.
+              // Retry apply after a short delay to allow gossip-applied parent to settle.
+              log.warn("BFT onFinalized: block not found locally, retrying apply", {
+                height: block.number.toString(),
+                hash: block.hash,
+                error: String(applyErr),
+              })
+              await new Promise((r) => setTimeout(r, 500))
+              try {
+                await chain.applyBlock(finalizedBlock, true)
+                log.info("BFT onFinalized: retry apply succeeded", { height: block.number.toString() })
+              } catch (retryErr) {
+                log.error("BFT onFinalized: retry apply failed — chain may be stuck", {
+                  height: block.number.toString(),
+                  hash: block.hash,
+                  error: String(retryErr),
+                })
+              }
             }
           } catch {
             // best-effort finality persistence
