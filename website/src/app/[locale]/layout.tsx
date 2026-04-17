@@ -7,6 +7,7 @@ import { routing } from '@/i18n/routing'
 import { LanguageSwitcher } from '@/components/LanguageSwitcher'
 import { WalletProvider } from '@/components/shared/WalletProvider'
 import { WalletConnect } from '@/components/identity/WalletConnect'
+import { MobileMenu } from '@/components/shared/MobileMenu'
 import { Link } from '@/i18n/routing'
 import './globals.css'
 
@@ -64,7 +65,7 @@ export default async function LocaleLayout({
                         maskPosition: "center",
                       }}
                     />
-                    <span className="gradient-text tracking-widest [transform:scaleX(1.15)] [transform-origin:left_bottom] inline-block">
+                    <span className="gradient-text tracking-tighter inline-block [-webkit-text-stroke:1.5px_var(--accent-blue)] [paint-order:stroke_fill]">
                       COC
                     </span>
                   </Link>
@@ -88,17 +89,17 @@ export default async function LocaleLayout({
                       <WalletConnect />
                     </div>
                     <LanguageSwitcher />
-                    {/* Mobile menu button */}
-                    <button className="md:hidden text-text-primary hover:text-accent-cyan transition-colors">
-                      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M4 6h16M4 12h16M4 18h16"
-                        />
-                      </svg>
-                    </button>
+                    <MobileMenu items={[
+                      { href: '/', label: tCommon('home') },
+                      { href: '/plan', label: tCommon('plan') },
+                      { href: '/technology', label: tCommon('technology') },
+                      { href: '/network', label: tCommon('network') },
+                      { href: '/roadmap', label: tCommon('roadmap') },
+                      { href: '/governance', label: 'DAO' },
+                      { href: '/testnet', label: 'Testnet' },
+                      { href: '/forum', label: 'Forum' },
+                      { href: '/docs', label: tCommon('docs') },
+                    ]} />
                   </div>
                 </div>
               </div>

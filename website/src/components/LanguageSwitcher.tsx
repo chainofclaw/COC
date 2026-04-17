@@ -32,15 +32,15 @@ export function LanguageSwitcher() {
     <div className="relative">
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="group flex items-center gap-2 px-3 py-2 rounded-lg bg-accent-cyan/5 border border-accent-cyan/20 hover:bg-accent-cyan/10 hover:border-accent-cyan/40 transition-all font-display"
+        className="group flex items-center gap-1 md:gap-2 px-1.5 py-1 md:px-3 md:py-2 rounded-lg md:bg-accent-cyan/5 md:border md:border-accent-cyan/20 hover:bg-accent-cyan/10 md:hover:border-accent-cyan/40 transition-all font-display"
         disabled={isPending}
       >
-        <span className="text-xl filter grayscale-0">{currentLanguage.flag}</span>
+        <span className="text-base md:text-xl filter grayscale-0">{currentLanguage.flag}</span>
         <span className="hidden sm:inline text-sm text-text-secondary group-hover:text-accent-cyan transition-colors">
           {currentLanguage.name}
         </span>
         <svg
-          className={`w-4 h-4 text-text-muted group-hover:text-accent-cyan transition-all ${isOpen ? 'rotate-180' : ''}`}
+          className={`w-3 h-3 md:w-4 md:h-4 text-text-muted group-hover:text-accent-cyan transition-all ${isOpen ? 'rotate-180' : ''}`}
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
