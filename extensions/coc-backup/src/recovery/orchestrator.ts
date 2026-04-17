@@ -8,6 +8,7 @@ import type { RecoveryResult } from "../types.ts"
 import { restoreFromChain, restoreFromManifestCid } from "./state-restorer.ts"
 import { writeRestoreMarker, notifyAgentRestart } from "./agent-restarter.ts"
 import type { RestoreMarker } from "./agent-restarter.ts"
+import { injectRecoveryContext } from "./context-injector.ts"
 
 interface Logger {
   info(msg: string): void
@@ -65,6 +66,14 @@ export async function autoRestore(opts: AutoRestoreOptions): Promise<AutoRestore
     `${recovery.backupsApplied} manifests applied, merkle=${recovery.merkleVerified}`,
   )
 
+  // 3b. Inject semantic recovery context (RECOVERY_CONTEXT.md)
+  try {
+    await injectRecoveryContext(targetDir, recovery, agentId)
+    logger.info("Recovery context injected (RECOVERY_CONTEXT.md)")
+  } catch (error) {
+    logger.warn(`Recovery context injection failed (non-fatal): ${String(error)}`)
+  }
+
   // 4. Write restore marker
   const marker: RestoreMarker = {
     version: 1,
@@ -115,6 +124,13 @@ export async function restoreFromCid(
     logger,
     soul,
   )
+
+  // Inject semantic recovery context
+  try {
+    await injectRecoveryContext(targetDir, recovery, recovery.resolvedAgentId ?? "unknown")
+  } catch {
+    // Non-fatal
+  }
 
   const marker: RestoreMarker = {
     version: 1,

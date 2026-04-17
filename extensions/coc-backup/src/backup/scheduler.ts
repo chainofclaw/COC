@@ -6,15 +6,18 @@ import type { IpfsClient } from "../ipfs-client.ts"
 import type {
   BackupReceipt,
   BackupRecoveryPackage,
+  SemanticDigest,
   SnapshotManifest,
 } from "../types.ts"
 import { detectChanges } from "./change-detector.ts"
 import { captureContextSnapshot } from "./context-snapshot.ts"
+import { captureSemanticSnapshot, readSemanticSnapshot } from "./semantic-snapshot.ts"
 import { uploadFiles, carryOverEntries } from "./uploader.ts"
 import { buildManifest } from "./manifest-builder.ts"
 import { anchorBackup } from "./anchor.ts"
 import { readBackupState, writeBackupState, writeLatestRecoveryPackage } from "../local-state.ts"
 import { resolveHomePath } from "../utils.ts"
+import { sha256Hex } from "../crypto.ts"
 
 interface Logger {
   info(msg: string): void
@@ -202,6 +205,13 @@ export class BackupScheduler {
       this.logger.warn(`Context snapshot failed (non-fatal): ${String(error)}`)
     }
 
+    // Capture semantic snapshot from claude-mem database
+    try {
+      await captureSemanticSnapshot(baseDir, this.config.semanticSnapshot)
+    } catch (error) {
+      this.logger.warn(`Semantic snapshot failed (non-fatal): ${String(error)}`)
+    }
+
     // Determine if we should do full or incremental
     const isFullBackup = forceFullBackup ||
       !this.lastManifest ||
@@ -249,9 +259,10 @@ export class BackupScheduler {
       // Remove deleted files (already excluded by not carrying them over)
     }
 
-    // 4. Build manifest
+    // 4. Build manifest (with optional semantic digest)
     const parentCid = isFullBackup ? null : (this.lastManifestCid ?? null)
-    const manifest = buildManifest(agentId, allEntries, parentCid)
+    const semanticDigest = await this._buildSemanticDigest(baseDir)
+    const manifest = buildManifest(agentId, allEntries, parentCid, semanticDigest ?? undefined)
 
     // 5. Anchor on-chain
     const result = await anchorBackup(manifest, this.ipfs, this.soul)
@@ -281,6 +292,29 @@ export class BackupScheduler {
       heartbeatStatus: heartbeat.status,
       heartbeatError: heartbeat.error,
       backup: result,
+    }
+  }
+
+  /** Build a semantic digest from the latest semantic snapshot (if available) */
+  private async _buildSemanticDigest(baseDir: string): Promise<SemanticDigest | null> {
+    try {
+      const snapshot = await readSemanticSnapshot(baseDir)
+      if (!snapshot || (snapshot.observations.length === 0 && snapshot.summaries.length === 0)) {
+        return null
+      }
+      const serialized = JSON.stringify({
+        observations: snapshot.observations,
+        summaries: snapshot.summaries,
+      })
+      const contentHash = sha256Hex(Buffer.from(serialized, "utf-8"))
+      return {
+        observationCount: snapshot.observations.length,
+        summaryCount: snapshot.summaries.length,
+        contentHash,
+        snapshotTokens: snapshot.tokensUsed,
+      }
+    } catch {
+      return null
     }
   }
 

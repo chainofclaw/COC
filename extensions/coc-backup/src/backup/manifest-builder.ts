@@ -2,7 +2,7 @@
 // Reuses the Merkle tree algorithm from COC/node/src/ipfs-merkle.ts
 
 import { createHash } from "node:crypto"
-import type { SnapshotManifest, ManifestFileEntry } from "../types.ts"
+import type { SnapshotManifest, ManifestFileEntry, SemanticDigest } from "../types.ts"
 
 type Hex = `0x${string}`
 
@@ -86,6 +86,7 @@ export function buildManifest(
   agentId: string,
   entries: Record<string, ManifestFileEntry>,
   parentCid: string | null,
+  semanticDigest?: SemanticDigest,
 ): SnapshotManifest {
   const merkleRoot = computeDataMerkleRoot(entries)
 
@@ -96,7 +97,7 @@ export function buildManifest(
     fileCount++
   }
 
-  return {
+  const manifest: SnapshotManifest = {
     version: 1,
     agentId,
     timestamp: new Date().toISOString(),
@@ -106,4 +107,10 @@ export function buildManifest(
     totalBytes,
     fileCount,
   }
+
+  if (semanticDigest) {
+    manifest.semanticDigest = semanticDigest
+  }
+
+  return manifest
 }

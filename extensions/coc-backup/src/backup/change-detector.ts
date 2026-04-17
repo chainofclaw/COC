@@ -33,6 +33,10 @@ const FILE_RULES: Array<{ pattern: RegExp; category: FileCategory; encrypt: bool
   { pattern: /^credentials\/.*/, category: "config", encrypt: true },
   // Context snapshot
   { pattern: /^\.coc-backup\/context-snapshot\.json$/, category: "workspace", encrypt: false },
+  // Semantic snapshot (claude-mem observations + summaries)
+  { pattern: /^\.coc-backup\/semantic-snapshot\.json$/, category: "memory", encrypt: false },
+  // Recovery context (generated on restore for agent context injection)
+  { pattern: /^RECOVERY_CONTEXT\.md$/, category: "memory", encrypt: false },
 ]
 
 function classifyFile(relativePath: string): { category: FileCategory; encrypt: boolean } | null {

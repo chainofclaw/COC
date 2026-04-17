@@ -21,6 +21,13 @@ export interface ChangeSet {
   unchanged: FileState[]
 }
 
+export interface SemanticDigest {
+  observationCount: number
+  summaryCount: number
+  contentHash: string     // SHA-256 of serialized snapshot content
+  snapshotTokens: number  // token budget used
+}
+
 export interface SnapshotManifest {
   version: 1
   agentId: string        // hex
@@ -30,6 +37,7 @@ export interface SnapshotManifest {
   merkleRoot: string     // hex
   totalBytes: number
   fileCount: number
+  semanticDigest?: SemanticDigest
 }
 
 export interface ManifestFileEntry {
