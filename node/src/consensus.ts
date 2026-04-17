@@ -124,7 +124,6 @@ export class ConsensusEngine {
   private degradedCheckTimer: ReturnType<typeof setInterval> | null = null
   private syncInFlight = false
   private proposeInFlight = false
-  private proposeSkippedInFlight = 0
 
   // Sync progress tracking
   private highestPeerHeight = 0n
@@ -245,14 +244,7 @@ export class ConsensusEngine {
   }
 
   private async tryPropose(): Promise<void> {
-    if (this.proposeInFlight) {
-      this.proposeSkippedInFlight = (this.proposeSkippedInFlight ?? 0) + 1
-      if (this.proposeSkippedInFlight % 10 === 0) {
-        log.warn("tryPropose skipped: proposeInFlight stuck", { consecutive: this.proposeSkippedInFlight })
-      }
-      return
-    }
-    this.proposeSkippedInFlight = 0
+    if (this.proposeInFlight) return
 
     if (!this.cfg.sequencerMode) {
       if (this.syncInFlight) return // Don't propose while snap sync is modifying chain state
