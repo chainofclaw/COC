@@ -66,6 +66,14 @@ export class BftCoordinator {
    * Start a new BFT round for a proposed block.
    */
   async startRound(block: ChainBlock): Promise<void> {
+    // Auto-clear stale rounds in terminal state before evaluating defer logic
+    if (this.activeRound) {
+      const phase = this.activeRound.state.phase
+      if (phase === "finalized" || phase === "failed") {
+        this.clearRound()
+      }
+    }
+
     // Defer new block if an active round has voting progress (avoid killing in-flight rounds)
     if (this.activeRound) {
       const phase = this.activeRound.state.phase
@@ -274,7 +282,10 @@ export class BftCoordinator {
     commitVotes: number
     equivocations: number
   } {
-    if (!this.activeRound) {
+    // Report inactive when no round exists or round reached a terminal state.
+    // This prevents tryPropose() from being permanently blocked by a stale round
+    // that was finalized/failed but not yet cleared (race window).
+    if (!this.activeRound || this.activeRound.state.phase === "finalized" || this.activeRound.state.phase === "failed") {
       return { active: false, height: null, phase: null, prepareVotes: 0, commitVotes: 0, equivocations: 0 }
     }
     return {
@@ -296,9 +307,16 @@ export class BftCoordinator {
     if (block.proposer.toLowerCase() === this.cfg.localId.toLowerCase()) return
 
     if (this.activeRound) {
-      if (block.number <= this.activeRound.state.height) {
+      const phase = this.activeRound.state.phase
+      // Auto-clear stale rounds in terminal state before checking height
+      if (phase === "finalized" || phase === "failed") {
+        this.clearRound()
+      } else if (block.number <= this.activeRound.state.height) {
         return
       }
+    }
+
+    if (this.activeRound) {
       // Defer if current round is close to finalization (commit phase or prepare with votes)
       const phase = this.activeRound.state.phase
       const hasVotes = this.activeRound.state.prepareVotes.size > 1
