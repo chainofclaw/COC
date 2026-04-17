@@ -15,6 +15,19 @@ export const CocBackupConfigSchema = z.object({
   maxIncrementalChain: z.number().int().min(1).default(10).describe("Max incremental backups before forcing full backup"),
   didRegistryAddress: z.string().regex(/^0x[0-9a-fA-F]{40}$/).optional().describe("DIDRegistry contract address (enables DID CLI commands)"),
   backupOnSessionEnd: z.boolean().default(true).describe("Trigger backup when agent session ends"),
+  semanticSnapshot: z.object({
+    enabled: z.boolean().default(true).describe("Capture semantic snapshot from claude-mem before backup"),
+    tokenBudget: z.number().default(8000).describe("Max tokens for semantic snapshot content"),
+    maxObservations: z.number().default(50).describe("Max observations to include in snapshot"),
+    maxSummaries: z.number().default(10).describe("Max session summaries to include in snapshot"),
+    claudeMemDbPath: z.string().default("").describe("Explicit path to claude-mem database (auto-detected if empty)"),
+  }).default({
+    enabled: true,
+    tokenBudget: 8000,
+    maxObservations: 50,
+    maxSummaries: 10,
+    claudeMemDbPath: "",
+  }),
   carrier: z.object({
     enabled: z.boolean().default(false).describe("Enable carrier daemon mode"),
     carrierId: z.string().optional().describe("This carrier's registered ID (bytes32)"),

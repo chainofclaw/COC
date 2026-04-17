@@ -12,6 +12,7 @@ import type { OpenClawPluginApi } from "./src/plugin-api.ts"
 import { readFile, rm } from "node:fs/promises"
 import { join } from "node:path"
 import { buildDoctorReport, resolveRestorePlan } from "./src/lifecycle.ts"
+import { searchMemories } from "./src/recovery/memory-search.ts"
 import { patchBackupState, readBackupState } from "./src/local-state.ts"
 import { resolveHomePath } from "./src/utils.ts"
 
@@ -413,6 +414,49 @@ export function activate(api: OpenClawPluginApi) {
         }
         const txHash = await soulClient.removeGuardian(agentId, params.guardian)
         return { success: true, action: "removed", guardian: params.guardian, txHash }
+      } catch (error) {
+        return { success: false, error: String(error) }
+      }
+    },
+  })
+
+  // Semantic memory search tool
+  api.registerTool({
+    name: "soul-memory-search",
+    description: "Search the agent's semantic memories (past observations and session summaries). " +
+      "Uses claude-mem worker if available, falls back to direct SQLite FTS5 search.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Search query text" },
+        limit: { type: "number", description: "Max results to return (default: 10)" },
+        type: { type: "string", description: "Filter by observation type (decision/discovery/pattern/learning/etc.)" },
+      },
+      required: ["query"],
+    },
+    async execute(params: { query: string; limit?: number; type?: string }) {
+      try {
+        const result = await searchMemories({
+          query: params.query,
+          limit: params.limit,
+          type: params.type,
+          dataDir,
+        })
+        return {
+          success: true,
+          source: result.source,
+          totalCount: result.totalCount,
+          results: result.results.map((hit) => ({
+            id: hit.id,
+            type: hit.type,
+            title: hit.title,
+            narrative: hit.narrative,
+            facts: hit.facts,
+            concepts: hit.concepts,
+            createdAt: hit.createdAt,
+            score: hit.score,
+          })),
+        }
       } catch (error) {
         return { success: false, error: String(error) }
       }
