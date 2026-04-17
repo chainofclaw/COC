@@ -7,6 +7,25 @@ import { NetworkStats } from '@/components/NetworkStats'
 
 type HeroSlide = { label: string; quote: string; title: string }
 
+// Strip punctuation from hero copy and convert each punctuation boundary into
+// a line break. Quotes / guillemets are removed entirely.
+function cleanHeroText(s: string): string {
+  return s
+    .replace(/[「」『』""''""]/g, '')
+    .replace(/[，、,;；]\s*/g, '\n')
+    .replace(/[。！.!]\s*/g, '\n')
+    .replace(/[？?]\s*/g, '?\n')
+    .replace(/——+|—+|–+|--+/g, '\n')
+    .replace(/\n+/g, '\n')
+    .trim()
+    .split('\n')
+    .map(l => l.trimStart())
+    .map(l => l.charAt(0).toUpperCase() + l.slice(1))
+    .join('\n')
+    .replace(/([\u4e00-\u9fff\u3400-\u4dbf])\s+([\w])/g, '$1$2')
+    .replace(/([\w])\s+([\u4e00-\u9fff\u3400-\u4dbf])/g, '$1$2')
+}
+
 export default function HomePage() {
   const t = useTranslations('home')
   const slides = t.raw('hero.slides') as HeroSlide[]
@@ -53,13 +72,13 @@ export default function HomePage() {
                   </div>
 
                   {/* Quote */}
-                  <p className="text-base md:text-lg italic text-text-muted max-w-3xl font-body mb-8 leading-relaxed">
-                    {slide.quote}
+                  <p className="text-sm md:text-base italic text-text-muted max-w-3xl font-body mb-6 leading-[1.5] whitespace-pre-line">
+                    {cleanHeroText(slide.quote)}
                   </p>
 
-                  {/* Title (3 lines) */}
-                  <h1 className="text-3xl md:text-5xl font-display font-bold mb-6 leading-loose whitespace-pre-line">
-                    <span className="gradient-text glow-text">{slide.title}</span>
+                  {/* Title */}
+                  <h1 className="text-2xl md:text-4xl font-display font-bold mb-6 leading-[1.5] whitespace-pre-line">
+                    <span className="gradient-text glow-text">{cleanHeroText(slide.title)}...</span>
                   </h1>
                 </div>
               ))}
@@ -94,17 +113,6 @@ export default function HomePage() {
                 <div className="absolute inset-0 bg-gradient-cyber blur-xl opacity-50 group-hover:opacity-75 transition-opacity" />
                 <span className="relative text-white">&gt; {t('hero.learnMore')}</span>
               </Link>
-
-              <a
-                href="https://explorer.clawchain.io"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="group px-8 py-4 rounded-lg font-display font-semibold text-lg border-2 border-accent-cyan/50 bg-accent-cyan/5 hover:bg-accent-cyan/10 hover:border-accent-cyan transition-all hover:shadow-glow-md backdrop-blur-sm"
-              >
-                <span className="text-accent-cyan group-hover:text-accent-cyan/90">
-                  {t('hero.browseBlockchain')} →
-                </span>
-              </a>
 
               <Link
                 href="/docs"
