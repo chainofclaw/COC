@@ -124,6 +124,7 @@ export class ConsensusEngine {
   private degradedCheckTimer: ReturnType<typeof setInterval> | null = null
   private syncInFlight = false
   private proposeInFlight = false
+  private proposeSkippedInFlight = 0
 
   // Sync progress tracking
   private highestPeerHeight = 0n
@@ -244,7 +245,14 @@ export class ConsensusEngine {
   }
 
   private async tryPropose(): Promise<void> {
-    if (this.proposeInFlight) return
+    if (this.proposeInFlight) {
+      this.proposeSkippedInFlight = (this.proposeSkippedInFlight ?? 0) + 1
+      if (this.proposeSkippedInFlight % 10 === 0) {
+        log.warn("tryPropose skipped: proposeInFlight stuck", { consecutive: this.proposeSkippedInFlight })
+      }
+      return
+    }
+    this.proposeSkippedInFlight = 0
 
     if (!this.cfg.sequencerMode) {
       if (this.syncInFlight) return // Don't propose while snap sync is modifying chain state
@@ -442,8 +450,18 @@ export class ConsensusEngine {
           this.snapSync &&
           gap > BigInt(this.cfg.snapSyncThreshold ?? 100)
         ) {
+          log.info("snap sync path selected", {
+            localHeight: localHeight.toString(),
+            remoteHeight: remoteCandidate.height.toString(),
+            gap: gap.toString(),
+            threshold: String(this.cfg.snapSyncThreshold ?? 100),
+          })
           snapAttemptedForGap = true
           const ok = await this.trySnapSync(snapshot)
+          log.info("snap sync attempt finished", {
+            ok,
+            localHeightAfter: String(await Promise.resolve(this.chain.getHeight())),
+          })
           if (ok) {
             this.blocksAdopted++
             const newHeight = await Promise.resolve(this.chain.getHeight())
@@ -504,6 +522,13 @@ export class ConsensusEngine {
         } else if (typeof blockEngine.maybeAdoptSnapshot === "function") {
           ok = await blockEngine.maybeAdoptSnapshot(snapshot.blocks)
         }
+        log.info("block-level snapshot adoption result", {
+          ok,
+          localHeightBefore: localHeight.toString(),
+          localHeightAfter: String(await Promise.resolve(this.chain.getHeight())),
+          snapshotStart: String(snapshot.blocks[0]?.number ?? "n/a"),
+          snapshotEnd: String(snapshot.blocks[snapshot.blocks.length - 1]?.number ?? "n/a"),
+        })
         if (ok) {
           this.blocksAdopted++
           // Refresh local state after successful adoption to prevent stale comparisons
