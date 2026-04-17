@@ -7,6 +7,7 @@ import type { NodeType } from "../node-types.ts"
 import type { NetworkId } from "../network-presets.ts"
 import { CocProcessManager } from "./process-manager.ts"
 import { resolveDataDir } from "../shared/paths.ts"
+import { rpcCall } from "./rpc-client.ts"
 
 export interface NodeEntry {
   name: string
@@ -172,6 +173,17 @@ export class NodeManager {
     return result
   }
 
+  // --- Logs ---
+
+  async getNodeLogs(name: string, service: "node" | "agent" | "relayer" = "node", lines = 50): Promise<string> {
+    const node = this.getNode(name)
+    if (!node) throw new Error(`Node "${name}" not found`)
+    const content = await this.processManager.readLogs(service, node.dataDir)
+    if (!content) return ""
+    const allLines = content.split("\n")
+    return allLines.slice(-lines).join("\n")
+  }
+
   // --- Config ---
 
   async getNodeConfig(name: string): Promise<Record<string, unknown>> {
@@ -262,14 +274,3 @@ export class NodeManager {
   }
 }
 
-async function rpcCall(url: string, method: string, params: unknown[]): Promise<unknown> {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-    signal: AbortSignal.timeout(3000),
-  })
-  const json = (await res.json()) as { result?: unknown; error?: { message: string } }
-  if (json.error) throw new Error(json.error.message)
-  return json.result
-}

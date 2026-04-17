@@ -3,8 +3,9 @@ import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 
 export function resolveCocRoot(): string {
+  // From src/shared/ → src/ → coc-nodeops/ → extensions/ → COC/
   const currentDir = dirname(fileURLToPath(import.meta.url));
-  return join(currentDir, "../../../COC");
+  return join(currentDir, "../../../..");
 }
 
 export function resolveRuntimeDir(): string {

@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { access, mkdir, open, readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { PluginLogger } from "openclaw/plugin-sdk";
-import { resolveDataDir, resolveRuntimeDir } from "../shared/paths.ts";
+import { resolveCocRoot, resolveDataDir, resolveRuntimeDir } from "../shared/paths.ts";
 
 export type CocProcessKind = "node" | "agent" | "relayer";
 
@@ -38,8 +38,12 @@ export class CocProcessManager {
       return;
     }
 
+    // "node" service uses the full blockchain entry point (node/src/index.ts),
+    // while "agent" and "relayer" use runtime scripts (runtime/coc-*.ts).
     const runtimeDir = config.runtimeDir?.trim() ? config.runtimeDir.trim() : resolveRuntimeDir();
-    const scriptPath = join(runtimeDir, `coc-${kind}.ts`);
+    const scriptPath = kind === "node"
+      ? join(resolveCocRoot(), "node", "src", "index.ts")
+      : join(runtimeDir, `coc-${kind}.ts`);
     await access(scriptPath);
 
     const logPath = join(dataDir, `coc-${kind}.log`);

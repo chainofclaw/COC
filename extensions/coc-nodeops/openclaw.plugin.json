@@ -1,9 +1,16 @@
 {
   "id": "coc-nodeops",
-  "name": "COC 节点运维",
-  "version": "0.1.0",
-  "description": "COC 节点/Agent/Relayer 安装、配置与运维",
+  "name": "COC Node Ops",
+  "version": "0.2.0",
+  "description": "COC blockchain node/agent/relayer installation, configuration, and operations",
   "author": "OpenClaw Contributors",
+  "entry": "./index.ts",
+  "commands": ["coc"],
+  "tools": [
+    "coc-node-init", "coc-node-list", "coc-node-start", "coc-node-stop",
+    "coc-node-restart", "coc-node-status", "coc-node-remove",
+    "coc-node-config", "coc-node-logs", "coc-rpc-query"
+  ],
   "services": [
     "coc"
   ],
