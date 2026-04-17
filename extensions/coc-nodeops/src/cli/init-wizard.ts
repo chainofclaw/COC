@@ -3,6 +3,7 @@ import * as p from "@clack/prompts"
 import crypto from "node:crypto"
 import { writeFile, mkdir } from "node:fs/promises"
 import { join } from "node:path"
+import { Wallet } from "ethers"
 
 import type { NodeType } from "../node-types.ts"
 import { NODE_TYPE_PRESETS, NODE_TYPE_LABELS, isValidNodeType } from "../node-types.ts"
@@ -233,11 +234,16 @@ export async function runInitWizard(
     nodeConfig.validators = [name]
   }
 
-  // Generate node key
+  // Generate node key and derive address
   await mkdir(nodeDir, { recursive: true })
   const nodeKey = "0x" + crypto.randomBytes(32).toString("hex")
   const keyPath = join(nodeDir, "node-key")
   await writeFile(keyPath, nodeKey + "\n", { mode: 0o600 })
+
+  // Derive Ethereum address from private key — used as nodeId for DHT/P2P
+  const wallet = new Wallet(nodeKey)
+  const nodeAddress = wallet.address.toLowerCase()
+  nodeConfig.nodeId = nodeAddress
 
   // Write node-config.json
   const configPath = join(nodeDir, "node-config.json")
