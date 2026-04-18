@@ -267,6 +267,11 @@ export class Mempool {
       if (cumulativeGas + tx.gasLimit > blockGasLimit) continue
       const next = expected.get(tx.from)
       if (next === undefined || next === -1n) continue
+      // Evict transactions whose nonce is already confirmed on-chain
+      if (tx.nonce < next) {
+        this.removeTx(tx.hash)
+        continue
+      }
       if (tx.nonce !== next) continue
       picked.push(tx)
       cumulativeGas += tx.gasLimit

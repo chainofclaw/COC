@@ -152,6 +152,13 @@ export class ChainEngine {
     if (this.txHashSet.has(decoded.hash as Hex)) {
       throw new Error("tx already confirmed")
     }
+    // Reject transactions with nonce already used on-chain
+    if (decoded.from) {
+      const onchainNonce = await this.evm.getNonce(decoded.from.toLowerCase() as Hex)
+      if (BigInt(decoded.nonce) < onchainNonce) {
+        throw new Error(`nonce too low: tx nonce ${decoded.nonce}, on-chain nonce ${onchainNonce}`)
+      }
+    }
     const tx = this.mempool.addRawTx(rawTx, decoded)
 
     this.events.emitPendingTx({

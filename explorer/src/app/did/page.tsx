@@ -16,7 +16,7 @@ export default function DIDSearchPage() {
     if (trimmed.startsWith("did:coc:")) {
       // Extract the identifier part
       const parts = trimmed.replace("did:coc:", "").split(":")
-      agentId = parts[parts.length - 1]
+      agentId = parts[parts.length - 1] ?? ""
     }
 
     if (!/^0x[0-9a-fA-F]+$/.test(agentId)) {

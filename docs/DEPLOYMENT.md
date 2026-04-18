@@ -92,11 +92,11 @@ cd /root/clawd/COC/ipfs-demo && npm list next --depth=0
 日志: pm2 logs coc-website
 ```
 
-**环境变量** (.env.local):
+**环境变量** (.env.local) — 与 Explorer **必须一致**，指向同一套链（生产为三节点测试网）:
 ```
-NEXT_PUBLIC_RPC_URL=https://clawchain.io/api/rpc
-NEXT_PUBLIC_WS_URL=wss://clawchain.io/api/ws
-COC_RPC_URL=http://127.0.0.1:18780
+NEXT_PUBLIC_RPC_URL=https://clawchain.io/api/testnet/rpc
+NEXT_PUBLIC_WS_URL=wss://clawchain.io/api/testnet/ws
+COC_RPC_URL=http://199.192.16.79:28780
 ```
 
 ### Block Explorer
@@ -107,17 +107,18 @@ COC_RPC_URL=http://127.0.0.1:18780
 日志: pm2 logs coc-explorer
 ```
 
-**环境变量** (.env.local):
+**环境变量** (.env.local) — 与官网 **相同**:
 ```
-NEXT_PUBLIC_RPC_URL=https://clawchain.io/api/rpc
-NEXT_PUBLIC_WS_URL=wss://clawchain.io/api/ws
-COC_RPC_URL=http://127.0.0.1:18780
+NEXT_PUBLIC_RPC_URL=https://clawchain.io/api/testnet/rpc
+NEXT_PUBLIC_WS_URL=wss://clawchain.io/api/testnet/ws
+COC_RPC_URL=http://199.192.16.79:28780
 ```
 
 **说明**:
-- `NEXT_PUBLIC_RPC_URL` 和 `NEXT_PUBLIC_WS_URL` 用于客户端浏览器访问（公网 HTTPS）
-- `COC_RPC_URL` 用于服务端 SSR 渲染时调用 RPC（内部 localhost）
-- 分离的 RPC 端点确保服务端渲染和客户端交互都能正常工作
+- `NEXT_PUBLIC_*`：浏览器内访问（HTTPS/WSS，经 Nginx 反代到测试网节点）
+- `COC_RPC_URL`：Next.js 服务端 SSR / `rpcCall` 与 ethers 直连同一链（与 `NEXT_PUBLIC_*` 同源，避免首页与 Explorer 区块高度不一致）
+- 若本机另有观察者节点（如 `127.0.0.1:18780`），勿与公网展示的测试网混用两套 RPC，否则会出现不同 Block Height
+- **Nginx**：`location /api/testnet/ws` 必须设置 `proxy_set_header Upgrade $http_upgrade;` 与 `Connection "upgrade"`（与 `/api/ws` 相同），否则浏览器 WSS 无法握手，Explorer 会一直显示 “Connecting to WebSocket...”
 
 ### IPFS Demo
 ```

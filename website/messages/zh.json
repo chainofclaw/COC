@@ -916,6 +916,7 @@
       "version": "版本",
       "startTime": "啟動時間",
       "uptime": "運行時長",
+      "client": "客戶端",
       "rpcEndpoint": "RPC 端點",
       "wsEndpoint": "WebSocket",
       "p2pEndpoint": "P2P 端點"
@@ -939,6 +940,26 @@
       "timestamp": "時間戳",
       "txCount": "交易數",
       "gasUsed": "Gas 使用"
+    },
+    "countdown": {
+      "title": "測試網啟動倒計時",
+      "days": "天",
+      "hours": "小時",
+      "minutes": "分鐘",
+      "seconds": "秒",
+      "launchDate": "啟動日期：2026年3月27日"
+    },
+    "units": {
+      "blocksPerMinute": "塊/分鐘",
+      "authRequests": "認證請求"
+    },
+    "statusEnabled": "✓ 啟用",
+    "statusDisabled": "✗ 禁用",
+    "uptime": {
+      "daysHours": "{days}天 {hours}小時",
+      "hoursMinutes": "{hours}小時 {minutes}分鐘",
+      "minutesOnly": "{minutes}分鐘",
+      "secondsOnly": "{seconds}秒"
     },
     "quickLinks": {
       "title": "快速鏈接",

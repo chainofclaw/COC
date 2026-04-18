@@ -916,6 +916,7 @@
       "version": "バージョン",
       "startTime": "起動時刻",
       "uptime": "アップタイム",
+      "client": "クライアント",
       "rpcEndpoint": "RPC エンドポイント",
       "wsEndpoint": "WebSocket",
       "p2pEndpoint": "P2P エンドポイント"
@@ -939,6 +940,26 @@
       "timestamp": "タイムスタンプ",
       "txCount": "Tx 数",
       "gasUsed": "Gas 使用量"
+    },
+    "countdown": {
+      "title": "テストネット起動カウントダウン",
+      "days": "日",
+      "hours": "時間",
+      "minutes": "分",
+      "seconds": "秒",
+      "launchDate": "2026年3月27日に起動"
+    },
+    "units": {
+      "blocksPerMinute": "ブロック/分",
+      "authRequests": "認証リクエスト"
+    },
+    "statusEnabled": "✓ 有効",
+    "statusDisabled": "✗ 無効",
+    "uptime": {
+      "daysHours": "{days}日 {hours}時間",
+      "hoursMinutes": "{hours}時間 {minutes}分",
+      "minutesOnly": "{minutes}分",
+      "secondsOnly": "{seconds}秒"
     },
     "quickLinks": {
       "title": "クイックリンク",
