@@ -273,16 +273,8 @@ export class PersistentChainEngine {
       for (const tx of txs) {
         this.mempool.remove(tx.hash)
       }
-      // Reset EVM execution state to prevent nonce/balance pollution from the
-      // failed block's partial tx execution leaking into the empty fallback block.
-      // applyBlock's internal checkpoint/revert may not fully clean up if EthereumJS
-      // runTx threw mid-execution without reverting its own checkpoint level.
-      await this.evm.resetExecution()
-      // Replay all committed blocks to restore clean EVM state
-      const currentHeight = await this.getHeight()
-      if (currentHeight > 0n) {
-        await this.rebuildFromPersisted(currentHeight)
-      }
+      // applyBlock uses atomic checkpoint/revert (with trie overlay buffering),
+      // so EVM and trie state are cleanly reverted. No resetExecution needed.
       const emptyBlock = await this.buildBlock(nextHeight, [])
       if (this.nodeSigner) {
         emptyBlock.signature = this.nodeSigner.sign(`block:${emptyBlock.hash}`) as Hex
@@ -376,6 +368,9 @@ export class PersistentChainEngine {
     if (expectedHash !== block.hash) {
       throw new Error("invalid block hash")
     }
+
+    // Save pre-execution state root for forced recovery on failure
+    const preExecStateRoot = this.stateTrie?.stateRoot() ?? null
 
     // Checkpoint both EVM stateManager and persistent trie for atomic rollback on failure
     await this.evm.checkpointState()
@@ -552,12 +547,21 @@ export class PersistentChainEngine {
     this.evm.evictCaches()
 
     } catch (err) {
-      // Revert both EVM stateManager and state trie on failure to prevent state pollution.
-      // Without EVM revert, in-memory nonces/balances remain modified from the failed
-      // block's partial execution, causing subsequent blocks to fail nonce validation.
+      // Revert both EVM stateManager and state trie on failure.
+      // The trie overlay ensures no partial writes reach LevelDB.
+      // EVM revert drains all checkpoint levels (including runTx internals).
       try { await this.evm.revertState() } catch { /* best-effort */ }
       if (this.stateTrie) {
         try { await this.stateTrie.revert() } catch { /* best-effort */ }
+      }
+      // Force EVM stateManager back to the pre-execution state root as a
+      // last-resort guarantee. This handles cases where runTx's internal
+      // checkpoint/commit corrupted the stateManager beyond what revert() can fix.
+      if (preExecStateRoot && this.stateTrie) {
+        try {
+          const { hexToBytes } = await import("@ethereumjs/util")
+          await this.evm.forceStateRoot(hexToBytes(preExecStateRoot))
+        } catch { /* best-effort */ }
       }
       throw err
     }
