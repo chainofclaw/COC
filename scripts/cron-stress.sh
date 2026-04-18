@@ -41,6 +41,7 @@ sent=$(echo "$result" | python3 -c 'import sys,json; print(json.load(sys.stdin).
 confirmed=$(echo "$result" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("confirmed",0))' 2>/dev/null || echo 0)
 peers=$(echo "$result" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("peers",0))' 2>/dev/null || echo 0)
 sync=$(echo "$result" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("sync","?"))' 2>/dev/null || echo "?")
+detail=$(echo "$result" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("detail",""))' 2>/dev/null || echo "")
 
 # Stall detection
 prev_height=0
@@ -53,6 +54,6 @@ fi
 python3 -c "import json; json.dump({'height':$height,'ts':'$(ts)'}, open('$STATE_FILE','w'))" 2>/dev/null
 
 # Log
-line="$(ts) $status h=$height +$blocks sent=$sent ok=$confirmed peers=$peers sync=$sync"
+line="$(ts) $status h=$height +$blocks sent=$sent ok=$confirmed peers=$peers sync=$sync $detail"
 echo "$line"
 echo "$line" >> "$LOG_DIR/stress-$(date -u +%Y%m%d).log"
