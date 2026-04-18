@@ -369,9 +369,6 @@ export class PersistentChainEngine {
       throw new Error("invalid block hash")
     }
 
-    // Save pre-execution state root for forced recovery on failure
-    const preExecStateRoot = this.stateTrie?.stateRoot() ?? null
-
     // Checkpoint both EVM stateManager and persistent trie for atomic rollback on failure
     await this.evm.checkpointState()
     if (this.stateTrie) await this.stateTrie.checkpoint()
@@ -554,15 +551,9 @@ export class PersistentChainEngine {
       if (this.stateTrie) {
         try { await this.stateTrie.revert() } catch { /* best-effort */ }
       }
-      // Force EVM stateManager back to the pre-execution state root as a
-      // last-resort guarantee. This handles cases where runTx's internal
-      // checkpoint/commit corrupted the stateManager beyond what revert() can fix.
-      if (preExecStateRoot && this.stateTrie) {
-        try {
-          const { hexToBytes } = await import("@ethereumjs/util")
-          await this.evm.forceStateRoot(hexToBytes(preExecStateRoot))
-        } catch { /* best-effort */ }
-      }
+      // Note: forceStateRoot() disabled — the trie overlay + drain revert should
+      // be sufficient. forceStateRoot can corrupt state if the EthereumJS trie
+      // internal cache has stale nodes that conflict with the forced root.
       throw err
     }
 
