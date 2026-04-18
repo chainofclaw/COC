@@ -389,24 +389,20 @@ if (bftEnabled) {
               await persistentEngine.blockIndex.updateBlock(updated)
             } else if (!existing) {
               // Block was NOT previously applied — this is a real failure, not a duplicate.
-              // Reset EVM and replay from committed state to clear any nonce pollution,
-              // then retry the apply.
-              log.warn("BFT onFinalized: block not found locally, resetting EVM and retrying", {
+              // Block not found locally — likely gossip applyBlock failed but
+              // EVM/trie state was atomically reverted (via overlay buffering).
+              // Retry after a short delay to let gossip settle.
+              log.warn("BFT onFinalized: block not found locally, retrying apply", {
                 height: block.number.toString(),
                 hash: block.hash,
                 error: String(applyErr),
               })
               try {
-                const currentHeight = await Promise.resolve(chain.getHeight())
-                const pe = chain as any
-                if (pe.evm?.resetExecution && pe.rebuildFromPersisted) {
-                  await pe.evm.resetExecution()
-                  if (currentHeight > 0n) await pe.rebuildFromPersisted(currentHeight)
-                }
+                await new Promise((r) => setTimeout(r, 500))
                 await chain.applyBlock(finalizedBlock, true)
-                log.info("BFT onFinalized: EVM reset + retry apply succeeded", { height: block.number.toString() })
+                log.info("BFT onFinalized: retry apply succeeded", { height: block.number.toString() })
               } catch (retryErr) {
-                log.error("BFT onFinalized: retry apply failed after EVM reset", {
+                log.error("BFT onFinalized: retry apply failed", {
                   height: block.number.toString(),
                   hash: block.hash,
                   error: String(retryErr),

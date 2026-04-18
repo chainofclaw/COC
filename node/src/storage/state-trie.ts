@@ -62,29 +62,63 @@ export interface IStateTrie {
  * Trie v6 passes unprefixed hex strings for both keys AND values (not Uint8Array).
  * We convert hex string values to/from binary for LevelDB storage.
  */
+/**
+ * Adapter making IDatabase compatible with @ethereumjs/trie v6 DB interface.
+ *
+ * Supports an in-memory write overlay for atomic checkpoint/revert:
+ * - enableOverlay(): all writes go to an in-memory Map instead of LevelDB
+ * - flushOverlay(): batch-write all buffered entries to LevelDB
+ * - discardOverlay(): throw away buffered writes (revert)
+ * - Reads check overlay first, then fall through to LevelDB
+ *
+ * This prevents partial LevelDB pollution when applyBlock fails mid-execution.
+ */
 class TrieDBAdapter {
   private db: IDatabase
   private prefix: string
+  private overlay: Map<string, Uint8Array | null> | null = null // null = overlay disabled
 
   constructor(db: IDatabase, prefix: string = STATE_TRIE_PREFIX) {
     this.db = db
     this.prefix = prefix
   }
 
+  enableOverlay(): void {
+    if (!this.overlay) this.overlay = new Map()
+  }
+
+  async flushOverlay(): Promise<void> {
+    if (!this.overlay || this.overlay.size === 0) {
+      this.overlay = null
+      return
+    }
+    const ops: Array<{ type: "put" | "del"; key: string; value?: Uint8Array }> = []
+    for (const [key, value] of this.overlay) {
+      if (value === null) {
+        ops.push({ type: "del", key })
+      } else {
+        ops.push({ type: "put", key, value })
+      }
+    }
+    await this.db.batch(ops)
+    this.overlay = null
+  }
+
+  discardOverlay(): void {
+    this.overlay = null
+  }
+
   private toKeyStr(key: string | Uint8Array): string {
     return typeof key === "string" ? key : bytesToHex(key)
   }
 
-  // Convert value from trie (hex string or Uint8Array) to bytes for storage
   private toBytes(value: Uint8Array | string): Uint8Array {
     if (typeof value === "string") {
-      // Trie v6 passes unprefixed hex strings
       return hexToBytes(value.startsWith("0x") ? value : `0x${value}`)
     }
     return value
   }
 
-  // Convert stored bytes back to unprefixed hex string for trie consumption
   private fromBytes(data: Uint8Array): string {
     const hex = bytesToHex(data)
     return hex.startsWith("0x") ? hex.slice(2) : hex
@@ -92,6 +126,12 @@ class TrieDBAdapter {
 
   async get(key: string | Uint8Array): Promise<string | undefined> {
     const prefixedKey = this.prefix + this.toKeyStr(key)
+    // Check overlay first
+    if (this.overlay?.has(prefixedKey)) {
+      const val = this.overlay.get(prefixedKey)
+      if (val === null) return undefined // deleted in overlay
+      return this.fromBytes(val)
+    }
     const result = await this.db.get(prefixedKey)
     if (!result) return undefined
     return this.fromBytes(result)
@@ -99,15 +139,34 @@ class TrieDBAdapter {
 
   async put(key: string | Uint8Array, value: Uint8Array | string): Promise<void> {
     const prefixedKey = this.prefix + this.toKeyStr(key)
+    if (this.overlay) {
+      this.overlay.set(prefixedKey, this.toBytes(value))
+      return
+    }
     await this.db.put(prefixedKey, this.toBytes(value))
   }
 
   async del(key: string | Uint8Array): Promise<void> {
     const prefixedKey = this.prefix + this.toKeyStr(key)
+    if (this.overlay) {
+      this.overlay.set(prefixedKey, null) // mark as deleted
+      return
+    }
     await this.db.del(prefixedKey)
   }
 
   async batch(ops: Array<{ type: "put" | "del"; key: string | Uint8Array; value?: Uint8Array | string }>): Promise<void> {
+    if (this.overlay) {
+      for (const op of ops) {
+        const prefixedKey = this.prefix + this.toKeyStr(op.key)
+        if (op.type === "del") {
+          this.overlay.set(prefixedKey, null)
+        } else {
+          this.overlay.set(prefixedKey, op.value ? this.toBytes(op.value) : new Uint8Array(0))
+        }
+      }
+      return
+    }
     const batchOps = ops.map((op) => ({
       type: op.type,
       key: this.prefix + this.toKeyStr(op.key),
@@ -120,7 +179,10 @@ class TrieDBAdapter {
   async close(): Promise<void> {}
 
   shallowCopy(): TrieDBAdapter {
-    return new TrieDBAdapter(this.db, this.prefix)
+    const copy = new TrieDBAdapter(this.db, this.prefix)
+    // Share overlay reference so forked tries also buffer
+    if (this.overlay) copy.overlay = this.overlay
+    return copy
   }
 }
 
@@ -350,6 +412,14 @@ export class PersistentStateTrie implements IStateTrie {
     await (this.trie as Trie & { persistRoot?: () => Promise<void> }).persistRoot?.()
     this.lastStateRoot = bytesToHex(this.trie.root())
 
+    // Flush all overlay writes to LevelDB atomically.
+    // This must happen AFTER trie.persistRoot() so all trie nodes are in the overlay,
+    // and BEFORE returning so the committed state is durable.
+    await this.trieDb.flushOverlay()
+    for (const [addr, adapter] of this.storageTrieAdapters) {
+      await adapter.flushOverlay()
+    }
+
     // Persist state root for recovery across restarts
     await this.db.put(STATE_ROOT_KEY, encoder.encode(this.lastStateRoot))
 
@@ -363,9 +433,23 @@ export class PersistentStateTrie implements IStateTrie {
     return this.lastStateRoot
   }
 
+  /**
+   * Track storage trie DB adapters so we can enable/flush/discard overlays on them.
+   * Storage tries are created dynamically (e.g. during contract deploy), so we
+   * need to track their adapters separately from the main trie adapter.
+   */
+  private storageTrieAdapters = new Map<string, TrieDBAdapter>()
+
   async checkpoint(): Promise<void> {
+    // Enable write overlay on the main trie adapter — all subsequent writes
+    // go to an in-memory buffer instead of LevelDB. This prevents partial
+    // DB pollution when applyBlock fails mid-execution (e.g. contract deploy
+    // creates new storage trie nodes that can't be reverted from LevelDB).
+    this.trieDb.enableOverlay()
     await this.trie.checkpoint()
-    for (const storageTrie of this.storageTries.values()) {
+    for (const [addr, storageTrie] of this.storageTries.entries()) {
+      const adapter = this.storageTrieAdapters.get(addr)
+      if (adapter) adapter.enableOverlay()
       await storageTrie.checkpoint()
     }
   }
@@ -374,16 +458,19 @@ export class PersistentStateTrie implements IStateTrie {
     try {
       await this.trie.revert()
     } catch (err) {
-      // Revert without matching checkpoint — trie state may be inconsistent.
-      // Log but don't throw to allow recovery attempts to continue.
       log.warn("trie revert failed (no matching checkpoint?)", { error: String(err) })
     }
+    // Discard all buffered writes — nothing hits LevelDB
+    this.trieDb.discardOverlay()
     for (const [addr, storageTrie] of this.storageTries.entries()) {
+      const adapter = this.storageTrieAdapters.get(addr)
+      if (adapter) adapter.discardOverlay()
       try {
         await storageTrie.revert()
       } catch {
         // Storage trie created after checkpoint has no checkpoint to revert — remove it
         this.storageTries.delete(addr)
+        this.storageTrieAdapters.delete(addr)
       }
     }
     // Invalidate caches and dirty tracking on revert
@@ -394,6 +481,7 @@ export class PersistentStateTrie implements IStateTrie {
 
   async clearStorage(address: string): Promise<void> {
     this.storageTries.delete(address)
+    this.storageTrieAdapters.delete(address)
     // Reset account storage root to empty
     const account = await this.get(address)
     if (account) {
@@ -459,6 +547,7 @@ export class PersistentStateTrie implements IStateTrie {
 
   async close(): Promise<void> {
     this.storageTries.clear()
+    this.storageTrieAdapters.clear()
     this.accountCache.clear()
     this.dirtyAddresses.clear()
   }
@@ -507,6 +596,10 @@ export class PersistentStateTrie implements IStateTrie {
     this.evictLru()
 
     const trieDb = new TrieDBAdapter(this.db, `ss:${address}:`)
+    // If main trie is in overlay mode (checkpoint active), enable overlay on new
+    // storage tries too — prevents LevelDB pollution for newly deployed contracts.
+    if (this.trieDb["overlay"]) trieDb.enableOverlay()
+    this.storageTrieAdapters.set(address, trieDb)
     const rootBytes = storageRoot !== "0x" + "0".repeat(64) ? hexToBytes(storageRoot) : undefined
 
     storageTrie = new Trie({ db: trieDb as any, root: rootBytes })
