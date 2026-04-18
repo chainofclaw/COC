@@ -1,14 +1,16 @@
-import { RPC_URL } from './provider.ts'
+import { getEffectiveRpcUrl } from './provider.ts'
 
 let rpcId = 1
 
 /**
  * Send a raw JSON-RPC call to the COC node.
+ * Uses COC_RPC_URL on the server (SSR) and NEXT_PUBLIC_RPC_URL on the client,
+ * matching the ethers.js provider to avoid data inconsistency.
  */
 export async function rpcCall<T = unknown>(method: string, params: unknown[] = []): Promise<T> {
   let res: Response
   try {
-    res = await fetch(RPC_URL, {
+    res = await fetch(getEffectiveRpcUrl(), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ jsonrpc: '2.0', id: rpcId++, method, params }),

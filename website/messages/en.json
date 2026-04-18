@@ -916,6 +916,7 @@
       "version": "Version",
       "startTime": "Start Time",
       "uptime": "Uptime",
+      "client": "Client",
       "rpcEndpoint": "RPC Endpoint",
       "wsEndpoint": "WebSocket",
       "p2pEndpoint": "P2P Endpoint"
@@ -939,6 +940,26 @@
       "timestamp": "Timestamp",
       "txCount": "Tx Count",
       "gasUsed": "Gas Used"
+    },
+    "countdown": {
+      "title": "Testnet Launch Countdown",
+      "days": "Days",
+      "hours": "Hours",
+      "minutes": "Minutes",
+      "seconds": "Seconds",
+      "launchDate": "Launching on March 27, 2026"
+    },
+    "units": {
+      "blocksPerMinute": "blocks/min",
+      "authRequests": "auth requests"
+    },
+    "statusEnabled": "✓ Enabled",
+    "statusDisabled": "✗ Disabled",
+    "uptime": {
+      "daysHours": "{days}d {hours}h",
+      "hoursMinutes": "{hours}h {minutes}m",
+      "minutesOnly": "{minutes}m",
+      "secondsOnly": "{seconds}s"
     },
     "quickLinks": {
       "title": "Quick Links",

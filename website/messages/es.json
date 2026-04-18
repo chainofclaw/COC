@@ -916,6 +916,7 @@
       "version": "Versión",
       "startTime": "Hora de Inicio",
       "uptime": "Uptime",
+      "client": "Cliente",
       "rpcEndpoint": "Endpoint RPC",
       "wsEndpoint": "WebSocket",
       "p2pEndpoint": "Endpoint P2P"
@@ -939,6 +940,26 @@
       "timestamp": "Timestamp",
       "txCount": "Cantidad Tx",
       "gasUsed": "Gas Usado"
+    },
+    "countdown": {
+      "title": "Cuenta Regresiva del Testnet",
+      "days": "Días",
+      "hours": "Horas",
+      "minutes": "Minutos",
+      "seconds": "Segundos",
+      "launchDate": "Lanzamiento el 27 de marzo de 2026"
+    },
+    "units": {
+      "blocksPerMinute": "bloques/min",
+      "authRequests": "solicitudes auth"
+    },
+    "statusEnabled": "✓ Habilitado",
+    "statusDisabled": "✗ Deshabilitado",
+    "uptime": {
+      "daysHours": "{days}d {hours}h",
+      "hoursMinutes": "{hours}h {minutes}m",
+      "minutesOnly": "{minutes}m",
+      "secondsOnly": "{seconds}s"
     },
     "quickLinks": {
       "title": "Enlaces Rápidos",

@@ -1,9 +1,9 @@
-import { RPC_URL } from './provider'
+import { getEffectiveRpcUrl } from './provider'
 
 let rpcId = 1
 
 export async function rpcCall<T>(method: string, params: unknown[] = []): Promise<T> {
-  const response = await fetch(RPC_URL, {
+  const response = await fetch(getEffectiveRpcUrl(), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

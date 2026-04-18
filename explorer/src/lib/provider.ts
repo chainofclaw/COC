@@ -5,7 +5,13 @@ export const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL || 'http://127.0.0.1:1878
 export const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://127.0.0.1:18781'
 
 // Server-side RPC endpoint (for SSR and server operations)
-const SERVER_RPC_URL = process.env.COC_RPC_URL || 'http://127.0.0.1:18780'
+// Falls back to RPC_URL so both code paths always hit the same node.
+export const SERVER_RPC_URL = process.env.COC_RPC_URL || RPC_URL
+
+// Effective RPC URL: server-side uses SERVER_RPC_URL, client-side uses RPC_URL.
+export function getEffectiveRpcUrl(): string {
+  return typeof window === 'undefined' ? SERVER_RPC_URL : RPC_URL
+}
 
 // 创建 ethers.js Provider - 使用服务器端地址进行 SSR 调用
 export const provider = new JsonRpcProvider(SERVER_RPC_URL, {
@@ -23,7 +29,7 @@ export function formatHash(hash: string): string {
 }
 
 export function formatTimestamp(timestamp: number): string {
-  return new Date(timestamp * 1000).toLocaleString('zh-CN')
+  return new Date(timestamp * 1000).toLocaleString()
 }
 
 export function formatEther(wei: bigint): string {

@@ -916,6 +916,7 @@
       "version": "버전",
       "startTime": "시작 시각",
       "uptime": "가동 시간",
+      "client": "클라이언트",
       "rpcEndpoint": "RPC 엔드포인트",
       "wsEndpoint": "WebSocket",
       "p2pEndpoint": "P2P 엔드포인트"
@@ -939,6 +940,26 @@
       "timestamp": "타임스탬프",
       "txCount": "Tx 수",
       "gasUsed": "Gas 사용량"
+    },
+    "countdown": {
+      "title": "테스트넷 론칭 카운트다운",
+      "days": "일",
+      "hours": "시간",
+      "minutes": "분",
+      "seconds": "초",
+      "launchDate": "2026년 3월 27일 론칭"
+    },
+    "units": {
+      "blocksPerMinute": "블록/분",
+      "authRequests": "인증 요청"
+    },
+    "statusEnabled": "✓ 활성화됨",
+    "statusDisabled": "✗ 비활성화됨",
+    "uptime": {
+      "daysHours": "{days}일 {hours}시간",
+      "hoursMinutes": "{hours}시간 {minutes}분",
+      "minutesOnly": "{minutes}분",
+      "secondsOnly": "{seconds}초"
     },
     "quickLinks": {
       "title": "빠른 링크",

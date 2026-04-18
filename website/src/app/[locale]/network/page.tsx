@@ -3,7 +3,7 @@
 import { NetworkStats } from '@/components/NetworkStats'
 import { rpcCall } from '@/lib/rpc'
 import Link from 'next/link'
-import { useTranslations } from 'next-intl'
+import { useLocale, useTranslations } from 'next-intl'
 import { useEffect, useState } from 'react'
 
 // Moved to client component for consistency with design system
@@ -111,6 +111,7 @@ type CountdownTime = {
 
 export default function NetworkPage() {
   const t = useTranslations('network')
+  const locale = useLocale()
   const [nodeInfo, setNodeInfo] = useState<NodeInfo>(null)
   const [validators, setValidators] = useState<Validator[]>([])
   const [recentBlocks, setRecentBlocks] = useState<BlockData[]>([])
@@ -272,16 +273,16 @@ export default function NetworkPage() {
             <div className="mt-12 mb-6 fade-in-delay-3">
               <div className="inline-block px-6 py-4 rounded-lg border border-accent-cyan/50 bg-accent-cyan/10 backdrop-blur-sm">
                 <p className="text-sm text-accent-cyan font-display uppercase tracking-widest mb-4">
-                  ⏱️ Testnet Launch Countdown
+                  ⏱️ {t('countdown.title')}
                 </p>
                 <div className="grid grid-cols-4 gap-4">
-                  <CountdownUnit value={countdown.days} label="Days" />
-                  <CountdownUnit value={countdown.hours} label="Hours" />
-                  <CountdownUnit value={countdown.minutes} label="Minutes" />
-                  <CountdownUnit value={countdown.seconds} label="Seconds" />
+                  <CountdownUnit value={countdown.days} label={t('countdown.days')} />
+                  <CountdownUnit value={countdown.hours} label={t('countdown.hours')} />
+                  <CountdownUnit value={countdown.minutes} label={t('countdown.minutes')} />
+                  <CountdownUnit value={countdown.seconds} label={t('countdown.seconds')} />
                 </div>
                 <p className="text-xs text-accent-cyan/70 mt-4">
-                  Launching on March 27, 2026
+                  {t('countdown.launchDate')}
                 </p>
               </div>
             </div>
@@ -320,7 +321,7 @@ export default function NetworkPage() {
               <StatMetricCard
                 title={t('chainStats.blockRate')}
                 value={`${chainStats.blocksPerMinute.toFixed(1)}`}
-                unit="块/分钟"
+                unit={t('units.blocksPerMinute')}
               />
               <StatMetricCard
                 title={t('chainStats.tps')}
@@ -355,7 +356,7 @@ export default function NetworkPage() {
                   <>
                     <InfoRow
                       label={t('bftStatus.active')}
-                      value={bftStatus.active ? '活跃' : '非活跃'}
+                      value={bftStatus.active ? t('bftStatus.active') : t('bftStatus.inactive')}
                     />
                     <InfoRow
                       label={t('bftStatus.phase')}
@@ -395,16 +396,18 @@ export default function NetworkPage() {
                 title={t('networkTopology.wireConnections')}
                 value={networkStats.wire?.peers?.toString() || '0'}
                 status={networkStats.wire?.enabled ? 'enabled' : 'disabled'}
+                statusLabel={networkStats.wire?.enabled ? t('statusEnabled') : t('statusDisabled')}
               />
               <StatMetricCard
                 title={t('networkTopology.dhtNodes')}
                 value={networkStats.dht?.nodes?.toString() || '0'}
                 status={networkStats.dht?.enabled ? 'enabled' : 'disabled'}
+                statusLabel={networkStats.dht?.enabled ? t('statusEnabled') : t('statusDisabled')}
               />
               <StatMetricCard
                 title={t('networkTopology.securityMetrics')}
                 value={`${networkStats.p2p?.security?.authAcceptedRequests || 0}`}
-                unit="认证请求"
+                unit={t('units.authRequests')}
               />
             </div>
           </section>
@@ -471,16 +474,16 @@ export default function NetworkPage() {
               <div className="grid md:grid-cols-2 gap-6">
                 {nodeInfo.runtime && <InfoRow label={t('nodeInfo.runtime')} value={nodeInfo.runtime} />}
                 {nodeInfo.version && <InfoRow label={t('nodeInfo.version')} value={nodeInfo.version} />}
-                {nodeInfo.clientVersion && <InfoRow label="Client" value={nodeInfo.clientVersion} />}
-                {nodeInfo.chainId && <InfoRow label="Chain ID" value={nodeInfo.chainId.toString()} />}
+                {nodeInfo.clientVersion && <InfoRow label={t('nodeInfo.client')} value={nodeInfo.clientVersion} />}
+                {nodeInfo.chainId && <InfoRow label={t('chainId')} value={nodeInfo.chainId.toString()} />}
                 {nodeInfo.blockHeight && <InfoRow label={t('blockHeight')} value={parseInt(nodeInfo.blockHeight, 16).toString()} />}
                 {nodeInfo.startTime && <InfoRow
                   label={t('nodeInfo.startTime')}
-                  value={new Date(nodeInfo.startTime).toLocaleString('zh-CN')}
+                  value={new Date(nodeInfo.startTime).toLocaleString(locale)}
                 />}
                 {nodeInfo.uptime && <InfoRow
                   label={t('nodeInfo.uptime')}
-                  value={formatUptime(nodeInfo.uptime * 1000)}
+                  value={formatUptime(nodeInfo.uptime * 1000, t)}
                 />}
                 {nodeInfo.endpoints?.rpc && <InfoRow label={t('nodeInfo.rpcEndpoint')} value={nodeInfo.endpoints.rpc} mono />}
                 {nodeInfo.endpoints?.ws && <InfoRow label={t('nodeInfo.wsEndpoint')} value={nodeInfo.endpoints.ws} mono />}
@@ -616,7 +619,7 @@ export default function NetworkPage() {
                           </a>
                         </td>
                         <td className="px-6 py-4 font-body text-sm text-text-secondary">
-                          {new Date(block.timestamp * 1000).toLocaleString('zh-CN')}
+                          {new Date(block.timestamp * 1000).toLocaleString(locale)}
                         </td>
                         <td className="px-6 py-4 text-center font-body text-text-secondary">
                           {block.transactions.length}
@@ -732,11 +735,13 @@ function StatMetricCard({
   value,
   unit,
   status,
+  statusLabel,
 }: {
   title: string
   value: string
   unit?: string
   status?: 'enabled' | 'disabled'
+  statusLabel?: string
 }) {
   const statusColor = status === 'enabled' ? 'text-green-500' : status === 'disabled' ? 'text-gray-500' : ''
   const statusBg = status === 'enabled' ? 'bg-green-500/10' : status === 'disabled' ? 'bg-gray-500/10' : ''
@@ -755,7 +760,7 @@ function StatMetricCard({
         </div>
         {status && (
           <div className={`text-xs font-display mt-2 ${statusColor}`}>
-            {status === 'enabled' ? '✓ 启用' : '✗ 禁用'}
+            {statusLabel}
           </div>
         )}
       </div>
@@ -823,14 +828,14 @@ function CountdownUnit({ value, label }: { value: number; label: string }) {
   )
 }
 
-function formatUptime(ms: number): string {
+function formatUptime(ms: number, t: (key: string, values?: Record<string, number>) => string): string {
   const seconds = Math.floor(ms / 1000)
   const minutes = Math.floor(seconds / 60)
   const hours = Math.floor(minutes / 60)
   const days = Math.floor(hours / 24)
 
-  if (days > 0) return `${days}天 ${hours % 24}小时`
-  if (hours > 0) return `${hours}小时 ${minutes % 60}分钟`
-  if (minutes > 0) return `${minutes}分钟`
-  return `${seconds}秒`
+  if (days > 0) return t('uptime.daysHours', { days, hours: hours % 24 })
+  if (hours > 0) return t('uptime.hoursMinutes', { hours, minutes: minutes % 60 })
+  if (minutes > 0) return t('uptime.minutesOnly', { minutes })
+  return t('uptime.secondsOnly', { seconds })
 }
