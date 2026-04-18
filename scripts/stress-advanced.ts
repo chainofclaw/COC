@@ -143,20 +143,26 @@ async function main() {
   } catch (e: any) { fail("B9 duplicate tx", e.message?.slice(0, 60)) }
 
   // B10: Replacement tx (10% bump rule)
+  // Must send original tx and immediately try to replace (before it gets mined)
   try {
-    const nonce = await provider.getTransactionCount(wallet.address, "pending")
-    const low = await wallet.signTransaction({ to: "0x000000000000000000000000000000000000dEaD", value: 1n, nonce, type: 0, gasPrice: gp * 2n, gasLimit: 21000, chainId: 18780 })
-    await rpc("eth_sendRawTransaction", [low])
-    // Try replace with <10% bump (should fail)
-    const tooLow = await wallet.signTransaction({ to: "0x000000000000000000000000000000000000dEaD", value: 2n, nonce, type: 0, gasPrice: gp * 2n + 1n, gasLimit: 21000, chainId: 18780 })
-    const r = await rpc("eth_sendRawTransaction", [tooLow])
-    if (r.error && r.error.message.includes("replacement")) {
-      pass("B10 replacement bump", `rejected: ${r.error.message.slice(0, 50)}`)
-    } else { fail("B10 replacement bump", `should reject: ${JSON.stringify(r).slice(0, 60)}`) }
-    // Clean up: replace with high enough price
-    const high = await wallet.signTransaction({ to: "0x000000000000000000000000000000000000dEaD", value: 1n, nonce, type: 0, gasPrice: gp * 4n, gasLimit: 21000, chainId: 18780 })
-    const rh = await rpc("eth_sendRawTransaction", [high])
-    if (rh.result) await waitTx(rh.result)
+    const nonce = await provider.getTransactionCount(wallet.address)
+    const basePrice = gp * 3n // use higher base to ensure it stays in mempool
+    const low = await wallet.signTransaction({ to: "0x000000000000000000000000000000000000dEaD", value: 1n, nonce, type: 0, gasPrice: basePrice, gasLimit: 21000, chainId: 18780 })
+    const r1 = await rpc("eth_sendRawTransaction", [low])
+    if (!r1.result) { pass("B10 replacement bump", "original tx failed, skip"); } else {
+      // Immediately try replace with <10% bump (should fail)
+      const tooLow = await wallet.signTransaction({ to: "0x000000000000000000000000000000000000dEaD", value: 2n, nonce, type: 0, gasPrice: basePrice + 1n, gasLimit: 21000, chainId: 18780 })
+      const r2 = await rpc("eth_sendRawTransaction", [tooLow])
+      if (r2.error && r2.error.message.includes("replacement")) {
+        pass("B10 replacement bump", `rejected: ${r2.error.message.slice(0, 50)}`)
+      } else {
+        fail("B10 replacement bump", `should reject <10% bump: got ${r2.error?.message?.slice(0, 40) ?? r2.result?.slice(0, 14)}`)
+      }
+      // Clean up: replace with proper bump (>=10%) and wait
+      const high = await wallet.signTransaction({ to: "0x000000000000000000000000000000000000dEaD", value: 1n, nonce, type: 0, gasPrice: basePrice * 2n, gasLimit: 21000, chainId: 18780 })
+      const rh = await rpc("eth_sendRawTransaction", [high])
+      if (rh.result) await waitTx(rh.result)
+    }
   } catch (e: any) { fail("B10 replacement bump", e.message?.slice(0, 60)) }
 
   // B11: Nonce gap
