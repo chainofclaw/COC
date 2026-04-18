@@ -213,10 +213,25 @@ const p2p = new P2PNode(
       }
     },
     onBlock: async (block) => {
-      try {
-        await chain.applyBlock(block)
-      } catch {
-        // ignore invalid/duplicate blocks from peers
+      // When BFT is enabled, defer block execution to onFinalized to prevent
+      // EVM state pollution from speculative gossip-path execution. The BFT
+      // coordinator only needs block metadata for voting, not executed state.
+      if (!bftCoordinator) {
+        try {
+          await chain.applyBlock(block)
+        } catch {
+          // ignore invalid/duplicate blocks from peers
+        }
+      } else {
+        // Pre-remove the block's transactions from mempool so the next proposer
+        // doesn't re-include them (mempool desync prevention).
+        if (block.txs.length > 0) {
+          for (const rawTx of block.txs) {
+            try {
+              chain.mempool.remove(keccak256(rawTx) as Hex)
+            } catch { /* ignore */ }
+          }
+        }
       }
       // Non-proposer nodes: join BFT round for blocks received via gossip
       if (bftCoordinator) {
@@ -398,11 +413,18 @@ if (bftEnabled) {
                 error: String(applyErr),
               })
               try {
-                await new Promise((r) => setTimeout(r, 500))
+                // With trie overlay protecting LevelDB, a full EVM reset +
+                // rebuild from persisted blocks is safe and guarantees clean state.
+                const pe = chain as any
+                if (pe.evm?.resetExecution && pe.rebuildFromPersisted) {
+                  const currentHeight = await Promise.resolve(chain.getHeight())
+                  await pe.evm.resetExecution()
+                  if (currentHeight > 0n) await pe.rebuildFromPersisted(currentHeight)
+                }
                 await chain.applyBlock(finalizedBlock, true)
-                log.info("BFT onFinalized: retry apply succeeded", { height: block.number.toString() })
+                log.info("BFT onFinalized: EVM reset + retry succeeded", { height: block.number.toString() })
               } catch (retryErr) {
-                log.error("BFT onFinalized: retry apply failed", {
+                log.error("BFT onFinalized: retry failed after EVM reset", {
                   height: block.number.toString(),
                   hash: block.hash,
                   error: String(retryErr),
@@ -674,9 +696,13 @@ if (config.enableWireProtocol) {
     sharedSeenTx: p2p.seenTx,
     sharedSeenBlocks: p2p.seenBlocks,
     onBlock: async (block) => {
-      try {
-        await chain.applyBlock(block)
-      } catch { /* ignore */ }
+      if (!bftCoordinator) {
+        try { await chain.applyBlock(block) } catch { /* ignore */ }
+      } else if (block.txs.length > 0) {
+        for (const rawTx of block.txs) {
+          try { chain.mempool.remove(keccak256(rawTx) as Hex) } catch { /* ignore */ }
+        }
+      }
       if (bftCoordinator) {
         try {
           await bftCoordinator.handleReceivedBlock(block)

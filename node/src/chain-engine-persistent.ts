@@ -547,13 +547,10 @@ export class PersistentChainEngine {
       // Revert both EVM stateManager and state trie on failure.
       // The trie overlay ensures no partial writes reach LevelDB.
       // EVM revert drains all checkpoint levels (including runTx internals).
-      try { await this.evm.revertState() } catch { /* best-effort */ }
+      try { await this.evm.revertState() } catch { /* no checkpoint to revert */ }
       if (this.stateTrie) {
-        try { await this.stateTrie.revert() } catch { /* best-effort */ }
+        try { await this.stateTrie.revert() } catch { /* no checkpoint to revert */ }
       }
-      // Note: forceStateRoot() disabled — the trie overlay + drain revert should
-      // be sufficient. forceStateRoot can corrupt state if the EthereumJS trie
-      // internal cache has stale nodes that conflict with the forced root.
       throw err
     }
 
