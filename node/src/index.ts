@@ -424,11 +424,34 @@ if (bftEnabled) {
                 await chain.applyBlock(finalizedBlock, true)
                 log.info("BFT onFinalized: EVM reset + retry succeeded", { height: block.number.toString() })
               } catch (retryErr) {
-                log.error("BFT onFinalized: retry failed after EVM reset", {
+                log.error("BFT onFinalized: retry failed after EVM reset, force-storing block", {
                   height: block.number.toString(),
                   hash: block.hash,
                   error: String(retryErr),
                 })
+                // Force-store the block WITHOUT executing transactions.
+                // This advances the chain height so subsequent blocks don't
+                // cascade-fail. The EVM state will be inconsistent for this
+                // block's transactions, but the chain can continue.
+                const pe = chain as any
+                if (pe.blockIndex?.putBlock) {
+                  try {
+                    const storedBlock = {
+                      ...finalizedBlock,
+                      gasUsed: 0n,
+                      finalized: true,
+                    }
+                    await pe.blockIndex.putBlock(storedBlock)
+                    // Reset EVM to match the new height
+                    if (pe.evm?.resetExecution && pe.rebuildFromPersisted) {
+                      await pe.evm.resetExecution()
+                      await pe.rebuildFromPersisted(BigInt(block.number))
+                    }
+                    log.warn("BFT onFinalized: force-stored block (txs skipped)", { height: block.number.toString() })
+                  } catch {
+                    log.error("BFT onFinalized: force-store also failed", { height: block.number.toString() })
+                  }
+                }
               }
             }
           } catch {

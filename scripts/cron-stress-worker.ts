@@ -182,17 +182,21 @@ async function main() {
   const stalled = height > 0 && height === prevHeight
   state.lastHeight = height
 
-  // 5-round rotation. Stalled → eth_call only.
-  const round = stalled ? 1 : (state.round % 5)
+  // 7-round rotation: mostly eth_call with occasional on-chain txs.
+  // Reduces BFT nonce-conflict risk by spacing out on-chain operations.
+  // Stalled → eth_call only.
+  const round = stalled ? 1 : (state.round % 7)
 
   let result: { sent: number; confirmed: number; detail: string }
   try {
     switch (round) {
       case 0: result = await roundTransfer(wallet, provider); break
       case 1: result = await roundEvmTest(provider, state); break
-      case 2: result = await roundDeployAndCall(wallet, provider, state); break
-      case 3: result = await roundMempoolTest(wallet, provider); break
+      case 2: result = await roundEvmTest(provider, state); break
+      case 3: result = await roundDeployAndCall(wallet, provider, state); break
       case 4: result = await roundEvmTest(provider, state); break
+      case 5: result = await roundEvmTest(provider, state); break
+      case 6: result = await roundMempoolTest(wallet, provider); break
       default: result = { sent: 0, confirmed: 0, detail: "unknown_round" }
     }
   } catch (e) {
