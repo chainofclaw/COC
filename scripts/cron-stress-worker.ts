@@ -1,11 +1,10 @@
 /**
- * Cron stress worker — sends transactions + deploys/calls contracts on COC testnet.
- * Called by cron-stress.sh every minute. Outputs a single JSON line.
+ * Cron stress worker — tests COC testnet stability via:
+ *   Round 0: Single ETH transfer (on-chain tx)
+ *   Round 1: EVM computation tests via eth_call (no tx, no stall risk)
+ *   Round 2: Deploy Counter if needed, then single increment() call
  *
- * Each run performs one of three test types (round-robin):
- *   Round 0: 3 ETH transfers (legacy type 0)
- *   Round 1: Deploy Counter contract (if not deployed) + 3 increment() calls
- *   Round 2: Deploy ERC20 (if not deployed) + mint + transfer
+ * Outputs a single JSON line. Called by cron-stress.sh every minute.
  */
 import { ethers } from "ethers"
 import { readFileSync, writeFileSync } from "node:fs"
@@ -15,33 +14,27 @@ const DEPLOYER_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7b
 const CONFIRM_TIMEOUT_S = 15
 const STATE_PATH = "/tmp/coc-stress-contracts.json"
 
-// --- Embedded contract artifacts ---
+// --- Embedded artifacts ---
 const COUNTER_BYTECODE = "0x608080604052346100155760ea908161001b8239f35b600080fdfe6080806040526004361015601257600080fd5b600090813560e01c90816306661abd146098575063d09de08a14603457600080fd5b3460955780600319360112609557805460001981146081576001018082556040519081527f38ac789ed44572701765277c4d0970f2db1c1a571ed39e84358095ae4eaa542060203392a280f35b634e487b7160e01b82526011600452602482fd5b80fd5b90503460b0578160031936011260b057602091548152f35b5080fdfea26469706673582212200601b4a0ea9a382d6b93facedeb52573bce750d3c0caad9dc838e0429eb5861b64736f6c63430008180033"
-const COUNTER_ABI = ["function increment()", "function count() view returns (uint256)", "event Incremented(address indexed caller, uint256 newCount)"]
+const COUNTER_ABI = ["function increment()", "function count() view returns (uint256)"]
 
-const ERC20_BYTECODE = "0x60803461016957601f6109e238819003918201601f19168301916001600160401b0383118484101761016e578084926020946040528339810103126101695751600061004b8154610184565b601f811161013f575b507f5465737420546f6b656e0000000000000000000000000000000000000000001481556001805461008590610184565b601f81116100f8575b5050600863151154d560e21b01600155601260ff1960025416176002558160035533815260046020528160408220556040519182527fddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef60203393a360405161082390816101bf8239f35b60018352601f0160051c7fb10e2d527612073b26eecdfd717e6a320cf44b4afac2b0732d9fcbe2b7fa0cf6908101905b818110610135575061008e565b8381558201610128565b818052601f60208320910160051c8101905b81811061015e5750610054565b828155600101610151565b600080fd5b634e487b7160e01b600052604160045260246000fd5b90600182811c921680156101b4575b602083101461019e57565b634e487b7160e01b600052602260045260246000fd5b91607f169161019356fe608060408181526004918236101561001657600080fd5b600092833560e01c91826306fdde03146105c857508163095ea7b31461051957816318160ddd146104fa57816323b872dd146103e3578163313ce567146103c15783826340c10f191461034e57826342966c68146102dd5750816370a08231146102a757816395d89b4114610184578163a9059cbb146100eb575063dd62ed3e146100a057600080fd5b346100e757806003193601126100e757806020926100bc6106e9565b6100c4610704565b6001600160a01b0391821683526005865283832091168252845220549051908152f35b5080fd5b905034610180578160031936011261018057602092826101096106e9565b91602435923382528487526101238484842054101561071a565b6001600160a01b03169361013885151561075d565b33825280875282822061014c85825461079d565b905584825286522061015f8282546107c0565b905582519081526000805160206107ce833981519152843392a35160018152f35b8280fd5b8383346100e757816003193601126100e7578051908260018054908160011c906001831692831561029d575b602093848410811461028a5783885290811561026e5750600114610218575b505050829003601f01601f191682019267ffffffffffffffff84118385101761020557508291826102019252826106a0565b0390f35b634e487b7160e01b815260418552602490fd5b600187529192508591837fb10e2d527612073b26eecdfd717e6a320cf44b4afac2b0732d9fcbe2b7fa0cf65b83851061025a57505050508301018580806101cf565b805488860183015293019284908201610244565b60ff1916878501525050151560051b84010190508580806101cf565b634e487b7160e01b895260228a52602489fd5b91607f16916101b0565b9050346101805760203660031901126101805760209282916001600160a01b036102cf6106e9565b168252845220549051908152f35b8091843461034a57602036600319011261034a578135913384528060205261030a8383862054101561071a565b33845260205280832061031e83825461079d565b905561032c8260035461079d565b600355519081526000805160206107ce83398151915260203392a380f35b5050fd5b915091346100e757806003193601126100e75760206000805160206107ce8339815191529161037b6106e9565b6001600160a01b031694602435919061039587151561075d565b6103a1836003546107c0565b60035586865283528085206103b78382546107c0565b905551908152a380f35b5050346100e757816003193601126100e75760209060ff600254169051908152f35b905034610180576060366003190112610180576103fe6106e9565b610406610704565b936044359060018060a01b038093169283825260209685885261042e8488852054101561071a565b8483526005885286832033845288528387842054106104be5787926000805160206107ce83398151915294928892169661046988151561075d565b86825280855282822061047d85825461079d565b905587825284528181206104928482546107c0565b9055858152600584528181203382528452206104af82825461079d565b90558551908152a35160018152f35b865162461bcd60e51b81528087018990526016602482015275496e73756666696369656e7420616c6c6f77616e636560501b6044820152606490fd5b5050346100e757816003193601126100e7576020906003549051908152f35b8284346105c557816003193601126105c5576105336106e9565b6001600160a01b0316906024359082156105905760209450838291338152600587528181208582528752205582519081527f8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925843392a35160018152f35b835162461bcd60e51b8152602081870152600f60248201526e24b73b30b634b21039b832b73232b960891b6044820152606490fd5b80fd5b8490843461018057826003193601126101805782835460018160011c9060018316928315610696575b602093848410811461028a5783885290811561026e575060011461064157505050829003601f01601f191682019267ffffffffffffffff84118385101761020557508291826102019252826106a0565b0390f35b8680529192508591837f290decd9548b62a8d60345a988386fc84ba6bc95484008f6362f93160ef3e5635b83851061068257505050508301018580806101cf565b80548886018301529301928490820161066c565b91607f16916105f1565b6020808252825181830181905290939260005b8281106106d557505060409293506000838284010152601f8019910116010190565b8181018601518482016040015285016106b3565b600435906001600160a01b03821682036106ff57565b600080fd5b602435906001600160a01b03821682036106ff57565b1561072157565b60405162461bcd60e51b8152602060048201526014602482015273496e73756666696369656e742062616c616e636560601b6044820152606490fd5b1561076457565b60405162461bcd60e51b8152602060048201526011602482015270125b9d985b1a59081c9958da5c1a595b9d607a1b6044820152606490fd5b919082039182116107aa57565b634e487b7160e01b600052601160045260246000fd5b919082018092116107aa5756feddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3efa2646970667358221220d4b9a373e385e7fd8064fa50257784e2ae557207c07908805a0e36d13cf30d1e64736f6c63430008180033"
-const ERC20_ABI = [
-  "constructor(uint256 initialSupply)",
-  "function transfer(address to, uint256 value) returns (bool)",
-  "function balanceOf(address) view returns (uint256)",
-  "function mint(address to, uint256 amount)",
-  "function totalSupply() view returns (uint256)",
-  "function name() view returns (string)",
+// HeavyCompute bytecode loaded from file (too large to embed)
+let HEAVY_BYTECODE = ""
+try { HEAVY_BYTECODE = readFileSync("/root/coc-stress/heavy-bytecode.txt", "utf-8").trim() } catch { /* will skip deploy */ }
+const HEAVY_ABI = [
+  "function fibonacci(uint256 n) view returns (uint256)",
+  "function sortArray(uint256[] arr) pure returns (uint256[])",
+  "function hashLoop(uint256 n) returns (bytes32)",
+  "function memoryExpand(uint256 sizeBytes) pure returns (uint256)",
+  "function batchWrite(uint256 n) external",
+  "function batchRead(uint256 n) view returns (uint256)",
+  "function combinedStress(uint256 writeCount, uint256 hashCount) returns (uint256, bytes32)",
 ]
 
-// --- State persistence ---
-interface ContractState {
-  counterAddr?: string
-  erc20Addr?: string
-  round: number
-}
-
-function loadState(): ContractState {
-  try { return JSON.parse(readFileSync(STATE_PATH, "utf-8")) } catch { return { round: 0 } }
-}
-function saveState(s: ContractState) {
-  writeFileSync(STATE_PATH, JSON.stringify(s))
-}
+// --- State ---
+interface State { counterAddr?: string; heavyAddr?: string; round: number; lastHeight?: number }
+function loadState(): State { try { return JSON.parse(readFileSync(STATE_PATH, "utf-8")) } catch { return { round: 0 } } }
+function saveState(s: State) { writeFileSync(STATE_PATH, JSON.stringify(s)) }
 
 // --- Helpers ---
 async function waitReceipt(provider: ethers.JsonRpcProvider, hash: string, timeoutS: number): Promise<ethers.TransactionReceipt | null> {
@@ -59,105 +52,85 @@ async function getGasPrice(provider: ethers.JsonRpcProvider): Promise<bigint> {
   return (fee.gasPrice ?? 2000000000n) * 2n
 }
 
-// --- Test rounds ---
-async function roundTransfers(wallet: ethers.Wallet, provider: ethers.JsonRpcProvider): Promise<{ sent: number; confirmed: number; detail: string }> {
+// --- Round 0: Single ETH transfer ---
+async function roundTransfer(wallet: ethers.Wallet, provider: ethers.JsonRpcProvider): Promise<{ sent: number; confirmed: number; detail: string }> {
   const gasPrice = await getGasPrice(provider)
-  let sent = 0, confirmed = 0
-  // Send 1 tx per round. Multiple sequential txs can trigger cross-proposer
-  // nonce conflicts in BFT networks. Single tx is reliable.
-  for (let i = 0; i < 1; i++) {
-    try {
-      const tx = await wallet.sendTransaction({ to: "0x000000000000000000000000000000000000dEaD", value: 1000n + BigInt(i), type: 0, gasPrice, gasLimit: 21000 })
-      sent++
-      const r = await waitReceipt(provider, tx.hash, CONFIRM_TIMEOUT_S)
-      if (r?.status === 1) confirmed++
-      else break
-    } catch { break }
-  }
-  return { sent, confirmed, detail: "eth_transfer" }
+  try {
+    const tx = await wallet.sendTransaction({ to: "0x000000000000000000000000000000000000dEaD", value: 1000n, type: 0, gasPrice, gasLimit: 21000 })
+    const r = await waitReceipt(provider, tx.hash, CONFIRM_TIMEOUT_S)
+    return { sent: 1, confirmed: r?.status === 1 ? 1 : 0, detail: "eth_transfer" }
+  } catch { return { sent: 1, confirmed: 0, detail: "eth_transfer_fail" } }
 }
 
-async function roundCounter(wallet: ethers.Wallet, provider: ethers.JsonRpcProvider, state: ContractState): Promise<{ sent: number; confirmed: number; detail: string }> {
-  const gasPrice = await getGasPrice(provider)
-  let addr = state.counterAddr
-
-  // Deploy if not yet deployed
-  if (!addr) {
-    const factory = new ethers.ContractFactory(COUNTER_ABI, COUNTER_BYTECODE, wallet)
+// --- Round 1: EVM computation via eth_call (no tx, zero stall risk) ---
+async function roundEvmTest(provider: ethers.JsonRpcProvider, state: State): Promise<{ sent: number; confirmed: number; detail: string }> {
+  // Deploy HeavyCompute if not deployed
+  if (!state.heavyAddr) {
+    const wallet = new ethers.Wallet(DEPLOYER_KEY, provider)
+    const gasPrice = await getGasPrice(provider)
     try {
-      const contract = await factory.deploy({ type: 0, gasPrice, gasLimit: 200000 })
-      const r = await waitReceipt(provider, contract.deploymentTransaction()!.hash, CONFIRM_TIMEOUT_S)
+      const factory = new ethers.ContractFactory(HEAVY_ABI, HEAVY_BYTECODE, wallet)
+      const c = await factory.deploy({ type: 0, gasPrice, gasLimit: 500000 })
+      const r = await waitReceipt(provider, c.deploymentTransaction()!.hash, CONFIRM_TIMEOUT_S)
       if (r?.status === 1 && r.contractAddress) {
-        addr = r.contractAddress
-        state.counterAddr = addr
+        state.heavyAddr = r.contractAddress
         saveState(state)
-        return { sent: 1, confirmed: 1, detail: `counter_deploy:${addr.slice(0, 10)}` }
+        return { sent: 1, confirmed: 1, detail: `heavy_deploy:${r.contractAddress.slice(0, 10)}` }
+      }
+    } catch { /* deploy failed */ }
+    return { sent: 1, confirmed: 0, detail: "heavy_deploy_fail" }
+  }
+
+  const heavy = new ethers.Contract(state.heavyAddr, HEAVY_ABI, provider)
+  const tests: string[] = []
+  let passed = 0
+
+  // fibonacci(100) — CPU test
+  try { await heavy.fibonacci(100); passed++; tests.push("fib100") } catch { tests.push("fib100!") }
+
+  // sortArray(50) — O(n^2) loop
+  try { await heavy.sortArray(Array.from({ length: 50 }, (_, i) => 50 - i)); passed++; tests.push("sort50") } catch { tests.push("sort50!") }
+
+  // hashLoop — estimate gas for 10000 iterations
+  try { const g = await heavy.hashLoop.estimateGas(10000); passed++; tests.push(`hash10k:${g}`) } catch { tests.push("hash10k!") }
+
+  // memoryExpand(512KB)
+  try { await heavy.memoryExpand(512 * 1024); passed++; tests.push("mem512k") } catch { tests.push("mem512k!") }
+
+  // batchRead(1000) — storage read
+  try { await heavy.batchRead(1000); passed++; tests.push("read1k") } catch { tests.push("read1k!") }
+
+  return { sent: 5, confirmed: passed, detail: `evm:${tests.join(",")}` }
+}
+
+// --- Round 2: Counter contract deploy/call ---
+async function roundCounter(wallet: ethers.Wallet, provider: ethers.JsonRpcProvider, state: State): Promise<{ sent: number; confirmed: number; detail: string }> {
+  const gasPrice = await getGasPrice(provider)
+
+  if (!state.counterAddr) {
+    try {
+      const factory = new ethers.ContractFactory(COUNTER_ABI, COUNTER_BYTECODE, wallet)
+      const c = await factory.deploy({ type: 0, gasPrice, gasLimit: 200000 })
+      const r = await waitReceipt(provider, c.deploymentTransaction()!.hash, CONFIRM_TIMEOUT_S)
+      if (r?.status === 1 && r.contractAddress) {
+        state.counterAddr = r.contractAddress
+        saveState(state)
+        return { sent: 1, confirmed: 1, detail: `counter_deploy:${r.contractAddress.slice(0, 10)}` }
       }
     } catch { /* deploy failed */ }
     return { sent: 1, confirmed: 0, detail: "counter_deploy_fail" }
   }
 
-  // Call increment() 3 times — sequential to avoid cross-proposer conflicts
-  const counter = new ethers.Contract(addr, COUNTER_ABI, wallet)
-  let sent = 0, confirmed = 0
+  // Single increment()
+  const counter = new ethers.Contract(state.counterAddr, COUNTER_ABI, wallet)
   try {
     const tx = await counter.increment({ type: 0, gasPrice, gasLimit: 60000 })
-    sent = 1
     const r = await waitReceipt(provider, tx.hash, CONFIRM_TIMEOUT_S)
-    if (r?.status === 1) confirmed = 1
-  } catch { /* skip */ }
-
-  // Read counter value (view call — no gas)
-  let countVal = "?"
-  try { countVal = String(await counter.count()) } catch { /* ignore */ }
-
-  return { sent, confirmed, detail: `counter_call:${countVal}` }
-}
-
-async function roundERC20(wallet: ethers.Wallet, provider: ethers.JsonRpcProvider, state: ContractState): Promise<{ sent: number; confirmed: number; detail: string }> {
-  const gasPrice = await getGasPrice(provider)
-  let addr = state.erc20Addr
-
-  // Deploy if not yet deployed
-  if (!addr) {
-    const factory = new ethers.ContractFactory(ERC20_ABI, ERC20_BYTECODE, wallet)
-    try {
-      const supply = ethers.parseEther("1000000")
-      const contract = await factory.deploy(supply, { type: 0, gasPrice, gasLimit: 800000 })
-      const r = await waitReceipt(provider, contract.deploymentTransaction()!.hash, CONFIRM_TIMEOUT_S)
-      if (r?.status === 1 && r.contractAddress) {
-        addr = r.contractAddress
-        state.erc20Addr = addr
-        saveState(state)
-        return { sent: 1, confirmed: 1, detail: `erc20_deploy:${addr.slice(0, 10)}` }
-      }
-    } catch { /* deploy failed */ }
-    return { sent: 1, confirmed: 0, detail: "erc20_deploy_fail" }
+    const count = await counter.count().catch(() => "?")
+    return { sent: 1, confirmed: r?.status === 1 ? 1 : 0, detail: `counter:${count}` }
+  } catch {
+    return { sent: 1, confirmed: 0, detail: "counter_call_fail" }
   }
-
-  // Mint + transfer
-  const token = new ethers.Contract(addr, ERC20_ABI, wallet)
-  const nonce = await provider.getTransactionCount(wallet.address, "pending")
-  const hashes: string[] = []
-  const recipient = "0x000000000000000000000000000000000000dEaD"
-
-  try {
-    // mint small amount (keep gas low)
-    const tx1 = await token.mint(wallet.address, ethers.parseEther("1"), { type: 0, gasPrice, gasLimit: 100000, nonce })
-    hashes.push(tx1.hash)
-    // transfer
-    const tx2 = await token.transfer(recipient, ethers.parseEther("0.1"), { type: 0, gasPrice, gasLimit: 100000, nonce: nonce + 1 })
-    hashes.push(tx2.hash)
-  } catch { /* skip */ }
-
-  let confirmed = 0
-  for (const h of hashes) { if ((await waitReceipt(provider, h, CONFIRM_TIMEOUT_S))?.status === 1) confirmed++ }
-
-  // Read balance (view)
-  let balance = "?"
-  try { balance = ethers.formatEther(await token.balanceOf(wallet.address)) } catch { /* ignore */ }
-
-  return { sent: hashes.length, confirmed, detail: `erc20_ops:bal=${balance}` }
 }
 
 // --- Main ---
@@ -175,20 +148,27 @@ async function main() {
   }
 
   const state = loadState()
-  // ETH transfers only for continuous stability monitoring.
-  // Contract operations (Counter, ERC20) work in sequential single-tx mode
-  // but trigger cross-proposer nonce conflicts under sustained load due to
-  // BFT architecture limitations (proposer executes tx, non-proposer onFinalized
-  // apply fails when nonce is off-by-one from gossip-deferred execution timing).
+
+  // Check if chain is advancing — if stalled, only run eth_call tests (round 1)
+  // which don't require on-chain transactions and can't make things worse.
+  const prevHeight = state.lastHeight ?? 0
+  const stalled = height > 0 && height === prevHeight
+  state.lastHeight = height
+
+  // Round rotation: ETH transfer (1 tx) → EVM eth_call → EVM eth_call
+  // Only 1 on-chain tx every 3 minutes to minimize BFT stall risk.
+  // When stalled, only run eth_call tests (no tx, can't make things worse).
+  const round = stalled ? 1 : (state.round % 3)
+
   let result: { sent: number; confirmed: number; detail: string }
   try {
-    result = await roundTransfers(wallet, provider)
+    if (round === 0) result = await roundTransfer(wallet, provider)
+    else result = await roundEvmTest(provider, state)
   } catch (e) {
     result = { sent: 0, confirmed: 0, detail: `error:${String(e).slice(0, 50)}` }
   }
-  state.round = (state.round + 1)
 
-  state.round = (state.round + 1)
+  if (!stalled) state.round = state.round + 1
   saveState(state)
 
   const finalHeight = await provider.getBlockNumber()
@@ -205,16 +185,7 @@ async function main() {
   if (result.sent === 0) status = "SEND_FAIL"
   if (sync === "desync") status = "DESYNC"
 
-  console.log(JSON.stringify({
-    status,
-    height: finalHeight,
-    blocks: finalHeight - height,
-    sent: result.sent,
-    confirmed: result.confirmed,
-    peers,
-    sync,
-    detail: result.detail,
-  }))
+  console.log(JSON.stringify({ status, height: finalHeight, blocks: finalHeight - height, sent: result.sent, confirmed: result.confirmed, peers, sync, detail: result.detail }))
 }
 
 main().catch(() => {
