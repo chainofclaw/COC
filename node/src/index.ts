@@ -316,6 +316,10 @@ if (bftEnabled) {
     stake: 1_000_000_000_000_000_000n, // 1 ETH default stake
   }))
 
+  // Serialization queue for onFinalized — prevents re-entrant applyBlock
+  // when BFT finalizes consecutive blocks within milliseconds.
+  let onFinalizedQueue = Promise.resolve()
+
   bftCoordinator = new BftCoordinator({
     localId: config.nodeId,
     validators,
@@ -377,7 +381,11 @@ if (bftEnabled) {
       // Also broadcast BFT messages via wire protocol (dual transport)
       wireBftBroadcastFn?.(msg)
     },
-    onFinalized: async (block) => {
+    onFinalized: (block) => {
+      // Queue onFinalized calls to prevent re-entrant applyBlock.
+      // BFT can finalize consecutive blocks within milliseconds when buffered
+      // messages cause immediate finalization of deferred blocks.
+      const work = async () => {
       // Always remove finalized block's transactions from mempool, even before
       // applyBlock succeeds. This prevents other proposers from re-including
       // already-confirmed transactions in subsequent blocks (mempool desync).
@@ -456,6 +464,9 @@ if (bftEnabled) {
         const active = chain.governance.getActiveValidators()
         bftCoordinator?.updateValidators(active.map((v) => ({ id: v.id, stake: v.stake })))
       }
+      } // end of work()
+      onFinalizedQueue = onFinalizedQueue.then(work, work)
+      return onFinalizedQueue
     },
   })
   log.info("BFT consensus enabled", { validators: config.validators.length })
