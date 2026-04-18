@@ -64,8 +64,15 @@ async function roundTransfer(wallet: ethers.Wallet, provider: ethers.JsonRpcProv
 
 // --- Round 1: EVM computation via eth_call (no tx, zero stall risk) ---
 async function roundEvmTest(provider: ethers.JsonRpcProvider, state: State): Promise<{ sent: number; confirmed: number; detail: string }> {
-  // Deploy HeavyCompute if not deployed
-  if (!state.heavyAddr) {
+  // Deploy HeavyCompute if not deployed or chain was reset (code gone)
+  let needsDeploy = !state.heavyAddr
+  if (state.heavyAddr) {
+    try {
+      const code = await provider.getCode(state.heavyAddr)
+      if (!code || code === "0x") { needsDeploy = true; state.heavyAddr = undefined }
+    } catch { needsDeploy = true; state.heavyAddr = undefined }
+  }
+  if (needsDeploy) {
     const wallet = new ethers.Wallet(DEPLOYER_KEY, provider)
     const gasPrice = await getGasPrice(provider)
     try {
