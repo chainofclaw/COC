@@ -239,7 +239,19 @@ export class PersistentChainEngine {
     return tx
   }
 
-  async proposeNextBlock(): Promise<ChainBlock | null> {
+  /**
+   * Propose the next block.
+   *
+   * When `deferApply` is true (BFT mode), the block is built and signed but
+   * NOT applied to local EVM/chain state. The caller must apply it later via
+   * applyBlock() (typically in the BFT onFinalized callback). This prevents
+   * height divergence when BFT round times out — the proposer stays at the
+   * same height as other validators.
+   *
+   * When `deferApply` is false (non-BFT mode), the block is applied immediately
+   * as before.
+   */
+  async proposeNextBlock(deferApply = false): Promise<ChainBlock | null> {
     const nextHeight = (await this.getHeight()) + 1n
     if (this.expectedProposer(nextHeight) !== this.cfg.nodeId) {
       return null
@@ -258,11 +270,18 @@ export class PersistentChainEngine {
       nextBaseFee,
     )
 
-    const block = await this.buildBlock(nextHeight, txs)
+    let block = await this.buildBlock(nextHeight, txs)
     if (this.nodeSigner) {
       block.signature = this.nodeSigner.sign(`block:${block.hash}`) as Hex
     }
-    // Build sender map from mempool picks to avoid redundant ECDSA in block execution
+
+    // In BFT deferred mode, return the built block without applying.
+    // The block will be applied when BFT onFinalized fires.
+    if (deferApply) {
+      return block
+    }
+
+    // Non-BFT mode: apply immediately (original behavior)
     const senderByRawTx = new Map<string, string>()
     for (const mt of txs) senderByRawTx.set(mt.rawTx, mt.from)
 
@@ -273,8 +292,6 @@ export class PersistentChainEngine {
       for (const tx of txs) {
         this.mempool.remove(tx.hash)
       }
-      // applyBlock uses atomic checkpoint/revert (with trie overlay buffering),
-      // so EVM and trie state are cleanly reverted. No resetExecution needed.
       const emptyBlock = await this.buildBlock(nextHeight, [])
       if (this.nodeSigner) {
         emptyBlock.signature = this.nodeSigner.sign(`block:${emptyBlock.hash}`) as Hex

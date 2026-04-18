@@ -124,6 +124,7 @@ export class ConsensusEngine {
   private degradedCheckTimer: ReturnType<typeof setInterval> | null = null
   private syncInFlight = false
   private proposeInFlight = false
+  private lastProposedHeight: bigint | undefined = undefined
 
   // Sync progress tracking
   private highestPeerHeight = 0n
@@ -264,13 +265,31 @@ export class ConsensusEngine {
     this.proposeInFlight = true
     const t0 = Date.now()
     try {
-      const block = await this.chain.proposeNextBlock()
+      // When BFT is enabled, build the block without applying it locally.
+      // The proposer stays at the same height as validators until BFT finalizes.
+      // This prevents the fatal height divergence (proposer at N+1, others at N)
+      // that occurs when a BFT round times out after the proposer already applied.
+      const deferApply = !!this.bft
+
+      // Guard: skip if we already proposed this height (deferred-apply means
+      // height doesn't change until onFinalized, so the next interval would
+      // re-propose the same height with a different timestamp/hash, causing
+      // equivocation detection on validators).
+      if (deferApply && this.lastProposedHeight !== undefined) {
+        const currentHeight = await Promise.resolve(this.chain.getHeight())
+        if (currentHeight < this.lastProposedHeight) {
+          return // Still waiting for onFinalized to apply our previous proposal
+        }
+      }
+
+      const block = await this.chain.proposeNextBlock(deferApply)
       if (!block) {
         return
       }
 
       this.proposeFailures = 0
       this.blocksProposed++
+      if (deferApply) this.lastProposedHeight = block.number
 
       // Broadcast block via gossip so all peers receive it
       await this.broadcastBlock(block)
