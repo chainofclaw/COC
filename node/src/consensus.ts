@@ -125,6 +125,7 @@ export class ConsensusEngine {
   private syncInFlight = false
   private proposeInFlight = false
   private lastProposedHeight: bigint | undefined = undefined
+  private lastProposedBlock: any | undefined = undefined // Cached for retry on BFT timeout
 
   // Sync progress tracking
   private highestPeerHeight = 0n
@@ -271,15 +272,26 @@ export class ConsensusEngine {
       // that occurs when a BFT round times out after the proposer already applied.
       const deferApply = !!this.bft
 
-      // Guard: skip if we already proposed this height (deferred-apply means
-      // height doesn't change until onFinalized, so the next interval would
-      // re-propose the same height with a different timestamp/hash, causing
-      // equivocation detection on validators).
+      // Guard: if we already proposed this height, check BFT round state.
+      // If round is active, wait. If round timed out, re-broadcast the SAME
+      // block (not a new one) to avoid equivocation.
       if (deferApply && this.lastProposedHeight !== undefined) {
         const currentHeight = await Promise.resolve(this.chain.getHeight())
         if (currentHeight < this.lastProposedHeight) {
-          return // Still waiting for onFinalized to apply our previous proposal
+          const bftState = this.bft!.getRoundState()
+          if (bftState.active) {
+            return // BFT round in progress
+          }
+          // BFT round timed out — re-broadcast cached block + restart BFT
+          if (this.lastProposedBlock) {
+            log.info("re-broadcasting timed-out proposal", { height: this.lastProposedHeight.toString() })
+            await this.broadcastBlock(this.lastProposedBlock)
+            try { await this.bft!.startRound(this.lastProposedBlock) } catch { /* ignore */ }
+          }
+          return
         }
+        // Height caught up — clear cached block
+        this.lastProposedBlock = undefined
       }
 
       const block = await this.chain.proposeNextBlock(deferApply)
@@ -289,7 +301,10 @@ export class ConsensusEngine {
 
       this.proposeFailures = 0
       this.blocksProposed++
-      if (deferApply) this.lastProposedHeight = block.number
+      if (deferApply) {
+        this.lastProposedHeight = block.number
+        this.lastProposedBlock = block
+      }
 
       // Broadcast block via gossip so all peers receive it
       await this.broadcastBlock(block)
