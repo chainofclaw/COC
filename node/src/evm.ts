@@ -489,24 +489,9 @@ export class EvmChain {
 
   /**
    * Revert to a previously checkpointed state (speculative execution failed).
-   *
-   * Drains ALL checkpoint levels from the stateManager to handle the case where
-   * EthereumJS's runTx() added internal checkpoints that weren't committed or
-   * reverted before throwing. Without draining, the checkpoint stack becomes
-   * unbalanced and subsequent revert() only peels one level instead of fully
-   * restoring state to our checkpoint.
    */
   async revertState(): Promise<void> {
-    const sm = this.vm.stateManager as any
-    // Drain all checkpoint levels — runTx may have added nested ones
-    let maxIterations = 20
-    while (maxIterations-- > 0) {
-      try {
-        await sm.revert()
-      } catch {
-        break
-      }
-    }
+    await this.vm.stateManager.revert()
   }
 
   /**
