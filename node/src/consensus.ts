@@ -285,6 +285,9 @@ export class ConsensusEngine {
           // BFT round timed out — re-broadcast cached block + restart BFT
           if (this.lastProposedBlock) {
             log.info("re-broadcasting timed-out proposal", { height: this.lastProposedHeight.toString() })
+            // Clear seenBlocks cache for this block so receiveBlock accepts it again.
+            // Without this, the gossip dedup cache blocks the re-broadcast.
+            this.p2p.seenBlocks?.delete?.(this.lastProposedBlock.hash)
             await this.broadcastBlock(this.lastProposedBlock)
             try { await this.bft!.startRound(this.lastProposedBlock) } catch { /* ignore */ }
           }

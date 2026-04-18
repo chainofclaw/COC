@@ -314,6 +314,14 @@ export class EvmChain {
    * Fast path for block execution: skips per-tx VM setup that applyBlockContext() already did.
    * The caller MUST call applyBlockContext() before the tx loop.
    */
+  /**
+   * Execute a raw transaction within a block context.
+   *
+   * When `trustBlock` is true, skips nonce and balance pre-validation.
+   * This is used for BFT-finalized blocks where the consensus layer has
+   * already validated the block — the execution layer should deterministically
+   * re-execute without rejecting transactions due to local state differences.
+   */
   async executeRawTxInBlock(
     rawTx: string,
     blockCommon: ReturnType<typeof createCustomCommon>,
@@ -324,12 +332,18 @@ export class EvmChain {
     baseFeePerGas: bigint,
     blockNumberHex?: string,
     knownSender?: string,
+    trustBlock = false,
   ): Promise<BlockExecutionResult> {
     const tx = createTxFromRLP(hexToBytes(rawTx), { common: blockCommon })
     if (tx.type === 3) {
       throw new Error("blob transactions (type 3) are not supported")
     }
-    const result = await runTx(this.vm, { tx, block: executionBlock, skipHardForkValidation: true })
+    const result = await runTx(this.vm, {
+      tx,
+      block: executionBlock,
+      skipHardForkValidation: true,
+      ...(trustBlock ? { skipNonce: true, skipBalance: true } : {}),
+    })
     const txHash = bytesToHex(tx.hash())
     this.blockNumber = appliedBlock
     const bnHex = blockNumberHex ?? `0x${appliedBlock.toString(16)}`

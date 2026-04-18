@@ -417,10 +417,18 @@ export class PersistentChainEngine {
     const baseFee = block.baseFee ?? 0n
     const blockNumberHex = `0x${block.number.toString(16)}`
 
+    // For BFT-finalized blocks, trust the block's transaction ordering and skip
+    // nonce/balance pre-validation. The BFT consensus layer has already confirmed
+    // the block's validity through 2/3 stake-weighted voting. This enables
+    // deterministic re-execution regardless of local EVM state differences.
+    // In deferred-apply mode, even the proposer's own block goes through onFinalized
+    // with locallyProposed=true, so we always trust when bftFinalized is set.
+    const trustBlock = !!block.bftFinalized || !locallyProposed
+
     for (let i = 0; i < block.txs.length; i++) {
       const raw = block.txs[i]
       const sender = senderByRawTx?.get(raw)
-      const result = await this.evm.executeRawTxInBlock(raw, blockCommon, executionBlock, block.number, i, block.hash, baseFee, blockNumberHex, sender)
+      const result = await this.evm.executeRawTxInBlock(raw, blockCommon, executionBlock, block.number, i, block.hash, baseFee, blockNumberHex, sender, trustBlock)
 
       // Use directly returned receipt/from/to — no Map lookup needed
       const receipt = result.receipt

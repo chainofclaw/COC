@@ -197,6 +197,10 @@ export class BoundedSet<T> {
     this.items.set(value, true)
   }
 
+  delete(value: T): boolean {
+    return this.items.delete(value)
+  }
+
   clear(): void {
     this.items.clear()
   }
