@@ -144,6 +144,10 @@ export class EvmChain {
     }
   }
 
+  setPrefundAccounts(accounts: PrefundAccount[]): void {
+    this.prefundAccounts = [...accounts]
+  }
+
   async applyBlockContext(context: ExecutionContext = {}): Promise<void> {
     const normalized = normalizeExecutionContext(context)
     const blockCommon = this.createExecutionCommon(normalized.blockNumber)
