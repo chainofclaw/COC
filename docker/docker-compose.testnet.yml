@@ -64,6 +64,30 @@ services:
       - COC_NODE_CONFIG=/data/coc/node-config.json
       - COC_NODE_KEY=0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a
 
+  sync-node:
+    <<: *node-base
+    container_name: coc-sync-node
+    ports:
+      - "18780:18780"
+      - "18781:18781"
+      - "19880:19780"
+      - "19881:19781"
+      - "9104:9100"
+    volumes:
+      - sync-data:/data/coc
+      - ./testnet-configs/sync-node.json:/data/coc/node-config.json:ro
+    environment:
+      - COC_DATA_DIR=/data/coc
+      - COC_NODE_CONFIG=/data/coc/node-config.json
+      - COC_NODE_KEY=0x4bbbf85ce3377467afe5d46f804f221813b2bb87f24d81f60f1fcdbf7cbf4356
+    depends_on:
+      node-1:
+        condition: service_healthy
+      node-2:
+        condition: service_healthy
+      node-3:
+        condition: service_healthy
+
   explorer:
     image: ${COC_EXPLORER_IMAGE:-ghcr.io/chainofclaw/coc-explorer}:${IMAGE_TAG:-latest}
     build:
@@ -156,6 +180,7 @@ volumes:
   node1-data:
   node2-data:
   node3-data:
+  sync-data:
   runtime-data:
 
 networks:
