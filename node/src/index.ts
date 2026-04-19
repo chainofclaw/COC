@@ -487,14 +487,42 @@ if (bftEnabled) {
         bftCoordinator?.updateValidators(active.map((v) => ({ id: v.id, stake: v.stake })))
       }
       } // end of work()
-      // Chain this work after the prior one completes (success or failure).
-      // Return the CURRENT slot's promise, not the cumulative queue — a hung
-      // or slow work() must not propagate its wait time to future callers of
-      // onFinalized. BftCoordinator awaits this; if it rejects, the coordinator
-      // logs and continues, instead of being blocked forever.
+      // Wall-clock timeout around the entire work() body. Observed on testnet:
+      // after the inner applyBlock timed out, the retry path (EVM reset +
+      // rebuildFromPersisted) also hung indefinitely — no "retry succeeded"
+      // and no "apply failed" log ever emitted, and every subsequent round
+      // stalled behind it. A 75s outer cap (> inner 30s + inner-retry 30s)
+      // guarantees the work slot always resolves so the next BFT round can
+      // make progress; an unapplied block is recoverable via snap-sync, but
+      // an indefinitely-pending promise is not.
+      const workTimeoutMs = 75_000
+      const workWithTimeout = async () => {
+        let timer: NodeJS.Timeout | undefined
+        const timeout = new Promise<never>((_, rej) => {
+          timer = setTimeout(
+            () => rej(new Error(`onFinalized work timeout ${workTimeoutMs}ms`)),
+            workTimeoutMs,
+          )
+        })
+        try {
+          await Promise.race([work(), timeout])
+        } catch (err) {
+          log.error("BFT onFinalized: work slot failed", {
+            height: block.number.toString(),
+            hash: block.hash,
+            error: String(err),
+          })
+          // Swallow — the queue must keep advancing.
+        } finally {
+          if (timer) clearTimeout(timer)
+        }
+      }
+      // Chain this work after the prior one completes. Return the CURRENT
+      // slot's promise so a hung or slow work() cannot propagate wait time
+      // to future callers of onFinalized.
       const prior = onFinalizedQueue
-      const current = prior.then(work, work)
-      onFinalizedQueue = current.catch(() => {}) // absorb rejection for chaining
+      const current = prior.then(workWithTimeout, workWithTimeout)
+      onFinalizedQueue = current
       return current
     },
   })
