@@ -512,6 +512,29 @@ if (bftEnabled) {
             hash: block.hash,
             error: String(err),
           })
+          // Poison every tx this block tried to execute: one of them hangs
+          // applyBlock (likely @ethereumjs/vm runTx microtask starvation that
+          // no Promise.race timer can interrupt from the main thread).
+          // Marking them here prevents the mempool and proposer from re-
+          // including the same tx into the next block and re-triggering the
+          // deadlock every time.
+          try {
+            const poisoned: string[] = []
+            for (const rawTx of block.txs) {
+              const txHash = ethers.keccak256(rawTx) as Hex
+              chain.mempool.poison(txHash)
+              poisoned.push(txHash)
+            }
+            if (poisoned.length > 0) {
+              log.warn("BFT onFinalized: poisoned txs after work slot failure", {
+                height: block.number.toString(),
+                count: poisoned.length,
+                sample: poisoned.slice(0, 5),
+              })
+            }
+          } catch (poisonErr) {
+            log.warn("BFT onFinalized: poison failed", { error: String(poisonErr) })
+          }
           // Swallow — the queue must keep advancing.
         } finally {
           if (timer) clearTimeout(timer)
