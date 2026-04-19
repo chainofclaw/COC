@@ -440,11 +440,12 @@ export class PersistentStateTrie implements IStateTrie {
    */
   private storageTrieAdapters = new Map<string, TrieDBAdapter>()
 
+  private checkpointStateRoot: string | null = null
+
   async checkpoint(): Promise<void> {
-    // Enable write overlay on the main trie adapter — all subsequent writes
-    // go to an in-memory buffer instead of LevelDB. This prevents partial
-    // DB pollution when applyBlock fails mid-execution (e.g. contract deploy
-    // creates new storage trie nodes that can't be reverted from LevelDB).
+    // Save the current state root so revert() can restore it
+    // (instead of clearing to null which breaks snapshot requests)
+    this.checkpointStateRoot = this.lastStateRoot
     this.trieDb.enableOverlay()
     await this.trie.checkpoint()
     for (const [addr, storageTrie] of this.storageTries.entries()) {
@@ -476,7 +477,9 @@ export class PersistentStateTrie implements IStateTrie {
     // Invalidate caches and dirty tracking on revert
     this.accountCache.clear()
     this.dirtyAddresses.clear()
-    this.lastStateRoot = null
+    // Restore to pre-checkpoint state root (not null — null breaks snapshot requests)
+    this.lastStateRoot = this.checkpointStateRoot
+    this.checkpointStateRoot = null
   }
 
   async clearStorage(address: string): Promise<void> {
