@@ -103,13 +103,30 @@ export class PersistentChainEngine {
   async init(): Promise<void> {
     await this.db.open()
 
-    // Apply prefund accounts to EVM
-    if (this.cfg.prefundAccounts && this.cfg.prefundAccounts.length > 0) {
+    // Load latest block first to decide whether this is a genesis boot or a restart.
+    const latestBlock = await this.blockIndex.getLatestBlock()
+
+    // Prefund accounts are a genesis-only concern. On a restart with a populated
+    // LevelDB, writing genesis balances over a persisted trie corrupts internal
+    // trie nodes (Trie "Stack underflow") because the trie still holds cached
+    // references from the prior run and the stateRoot has not yet been restored.
+    // Persisted balances are already on disk — only prefund when the chain is empty.
+    if (
+      !latestBlock &&
+      this.cfg.prefundAccounts &&
+      this.cfg.prefundAccounts.length > 0
+    ) {
       await this.evm.prefund(this.cfg.prefundAccounts)
+    } else if (
+      latestBlock &&
+      this.cfg.prefundAccounts &&
+      this.cfg.prefundAccounts.length > 0
+    ) {
+      // Still record the accounts for in-memory replay paths that need them
+      // (e.g. speculative re-execution), without writing to the persistent trie.
+      this.evm.setPrefundAccounts(this.cfg.prefundAccounts)
     }
 
-    // Load latest block and rebuild if exists
-    const latestBlock = await this.blockIndex.getLatestBlock()
     if (latestBlock) {
       // If we have a persistent state trie with a valid state root,
       // skip full replay - state is already persisted in LevelDB
@@ -124,6 +141,16 @@ export class PersistentChainEngine {
       const genesisProposer = this.cfg.validators[0]
       const parentHash = zeroHash()
       const genesisTimestampMs = 0 // deterministic: all nodes produce identical hash
+
+      // Commit prefunded balances to the state trie so block 1 carries a
+      // queryable stateRoot. Without this, eth_getBalance on "latest" returns 0
+      // and no account can fund contract deploys until the first regular block.
+      let genesisStateRoot: Hex | undefined
+      if (this.stateTrie) {
+        const root = await this.stateTrie.commit()
+        genesisStateRoot = root as Hex
+      }
+
       const hash = hashBlockPayload({
         number: 1n,
         parentHash,
@@ -141,9 +168,15 @@ export class PersistentChainEngine {
         txs: [],
         finalized: false,
         cumulativeWeight: 1n,
+        ...(genesisStateRoot !== undefined ? { stateRoot: genesisStateRoot } : {}),
       }
       await this.blockIndex.putBlock(genesis)
-      log.info("genesis block created", { height: "1", hash, proposer: genesisProposer })
+      log.info("genesis block created", {
+        height: "1",
+        hash,
+        proposer: genesisProposer,
+        stateRoot: genesisStateRoot ?? "(none)",
+      })
     }
   }
 
