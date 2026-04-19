@@ -585,6 +585,24 @@ if (bftEnabled) {
           } catch (resetErr) {
             log.warn("BFT onFinalized: reset failed", { error: String(resetErr) })
           }
+          // Pre-exit diagnostic dump: full JS + native stack trace, async
+          // hook state, heap stats, and libuv handles. This is the only way
+          // to localize the upstream @ethereumjs/vm hang — the applyBlock
+          // phase marker tells us which tx, but not *where inside runTx*
+          // the promise stopped resolving. Report lands under dataDir; a
+          // worker follow-up grepping these reports can pinpoint the
+          // hanging await/native call across multiple recurrences.
+          try {
+            const reportPath = join(config.dataDir, `hang-report-${Date.now()}.json`)
+            // @ts-ignore — report API exists on Node 22 process at runtime
+            process.report?.writeReport?.(reportPath)
+            log.error("BFT onFinalized: hang diagnostic dumped", {
+              height: block.number.toString(),
+              path: reportPath,
+            })
+          } catch (reportErr) {
+            log.warn("BFT onFinalized: report dump failed", { error: String(reportErr) })
+          }
           // Nuclear recovery: BftCoordinator's lastFinalizedHeight now believes
           // this block is finalized, but the chain engine never applied it, so
           // getTip() is one behind. Every future round at this height gets
@@ -598,7 +616,7 @@ if (bftEnabled) {
             height: block.number.toString(),
             poisonedCount,
           })
-          setTimeout(() => process.exit(1), 250)
+          setTimeout(() => process.exit(1), 500)
           // Swallow — the queue must keep advancing.
         } finally {
           if (timer) clearTimeout(timer)
