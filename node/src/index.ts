@@ -1,4 +1,5 @@
 import { keccak256, parseEther, Wallet } from "ethers"
+import { appendFileSync, existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { loadNodeConfig } from "./config.ts"
 import { startRpcServer } from "./rpc.ts"
@@ -147,6 +148,26 @@ if (usePersistent) {
   await memoryEngine.init()
   chain = memoryEngine
   log.info("using memory storage backend")
+}
+
+// Persistent poison store — survives process restart. Work-slot-failed
+// triggers process.exit(1) to force a fresh BFT state, but without
+// reloading this set gossip would re-deliver the same hung tx and we
+// would crash-loop. Path lives under dataDir so multi-node deployments
+// get independent stores per node.
+const poisonStorePath = join(config.dataDir, "poisoned-txs.txt")
+if (existsSync(poisonStorePath)) {
+  try {
+    const hashes = readFileSync(poisonStorePath, "utf-8")
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.length === 66 && l.startsWith("0x"))
+      .map((l) => l.toLowerCase() as Hex)
+    chain.mempool.loadPoisonedHashes(hashes)
+    log.info("mempool poison set loaded", { count: hashes.length, path: poisonStorePath })
+  } catch (err) {
+    log.warn("mempool poison set load failed", { error: String(err) })
+  }
 }
 
 // Node identity signer — created early so Wire/BFT/PoSe all share the same key
@@ -518,6 +539,7 @@ if (bftEnabled) {
           // Marking them here prevents the mempool and proposer from re-
           // including the same tx into the next block and re-triggering the
           // deadlock every time.
+          let poisonedCount = 0
           try {
             const poisoned: string[] = []
             for (const rawTx of block.txs) {
@@ -525,7 +547,19 @@ if (bftEnabled) {
               chain.mempool.poison(txHash)
               poisoned.push(txHash)
             }
+            poisonedCount = poisoned.length
             if (poisoned.length > 0) {
+              // Persist immediately (sync) so the set survives the imminent
+              // process.exit(1). appendFileSync guarantees the write lands
+              // before we die; without it a restart would re-enter the same
+              // deadlock via gossip re-delivering the poisoned tx.
+              try {
+                appendFileSync(poisonStorePath, poisoned.join("\n") + "\n")
+              } catch (persistErr) {
+                log.error("BFT onFinalized: poison persist failed", {
+                  error: String(persistErr),
+                })
+              }
               log.warn("BFT onFinalized: poisoned txs after work slot failure", {
                 height: block.number.toString(),
                 count: poisoned.length,
@@ -551,6 +585,20 @@ if (bftEnabled) {
           } catch (resetErr) {
             log.warn("BFT onFinalized: reset failed", { error: String(resetErr) })
           }
+          // Nuclear recovery: BftCoordinator's lastFinalizedHeight now believes
+          // this block is finalized, but the chain engine never applied it, so
+          // getTip() is one behind. Every future round at this height gets
+          // buffered/rejected by peers (also desynced), producing a soft
+          // livelock where prepareVotes never reach quorum. In-process
+          // reconciliation is brittle (risks equivocation); exit instead and
+          // let docker's restart policy (unless-stopped) rebuild BFT state
+          // from scratch. Poisoned tx set is persisted above so gossip can't
+          // re-trigger the same hang post-restart.
+          log.error("BFT onFinalized: exiting to recover from BFT/chain state desync", {
+            height: block.number.toString(),
+            poisonedCount,
+          })
+          setTimeout(() => process.exit(1), 250)
           // Swallow — the queue must keep advancing.
         } finally {
           if (timer) clearTimeout(timer)
