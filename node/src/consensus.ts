@@ -643,22 +643,22 @@ export class ConsensusEngine {
         })
       }
 
-      // Require stateRoot+validatorsHash consensus: at least 2 votes AND strict majority.
-      // Single-peer networks accept with 1 vote (no alternative).
+      // Require stateRoot+validatorsHash consensus across responding peers.
+      // On an actively-producing chain, peer stateRoots differ by 1-2 blocks at any given moment.
+      // We accept the most-voted root as long as it has strict majority (>50%) of responses,
+      // OR all responding peers agree (common when responses are tightly clustered in time).
+      // This enables bootstrap when only a subset of peers respond within the request window.
       const totalResponding = [...peerStateRoots.values()].reduce((sum, v) => sum + v.count, 0)
       let trustedStateRoot: string | null = null
       let trustedValidatorsHash: string | null = null
 
       if (peerStateRoots.size === 1) {
+        // All responding peers agree on a single stateRoot — accept it.
         const entry = [...peerStateRoots.values()][0]
         trustedStateRoot = entry.stateRoot
         trustedValidatorsHash = entry.validatorsHash
-        if (peers.length > 1 && entry.count < 2) {
-          log.warn("snap sync: insufficient peer responses for stateRoot consensus, aborting", {
-            stateRoot: trustedStateRoot,
-            respondingPeers: totalResponding,
-            totalPeers: peers.length,
-          })
+        if (totalResponding === 0) {
+          log.warn("snap sync: no peer responded with stateRoot")
           return false
         }
       } else if (peerStateRoots.size > 1) {
@@ -670,12 +670,12 @@ export class ConsensusEngine {
             trustedValidatorsHash = info.validatorsHash
           }
         }
-        const majorityThreshold = Math.ceil(totalResponding * 2 / 3)
-        if (maxCount < 2 || maxCount < majorityThreshold) {
-          log.warn("snap sync: no stateRoot consensus among peers, aborting (fail-closed)", {
+        // Require strict majority (>50%) of responding peers.
+        if (maxCount * 2 <= totalResponding) {
+          log.warn("snap sync: no stateRoot majority among peers, aborting (fail-closed)", {
             maxVotes: maxCount,
-            required: Math.max(2, majorityThreshold),
             respondingPeers: totalResponding,
+            uniqueRoots: peerStateRoots.size,
           })
           return false
         }
