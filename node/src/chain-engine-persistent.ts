@@ -343,23 +343,36 @@ export class PersistentChainEngine {
     this.applyingBlock = true
     try {
 
+    // Early phase markers — the previous patch only started emitting from
+    // checkpoint() onwards, but a subsequent deadlock was observed with no
+    // phase log at all, indicating the hang sits in one of these DB reads.
+    const earlyPhaseLog = (phase: string, extra?: Record<string, unknown>) => {
+      log.info("applyBlock phase", { height: block.number.toString(), phase, ...(extra ?? {}) })
+    }
+
+    earlyPhaseLog("dup-check")
     // Duplicate block detection (inside guard to prevent TOCTOU race)
     const existing = await this.blockIndex.getBlockByHash(block.hash)
     if (existing) {
       // Allow trusted local path (BFT finalize callback) to promote finality metadata.
       if (locallyProposed && block.bftFinalized && !existing.bftFinalized) {
         const updated = { ...existing, bftFinalized: true }
+        earlyPhaseLog("dup-promote.getTip")
         // Use putBlock for tip (updates LATEST_BLOCK_KEY cache), updateBlock for non-tip
         const currentTip = await this.getTip()
         if (currentTip?.hash === updated.hash) {
+          earlyPhaseLog("dup-promote.putBlock")
           await this.blockIndex.putBlock(updated)
         } else {
+          earlyPhaseLog("dup-promote.updateBlock")
           await this.blockIndex.updateBlock(updated)
         }
       }
+      earlyPhaseLog("dup-return")
       return
     }
 
+    earlyPhaseLog("getTip")
     const prev = await this.getTip()
     if (!validateBlockLink(prev ?? null, block)) {
       throw new Error("invalid block link")
