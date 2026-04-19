@@ -419,6 +419,15 @@ export class PersistentChainEngine {
       throw new Error("invalid block hash")
     }
 
+    // Phase markers: let operators localize a hang to a specific await.
+    // Emitted at "info" so they're filterable via `grep phase=` in node logs.
+    // The last "phase=" line before a BFT onFinalized timeout identifies
+    // exactly which await inside applyBlock stopped returning.
+    const phaseLog = (phase: string, extra?: Record<string, unknown>) => {
+      log.info("applyBlock phase", { height: block.number.toString(), phase, ...(extra ?? {}) })
+    }
+
+    phaseLog("checkpoint")
     // Checkpoint both EVM stateManager and persistent trie for atomic rollback on failure
     await this.evm.checkpointState()
     if (this.stateTrie) await this.stateTrie.checkpoint()
@@ -442,7 +451,9 @@ export class PersistentChainEngine {
       parentBeaconBlockRoot: block.parentBeaconBlockRoot ? hexToBytes(block.parentBeaconBlockRoot) : undefined,
       timestamp: executionTimestamp,
     }
+    phaseLog("applyBlockContext")
     await this.evm.applyBlockContext(blockContext)
+    phaseLog("tx-loop", { txCount: block.txs.length })
 
     // Pre-compute block-scoped objects once — reuse for all txs in this block
     const blockEnv = this.evm.prepareBlock(block.number, blockContext)
@@ -461,6 +472,7 @@ export class PersistentChainEngine {
     for (let i = 0; i < block.txs.length; i++) {
       const raw = block.txs[i]
       const sender = senderByRawTx?.get(raw)
+      phaseLog("executeRawTx", { txIndex: i, rawPrefix: raw.slice(0, 18) })
       const result = await this.evm.executeRawTxInBlock(raw, blockCommon, executionBlock, block.number, i, block.hash, baseFee, blockNumberHex, sender, trustBlock)
 
       // Use directly returned receipt/from/to — no Map lookup needed
@@ -541,12 +553,14 @@ export class PersistentChainEngine {
       throw new Error(`block gasUsed mismatch: claimed ${block.gasUsed}, computed ${totalGasUsed}`)
     }
 
+    phaseLog("commitState")
     // Commit EVM stateManager checkpoint (matches the checkpoint() at block start)
     await this.evm.commitState()
 
     // Create immutable stored block — never mutate the input parameter
     let stateRoot: Hex | undefined
     if (this.stateTrie) {
+      phaseLog("stateTrie.commit")
       const root = await this.stateTrie.commit()
       stateRoot = root as Hex
     }
@@ -596,7 +610,9 @@ export class PersistentChainEngine {
     for (let j = 0; j < blockOps.length; j++) allDbOps.push(blockOps[j])
     for (let j = 0; j < logOps.length; j++) allDbOps.push(logOps[j])
     for (let j = 0; j < nonceOps.length; j++) allDbOps.push(nonceOps[j])
+    phaseLog("db.batch", { opCount: allDbOps.length })
     await this.db.batch(allDbOps)
+    phaseLog("done")
 
     // Batch evict receipt/tx caches once per block instead of per-tx
     this.evm.evictCaches()
