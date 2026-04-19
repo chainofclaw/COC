@@ -58,6 +58,22 @@ export class PersistentChainEngine {
   private nodeSigner: NodeSigner | null = null
   private signatureVerifier: SignatureVerifier | null = null
   private applyingBlock = false
+
+  /**
+   * Force-clear the re-entrant applyBlock guard. The flag is normally cleared
+   * in a finally block, but if applyBlock hangs inside an uninterruptible VM
+   * operation the finally never runs, leaving the flag pinned true and making
+   * every subsequent applyBlock throw "re-entrant" — even legitimate retries.
+   *
+   * This is only safe to call after the hung applyBlock has been given up on
+   * by a higher-level timeout (onFinalized 75s work slot). Any persistent
+   * state it partially wrote is recovered via the trie overlay + LevelDB
+   * batch atomicity guarantees; stale EVM stateManager checkpoints are
+   * revertible on the next block via revertState().
+   */
+  resetApplyingFlag(): void {
+    this.applyingBlock = false
+  }
   private validatorAddressMap: Map<string, string> = new Map()
 
   constructor(cfg: PersistentChainEngineConfig, evm: EvmChain) {
