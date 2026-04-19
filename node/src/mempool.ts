@@ -80,6 +80,18 @@ export class Mempool {
     this.cfg = { ...DEFAULT_CONFIG, ...config }
   }
 
+  /**
+   * Populate the poison set from a persisted store on startup. Restarts
+   * triggered by work-slot-failed → process.exit(1) would otherwise lose
+   * the in-memory poison set, letting gossip re-deliver the same hung
+   * tx and re-trigger the deadlock on the next block.
+   */
+  loadPoisonedHashes(hashes: Iterable<Hex>): void {
+    for (const h of hashes) {
+      this.poisoned.add(h.toLowerCase() as Hex)
+    }
+  }
+
   /** Permanently reject a tx — used after it hangs block execution. */
   poison(hash: Hex): void {
     const MAX_POISONED = 10_000
