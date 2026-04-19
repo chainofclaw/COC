@@ -392,7 +392,7 @@ if (bftEnabled) {
       if (block.txs.length > 0) {
         for (const rawTx of block.txs) {
           try {
-            const txHash = ethers.keccak256(rawTx)
+            const txHash = keccak256(rawTx)
             chain.mempool.remove(txHash as Hex)
           } catch { /* best-effort */ }
         }
@@ -521,7 +521,7 @@ if (bftEnabled) {
           try {
             const poisoned: string[] = []
             for (const rawTx of block.txs) {
-              const txHash = ethers.keccak256(rawTx) as Hex
+              const txHash = keccak256(rawTx) as Hex
               chain.mempool.poison(txHash)
               poisoned.push(txHash)
             }
