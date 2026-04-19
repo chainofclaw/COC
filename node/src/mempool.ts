@@ -67,10 +67,33 @@ export class Mempool {
   private readonly bySender = new Map<Hex, Set<Hex>>()
   // Index: sender+nonce -> tx hash for replacement lookups
   private readonly byNonce = new Map<string, Hex>()
+  // Tx hashes that have been observed to hang applyBlock. When a block's
+  // onFinalized work times out (@ethereumjs/vm runTx hang observed on
+  // testnet, unrecoverable because the inner Promise.race timer cannot
+  // fire through microtask starvation), we mark every tx the block tried
+  // to execute so neither gossip nor the local proposer re-includes them.
+  // Bounded to avoid unbounded growth under sustained abuse.
+  private readonly poisoned = new Set<Hex>()
   private readonly cfg: MempoolConfig
 
   constructor(config?: Partial<MempoolConfig>) {
     this.cfg = { ...DEFAULT_CONFIG, ...config }
+  }
+
+  /** Permanently reject a tx — used after it hangs block execution. */
+  poison(hash: Hex): void {
+    const MAX_POISONED = 10_000
+    if (this.poisoned.size >= MAX_POISONED) {
+      // Drop the oldest entry (FIFO on iteration order) to keep the set bounded.
+      const firstIter = this.poisoned.values().next()
+      if (!firstIter.done) this.poisoned.delete(firstIter.value)
+    }
+    this.poisoned.add(hash.toLowerCase() as Hex)
+    this.removeTx(hash)
+  }
+
+  isPoisoned(hash: Hex): boolean {
+    return this.poisoned.has(hash.toLowerCase() as Hex)
   }
 
   addRawTx(rawTx: Hex, preDecoded?: Transaction): MempoolTx {
@@ -82,6 +105,10 @@ export class Mempool {
     // Replay protection: validate chain ID (reject chainId=0 to prevent cross-chain replay)
     if (tx.chainId !== BigInt(this.cfg.chainId)) {
       throw new Error(`invalid chain ID: expected ${this.cfg.chainId}, got ${tx.chainId}`)
+    }
+
+    if (this.poisoned.has((tx.hash as Hex).toLowerCase() as Hex)) {
+      throw new Error(`tx ${tx.hash} is poisoned (hung block execution previously)`)
     }
 
     const from = tx.from.toLowerCase() as Hex
