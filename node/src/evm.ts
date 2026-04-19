@@ -342,12 +342,35 @@ export class EvmChain {
     if (tx.type === 3) {
       throw new Error("blob transactions (type 3) are not supported")
     }
-    const result = await runTx(this.vm, {
-      tx,
-      block: executionBlock,
-      skipHardForkValidation: true,
-      ...(trustBlock ? { skipNonce: true, skipBalance: true } : {}),
+    // Guard against @ethereumjs/vm runTx hangs — observed on testnet as an
+    // unrecoverable deadlock inside VM.runTx that never resolves/rejects for
+    // otherwise-normal legacy transfers. 15s is generous: a 21k-gas transfer
+    // executes in <10ms under load, and even worst-case heavy contract calls
+    // finish in <2s. A timeout converts the hang into a throw so applyBlock's
+    // catch handler can revert state and surface an error upstream rather
+    // than wedging the chain.
+    const runTxTimeoutMs = 15_000
+    let runTxTimer: NodeJS.Timeout | undefined
+    const runTxTimeout = new Promise<never>((_, rej) => {
+      runTxTimer = setTimeout(
+        () => rej(new Error(`runTx timeout ${runTxTimeoutMs}ms for tx ${bytesToHex(tx.hash())}`)),
+        runTxTimeoutMs,
+      )
     })
+    let result
+    try {
+      result = await Promise.race([
+        runTx(this.vm, {
+          tx,
+          block: executionBlock,
+          skipHardForkValidation: true,
+          ...(trustBlock ? { skipNonce: true, skipBalance: true } : {}),
+        }),
+        runTxTimeout,
+      ])
+    } finally {
+      if (runTxTimer) clearTimeout(runTxTimer)
+    }
     const txHash = bytesToHex(tx.hash())
     this.blockNumber = appliedBlock
     const bnHex = blockNumberHex ?? `0x${appliedBlock.toString(16)}`
