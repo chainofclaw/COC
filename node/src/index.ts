@@ -535,6 +535,22 @@ if (bftEnabled) {
           } catch (poisonErr) {
             log.warn("BFT onFinalized: poison failed", { error: String(poisonErr) })
           }
+          // The hung applyBlock never reached its finally block, so the
+          // re-entrant guard stays pinned true and blocks every future
+          // applyBlock call. Force-clear it now that the work slot has
+          // been given up on — without this, the chain never recovers
+          // even after the poisoned tx is removed.
+          try {
+            const pe = chain as { resetApplyingFlag?: () => void }
+            if (typeof pe.resetApplyingFlag === "function") {
+              pe.resetApplyingFlag()
+              log.warn("BFT onFinalized: cleared applyingBlock guard", {
+                height: block.number.toString(),
+              })
+            }
+          } catch (resetErr) {
+            log.warn("BFT onFinalized: reset failed", { error: String(resetErr) })
+          }
           // Swallow — the queue must keep advancing.
         } finally {
           if (timer) clearTimeout(timer)
