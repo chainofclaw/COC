@@ -52,6 +52,9 @@ out/
 tmp/
 temp/
 *.tmp
+scripts/pdf-build/_tmp_*
+node/revm-wasm/target/
+vendor/
 
 # Playwright MCP screenshots
 .playwright-mcp/
