@@ -603,6 +603,30 @@ if (bftEnabled) {
           } catch (reportErr) {
             log.warn("BFT onFinalized: report dump failed", { error: String(reportErr) })
           }
+          // Also dump the full raw tx bytes so they can be replayed against
+          // a stock @ethereumjs/vm in isolation — the hash alone is not
+          // enough for offline reproduction, we need the signed payload
+          // plus the block context (baseFee, timestamp, parent stateRoot).
+          try {
+            const txDumpPath = join(config.dataDir, `hang-txs-${Date.now()}.json`)
+            const dump = {
+              timestamp: Date.now(),
+              blockHeight: block.number.toString(),
+              blockHash: block.hash,
+              parentHash: block.parentHash,
+              baseFee: block.baseFee?.toString(),
+              timestampMs: block.timestampMs,
+              txs: block.txs,
+            }
+            appendFileSync(txDumpPath, JSON.stringify(dump) + "\n")
+            log.error("BFT onFinalized: hang txs dumped", {
+              height: block.number.toString(),
+              path: txDumpPath,
+              txCount: block.txs.length,
+            })
+          } catch (txDumpErr) {
+            log.warn("BFT onFinalized: tx dump failed", { error: String(txDumpErr) })
+          }
           // Nuclear recovery: BftCoordinator's lastFinalizedHeight now believes
           // this block is finalized, but the chain engine never applied it, so
           // getTip() is one behind. Every future round at this height gets
