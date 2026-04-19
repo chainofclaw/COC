@@ -399,8 +399,30 @@ if (bftEnabled) {
       }
 
       const finalizedBlock = { ...block, bftFinalized: true }
+      // Guard against applyBlock hanging (observed: node-1/node-2 stuck
+      // 10+ min in "BFT round finalized" with no "BFT finalized block" log,
+      // no error, and an indefinitely pending onFinalizedQueue that blocked
+      // every subsequent BFT round). A hard timeout converts the hang into
+      // a surfaced error so the queue can progress and trySync can recover.
+      const applyTimeoutMs = 30_000
+      const applyWithTimeout = async (retry: boolean) => {
+        let timer: NodeJS.Timeout | undefined
+        const timeout = new Promise<never>((_, rej) => {
+          timer = setTimeout(
+            () => rej(new Error(`applyBlock timeout ${applyTimeoutMs}ms${retry ? " (retry)" : ""}`)),
+            applyTimeoutMs,
+          )
+        })
+        try {
+          log.info("BFT onFinalized: applyBlock begin", { height: block.number.toString(), retry })
+          await Promise.race([chain.applyBlock(finalizedBlock, true), timeout])
+          log.info("BFT onFinalized: applyBlock end", { height: block.number.toString(), retry })
+        } finally {
+          if (timer) clearTimeout(timer)
+        }
+      }
       try {
-        await chain.applyBlock(finalizedBlock, true)
+        await applyWithTimeout(false)
       } catch (applyErr) {
         // block may already be applied during propose — persist bftFinalized flag
         const persistentEngine = chain as { blockIndex?: { getBlockByHash(h: string): Promise<ChainBlock | null>; updateBlock(b: ChainBlock): Promise<void> } }
@@ -429,7 +451,7 @@ if (bftEnabled) {
                   await pe.evm.resetExecution()
                   if (currentHeight > 0n) await pe.rebuildFromPersisted(currentHeight)
                 }
-                await chain.applyBlock(finalizedBlock, true)
+                await applyWithTimeout(true)
                 log.info("BFT onFinalized: EVM reset + retry succeeded", { height: block.number.toString() })
               } catch (retryErr) {
                 log.error("BFT onFinalized: apply failed after EVM reset — block NOT stored", {
@@ -465,8 +487,15 @@ if (bftEnabled) {
         bftCoordinator?.updateValidators(active.map((v) => ({ id: v.id, stake: v.stake })))
       }
       } // end of work()
-      onFinalizedQueue = onFinalizedQueue.then(work, work)
-      return onFinalizedQueue
+      // Chain this work after the prior one completes (success or failure).
+      // Return the CURRENT slot's promise, not the cumulative queue — a hung
+      // or slow work() must not propagate its wait time to future callers of
+      // onFinalized. BftCoordinator awaits this; if it rejects, the coordinator
+      // logs and continues, instead of being blocked forever.
+      const prior = onFinalizedQueue
+      const current = prior.then(work, work)
+      onFinalizedQueue = current.catch(() => {}) // absorb rejection for chaining
+      return current
     },
   })
   log.info("BFT consensus enabled", { validators: config.validators.length })
