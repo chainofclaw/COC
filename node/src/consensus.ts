@@ -390,13 +390,16 @@ export class ConsensusEngine {
 
       // Track sync progress: compute max peer height per sync round (allows decrease after reorgs).
       // Cap accepted heights to prevent malicious peers from reporting extreme values that
-      // break the progress display (showing 0% forever). A legitimate peer should not
-      // be more than 10x our height + 1000 blocks ahead.
+      // break the progress display (showing 0% forever).
+      // - Bootstrap phase (localHeight <= 100): accept up to 10M to allow new nodes to join
+      //   a long-running chain via snap sync + block replay.
+      // - Steady state (localHeight > 100): cap at 10x + 1000 buffer to detect malicious peers.
       const MAX_HEIGHT_MULTIPLIER = 10n
       const MAX_HEIGHT_BUFFER = 1000n
-      const maxAcceptableHeight = localHeight > 0n
+      const BOOTSTRAP_MAX_HEIGHT = 10_000_000n
+      const maxAcceptableHeight = localHeight > 100n
         ? localHeight * MAX_HEIGHT_MULTIPLIER + MAX_HEIGHT_BUFFER
-        : 10_000n // genesis bootstrap: accept up to 10k
+        : BOOTSTRAP_MAX_HEIGHT
       let roundMaxPeerHeight = 0n
       for (const snap of snapshots) {
         if (Array.isArray(snap.blocks) && snap.blocks.length > 0) {
