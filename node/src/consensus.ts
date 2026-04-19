@@ -261,6 +261,27 @@ export class ConsensusEngine {
           return
         }
       }
+
+      // Wall-clock slot alignment: each proposer runs its own 3s-interval
+      // timer with an independent phase, so two adjacent proposers' ticks
+      // can fall ~1s apart and produce back-to-back blocks. Gate proposing
+      // on the chain tip's slot — if the tip was already produced in the
+      // current slot, wait for the next one. This caps the whole network
+      // to one block per `blockTimeMs` regardless of per-node timer phase.
+      if (this.bft) {
+        try {
+          const tip = await Promise.resolve(this.chain.getTip())
+          if (tip) {
+            const currentSlot = Math.floor(Date.now() / this.cfg.blockTimeMs)
+            const tipSlot = Math.floor(tip.timestampMs / this.cfg.blockTimeMs)
+            if (tipSlot >= currentSlot) {
+              return // Tip is from current (or future) slot — nothing to do yet
+            }
+          }
+        } catch {
+          // Best-effort; fall through if getTip throws.
+        }
+      }
     }
 
     this.proposeInFlight = true
