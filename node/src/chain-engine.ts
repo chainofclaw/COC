@@ -59,6 +59,9 @@ export class ChainEngine {
   private nodeSigner: NodeSigner | null = null
   private signatureVerifier: SignatureVerifier | null = null
   private applyingBlock = false
+  // Serializes concurrent applyBlock callers. Mirrors PersistentChainEngine
+  // so both backends present the same API contract to callers.
+  private applyQueue: Promise<void> = Promise.resolve()
   private validatorAddressMap: Map<string, string> = new Map()
 
   constructor(cfg: ChainEngineConfig, evm: EvmChain) {
@@ -220,7 +223,16 @@ export class ChainEngine {
   }
 
   async applyBlock(block: ChainBlock, locallyProposed = false): Promise<void> {
-    // Re-entrant guard (async EVM execution can yield back to event loop)
+    const run = () => this._applyBlockImpl(block, locallyProposed)
+    const prior = this.applyQueue
+    const current = prior.then(run, run)
+    this.applyQueue = current.catch(() => {})
+    return current
+  }
+
+  private async _applyBlockImpl(block: ChainBlock, locallyProposed = false): Promise<void> {
+    // Re-entrant guard retained as a safety net; the queue is the primary
+    // serialization mechanism, but this keeps resetApplyingFlag's contract.
     if (this.applyingBlock) {
       throw new Error("applyBlock re-entrant call detected")
     }

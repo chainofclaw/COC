@@ -58,6 +58,8 @@ export class PersistentChainEngine {
   private nodeSigner: NodeSigner | null = null
   private signatureVerifier: SignatureVerifier | null = null
   private applyingBlock = false
+  // Serializes concurrent applyBlock callers (see public applyBlock jsdoc).
+  private applyQueue: Promise<void> = Promise.resolve()
 
   /**
    * Force-clear the re-entrant applyBlock guard. The flag is normally cleared
@@ -351,8 +353,35 @@ export class PersistentChainEngine {
     return block
   }
 
+  /**
+   * Public applyBlock: serializes concurrent callers via a Promise-chain queue.
+   *
+   * Prior to this change, a second concurrent caller would hit the `applyingBlock`
+   * re-entrant guard and throw `applyBlock re-entrant call detected`, forcing every
+   * caller (proposer path, gossip onBlock, BFT onFinalized) to wrap the call in a
+   * try/catch that silently recovered. Testing showed this fail-fast reaction
+   * masked a real need for serialization: the proposer can finish applying while
+   * a BFT-retry gossip frame re-delivers the same block, and both are valid.
+   *
+   * The queue ensures every caller's promise resolves in FIFO order. Rejections
+   * stay with their own caller — a failed apply does not poison the chain, so
+   * subsequent queued applies still run.
+   */
   async applyBlock(block: ChainBlock, locallyProposed = false, senderByRawTx?: Map<string, string>): Promise<void> {
-    // Re-entrant guard (async EVM execution can yield back to event loop)
+    const run = () => this._applyBlockImpl(block, locallyProposed, senderByRawTx)
+    const prior = this.applyQueue
+    const current = prior.then(run, run)
+    // Absorb rejections into the chain-tracking promise so the next caller's
+    // `then(run, run)` continues; per-caller rejection is still exposed via `current`.
+    this.applyQueue = current.catch(() => {})
+    return current
+  }
+
+  private async _applyBlockImpl(block: ChainBlock, locallyProposed = false, senderByRawTx?: Map<string, string>): Promise<void> {
+    // Re-entrant guard retained as a safety net: the queue prevents concurrent
+    // callers under normal paths, but the flag is still consulted by
+    // `resetApplyingFlag()` after the onFinalized 75 s outer timeout abandons
+    // a hung apply. Keeping it here preserves that recovery contract.
     if (this.applyingBlock) {
       throw new Error("applyBlock re-entrant call detected")
     }
