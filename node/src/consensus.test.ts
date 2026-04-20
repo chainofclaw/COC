@@ -91,10 +91,12 @@ test("empty snapshot is rejected", async () => {
 })
 
 describe("snap sync validation", () => {
-  it("rejects state snapshot with mismatched blockHeight", async () => {
+  // State snapshots AHEAD of the chain-snapshot tip are valid on a live chain
+  // (validators produce blocks while snapshots are in flight). State snapshots
+  // BEHIND the tip can never help us bootstrap, so they must be rejected.
+  it("rejects state snapshot older than chain tip", async () => {
     const { engine } = await createTestEngine()
 
-    // Build a mock P2P and snapSync provider
     const mockP2p = {
       fetchSnapshots: async () => [],
       receiveBlock: async () => {},
@@ -109,7 +111,7 @@ describe("snap sync validation", () => {
         fetchCalled = true
         return {
           stateRoot: "0x" + "ab".repeat(32),
-          blockHeight: "999", // Mismatched height
+          blockHeight: "50", // behind tip=100
           blockHash: "0x" + "cd".repeat(32),
           accounts: [],
           version: 1,
@@ -130,8 +132,6 @@ describe("snap sync validation", () => {
       { snapSync: mockSnapSync },
     )
 
-    // Directly test trySnapSync via the internal method path
-    // Create a snapshot with a tip block that doesn't match
     const tipBlock = {
       number: 100n,
       hash: ("0x" + "ee".repeat(32)) as Hex,
@@ -142,10 +142,9 @@ describe("snap sync validation", () => {
       finalized: false,
     }
 
-    // Access private method for testing
     const result = await (consensus as any).trySnapSync({ blocks: [tipBlock] })
     assert.equal(fetchCalled, true)
-    assert.equal(importCalled, false, "should not import when blockHeight mismatches")
+    assert.equal(importCalled, false, "should not import a state snapshot behind tip")
     assert.equal(result, false)
   })
 })
