@@ -162,6 +162,22 @@ export class EvmChain {
       const address = Address.fromString(acc.address)
       const account = Account.fromAccountData({ balance: BigInt(acc.balanceWei) })
       await this.vm.stateManager.putAccount(address, account)
+      // Read-back sanity check — if the state backend silently drops the put
+      // (observed on testnet when the persistent trie loses its root after a
+      // crash/restart), every subsequent block appears to start from a zeroed
+      // state and eth_getBalance returns 0 for pre-funded accounts.
+      const readback = await this.vm.stateManager.getAccount(address)
+      if (!readback) {
+        evmLog.error("prefund account not readable after putAccount", {
+          address: acc.address,
+          expectedBalance: acc.balanceWei,
+        })
+      } else {
+        evmLog.info("prefund account seeded", {
+          address: acc.address,
+          balance: readback.balance.toString(),
+        })
+      }
     }
   }
 
@@ -206,14 +222,23 @@ export class EvmChain {
         },
       ]
       const hdr = executionBlock.header
+      // Belt-and-suspenders: every numeric field goes through an explicit
+      // fallback so structured clone never sees undefined. Worker was
+      // observed throwing "Cannot convert undefined to a BigInt" with
+      // the previous (hdr.X ?? fallback).toString() style when hdr.X
+      // was a type-declared bigint that resolved to undefined at runtime.
+      const safeStr = (v: bigint | undefined | null, fallback: bigint): string => {
+        const b = v ?? fallback ?? 0n
+        return b.toString()
+      }
       const res = await sharedWorkerPool.runTx({
         rawTx,
         preload,
         blockContext: {
-          blockNumber: hdr.number.toString(),
-          baseFeePerGas: (hdr.baseFeePerGas ?? baseFeePerGas).toString(),
-          timestampSec: hdr.timestamp.toString(),
-          gasLimit: (hdr.gasLimit ?? 30_000_000n).toString(),
+          blockNumber: safeStr(hdr.number, 0n),
+          baseFeePerGas: safeStr(hdr.baseFeePerGas, baseFeePerGas),
+          timestampSec: safeStr(hdr.timestamp, BigInt(Math.floor(Date.now() / 1000))),
+          gasLimit: safeStr(hdr.gasLimit, 30_000_000n),
         },
         chainId: this.chainId,
         hardfork: String(this.hardfork),

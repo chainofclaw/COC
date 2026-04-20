@@ -647,14 +647,31 @@ export class ConsensusEngine {
           return { url: peer.url, snap }
         }),
       )
+      // On an actively-producing chain, state snapshots can be AHEAD of the chain
+      // snapshot's tip by the time they return (fetch is ~100ms, block time is 3s).
+      // Rejecting anything that doesn't exactly match tip.hash made bootstrap
+      // impossible on a live testnet. We now accept any snapshot whose height
+      // is at or ahead of the chain snapshot tip, and let peer-to-peer voting
+      // on (stateRoot, validators) reject outliers.
+      const tipHeight = BigInt(tip.number)
       for (const result of fetchResults) {
         if (result.status !== "fulfilled") continue
         const { url, snap } = result.value
         snapshotCache.set(url, snap)
         if (!snap) continue
-        if (snap.blockHeight !== tip.number.toString() || snap.blockHash !== tip.hash) continue
+        let snapHeight: bigint
+        try {
+          snapHeight = BigInt(snap.blockHeight)
+        } catch {
+          continue
+        }
+        // Reject snapshots from peers that are behind us (they can't help bootstrap).
+        if (snapHeight < tipHeight) continue
         const vHash = hashValidators(snap.validators)
-        const voteKey = `${snap.stateRoot}|${vHash}`
+        // Group by (stateRoot, validatorsHash, blockHash). blockHash disambiguates
+        // responses from peers that happen to be at different heights — they
+        // shouldn't get aggregated into the same vote.
+        const voteKey = `${snap.blockHash}|${snap.stateRoot}|${vHash}`
         const existing = peerStateRoots.get(voteKey)
         peerStateRoots.set(voteKey, {
           count: (existing?.count ?? 0) + 1,
@@ -710,17 +727,20 @@ export class ConsensusEngine {
       // State import FIRST (before blocks) to prevent half-corruption:
       // if state fails for all peers, we skip block import entirely.
       let stateImported = false
+      let importedStateHeight: bigint = 0n
       for (const peer of peers) {
         try {
           const stateSnap = snapshotCache.get(peer.url) ?? null
           if (!stateSnap) continue
 
-          if (
-            stateSnap.blockHeight !== tip.number.toString() ||
-            stateSnap.blockHash !== tip.hash
-          ) {
+          // Ignore peers behind the chain tip — their state can't bootstrap us.
+          let snapHeight: bigint
+          try {
+            snapHeight = BigInt(stateSnap.blockHeight)
+          } catch {
             continue
           }
+          if (snapHeight < tipHeight) continue
 
           if (stateSnap.stateRoot !== trustedStateRoot) {
             log.warn("snap sync: peer stateRoot disagrees with consensus", {
