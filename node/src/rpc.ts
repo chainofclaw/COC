@@ -1621,6 +1621,12 @@ async function handleRpc(
       }
       return []
     }
+    case "coc_blockIndexStatus": {
+      // Exposes whether the node maintains a block index so clients can distinguish
+      // "index empty" from "index not enabled" — avoids Explorer falling back to
+      // slow serial block-scan on nodes that will never return data anyway.
+      return { enabled: hasBlockIndex(chain) }
+    }
     case "coc_getContractInfo": {
       const addr = (payload.params ?? [])[0] as string
       if (!addr) throw new Error("address required")
