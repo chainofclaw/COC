@@ -84,6 +84,14 @@ export async function exportStateSnapshot(
     active: v.active,
   }))
 
+  log.info("state snapshot exported", {
+    accounts: accounts.length,
+    validators: snapshotValidators?.length ?? 0,
+    stateRoot,
+    blockHeight: blockHeight.toString(),
+    blockHash,
+  })
+
   return {
     version: 1,
     stateRoot,
