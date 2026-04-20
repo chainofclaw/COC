@@ -8,6 +8,27 @@ import type { EvmBlockEnv, EvmHardfork } from "./evm-types.ts"
 import { PersistentStateManager } from "./storage/persistent-state-manager.ts"
 import type { HardforkScheduleEntry } from "./config.ts"
 import type { CallTrace, CallTraceResult, RpcAccessListItem, TraceOptions, TraceStep, TransactionTrace, TxTraceResult } from "./trace-types.ts"
+import { RunTxWorkerPool, isSimpleTransfer, type PreloadedAccount } from "./runtx-worker-pool.ts"
+import { createLogger } from "./logger.ts"
+
+const evmLog = createLogger("evm")
+// Opt-in (disabled by default): set COC_USE_RUNTX_WORKER=1 to route
+// simple transfers through a worker-thread runTx harness, where a
+// Worker.terminate() call can kill a hung Promise that Promise.race
+// cannot. Contract creation and contract calls always stay on the
+// main-thread path because the worker's in-memory state manager
+// would miss arbitrary SLOAD targets.
+const WORKER_ENABLED = process.env.COC_USE_RUNTX_WORKER === "1"
+const sharedWorkerPool: RunTxWorkerPool | null = WORKER_ENABLED
+  ? new RunTxWorkerPool(10_000, 3)
+  : null
+
+// Exported for tests and graceful shutdown to kill the idle worker so the
+// Node process can exit. Production node's shutdown path should call this
+// from its SIGTERM handler (faucet + runtime already do).
+export async function closeSharedRuntxWorker(): Promise<void> {
+  if (sharedWorkerPool) await sharedWorkerPool.close()
+}
 
 export interface ExecutionResult {
   txHash: string
@@ -146,6 +167,145 @@ export class EvmChain {
 
   setPrefundAccounts(accounts: PrefundAccount[]): void {
     this.prefundAccounts = [...accounts]
+  }
+
+  /**
+   * Dispatch a simple-transfer tx to the shared worker pool. Returns null
+   * if the worker path fails for any reason — caller should fall back to
+   * the main-thread runTx.
+   */
+  private async _tryRunTxInWorker(
+    tx: ReturnType<typeof createTxFromRLP>,
+    rawTx: string,
+    executionBlock: ReturnType<typeof createBlock>,
+    baseFeePerGas: bigint,
+  ): Promise<{
+    gasUsed: string
+    exceptionError?: string
+    logs: Array<{ address: string; topics: string[]; data: string }>
+    accountsAfter: PreloadedAccount[]
+  } | null> {
+    if (!sharedWorkerPool) return null
+    try {
+      const fromAddr = tx.getSenderAddress().toString()
+      const toAddr = tx.to!.toString()
+      const [fromAcc, toAcc] = await Promise.all([
+        this.vm.stateManager.getAccount(Address.fromString(fromAddr)),
+        this.vm.stateManager.getAccount(Address.fromString(toAddr)),
+      ])
+      const preload: PreloadedAccount[] = [
+        {
+          address: fromAddr,
+          nonce: (fromAcc?.nonce ?? 0n).toString(),
+          balance: (fromAcc?.balance ?? 0n).toString(),
+        },
+        {
+          address: toAddr,
+          nonce: (toAcc?.nonce ?? 0n).toString(),
+          balance: (toAcc?.balance ?? 0n).toString(),
+        },
+      ]
+      const hdr = executionBlock.header
+      const res = await sharedWorkerPool.runTx({
+        rawTx,
+        preload,
+        blockContext: {
+          blockNumber: hdr.number.toString(),
+          baseFeePerGas: (hdr.baseFeePerGas ?? baseFeePerGas).toString(),
+          timestampSec: hdr.timestamp.toString(),
+          gasLimit: (hdr.gasLimit ?? 30_000_000n).toString(),
+        },
+        chainId: this.chainId,
+        hardfork: String(this.hardfork),
+      })
+      if (!res.ok) {
+        evmLog.warn("runtx-worker: worker returned error, falling back", { error: res.error })
+        return null
+      }
+      return {
+        gasUsed: res.gasUsed ?? "21000",
+        exceptionError: res.exceptionError,
+        logs: res.logs ?? [],
+        accountsAfter: res.accountsAfter ?? [],
+      }
+    } catch (err) {
+      evmLog.warn("runtx-worker: dispatch failed, falling back", { error: String(err) })
+      return null
+    }
+  }
+
+  /** Build the BlockExecutionResult from a worker response so the caller
+   * downstream sees the same shape as main-thread runTx. */
+  private _assembleResultFromWorker(
+    tx: ReturnType<typeof createTxFromRLP>,
+    rawTx: string,
+    workerResult: {
+      gasUsed: string
+      exceptionError?: string
+      logs: Array<{ address: string; topics: string[]; data: string }>
+      accountsAfter: PreloadedAccount[]
+    },
+    appliedBlock: bigint,
+    txIndex: number,
+    blockHash: string,
+    blockNumberHex: string | undefined,
+    baseFeePerGas: bigint,
+    knownSender?: string,
+  ): BlockExecutionResult {
+    const txHash = bytesToHex(tx.hash())
+    this.blockNumber = appliedBlock
+    const bnHex = blockNumberHex ?? `0x${appliedBlock.toString(16)}`
+    const txIdxHex = `0x${txIndex.toString(16)}`
+    const gasUsedHex = `0x${BigInt(workerResult.gasUsed).toString(16)}`
+    const status = workerResult.exceptionError === undefined ? "0x1" : "0x0"
+    const from = knownSender ?? tx.getSenderAddress().toString()
+    const to = tx.to ? tx.to.toString() : null
+    const rawGasPrice = tx.gasPrice as bigint | undefined
+    const gasPrice = rawGasPrice != null
+      ? rawGasPrice
+      : (() => {
+          const maxFee = (tx.maxFeePerGas ?? 0n) as bigint
+          const maxPriority = (tx.maxPriorityFeePerGas ?? 0n) as bigint
+          const priorityFee = maxFee > baseFeePerGas
+            ? (maxPriority < maxFee - baseFeePerGas ? maxPriority : maxFee - baseFeePerGas)
+            : 0n
+          return baseFeePerGas + priorityFee
+        })()
+    const gasPriceHex = `0x${gasPrice.toString(16)}`
+    const logs = workerResult.logs.map((entry, logIdx) => ({
+      address: entry.address,
+      topics: entry.topics,
+      data: entry.data,
+      blockNumber: bnHex,
+      transactionHash: txHash,
+      transactionIndex: txIdxHex,
+      logIndex: `0x${logIdx.toString(16)}`,
+      removed: false,
+    }))
+    const receipt: TxReceipt = {
+      transactionHash: txHash,
+      blockNumber: bnHex,
+      blockHash,
+      transactionIndex: txIdxHex,
+      cumulativeGasUsed: gasUsedHex,
+      gasUsed: gasUsedHex,
+      logs,
+      logsBloom: "0x" + "0".repeat(512),
+      from,
+      to,
+      contractAddress: null,
+      status,
+      type: `0x${(tx.type ?? 0).toString(16)}`,
+      effectiveGasPrice: gasPriceHex,
+    }
+    return {
+      txHash,
+      gasUsed: BigInt(workerResult.gasUsed),
+      success: workerResult.exceptionError === undefined,
+      receipt,
+      from,
+      to,
+    }
   }
 
   async applyBlockContext(context: ExecutionContext = {}): Promise<void> {
@@ -342,13 +502,45 @@ export class EvmChain {
     if (tx.type === 3) {
       throw new Error("blob transactions (type 3) are not supported")
     }
+
+    // Worker-thread isolation for simple transfers (opt-in via env var).
+    // The observed testnet hangs are all on 21k-gas value transfers, and
+    // Worker.terminate() reliably kills a hung Promise that Promise.race
+    // cannot. Contract interactions skip this path because the worker's
+    // in-memory state manager would miss arbitrary SLOAD targets.
+    if (WORKER_ENABLED && sharedWorkerPool && isSimpleTransfer(tx)) {
+      const workerResult = await this._tryRunTxInWorker(
+        tx, rawTx, executionBlock, baseFeePerGas,
+      )
+      if (workerResult) {
+        // Apply the worker's state diff to the main stateManager so the
+        // rest of the block (subsequent txs, stateRoot commit) sees the
+        // new nonce/balance as if runTx had run locally.
+        for (const a of workerResult.accountsAfter ?? []) {
+          const addr = Address.fromString(a.address)
+          await this.vm.stateManager.putAccount(addr, Account.fromAccountData({
+            nonce: BigInt(a.nonce),
+            balance: BigInt(a.balance),
+          }))
+        }
+        // Synthesize a runTx-like result object sufficient for the
+        // downstream receipt/logs assembly in this function.
+        return this._assembleResultFromWorker(
+          tx, rawTx, workerResult, appliedBlock, txIndex, blockHash,
+          blockNumberHex, baseFeePerGas, knownSender,
+        )
+      }
+      // worker path failed (deadline, terminate, or error) — fall through to
+      // the main-thread runTx so the tx still gets a chance to execute
+      // locally. If main-thread ALSO hangs, the onFinalized 75s outer
+      // timeout is still our safety net.
+    }
+
     // Guard against @ethereumjs/vm runTx hangs — observed on testnet as an
     // unrecoverable deadlock inside VM.runTx that never resolves/rejects for
     // otherwise-normal legacy transfers. 15s is generous: a 21k-gas transfer
     // executes in <10ms under load, and even worst-case heavy contract calls
-    // finish in <2s. A timeout converts the hang into a throw so applyBlock's
-    // catch handler can revert state and surface an error upstream rather
-    // than wedging the chain.
+    // finish in <2s.
     const runTxTimeoutMs = 15_000
     let runTxTimer: NodeJS.Timeout | undefined
     const runTxTimeout = new Promise<never>((_, rej) => {
