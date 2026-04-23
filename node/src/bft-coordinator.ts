@@ -122,13 +122,19 @@ export class BftCoordinator {
       commitTimeoutMs: this.cfg.commitTimeoutMs ?? DEFAULT_COMMIT_TIMEOUT_MS,
     }
 
-    this.activeRound = new BftRound(block.number, roundCfg)
-
     // Speculatively compute the stateRoot we'd produce if we applied this
     // block against our current state. Our prepare vote commits to that
     // pair, so quorum only finalizes blocks whose post-execution state
     // WE can reproduce — not just whose header hash we accept.
+    //
+    // CRITICAL: compute BEFORE creating activeRound. During the async
+    // compute, inbound prepares must see activeRound=null so handleMessage
+    // buffers them in pendingMessages (which this round later drains).
+    // If activeRound existed but phase stayed "propose" during compute,
+    // handlePrepare would silently drop inbound votes with `phase !== "prepare"`.
     const localStateRoot = await this.computeLocalStateRootSafe(block)
+
+    this.activeRound = new BftRound(block.number, roundCfg)
 
     // Handle the propose phase
     const outgoing = this.activeRound.handlePropose(block, block.proposer, localStateRoot)
