@@ -1,8 +1,9 @@
 {
   "name": "@openclaw/coc-nodeops",
-  "version": "0.2.0",
+  "version": "0.9.0-deprecated",
+  "deprecated": "Merged into @openclaw/claw-mem — install that instead.",
   "type": "module",
-  "description": "OpenClaw COC node operations and configuration management",
+  "description": "[DEPRECATED] Functionality has moved to @openclaw/claw-mem. This package is a thin compatibility shim.",
   "openclaw": {
     "extensions": [
       "./index.ts"
@@ -18,12 +19,9 @@
       "defaultChoice": "local"
     }
   },
-  "dependencies": {
-    "@clack/prompts": "^0.10.0",
-    "ethers": "^6.16.0",
-    "zod": "^4.3.6"
-  },
+  "dependencies": {},
   "peerDependencies": {
-    "openclaw": "*"
+    "openclaw": "*",
+    "@openclaw/claw-mem": "^1.0.0"
   }
 }
