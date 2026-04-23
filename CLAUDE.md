@@ -18,8 +18,13 @@ The project uses npm workspaces to manage multiple packages:
 - `wallet/`: CLI wallet tool
 - `tests/`: Integration and end-to-end tests
 - `explorer/`: Next.js blockchain explorer
-- `extensions/coc-backup/`: AI Silicon Immortality — soul backup/recovery, CID registry, carrier daemon, guardian CLI, 9 agent tools
 - `website/`: Project website
+
+> **Note:** The previous `extensions/coc-nodeops/` and `extensions/coc-backup/`
+> folders have been migrated to the standalone
+> [`@chainofclaw/claw-mem`](https://www.npmjs.com/package/@chainofclaw/claw-mem)
+> npm package. Install it directly (`npm install @chainofclaw/claw-mem`) —
+> COC no longer hosts the extension code.
 
 ## Runtime Requirements
 
@@ -87,8 +92,9 @@ Uses Node.js built-in test framework and Hardhat test runner (`1682` tests acros
 - **Faucet tests**: `faucet/src/*.test.ts` (`26` tests, `3` files) - drip flow, web UI, server wiring, cooldown logic
 - **Contract deploy tests**: `contracts/deploy/*.test.ts` (`18` tests, `2` files) - deploy config resolution, CLI wrapper, PoSe deploy helper validation
 - **Contract tests**: `cd contracts && npm test` (`227` tests, `10` files) - PoSeManager v1, PoSeManagerV2, v2 E2E lifecycle, gas benchmarks, security audit, EIP-712 cross-check, SoulRegistry (identity, backup, recovery, guardians), DIDRegistry (key rotation, delegation, credentials, ephemeral identities, lineage)
-- **Extension tests**: `extensions/coc-nodeops/src/**/*.test.ts` (`24` tests, `3` files) - node types, network presets, node manager
-- **Backup extension tests**: `extensions/coc-backup/test/*.test.ts` (`47` tests, `9` files) - binary handler (6), change detector (9), CID resolver (6), lifecycle (3), state restorer (2), scheduler (1), carrier daemon (7), resurrection flow (9), offline monitor (4)
+- **claw-mem tests** (extension replacement, now in its own repo):
+  [`github.com/NGPlateform/claw-mem`](https://github.com/NGPlateform/claw-mem)
+  — 208 tests (node/backup/recovery/carrier lifecycles); `npm test` inside that repo.
 - **Storage layer tests**: `node/src/storage/*.test.ts` (included in node layer)
 
 Running tests:
@@ -114,8 +120,8 @@ cd /path/to/COC && node --experimental-default-type=module --experimental-strip-
 # Faucet tests
 cd /path/to/COC && node --experimental-strip-types --test faucet/src/*.test.ts
 
-# Extension tests
-cd extensions/coc-nodeops && node --experimental-strip-types --test src/node-types.test.ts src/network-presets.test.ts src/runtime/node-manager.test.ts
+# claw-mem tests (formerly coc-nodeops + coc-backup extensions)
+cd /path/to/claw-mem && npm test
 
 # Contract deploy config tests
 cd /path/to/COC && node --experimental-default-type=module --experimental-strip-types --test contracts/deploy/*.test.ts

@@ -12,8 +12,7 @@
     "wallet",
     "tests",
     "explorer",
-    "website",
-    "extensions/coc-backup"
+    "website"
   ],
   "scripts": {
     "test": "echo \"Run tests in individual packages\"",
