@@ -294,6 +294,8 @@ const p2p = new P2PNode(
           senderId: msg.senderId,
           signature: (msg.signature ?? "") as Hex,
         }
+        // Propagate stateRoot (part of BFT quorum on (hash, stateRoot)).
+        if (msg.stateRoot) bftMsg.stateRoot = msg.stateRoot
         await bftCoordinator.handleMessage(bftMsg)
       }
       : undefined,
@@ -393,15 +395,27 @@ if (bftEnabled) {
       })
     },
     broadcastMessage: async (msg: BftMessage) => {
-      await p2p.broadcastBft({
-        type: msg.type,
+      const payload: BftMessagePayload = {
+        type: msg.type as "prepare" | "commit",
         height: msg.height.toString(),
         blockHash: msg.blockHash,
         senderId: msg.senderId,
         signature: msg.signature,
-      })
+      }
+      if (msg.stateRoot) payload.stateRoot = msg.stateRoot
+      await p2p.broadcastBft(payload)
       // Also broadcast BFT messages via wire protocol (dual transport)
       wireBftBroadcastFn?.(msg)
+    },
+    // Speculatively execute `block` against current state and return the
+    // post-execution stateRoot that this node would commit to — lets BFT
+    // quorum require agreement on (blockHash, stateRoot) instead of hash
+    // alone. If chain engine doesn't support speculative execution, return
+    // undefined and BFT falls back to hash-only quorum.
+    computeLocalStateRoot: async (block: ChainBlock) => {
+      const engine = chain as unknown as { speculativelyComputeStateRoot?: (b: ChainBlock) => Promise<Hex | undefined> }
+      if (!engine.speculativelyComputeStateRoot) return undefined
+      return engine.speculativelyComputeStateRoot(block)
     },
     onFinalized: (block) => {
       // Queue onFinalized calls to prevent re-entrant applyBlock.
@@ -970,13 +984,17 @@ if (config.enableWireProtocol) {
   // BFT messages via wire protocol
   wireBftBroadcastFn = (msg: BftMessage) => {
     const wireType = msg.type === "prepare" ? MessageType.BftPrepare : MessageType.BftCommit
-    ws.broadcastFrame(encodeJsonPayload(wireType, {
+    const framePayload: Record<string, unknown> = {
       type: msg.type,
       height: msg.height.toString(),
       blockHash: msg.blockHash,
       senderId: msg.senderId,
       signature: msg.signature,
-    }))
+    }
+    // Carry stateRoot on wire transport so BFT (hash, stateRoot) quorum works
+    // regardless of whether peers reach us via HTTP gossip or binary wire.
+    if (msg.stateRoot) framePayload.stateRoot = msg.stateRoot
+    ws.broadcastFrame(encodeJsonPayload(wireType, framePayload))
   }
 
   // Build peer ID → wire port mapping from dhtBootstrapPeers config

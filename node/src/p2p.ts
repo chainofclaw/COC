@@ -41,6 +41,14 @@ export interface BftMessagePayload {
   blockHash: Hex
   senderId: string
   signature?: string
+  /**
+   * Post-execution stateRoot the sender computed for this (height, blockHash).
+   * Part of BFT quorum: validators only finalize a block when 2/3+ agree on
+   * BOTH (blockHash, stateRoot). Optional for backward compatibility with
+   * peers still on the hash-only protocol — undefined votes count toward
+   * the winning group when that group's anchor has a stateRoot set.
+   */
+  stateRoot?: Hex
 }
 
 export interface P2PHandlers {
