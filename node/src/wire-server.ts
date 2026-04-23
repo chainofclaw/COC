@@ -495,13 +495,19 @@ export class WireServer {
           log.warn("BFT message height negative", { peer: conn.nodeId, height: msg.height })
           return
         }
-        await this.cfg.onBftMessage({
+        const outMsg: BftMessage = {
           type: bftType,
           height: bftHeight,
           blockHash: msg.blockHash,
           senderId: msg.senderId,
           signature: (msg.signature ?? "") as Hex,
-        })
+        }
+        // Propagate stateRoot (BFT quorum on (hash, stateRoot)). Optional for
+        // wire-compat with older peers that don't carry it.
+        if (typeof (msg as { stateRoot?: string }).stateRoot === "string") {
+          outMsg.stateRoot = (msg as { stateRoot: string }).stateRoot as Hex
+        }
+        await this.cfg.onBftMessage(outMsg)
         break
       }
 

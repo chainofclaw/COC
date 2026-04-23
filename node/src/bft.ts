@@ -19,6 +19,21 @@ export interface BftMessage {
   blockHash: Hex
   senderId: string
   signature: Hex
+  /**
+   * Post-execution stateRoot computed by the sender after speculatively
+   * applying this block to its local state. Optional for backward
+   * compatibility; when undefined, quorum falls back to hash-only voting.
+   *
+   * When set on both a validator's prepare and commit, BFT quorum requires
+   * agreement on BOTH (blockHash, stateRoot). This prevents the pattern
+   * where a proposer's local EVM apply produces a stateRoot other
+   * validators can't reproduce — those validators would previously still
+   * vote yes on block.hash (which doesn't include stateRoot), BFT
+   * finalized anyway, and every follower's applyBlock then threw
+   * stateRoot-mismatch, leaving exactly one node's state ahead of the
+   * others forever.
+   */
+  stateRoot?: Hex
 }
 
 export interface BftRoundConfig {
@@ -32,12 +47,19 @@ export interface BftRoundConfig {
   commitTimeoutMs: number
 }
 
+/** Per-validator vote record: which (blockHash, stateRoot) pair they endorsed. */
+export interface BftVote {
+  blockHash: Hex
+  /** undefined when the validator didn't ship a stateRoot — backward-compat path. */
+  stateRoot?: Hex
+}
+
 export interface BftRoundState {
   height: bigint
   phase: BftPhase
   proposedBlock: ChainBlock | null
-  prepareVotes: Map<string, Hex> // validatorId -> blockHash
-  commitVotes: Map<string, Hex> // validatorId -> blockHash
+  prepareVotes: Map<string, BftVote> // validatorId -> vote
+  commitVotes: Map<string, BftVote>  // validatorId -> vote
   startedAtMs: number
 }
 
@@ -51,6 +73,39 @@ export function quorumThreshold(validators: Array<{ id: string; stake: bigint }>
   // but accumulatedStake always returns 0n, causing infinite timeout loops.
   if (total === 0n) return BigInt(Number.MAX_SAFE_INTEGER)
   return (total * 2n) / 3n + 1n
+}
+
+/**
+ * Group votes by (blockHash, stateRoot) pair and return the voter ids for the
+ * group anchored on `anchorId` — i.e. whatever pair `anchorId` voted for, plus
+ * any other validator who voted for the same pair. Only the anchored group is
+ * eligible to reach quorum, so we never finalize a state the local node can't
+ * reproduce.
+ *
+ * Votes without a stateRoot (legacy path / non-validator observers) cannot be
+ * anchors themselves and are treated as "match any stateRoot" when the anchor
+ * did set one, to preserve backward compatibility during rollout.
+ *
+ * Returns the grouping key so callers can log / diagnose which pair won.
+ */
+export function pickWinningVoteGroup(
+  votes: Map<string, BftVote>,
+  anchorId: string,
+): { ids: string[]; blockHash: Hex | null; stateRoot: Hex | undefined } {
+  const anchor = votes.get(anchorId)
+  if (!anchor) return { ids: [], blockHash: null, stateRoot: undefined }
+
+  const ids: string[] = []
+  for (const [voterId, v] of votes.entries()) {
+    if (v.blockHash !== anchor.blockHash) continue
+    // If anchor has a stateRoot, require the voter's stateRoot to match, OR
+    // allow votes without a stateRoot (legacy compat).
+    if (anchor.stateRoot !== undefined) {
+      if (v.stateRoot !== undefined && v.stateRoot !== anchor.stateRoot) continue
+    }
+    ids.push(voterId)
+  }
+  return { ids, blockHash: anchor.blockHash, stateRoot: anchor.stateRoot }
 }
 
 /**
@@ -99,7 +154,7 @@ export class BftRound {
    * Handle a propose message from the block proposer.
    * Transitions to prepare phase if valid.
    */
-  handlePropose(block: ChainBlock, senderId: string): BftMessage[] {
+  handlePropose(block: ChainBlock, senderId: string, localStateRoot?: Hex): BftMessage[] {
     if (this.state.phase !== "propose") {
       log.warn("ignoring propose in wrong phase", { phase: this.state.phase, height: this.state.height.toString() })
       return []
@@ -125,16 +180,24 @@ export class BftRound {
     this.state.proposedBlock = block
     this.state.phase = "prepare"
 
-    // If we are a validator, send prepare vote
+    // If we are a validator, send prepare vote with our locally-computed stateRoot.
+    // Quorum calculation requires (blockHash, stateRoot) to match — prevents the
+    // case where proposer and followers compute different stateRoots and still
+    // pass quorum because they all agreed on block.hash.
     if (this.isValidator()) {
-      this.state.prepareVotes.set(this.config.localId.toLowerCase(), block.hash)
-      return [{
+      this.state.prepareVotes.set(this.config.localId.toLowerCase(), {
+        blockHash: block.hash,
+        stateRoot: localStateRoot,
+      })
+      const msg: BftMessage = {
         type: "prepare",
         height: this.state.height,
         blockHash: block.hash,
         senderId: this.config.localId,
         signature: "" as Hex, // placeholder — coordinator signs before broadcast
-      }]
+      }
+      if (localStateRoot !== undefined) msg.stateRoot = localStateRoot
+      return [msg]
     }
 
     return []
@@ -144,7 +207,7 @@ export class BftRound {
    * Handle a prepare vote from a validator.
    * If quorum is reached, transition to commit phase.
    */
-  handlePrepare(senderId: string, blockHash: Hex): BftMessage[] {
+  handlePrepare(senderId: string, blockHash: Hex, stateRoot?: Hex): BftMessage[] {
     if (this.state.phase !== "prepare") {
       return []
     }
@@ -170,35 +233,48 @@ export class BftRound {
     // Reject duplicate votes from the same validator (equivocation detector handles evidence)
     if (this.state.prepareVotes.has(senderId.toLowerCase())) return []
 
-    this.state.prepareVotes.set(senderId.toLowerCase(), blockHash)
+    this.state.prepareVotes.set(senderId.toLowerCase(), { blockHash, stateRoot })
 
-    // Check quorum
-    const voters = [...this.state.prepareVotes.keys()]
-    if (hasQuorum(voters, this.config.validators)) {
+    // Quorum requires agreement on BOTH (blockHash, stateRoot). Group votes by
+    // that pair; find the winning group (must include our own vote when we
+    // cast one, since we only commit to the state we can locally reproduce).
+    const winningVoters = pickWinningVoteGroup(
+      this.state.prepareVotes,
+      this.config.localId.toLowerCase(),
+    )
+    if (hasQuorum(winningVoters.ids, this.config.validators)) {
       this.state.phase = "commit"
 
       // Send commit vote
       if (this.isValidator()) {
-        this.state.commitVotes.set(this.config.localId.toLowerCase(), blockHash)
+        // Our own commit aligns with our prepare's stateRoot.
+        const ownPrepare = this.state.prepareVotes.get(this.config.localId.toLowerCase())
+        const ownStateRoot = ownPrepare?.stateRoot
+        this.state.commitVotes.set(this.config.localId.toLowerCase(), {
+          blockHash,
+          stateRoot: ownStateRoot,
+        })
 
-        // Check if early-arriving commits already give us commit quorum (filter by blockHash)
-        // proposedBlock is guaranteed non-null here (set by handlePropose before handlePrepare)
-        const proposedHash = this.state.proposedBlock!.hash
-        const commitVoters = [...this.state.commitVotes.entries()]
-          .filter(([, hash]) => hash === proposedHash)
-          .map(([id]) => id)
-        if (hasQuorum(commitVoters, this.config.validators)) {
+        // Check if early-arriving commits already give us commit quorum on the
+        // same (blockHash, stateRoot) pair.
+        const commitWinner = pickWinningVoteGroup(
+          this.state.commitVotes,
+          this.config.localId.toLowerCase(),
+        )
+        if (hasQuorum(commitWinner.ids, this.config.validators)) {
           this.state.phase = "finalized"
           return []
         }
 
-        return [{
+        const msg: BftMessage = {
           type: "commit",
           height: this.state.height,
           blockHash,
           senderId: this.config.localId,
           signature: "" as Hex, // placeholder — coordinator signs before broadcast
-        }]
+        }
+        if (ownStateRoot !== undefined) msg.stateRoot = ownStateRoot
+        return [msg]
       }
     }
 
@@ -210,7 +286,7 @@ export class BftRound {
    * If quorum is reached, transition to finalized.
    * Commits arriving during prepare phase are recorded for later evaluation.
    */
-  handleCommit(senderId: string, blockHash: Hex): boolean {
+  handleCommit(senderId: string, blockHash: Hex, stateRoot?: Hex): boolean {
     if (this.state.phase !== "commit" && this.state.phase !== "prepare") {
       return false
     }
@@ -236,17 +312,17 @@ export class BftRound {
     // Reject duplicate commit votes from the same validator
     if (this.state.commitVotes.has(senderId.toLowerCase())) return false
 
-    this.state.commitVotes.set(senderId.toLowerCase(), blockHash)
+    this.state.commitVotes.set(senderId.toLowerCase(), { blockHash, stateRoot })
 
     // Only check quorum if already in commit phase
     if (this.state.phase === "commit") {
-      // Filter commit votes to only count those matching the proposed block
-      // proposedBlock is guaranteed non-null here (null check above rejects early)
-      const proposedHash = this.state.proposedBlock!.hash
-      const matchingVoters = [...this.state.commitVotes.entries()]
-        .filter(([, hash]) => hash === proposedHash)
-        .map(([id]) => id)
-      if (hasQuorum(matchingVoters, this.config.validators)) {
+      // Quorum must be on same (blockHash, stateRoot) group. Anchor on our own
+      // vote so we only finalize a block whose state we can reproduce.
+      const winner = pickWinningVoteGroup(
+        this.state.commitVotes,
+        this.config.localId.toLowerCase(),
+      )
+      if (hasQuorum(winner.ids, this.config.validators)) {
         this.state.phase = "finalized"
         return true
       }
@@ -265,15 +341,18 @@ export class BftRound {
           // Cannot process propose without block
           return { outgoing: [], finalized: false }
         }
+        // `msg.stateRoot` on a propose is informational only (it's the
+        // proposer's computed root). Followers compute their own before
+        // voting, so don't forward the proposer's claim as our vote.
         const out = this.handlePropose(this.state.proposedBlock, msg.senderId)
         return { outgoing: out, finalized: false }
       }
       case "prepare": {
-        const out = this.handlePrepare(msg.senderId, msg.blockHash)
+        const out = this.handlePrepare(msg.senderId, msg.blockHash, msg.stateRoot)
         return { outgoing: out, finalized: false }
       }
       case "commit": {
-        const finalized = this.handleCommit(msg.senderId, msg.blockHash)
+        const finalized = this.handleCommit(msg.senderId, msg.blockHash, msg.stateRoot)
         return { outgoing: [], finalized }
       }
     }

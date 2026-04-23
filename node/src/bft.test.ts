@@ -427,3 +427,94 @@ describe("EquivocationDetector", () => {
     assert.equal(d.getEvidence().length, 1)
   })
 })
+
+describe("BftRound stateRoot consensus", () => {
+  const sr1 = ("0x" + "aa".repeat(32)) as Hex  // proposer's computed state
+  const sr2 = ("0x" + "bb".repeat(32)) as Hex  // a dissenter's state
+
+  it("quorum is NOT reached when validators disagree on stateRoot despite matching blockHash", () => {
+    // Regression test for issue #6: BFT previously voted hash-only, letting
+    // quorum form even when validators would compute different post-execution
+    // states. With stateRoot in prepare/commit, the dissenter's vote lands
+    // in a different (hash, stateRoot) group and never reaches quorum.
+    const round = new BftRound(1n, {
+      validators,
+      localId: "v1",
+      prepareTimeoutMs: 5000,
+      commitTimeoutMs: 5000,
+    })
+    const block = makeBlock(1n)
+    round.handlePropose(block, "v1", sr1)  // self votes with sr1
+
+    // Peer v2 reproduces the state and agrees with sr1.
+    const r1 = round.handlePrepare("v2", block.hash, sr1)
+    // Peer v3 computes a different root — this should NOT count toward our quorum.
+    const r2 = round.handlePrepare("v3", block.hash, sr2)
+
+    // Validators: 3 at stake 100, quorum threshold = 201.
+    // Anchored on v1 (sr1): v1 + v2 = 200 stake. Not quorum.
+    // v3 in a different group — shouldn't close the gap.
+    assert.equal(round.state.phase, "prepare",
+      "phase must stay in prepare: only 2/3 agree on (hash, sr1)")
+
+    // Sanity: r1 emitted nothing (didn't reach quorum), r2 emitted nothing.
+    assert.equal(r1.length, 0)
+    assert.equal(r2.length, 0)
+  })
+
+  it("quorum IS reached when all validators agree on (blockHash, stateRoot)", () => {
+    // With 3 equal-stake validators, quorum threshold is 201 — needs all three.
+    const round = new BftRound(1n, {
+      validators,
+      localId: "v1",
+      prepareTimeoutMs: 5000,
+      commitTimeoutMs: 5000,
+    })
+    const block = makeBlock(1n)
+    round.handlePropose(block, "v1", sr1)
+
+    round.handlePrepare("v2", block.hash, sr1)
+    const r3 = round.handlePrepare("v3", block.hash, sr1)
+    assert.equal(round.state.phase, "commit",
+      "commit phase reached with all 3 prepares matching (hash, sr1)")
+    assert.ok(r3.length === 1 && r3[0].type === "commit")
+    assert.equal(r3[0].stateRoot, sr1, "our commit vote also carries sr1")
+  })
+
+  it("legacy (undefined) stateRoot votes still count via hash-only quorum fallback", () => {
+    // Backward compat: nodes that haven't upgraded vote with no stateRoot;
+    // they count toward the winning group when the anchor hasn't set one either.
+    const round = new BftRound(1n, {
+      validators,
+      localId: "v1",
+      prepareTimeoutMs: 5000,
+      commitTimeoutMs: 5000,
+    })
+    const block = makeBlock(1n)
+    round.handlePropose(block, "v1")  // no stateRoot (legacy)
+
+    round.handlePrepare("v2", block.hash)
+    round.handlePrepare("v3", block.hash)
+    assert.equal(round.state.phase, "commit",
+      "legacy flow: quorum reached without stateRoot on full validator set")
+  })
+
+  it("partial stateRoot adoption still reaches quorum when upgraded anchor sees undefined as compatible", () => {
+    // Rollout scenario: v1 upgraded (computes sr1); v2, v3 still legacy (no sr).
+    // pickWinningVoteGroup treats undefined voters as matching the anchor's sr1
+    // (opt-in rule). So v1+v2+v3 reaches quorum on v1's (hash, sr1) group.
+    const round = new BftRound(1n, {
+      validators,
+      localId: "v1",
+      prepareTimeoutMs: 5000,
+      commitTimeoutMs: 5000,
+    })
+    const block = makeBlock(1n)
+    round.handlePropose(block, "v1", sr1)  // anchor has sr1
+
+    round.handlePrepare("v2", block.hash)            // legacy, no sr
+    round.handlePrepare("v3", block.hash)            // legacy, no sr
+    assert.equal(round.state.phase, "commit",
+      "anchor sr + legacy votes without sr still count together during rollout")
+  })
+})
