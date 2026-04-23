@@ -25,6 +25,14 @@ export interface DiscoveryConfig {
   healthCheckTimeoutMs: number
   selfId: string
   selfUrl: string
+  /**
+   * Externally-reachable URL to advertise in /p2p/peers gossip responses.
+   * Allows a node behind NAT / docker-compose bridge to expose a public
+   * URL to external observers while keeping `selfUrl` bound to the
+   * internal address it actually listens on. Optional; falls back to
+   * `selfUrl` when unset.
+   */
+  selfAdvertisedUrl?: string
   peerStorePath?: string
   dnsSeeds?: string[]
   peerMaxAgeMs?: number
@@ -195,10 +203,15 @@ export class PeerDiscovery {
    */
   getPeerListForExchange(): NodePeer[] {
     const active = this.getActivePeers()
-    // Include self in the exchange list
+    // Include self in the exchange list. Publish advertisedUrl when set so
+    // observers behind NAT / outside docker networks receive a reachable URL.
+    const selfAdvertised = this.cfg.selfAdvertisedUrl ?? this.cfg.selfUrl
     return [
-      { id: this.cfg.selfId, url: this.cfg.selfUrl },
-      ...active.slice(0, 20), // Limit to 20 peers per exchange
+      { id: this.cfg.selfId, url: selfAdvertised },
+      ...active.slice(0, 20).map((p) => ({
+        id: p.id,
+        url: p.advertisedUrl ?? p.url,
+      })),
     ]
   }
 
@@ -448,9 +461,22 @@ function normalizePeer(peer: NodePeer): NodePeer | null {
     if (isSSRFTarget(url.hostname)) {
       return null
     }
+    // Preserve advertisedUrl (also normalized against the same SSRF/protocol rules)
+    let advertisedUrl: string | undefined
+    if (peer.advertisedUrl) {
+      try {
+        const a = new URL(peer.advertisedUrl)
+        if ((a.protocol === "http:" || a.protocol === "https:") && a.hostname && !isSSRFTarget(a.hostname)) {
+          advertisedUrl = `${a.protocol}//${a.host}`
+        }
+      } catch {
+        // Invalid advertisedUrl: drop it rather than failing the whole peer.
+      }
+    }
     return {
       id: peer.id.trim(),
       url: `${url.protocol}//${url.host}`,
+      ...(advertisedUrl ? { advertisedUrl } : {}),
     }
   } catch {
     return null

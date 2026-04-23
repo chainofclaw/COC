@@ -57,6 +57,13 @@ export interface P2PConfig {
   port: number
   peers: NodePeer[]
   nodeId?: string
+  /**
+   * Externally-reachable URL to publish in /p2p/peers gossip responses.
+   * Required for nodes behind NAT or inside docker networks where the
+   * internal `bind:port` URL is unreachable by external observers.
+   * When unset, the internal URL is advertised as-is.
+   */
+  advertisedUrl?: string
   maxPeers?: number
   maxDiscoveredPerBatch?: number
   enableDiscovery?: boolean
@@ -399,6 +406,7 @@ export class P2PNode {
       {
         selfId: cfg.nodeId ?? "node-1",
         selfUrl: `http://${cfg.bind}:${cfg.port}`,
+        selfAdvertisedUrl: cfg.advertisedUrl,
         maxPeers: cfg.maxPeers ?? 50,
         maxDiscoveredPerBatch: cfg.maxDiscoveredPerBatch ?? 200,
         peerStorePath: cfg.peerStorePath,

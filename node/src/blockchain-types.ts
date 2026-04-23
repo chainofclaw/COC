@@ -40,6 +40,15 @@ export interface ChainSnapshot {
 export interface NodePeer {
   id: string
   url: string
+  /**
+   * Externally-reachable URL to advertise to other peers during gossip.
+   * When a node runs behind NAT or a docker-compose bridge, the `url` used
+   * by cluster-internal peers (e.g. http://node-2:19780) is not reachable
+   * from outside. Setting `advertisedUrl` lets /p2p/peers responses publish
+   * the external URL while keeping `url` for direct connections.
+   * Optional; falls back to `url` for backward compatibility.
+   */
+  advertisedUrl?: string
 }
 
 export interface PendingFilter {

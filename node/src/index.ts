@@ -206,6 +206,7 @@ const p2p = new P2PNode(
     port: config.p2pPort,
     peers: config.peers,
     nodeId: config.nodeId,
+    advertisedUrl: config.advertisedP2pUrl,
     maxPeers: config.p2pMaxPeers,
     enableDiscovery: true,
     peerStorePath: config.peerStorePath,
