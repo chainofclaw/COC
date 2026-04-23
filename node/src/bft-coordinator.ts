@@ -31,6 +31,18 @@ export interface BftCoordinatorConfig {
   signer?: NodeSigner
   /** Signature verifier for validating BFT messages */
   verifier?: SignatureVerifier
+  /**
+   * Speculatively execute `block` against the node's current state and return
+   * the post-execution stateRoot. Called before emitting our prepare vote so
+   * that the vote commits to a (blockHash, stateRoot) pair we can locally
+   * reproduce — downstream BFT quorum then guarantees all finalizing
+   * validators agreed on the same post-execution state.
+   *
+   * When omitted, BFT falls back to the legacy hash-only quorum behavior.
+   * When the callback throws or returns undefined, the validator abstains
+   * from voting this round (round will time out and a new proposer will try).
+   */
+  computeLocalStateRoot?: (block: ChainBlock) => Promise<Hex | undefined>
 }
 
 /**
@@ -112,8 +124,14 @@ export class BftCoordinator {
 
     this.activeRound = new BftRound(block.number, roundCfg)
 
+    // Speculatively compute the stateRoot we'd produce if we applied this
+    // block against our current state. Our prepare vote commits to that
+    // pair, so quorum only finalizes blocks whose post-execution state
+    // WE can reproduce — not just whose header hash we accept.
+    const localStateRoot = await this.computeLocalStateRootSafe(block)
+
     // Handle the propose phase
-    const outgoing = this.activeRound.handlePropose(block, block.proposer)
+    const outgoing = this.activeRound.handlePropose(block, block.proposer, localStateRoot)
 
     // Sign and broadcast prepare votes
     for (const msg of outgoing) {
@@ -225,7 +243,7 @@ export class BftCoordinator {
 
     switch (msg.type) {
       case "prepare": {
-        const outgoing = this.activeRound.handlePrepare(msg.senderId, msg.blockHash)
+        const outgoing = this.activeRound.handlePrepare(msg.senderId, msg.blockHash, msg.stateRoot)
         // handlePrepare may finalize immediately if early commits already reached quorum
         if (this.activeRound.state.phase === "finalized" && this.activeRound.state.proposedBlock) {
           log.info("BFT round finalized (early commits)", { height: msg.height.toString() })
@@ -252,7 +270,7 @@ export class BftCoordinator {
         break
       }
       case "commit": {
-        const finalized = this.activeRound.handleCommit(msg.senderId, msg.blockHash)
+        const finalized = this.activeRound.handleCommit(msg.senderId, msg.blockHash, msg.stateRoot)
         if (finalized && this.activeRound.state.proposedBlock) {
           log.info("BFT round finalized", { height: msg.height.toString() })
           const block = this.activeRound.state.proposedBlock
@@ -351,6 +369,28 @@ export class BftCoordinator {
     // Without this, the caller could modify the array after passing it, potentially
     // corrupting quorum calculations in an active BFT round.
     this.cfg.validators = validators.map(v => ({ id: v.id, stake: v.stake }))
+  }
+
+  /**
+   * Invoke the optional `computeLocalStateRoot` callback with panic safety.
+   * Errors are caught + logged; on error we return undefined, which leaves the
+   * vote anchored on block hash only (legacy behavior). This matches the
+   * historical contract while preferring the (hash, stateRoot) pair when
+   * computation succeeds.
+   */
+  private async computeLocalStateRootSafe(block: ChainBlock): Promise<Hex | undefined> {
+    const hook = this.cfg.computeLocalStateRoot
+    if (!hook) return undefined
+    try {
+      return await hook(block)
+    } catch (err) {
+      log.warn("computeLocalStateRoot threw; voting without stateRoot", {
+        height: block.number.toString(),
+        hash: block.hash,
+        error: String(err),
+      })
+      return undefined
+    }
   }
 
   private startTimeout(): void {
