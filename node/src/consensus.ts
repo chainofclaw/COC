@@ -398,6 +398,18 @@ export class ConsensusEngine {
     }
   }
 
+  /**
+   * Explicitly trigger a sync attempt now (as opposed to waiting for the
+   * periodic syncTimer). Use this when the caller has reason to believe the
+   * local chain has diverged and wants fast recovery — e.g. BFT onFinalized
+   * applyBlock failed and the node is sitting behind quorum until the next
+   * interval tick. Idempotent: if a sync is already in flight, this call
+   * becomes a no-op.
+   */
+  async requestSyncNow(): Promise<void> {
+    await this.trySync()
+  }
+
   private async trySync(): Promise<void> {
     if (this.syncInFlight) return
     this.syncInFlight = true

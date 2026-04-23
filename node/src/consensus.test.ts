@@ -400,3 +400,32 @@ test("applyBlock accepts block with matching stateRoot", async () => {
   // Locally proposed blocks should always succeed
   assert.ok(block.hash)
 })
+
+test("requestSyncNow triggers an immediate trySync cycle", async () => {
+  const { engine } = await createTestEngine()
+
+  let fetchSnapshotsCalls = 0
+  const mockP2p = {
+    fetchSnapshots: async () => {
+      fetchSnapshotsCalls++
+      return []
+    },
+    broadcastBlock: async () => {},
+    receiveBlock: async () => {},
+  }
+
+  const consensus = new ConsensusEngine(
+    engine as any,
+    mockP2p as any,
+    // Long interval so the background timer does NOT race the explicit call.
+    { blockTimeMs: 1000, syncIntervalMs: 300_000, enableSnapSync: false },
+  )
+
+  // Public API: caller (e.g. BFT onFinalized failure path) triggers it on demand.
+  await consensus.requestSyncNow()
+  assert.equal(fetchSnapshotsCalls, 1, "first call should run one sync cycle")
+
+  // Second call should also execute (no in-flight guard holding stale state).
+  await consensus.requestSyncNow()
+  assert.equal(fetchSnapshotsCalls, 2, "second call should run another cycle")
+})
