@@ -53,6 +53,42 @@ describe("PeerDiscovery", () => {
     assert.equal(exchangeList[0].id, "node-0")
   })
 
+  it("getPeerListForExchange advertises selfAdvertisedUrl over internal selfUrl", () => {
+    const scoring = makeScoring()
+    const discovery = new PeerDiscovery(
+      [makePeer("node-2")],
+      scoring,
+      {
+        selfId: "node-1",
+        selfUrl: "http://127.0.0.1:19780", // internal bind
+        selfAdvertisedUrl: "http://public.example.com:19880", // NAT-mapped external
+      },
+    )
+    const list = discovery.getPeerListForExchange()
+    assert.equal(list[0].id, "node-1")
+    assert.equal(list[0].url, "http://public.example.com:19880",
+      "self must be advertised via selfAdvertisedUrl, not selfUrl")
+  })
+
+  it("getPeerListForExchange advertises peer.advertisedUrl over peer.url", () => {
+    const scoring = makeScoring()
+    const discovery = new PeerDiscovery(
+      [
+        { id: "node-2", url: "http://node-2:19780", advertisedUrl: "http://199.192.16.79:29782" },
+        { id: "node-3", url: "http://node-3:19780" }, // no advertisedUrl
+      ],
+      scoring,
+      { selfId: "node-1", selfUrl: "http://127.0.0.1:19780" },
+    )
+    const list = discovery.getPeerListForExchange()
+    const node2 = list.find((p) => p.id === "node-2")
+    const node3 = list.find((p) => p.id === "node-3")
+    assert.ok(node2)
+    assert.equal(node2.url, "http://199.192.16.79:29782")
+    assert.ok(node3)
+    assert.equal(node3.url, "http://node-3:19780", "falls back to peer.url when advertisedUrl unset")
+  })
+
   it("addDiscoveredPeers skips self and duplicates", () => {
     const scoring = makeScoring()
     const discovery = new PeerDiscovery(
