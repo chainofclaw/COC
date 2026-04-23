@@ -33,7 +33,14 @@ export interface NodeConfig {
   storage: StorageConfig
   p2pBind: string
   p2pPort: number
-  peers: Array<{ id: string; url: string }>
+  peers: Array<{ id: string; url: string; advertisedUrl?: string }>
+  /**
+   * Externally-reachable URL to publish in /p2p/peers gossip responses.
+   * Use when the node runs behind NAT or inside a container network — its
+   * internal listen URL (derived from p2pBind+p2pPort) won't be reachable
+   * from observers. Defaults to the internal URL.
+   */
+  advertisedP2pUrl?: string
   validators: string[]
   blockTimeMs: number
   syncIntervalMs: number
@@ -355,6 +362,11 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
   // Resolve node private key: env var → file → auto-generate
   const nodePrivateKey = await resolveNodeKey(dataDir)
 
+  // advertisedP2pUrl: env var > user config; undefined means "advertise as-is"
+  const userAdvertised = (user as Record<string, unknown>).advertisedP2pUrl
+  const advertisedP2pUrl = process.env.COC_ADVERTISED_P2P_URL
+    ?? (typeof userAdvertised === "string" && userAdvertised.length > 0 ? userAdvertised : undefined)
+
   return {
     dataDir,
     nodeId: "node-1",
@@ -455,6 +467,8 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     poseOnchainAuthTimeoutMs,
     poseOnchainAuthFailOpen,
     poseChallengerAuthCacheTtlMs,
+    // env var COC_ADVERTISED_P2P_URL wins over user config
+    ...(advertisedP2pUrl !== undefined ? { advertisedP2pUrl } : {}),
     dhtRequireAuthenticatedVerify,
     rpcBind,
     p2pBind,
