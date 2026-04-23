@@ -484,8 +484,19 @@ if (bftEnabled) {
                 // Do NOT force-store the block. Force-storing without tx execution
                 // causes permanent EVM state divergence (stateRoot mismatch).
                 // The block is intentionally left unapplied — the node will be
-                // behind by 1+ blocks. The sync mechanism (trySync) should
-                // eventually pull the full state from peers.
+                // behind by 1+ blocks. Trigger an IMMEDIATE sync attempt so the
+                // node catches up from peers instead of waiting for the next
+                // syncIntervalMs tick — the interval-based recovery path was
+                // observed to leave nodes permanently behind when a single
+                // block's apply failed and no further divergence-widening
+                // events occurred to nudge it.
+                try {
+                  await consensus.requestSyncNow()
+                } catch (syncErr) {
+                  log.warn("BFT onFinalized: requestSyncNow failed", {
+                    error: String(syncErr),
+                  })
+                }
               }
             }
           } catch {
