@@ -292,6 +292,26 @@ cd contracts && npm test
 - DHT iterative lookup uses wire protocol FIND_NODE when available, falls back to local routing table
 - Wire protocol and HTTP gossip have independent dedup (BoundedSet) and cross-protocol relay
 
+## Known issues (testnet debugging record, 2026-04)
+
+Tracked on [github.com/NGPlateform/COC/issues](https://github.com/NGPlateform/COC/issues):
+
+- **#2** — Peer identity verification fails when peers advertise docker-internal DNS URLs. Fixed by #4 (`fix/advertised-url-peer-discovery`): `NodePeer.advertisedUrl` + `NodeConfig.advertisedP2pUrl` + env `COC_ADVERTISED_P2P_URL`. Deployments behind NAT/docker must set the advertised URL for external observers.
+- **#3** — Validators on the same network commit divergent state tries (same block number → different stateRoot per validator), and tx deploys show up on only 2 of 3 validators' `eth_getCode` even with `receipt.status=1`. Likely downstream of #2 — validators couldn't verify each other's identity so BFT quorum never formed. Re-validate after deploying the #4 fix.
+
+When debugging a multi-node cluster, the quick diagnostic is:
+
+```bash
+for BN in <block> <block>; do
+  for port in <rpc ports>; do
+    curl -s http://<host>:$port -d '{"...eth_getBlockByNumber...[$BN,false]..."}' \
+      | jq -r '.result.stateRoot'
+  done
+done
+```
+
+All three per-block stateRoots should match; if they don't, the cluster is forked.
+
 ## Configuration File Locations
 
 - Node config: loaded via environment variables or `node/src/config.ts`
