@@ -403,8 +403,14 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     peerMaxAgeMs: 7 * 24 * 60 * 60 * 1000,
     p2pMaxPeers: 50,
     p2pMaxDiscoveredPerBatch: 200,
-    p2pRateLimitWindowMs: 60_000,
-    p2pRateLimitMaxRequests: 240,
+    p2pRateLimitWindowMs: safeParseInt(
+      process.env.COC_P2P_RATE_LIMIT_WINDOW_MS,
+      Number((user as Record<string, unknown>).p2pRateLimitWindowMs ?? 60_000),
+    ),
+    p2pRateLimitMaxRequests: safeParseInt(
+      process.env.COC_P2P_RATE_LIMIT_MAX_REQUESTS,
+      Number((user as Record<string, unknown>).p2pRateLimitMaxRequests ?? 240),
+    ),
     p2pRequireInboundAuth,
     p2pInboundAuthMode,
     p2pAuthMaxClockSkewMs,
