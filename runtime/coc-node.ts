@@ -1,11 +1,10 @@
 import http from "node:http";
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Wallet } from "ethers";
 import { loadConfig } from "./lib/config.ts";
 import { InMemoryStore } from "./lib/state.ts";
-import { buildMerklePath } from "../node/src/ipfs-merkle.ts";
-import type { UnixFsFileMeta } from "../node/src/ipfs-types.ts";
+import { IpfsBlockstore } from "../node/src/ipfs-blockstore.ts";
+import { loadStorageProof, MerkleLeavesCache } from "./lib/storage-proof.ts";
 import { createNodeSigner, createNodeSignerV2, buildReceiptSignMessage } from "../node/src/crypto/signer.ts";
 import { keccak256Hex } from "../services/relayer/keccak256.ts";
 import { createLogger } from "../node/src/logger.ts";
@@ -17,6 +16,15 @@ const config = await loadConfig();
 const bind = process.env.COC_NODE_BIND || config.nodeBind || "127.0.0.1";
 const port = Number(process.env.COC_NODE_PORT || config.nodePort || 18780);
 const storageDir = resolveStorageDir(config.dataDir, config.storageDir);
+
+// Phase C2.1: when FF is on, the receipt handler reads real chunk bytes
+// from the IPFS blockstore rooted at `storageDir` (same path the main
+// node/src/index.ts IPFS subsystem uses) and derives Merkle proofs live.
+// With FF off, we keep the pre-baked `file-meta.json` path so existing
+// deployments behave identically until operator flips the switch.
+const poseStorageFromBlockstore = config.poseStorageFromBlockstore === true;
+const storageBlockstore = poseStorageFromBlockstore ? new IpfsBlockstore(storageDir) : undefined;
+const merkleLeavesCache = new MerkleLeavesCache(500);
 
 const nodePrivateKey = process.env.COC_NODE_PK || Wallet.createRandom().privateKey;
 const nodeSigner = createNodeSigner(nodePrivateKey);
@@ -131,7 +139,11 @@ const server = http.createServer((req, res) => {
         if (!cid) {
           return json(res, 400, { error: "missing cid in challenge querySpec" });
         }
-        loadStorageProof(storageDir, cid, chunkIndex)
+        loadStorageProof(
+          { storageDirPath: storageDir, blockstore: storageBlockstore, cache: merkleLeavesCache },
+          cid,
+          chunkIndex,
+        )
           .then((proof) => {
             const storageResponseBody = {
                 ok: true,
@@ -280,27 +292,6 @@ function buildRelayResponseBody(
   return { ok: true, routeTag, witness };
 }
 
-async function loadStorageProof(storageDirPath: string, cid: string, chunkIndex: number): Promise<{
-  leafHash: string;
-  merkleRoot: string;
-  merklePath: string[];
-}> {
-  const meta = await readFileMeta(storageDirPath);
-  const file = meta[cid];
-  if (!file) {
-    throw new Error(`file meta not found for cid ${cid}`);
-  }
-  const leafHash = file.merkleLeaves[chunkIndex];
-  if (!leafHash) {
-    throw new Error(`invalid chunk index ${chunkIndex}`);
-  }
-  const merklePath = buildMerklePath(file.merkleLeaves, chunkIndex);
-  return {
-    leafHash,
-    merkleRoot: file.merkleRoot,
-    merklePath,
-  };
-}
 
 const selfRpcUrl = process.env.COC_SELF_RPC_URL || `http://127.0.0.1:${port}`;
 
@@ -364,11 +355,3 @@ async function fetchBlockHash(blockNumber: number): Promise<string | null> {
   }
 }
 
-async function readFileMeta(storageDirPath: string): Promise<Record<string, UnixFsFileMeta>> {
-  try {
-    const raw = await readFile(join(storageDirPath, "file-meta.json"), "utf-8");
-    return JSON.parse(raw) as Record<string, UnixFsFileMeta>;
-  } catch {
-    return {};
-  }
-}

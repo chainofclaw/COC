@@ -61,6 +61,18 @@ export interface CocRuntimeConfig {
   rewardManifestDir?: string;
   epochNonceStrict?: boolean;
   pendingChallengesPath?: string;
+  /**
+   * Phase C2.1 feature flag. When true, runtime/coc-node.ts's
+   * `/pose/receipt` Storage handler derives Merkle proofs from the live
+   * IPFS blockstore (reading real bytes via the C1.3 fetch-or-serve
+   * path) instead of the pre-baked `file-meta.json`. Leave false until
+   * C1 is deployed and soaked so a PoSe challenge against a CID not
+   * locally pinned can actually fall through to a peer pull; otherwise
+   * storage challenges against recently-uploaded-to-another-node CIDs
+   * will all fail because we only trust blockstore.get at challenge
+   * time.
+   */
+  poseStorageFromBlockstore?: boolean;
 }
 
 export function resolveDataDir(): string {
