@@ -174,6 +174,30 @@ export class PersistentStateTrie implements IStateTrie {
 
   private trieDb: TrieDBAdapter
 
+  /**
+   * Dry-run mode switch (set to true only by forkForDryRun).
+   *
+   * In normal operation, `putCode` writes bytecode straight to LevelDB (it's
+   * content-addressed by keccak256, so there's no correctness concern) and
+   * `getStorageTrie` creates storage tries without opening their own v6
+   * checkpoint frame.
+   *
+   * Both paths violate the Phase B isolation contract when they happen on
+   * a fork: the code blob hits LevelDB immediately (orphaned if the dry-run
+   * is discarded), and storage trie writes flow through the per-address
+   * adapter straight to LevelDB because the adapter has no checkpoint
+   * context of its own.
+   *
+   * When dryRunMode is true we:
+   *   - intercept putCode into an in-memory `dryRunCodeScratch` Map so the
+   *     fork can read back anything it wrote but LevelDB stays clean;
+   *   - getCode consults the scratch first, then LevelDB;
+   *   - every newly-opened storage trie immediately gets a v6 checkpoint so
+   *     its CheckpointDB parks subsequent puts in memory.
+   */
+  private dryRunMode = false
+  private dryRunCodeScratch: Map<string, Uint8Array> | null = null
+
   constructor(db: IDatabase, opts?: { maxCachedTries?: number; maxAccountCache?: number }) {
     this.db = db
     this.maxCachedTries = opts?.maxCachedTries ?? DEFAULT_MAX_CACHED_TRIES
@@ -336,14 +360,27 @@ export class PersistentStateTrie implements IStateTrie {
   }
 
   async getCode(codeHash: string): Promise<Uint8Array | null> {
+    // Dry-run PSM must see writes the fork made in this session before it
+    // falls through to the shared LevelDB (for baseline code).
+    if (this.dryRunMode && this.dryRunCodeScratch?.has(codeHash)) {
+      return this.dryRunCodeScratch.get(codeHash) ?? null
+    }
     const key = CODE_PREFIX + codeHash
     return this.db.get(key)
   }
 
   async putCode(code: Uint8Array): Promise<string> {
     const codeHash = keccak256(code)
+    // On a dry-run fork, park the code in a per-fork scratch map instead of
+    // the shared LevelDB. The fork's `getCode` checks this map first, so
+    // the dry-run sees its own writes. Nothing reaches LevelDB — when the
+    // fork is discarded, the Map is GC'd with it.
+    if (this.dryRunMode) {
+      if (!this.dryRunCodeScratch) this.dryRunCodeScratch = new Map()
+      this.dryRunCodeScratch.set(codeHash, code)
+      return codeHash
+    }
     const key = CODE_PREFIX + codeHash
-
     await this.db.put(key, code)
     return codeHash
   }
@@ -597,6 +634,16 @@ export class PersistentStateTrie implements IStateTrie {
     storageTrie = new Trie({ db: trieDb as any, root: rootBytes })
     this.storageTries.set(address, storageTrie)
 
+    // Dry-run isolation: open a v6 checkpoint on freshly-created storage
+    // tries so their puts stay in the frame's in-memory keyValueMap. Without
+    // this, storage writes for a newly-touched address would flow through
+    // trieDb straight to the shared LevelDB — the same orphan pattern
+    // state-race.test.ts and the mid-block revert test already cover for
+    // the non-fork case.
+    if (this.dryRunMode) {
+      await storageTrie.checkpoint()
+    }
+
     return storageTrie
   }
 
@@ -673,8 +720,13 @@ export class PersistentStateTrie implements IStateTrie {
     // with the parent's committed root but a fresh (empty) CheckpointDB.
     forked.trie = this.trie.shallowCopy(false)
     forked.lastStateRoot = this.lastStateRoot
-    // Open the isolation frame. Writes from here on land only in the frame's
-    // in-memory keyValueMap; they reach LevelDB only on outermost commit.
+    // Dry-run mode: intercept putCode into per-fork scratch + auto-checkpoint
+    // newly-opened storage tries so their puts stay in-memory (otherwise
+    // they flow through per-address TrieDBAdapter straight to LevelDB).
+    forked.dryRunMode = true
+    // Open the isolation frame on the account trie. Writes from here on land
+    // only in the frame's in-memory keyValueMap; they reach LevelDB only on
+    // outermost commit — which the forkForDryRun API contract forbids.
     await forked.checkpoint()
     return forked
   }

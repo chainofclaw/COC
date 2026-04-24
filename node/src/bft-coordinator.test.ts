@@ -166,4 +166,89 @@ describe("BftCoordinator", () => {
     await coord.startRound(makeBlock(1n))
     assert.equal(broadcasted.length, 0) // observer doesn't vote
   })
+
+  // --- Phase B integration: computeLocalStateRoot wired through to prepare vote.
+  // See plans/coc-phase-b-stateroot-vote.md §B2.7. Covers the end-to-end BFT
+  // contract that (a) prepare votes carry the stateRoot from the hook, and
+  // (b) validators whose hook returns a different value form a separate
+  // quorum group — the (blockHash, stateRoot) pair fails to reach 2/3 when
+  // a proposer claims a stateRoot we can't reproduce.
+
+  it("computeLocalStateRoot output is attached to the outgoing prepare vote", async () => {
+    const broadcasted: BftMessage[] = []
+    const fakeRoot = ("0x" + "be".repeat(32)) as Hex
+    const coord = new BftCoordinator({
+      localId: "v1",
+      validators,
+      broadcastMessage: async (msg) => { broadcasted.push(msg) },
+      onFinalized: async () => {},
+      computeLocalStateRoot: async () => fakeRoot,
+    })
+
+    await coord.startRound(makeBlock(1n))
+    const prep = broadcasted.find((m) => m.type === "prepare")
+    assert.ok(prep, "prepare vote must be broadcast")
+    assert.strictEqual(prep!.stateRoot, fakeRoot, "prepare carries the stateRoot the hook returned")
+  })
+
+  it("quorum does NOT finalize when proposer's claimed stateRoot diverges from our hook", async () => {
+    let finalized = false
+    const broadcasted: BftMessage[] = []
+    const ourRoot = ("0x" + "aa".repeat(32)) as Hex   // what we (v1) compute
+    const theirRoot = ("0x" + "bb".repeat(32)) as Hex // what v2/v3 (on a fork) compute
+
+    const coord = new BftCoordinator({
+      localId: "v1",
+      validators,
+      prepareTimeoutMs: 100, // short so the test doesn't hang
+      commitTimeoutMs: 100,
+      broadcastMessage: async (msg) => { broadcasted.push(msg) },
+      onFinalized: async () => { finalized = true },
+      computeLocalStateRoot: async () => ourRoot,
+    })
+
+    const block = makeBlock(1n)
+    await coord.startRound(block)
+
+    // v2 and v3 vote with a different stateRoot — their speculative would
+    // have computed a different post-state (simulating a proposer whose
+    // claimed block can't be reproduced by 2/3 of the set).
+    await coord.handleMessage({ ...bftMsg("prepare", 1n, block.hash, "v2"), stateRoot: theirRoot })
+    await coord.handleMessage({ ...bftMsg("prepare", 1n, block.hash, "v3"), stateRoot: theirRoot })
+
+    // Wait past the prepare timeout so the coordinator clears the round.
+    await new Promise((r) => setTimeout(r, 200))
+
+    assert.equal(finalized, false, "quorum on (blockHash, ourRoot) must NOT form — our vote is alone")
+    const commit = broadcasted.find((m) => m.type === "commit")
+    assert.equal(commit, undefined, "no commit should be emitted without prepare quorum")
+  })
+
+  it("quorum DOES finalize when all three validators' hooks agree on the stateRoot", async () => {
+    let finalized = false
+    const broadcasted: BftMessage[] = []
+    const agreedRoot = ("0x" + "cc".repeat(32)) as Hex
+
+    const coord = new BftCoordinator({
+      localId: "v1",
+      validators,
+      prepareTimeoutMs: 1000,
+      commitTimeoutMs: 1000,
+      broadcastMessage: async (msg) => { broadcasted.push(msg) },
+      onFinalized: async () => { finalized = true },
+      computeLocalStateRoot: async () => agreedRoot,
+    })
+
+    const block = makeBlock(1n)
+    await coord.startRound(block)
+
+    // v2 and v3 vote the SAME stateRoot — prepare quorum forms.
+    await coord.handleMessage({ ...bftMsg("prepare", 1n, block.hash, "v2"), stateRoot: agreedRoot })
+    await coord.handleMessage({ ...bftMsg("prepare", 1n, block.hash, "v3"), stateRoot: agreedRoot })
+    // Commit quorum.
+    await coord.handleMessage({ ...bftMsg("commit", 1n, block.hash, "v2"), stateRoot: agreedRoot })
+    await coord.handleMessage({ ...bftMsg("commit", 1n, block.hash, "v3"), stateRoot: agreedRoot })
+
+    assert.equal(finalized, true, "quorum on matching (blockHash, stateRoot) must finalize")
+  })
 })

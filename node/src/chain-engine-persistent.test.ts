@@ -693,3 +693,191 @@ test("PersistentChainEngine: importSnapSyncBlocks rejects overlapping ranges", a
     rmSync(tmpDirB, { recursive: true, force: true })
   }
 })
+
+// --- Phase B contract: speculativelyComputeStateRoot behavior.
+// See plans/coc-phase-b-stateroot-vote.md §B2.3-6.
+// These tests lock in the "spec root matches apply", "zero side effects",
+// "throws → undefined", and "concurrent-safe" invariants that the BFT
+// (blockHash, stateRoot) pair quorum relies on.
+
+import { PersistentStateTrie } from "./storage/state-trie.ts"
+import { PersistentStateManager } from "./storage/persistent-state-manager.ts"
+import { LevelDatabase } from "./storage/db.ts"
+import type { IDatabase } from "./storage/db.ts"
+
+interface SpecTestCtx {
+  tmpDir: string
+  db: IDatabase
+  trie: PersistentStateTrie
+  evm: EvmChain
+  engine: PersistentChainEngine
+  wallet: Wallet
+  close(): Promise<void>
+}
+
+const SPEC_CHAIN_ID = 18780
+const SPEC_PK = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+
+async function buildSpecCtx(): Promise<SpecTestCtx> {
+  const tmpDir = mkdtempSync(join(tmpdir(), "coc-spec-"))
+  const db = new LevelDatabase(join(tmpDir, "state"))
+  await db.open()
+  const trie = new PersistentStateTrie(db)
+  await trie.init()
+  const sm = new PersistentStateManager(trie)
+  const evm = await EvmChain.create(SPEC_CHAIN_ID, sm)
+  const wallet = new Wallet(SPEC_PK)
+  const engine = new PersistentChainEngine(
+    {
+      dataDir: tmpDir,
+      nodeId: "node-1",
+      chainId: SPEC_CHAIN_ID,
+      validators: ["node-1"],
+      finalityDepth: 3,
+      maxTxPerBlock: 50,
+      minGasPriceWei: 1n,
+      stateTrie: trie,
+      prefundAccounts: [{ address: wallet.address, balanceWei: parseEther("100").toString() }],
+    },
+    evm,
+  )
+  await engine.init()
+  // Produce an empty block 1 so the engine has a tip and prefund is committed.
+  await engine.proposeNextBlock()
+  return {
+    tmpDir,
+    db,
+    trie,
+    evm,
+    engine,
+    wallet,
+    close: async () => {
+      await engine.close()
+      rmSync(tmpDir, { recursive: true, force: true })
+    },
+  }
+}
+
+async function signTx(wallet: Wallet, nonce: number, to = `0x${"11".repeat(20)}`, value = "0.01"): Promise<Hex> {
+  return (await wallet.signTransaction({
+    to, value: parseEther(value), gasLimit: 21000, gasPrice: 1_000_000_000,
+    nonce, chainId: SPEC_CHAIN_ID,
+  })) as Hex
+}
+
+test("speculativelyComputeStateRoot: spec root matches post-apply root", async () => {
+  const ctx = await buildSpecCtx()
+  try {
+    await ctx.engine.addRawTx(await signTx(ctx.wallet, 0))
+    const candidate = await ctx.engine.proposeNextBlock(true)
+    assert.ok(candidate, "deferred-apply proposal must return a block")
+
+    const spec = await ctx.engine.speculativelyComputeStateRoot(candidate!)
+    assert.ok(spec, "speculative root must be defined for a well-formed block")
+
+    await ctx.engine.applyBlock(candidate!, true)
+    const applied = ctx.trie.computeStateRoot()
+    assert.strictEqual(spec, applied, "spec root must equal apply root")
+  } finally {
+    await ctx.close()
+  }
+})
+
+test("speculativelyComputeStateRoot: zero side effects on main trie and LevelDB", async () => {
+  const ctx = await buildSpecCtx()
+  try {
+    await ctx.engine.addRawTx(await signTx(ctx.wallet, 0))
+    const candidate = await ctx.engine.proposeNextBlock(true)
+    assert.ok(candidate)
+
+    const rootBefore = ctx.trie.computeStateRoot()
+    const stackBefore = (ctx.trie as unknown as { trie: { _db: { checkpoints: unknown[] } } }).trie._db.checkpoints.length
+
+    // Snapshot all state-related LevelDB keys.
+    const prefixes = ["s:", "ss:", "c:", "meta:"]
+    const keysBefore: string[] = []
+    for (const p of prefixes) {
+      keysBefore.push(...(await ctx.db.getKeysWithPrefix(p)))
+    }
+    keysBefore.sort()
+
+    await ctx.engine.speculativelyComputeStateRoot(candidate!)
+
+    const rootAfter = ctx.trie.computeStateRoot()
+    const stackAfter = (ctx.trie as unknown as { trie: { _db: { checkpoints: unknown[] } } }).trie._db.checkpoints.length
+    const keysAfter: string[] = []
+    for (const p of prefixes) {
+      keysAfter.push(...(await ctx.db.getKeysWithPrefix(p)))
+    }
+    keysAfter.sort()
+
+    assert.strictEqual(rootAfter, rootBefore, "main trie root must not change")
+    assert.strictEqual(stackAfter, stackBefore, "main trie checkpoint stack must not change")
+    assert.deepStrictEqual(keysAfter, keysBefore, "LevelDB key set must not change")
+  } finally {
+    await ctx.close()
+  }
+})
+
+test("speculativelyComputeStateRoot: returns undefined on malformed tx, main unchanged", async () => {
+  const ctx = await buildSpecCtx()
+  try {
+    // Construct a block with a raw tx bytestring that's structurally invalid
+    // — the EVM's internal tx decode will throw, the engine catches, we get
+    // undefined, and main state stays pristine.
+    const good = await signTx(ctx.wallet, 0)
+    await ctx.engine.addRawTx(good)
+    const base = await ctx.engine.proposeNextBlock(true)
+    assert.ok(base)
+
+    // Clone the block and swap its single tx for garbage.
+    const malformed: ChainBlock = { ...base!, txs: ["0xdeadbeef"] as Hex[] }
+    // Re-hash since txs changed — otherwise the engine's own applyBlock would
+    // throw before executeRawTx, but speculative just feeds txs into the EVM
+    // so the interior decode throw is what we want to exercise.
+    malformed.hash = hashBlockPayload({
+      number: malformed.number, parentHash: malformed.parentHash,
+      proposer: malformed.proposer, timestampMs: malformed.timestampMs,
+      txs: malformed.txs, baseFee: malformed.baseFee,
+      cumulativeWeight: malformed.cumulativeWeight,
+      blobGasUsed: malformed.blobGasUsed, excessBlobGas: malformed.excessBlobGas,
+      parentBeaconBlockRoot: malformed.parentBeaconBlockRoot,
+    })
+
+    const rootBefore = ctx.trie.computeStateRoot()
+    const spec = await ctx.engine.speculativelyComputeStateRoot(malformed)
+    const rootAfter = ctx.trie.computeStateRoot()
+
+    assert.strictEqual(spec, undefined, "spec must return undefined on EVM throw")
+    assert.strictEqual(rootAfter, rootBefore, "main root unchanged despite spec failure")
+  } finally {
+    await ctx.close()
+  }
+})
+
+test("speculativelyComputeStateRoot: concurrent dry-runs don't cross-pollute", async () => {
+  const ctx = await buildSpecCtx()
+  try {
+    // Pin one candidate block and speculate on it twice in parallel. Each
+    // call forks its own isolated trie, so the two runs must agree on the
+    // post-exec root and never touch the main trie. This covers the
+    // "follower processes two back-to-back BFT rounds overlapping" scenario.
+    await ctx.engine.addRawTx(await signTx(ctx.wallet, 0))
+    const candidate = await ctx.engine.proposeNextBlock(true)
+    assert.ok(candidate)
+
+    const rootBefore = ctx.trie.computeStateRoot()
+    const [rootA, rootB] = await Promise.all([
+      ctx.engine.speculativelyComputeStateRoot(candidate!),
+      ctx.engine.speculativelyComputeStateRoot(candidate!),
+    ])
+    const rootAfter = ctx.trie.computeStateRoot()
+
+    assert.ok(rootA, "concurrent call A should return a root")
+    assert.ok(rootB, "concurrent call B should return a root")
+    assert.strictEqual(rootA, rootB, "two speculative runs of the same block must produce the same root")
+    assert.strictEqual(rootAfter, rootBefore, "main root unchanged after concurrent speculations")
+  } finally {
+    await ctx.close()
+  }
+})
