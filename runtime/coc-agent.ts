@@ -1960,7 +1960,10 @@ async function initCidRegistryReader(): Promise<void> {
   // doesn't need its own peer table. nodeUrl is the local coc-node HTTP
   // endpoint; we reuse the existing requestJson helper for consistency
   // with the rest of the agent's node calls.
-  const rpcEndpoint = process.env.COC_RPC_URL ?? "http://127.0.0.1:18780";
+  // Default to the already-configured node URL so Docker-networked
+  // agents reach node-1 by service name; falls back to localhost only
+  // when neither env var nor config is set (bare-metal single-host dev).
+  const rpcEndpoint = process.env.COC_RPC_URL ?? nodeUrl ?? "http://127.0.0.1:18780";
   const dhtProxy: DhtLike = {
     findProviders: async (cid: string, maxK = 3): Promise<string[]> => {
       try {
