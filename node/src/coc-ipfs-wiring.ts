@@ -204,19 +204,15 @@ export function buildCocIpfsWiring(cfg: CocIpfsWiringConfig): {
     const results = await Promise.all(targets.map(async (peerId) => {
       const client = cfg.connMgr.findByNodeId(peerId)
       if (!client) {
-        log.info("pushToK: no client for peerId", { peerId, cid })
-        return { peerId, ok: false, reason: "no-client" as const }
+        log.debug("pushToK: no client for peerId", { peerId, cid })
+        return { peerId, ok: false }
       }
       let ok = false
-      let reason: string | undefined
       try {
         ok = await client.pushBlock(cid, bytes, pushTimeoutMs)
-        if (!ok) reason = "pushBlock-returned-false"
       } catch (err) {
-        reason = String(err)
-        log.info("pushToK: peer pushBlock threw", { peerId, cid, error: reason })
+        log.debug("pushToK: peer pushBlock threw", { peerId, cid, error: String(err) })
       }
-      if (!ok) log.info("pushToK: per-peer push failed", { peerId, cid, reason })
       return { peerId, ok }
     }))
 
