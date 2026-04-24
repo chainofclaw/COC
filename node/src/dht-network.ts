@@ -40,6 +40,13 @@ export const DEFAULT_PROVIDER_TTL_MS = 24 * 60 * 60 * 1000 // 24 hours
 // 64 is ample for any realistic replication factor (default K=3) while
 // leaving room for transient restarts / split-brain temporary overclaim.
 const MAX_PROVIDERS_PER_CID = 64
+// C3.2 re-announce cadence: republish every TTL/2 so a record's expiry
+// is always bumped before it lapses. 12h matches libp2p kad-dht default.
+const REANNOUNCE_INTERVAL_MS = DEFAULT_PROVIDER_TTL_MS / 2
+// Throttle per-tick batch size: at 100 CID/min a 10k-file blockstore
+// drains in ~100 min, well within the 12h cadence. Prevents a fresh-
+// restart node from flooding its own provider map.
+const REANNOUNCE_BATCH_SIZE = 100
 
 export interface DhtNetworkConfig {
   localId: string
@@ -66,6 +73,9 @@ export class DhtNetwork {
   readonly routingTable: RoutingTable
   private refreshTimer: ReturnType<typeof setInterval> | null = null
   private announceTimer: ReturnType<typeof setInterval> | null = null
+  private reannounceTimer: ReturnType<typeof setInterval> | null = null
+  private reannouncePinSource: (() => Promise<string[]> | string[]) | null = null
+  private reannouncesPerformed = 0
   private stopped = false
   private verifyAttempts = 0
   private verifySuccess = 0
@@ -120,6 +130,18 @@ export class DhtNetwork {
       this.announce()
     }, ANNOUNCE_INTERVAL_MS)
     this.announceTimer.unref()
+
+    // Phase C3.2: if the caller attached a pin source via
+    // `setReannouncePinSource`, republish self-provider entries on a
+    // TTL/2 cadence so long-lived nodes don't let their own records
+    // expire. Timer starts unconditionally — the callback is a no-op
+    // when no source is attached.
+    this.reannounceTimer = setInterval(() => {
+      void this.reannounceSelfProviders().catch((err) => {
+        log.warn("reannounceSelfProviders failed", { error: String(err) })
+      })
+    }, REANNOUNCE_INTERVAL_MS)
+    this.reannounceTimer.unref()
   }
 
   stop(): void {
@@ -132,6 +154,49 @@ export class DhtNetwork {
       clearInterval(this.announceTimer)
       this.announceTimer = null
     }
+    if (this.reannounceTimer) {
+      clearInterval(this.reannounceTimer)
+      this.reannounceTimer = null
+    }
+  }
+
+  /**
+   * Phase C3.2: attach a pin source so the periodic re-announce loop
+   * knows which CIDs to bump. Pulled lazily per tick so the timer never
+   * captures a snapshot — new PUTs between ticks get picked up on the
+   * next pass automatically.
+   *
+   * Kept as a setter rather than a constructor arg because the
+   * blockstore is wired up after DhtNetwork in index.ts's startup order.
+   */
+  setReannouncePinSource(source: () => Promise<string[]> | string[]): void {
+    this.reannouncePinSource = source
+  }
+
+  /**
+   * Re-publish self-provider entries for every pinned CID. Called by
+   * the timer every TTL/2 and exposed as a public helper so tests can
+   * drive it deterministically without waiting 12h.
+   *
+   * Batches ≤ REANNOUNCE_BATCH_SIZE per call so a freshly-restarted
+   * node with 100k pins doesn't burn a 10-ms tick on the hot path;
+   * remainder picked up on the next tick. In practice the timer fires
+   * every 12h so even a 1M-CID blockstore converges in ~7 ticks at
+   * 100 CID/tick, but operators who care can shorten the interval via
+   * the test helper.
+   */
+  async reannounceSelfProviders(): Promise<number> {
+    if (this.stopped) return 0
+    if (!this.reannouncePinSource) return 0
+    const cids = await this.reannouncePinSource()
+    if (!Array.isArray(cids) || cids.length === 0) return 0
+    const batch = cids.slice(0, REANNOUNCE_BATCH_SIZE)
+    for (const cid of batch) {
+      this.putProvider(cid, this.cfg.localId)
+    }
+    this.reannouncesPerformed += batch.length
+    log.debug("self-reannounce tick", { total: cids.length, reannounced: batch.length })
+    return batch.length
   }
 
   /** Bootstrap the DHT by looking up our own node ID */

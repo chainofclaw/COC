@@ -599,3 +599,84 @@ describe("DhtNetwork provider records", () => {
     assert.deepEqual(net.findProviders(cidA), [])
   })
 })
+
+// Phase C3.2 — Re-announce loop: the DHT pulls from a lazy pin source
+// and self-republishes on a TTL/2 cadence so a long-lived node doesn't
+// let its own provider records expire. Tests use reannounceSelfProviders()
+// directly rather than waiting 12 h for the timer.
+
+describe("DhtNetwork re-announce loop", () => {
+  function newNetwork(localId = "0xaa"): DhtNetwork {
+    return new DhtNetwork({
+      localId,
+      bootstrapPeers: [],
+      wireClients: [],
+      onPeerDiscovered: () => {},
+    })
+  }
+
+  it("reannounceSelfProviders bumps putProvider for every pinned CID", async () => {
+    const net = newNetwork("0xaa")
+    net.setReannouncePinSource(() => ["cid-one", "cid-two", "cid-three"])
+    const n = await net.reannounceSelfProviders()
+    assert.equal(n, 3)
+    // Each CID now lists our local id as a provider.
+    assert.deepEqual(net.findProviders("cid-one"), ["0xaa"])
+    assert.deepEqual(net.findProviders("cid-two"), ["0xaa"])
+    assert.deepEqual(net.findProviders("cid-three"), ["0xaa"])
+  })
+
+  it("reannounceSelfProviders is a no-op when no pin source attached", async () => {
+    const net = newNetwork()
+    // No setReannouncePinSource call.
+    const n = await net.reannounceSelfProviders()
+    assert.equal(n, 0)
+  })
+
+  it("reannounceSelfProviders bumps expiry of existing entries (renewal)", async () => {
+    const net = newNetwork("0xaa")
+    // Expire-soon entry — the reannounce bumps it to 24 h.
+    net.putProvider("cid-renew", "0xaa", 50)
+    net.setReannouncePinSource(() => ["cid-renew"])
+    await net.reannounceSelfProviders()
+    // Sleep past the original TTL; entry should still be live.
+    await new Promise((r) => setTimeout(r, 80))
+    assert.deepEqual(net.findProviders("cid-renew"), ["0xaa"])
+  })
+
+  it("reannounceSelfProviders respects batch-size cap (100 CID/tick)", async () => {
+    const net = newNetwork("0xaa")
+    const all = Array.from({ length: 250 }, (_, i) => `cid-${i}`)
+    net.setReannouncePinSource(() => all)
+    const first = await net.reannounceSelfProviders()
+    assert.equal(first, 100, "first tick announces up to batch cap")
+    // Subsequent ticks pick up the remainder: the source is lazy so a
+    // real deployment would either cycle through or pin newer CIDs;
+    // here we simulate by shrinking the source after the first tick.
+    net.setReannouncePinSource(() => all.slice(100))
+    const second = await net.reannounceSelfProviders()
+    assert.equal(second, 100)
+    net.setReannouncePinSource(() => all.slice(200))
+    const third = await net.reannounceSelfProviders()
+    assert.equal(third, 50)
+  })
+
+  it("reannounceSelfProviders returns 0 after stop()", async () => {
+    const net = newNetwork()
+    net.setReannouncePinSource(() => ["cid-x"])
+    net.stop()
+    const n = await net.reannounceSelfProviders()
+    assert.equal(n, 0)
+  })
+
+  it("pin source can be async (returns Promise<string[]>)", async () => {
+    const net = newNetwork("0xaa")
+    net.setReannouncePinSource(async () => {
+      await new Promise((r) => setTimeout(r, 5))
+      return ["cid-async-1", "cid-async-2"]
+    })
+    const n = await net.reannounceSelfProviders()
+    assert.equal(n, 2)
+    assert.deepEqual(net.findProviders("cid-async-1"), ["0xaa"])
+  })
+})

@@ -141,6 +141,14 @@ export function buildCocIpfsWiring(cfg: CocIpfsWiringConfig): {
   // devnet doesn't spam its log every PUT.
   let lastLowPeerWarnMs = 0
 
+  // Phase C3.2: attach the blockstore's pin list as the DHT's re-announce
+  // source so the periodic republish loop bumps TTLs for every CID the
+  // local node still holds. Without this, a long-lived node's own
+  // provider records expire after 24 h and peers stop routing GETs here
+  // even though the bytes are still on disk. Attaching is idempotent;
+  // DhtNetwork.setReannouncePinSource just overwrites the previous ref.
+  cfg.dht.setReannouncePinSource(() => cfg.blockstore.listPins())
+
   const fetchRemote = async (cid: CidString): Promise<Uint8Array | null> => {
     const providers = cfg.dht.findProviders(cid, fanOut)
     if (providers.length === 0) {

@@ -569,6 +569,34 @@ describe("coc-ipfs-wiring", () => {
     mgr.stop()
   })
 
+  // --- Phase C3.2: DHT re-announce source wired to blockstore.listPins().
+  it("buildCocIpfsWiring attaches blockstore pins as DHT reannounce source", async () => {
+    const dht = makeDht("0xaa")
+    const connMgr = makeConnMgr(new Map())
+
+    // Pin something in the blockstore first so listPins() has data.
+    await blockstore.put({ cid: "QmReannounceA" as CidString, bytes: Buffer.from("A") })
+    await blockstore.put({ cid: "QmReannounceB" as CidString, bytes: Buffer.from("B") })
+    await blockstore.pin("QmReannounceA" as CidString)
+    await blockstore.pin("QmReannounceB" as CidString)
+
+    buildCocIpfsWiring({
+      localNodeId: "0xaa",
+      blockstore, dht, connMgr,
+    })
+
+    // Clear the self-announce entries that onPut just added so we can
+    // prove the reannounce path re-populates them independently.
+    ;(dht as unknown as { providerRecords: Map<string, Map<string, number>> }).providerRecords.clear()
+    assert.deepEqual(dht.findProviders("QmReannounceA" as CidString), [])
+
+    const n = await dht.reannounceSelfProviders()
+    assert.equal(n, 2, "both pinned CIDs re-announced in one tick")
+    assert.deepEqual(dht.findProviders("QmReannounceA" as CidString), ["0xaa"])
+    assert.deepEqual(dht.findProviders("QmReannounceB" as CidString), ["0xaa"])
+    connMgr.stop()
+  })
+
   it("first-success over multiple providers returns the fastest", async () => {
     const cid = "QmRace" as CidString
     const dht = makeDht()
