@@ -124,6 +124,14 @@ export function buildCocIpfsWiring(cfg: CocIpfsWiringConfig): {
    * loop can top up under-replicated CIDs on demand.
    */
   pushToK: (cid: string, bytes: Uint8Array) => Promise<PushToKResult>
+  /**
+   * Phase C3.1: return the PushToKResult for a recently-PUT CID, or null
+   * if the CID hasn't been PUT locally within the last ~30 s (memory
+   * cap) or no replication path exists. Lets the HTTP `/api/v0/add`
+   * handler add an `X-COC-Replicas-Warning` header when the number
+   * of successful replicas is below `cfg.ipfs.minReplicas`.
+   */
+  awaitReplicationResult: (cid: string, timeoutMs?: number) => Promise<PushToKResult | null>
 } {
   const fanOut = cfg.fetchProviderFanOut ?? DEFAULT_FETCH_PROVIDER_FAN_OUT
   const timeoutMs = cfg.fetchTimeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS
@@ -214,6 +222,14 @@ export function buildCocIpfsWiring(cfg: CocIpfsWiringConfig): {
     return { cid, attempted: targets.length, succeeded, failed, skippedLowPeers: false }
   }
 
+  // Phase C3.1: track in-flight per-CID pushToK promises so the HTTP
+  // PUT handler can await them and surface replica shortfalls in the
+  // response. Keys are lowercased CID strings; entries self-evict ~30 s
+  // after the promise settles so the map doesn't grow unbounded across
+  // the lifetime of a long-running process.
+  const inFlightPushes = new Map<string, Promise<PushToKResult>>()
+  const PUSH_RESULT_RETENTION_MS = 30_000
+
   const onPut = (cid: CidString, bytes: Uint8Array, opts?: OnPutOptions): void => {
     // Always self-announce. Cheap (in-memory DHT map) and buys the
     // snowball-provider effect C1.3 depends on.
@@ -226,12 +242,32 @@ export function buildCocIpfsWiring(cfg: CocIpfsWiringConfig): {
     const source = opts?.source ?? "local"
     if (source !== "local") return
 
-    // Fire-and-forget: PUT latency stays tight, and push results are
-    // observable through PushToKResult for C3.1's wait-for-replicas
-    // variant (which will call pushToK directly, not via the hook).
-    void pushToK(cid, bytes).catch((err) => {
+    // Fire-and-forget for latency, but retain the promise in
+    // inFlightPushes so C3.1's awaitReplicationResult can look it up.
+    const key = cid.toLowerCase()
+    const p = pushToK(cid, bytes).catch((err) => {
       log.warn("pushToK unexpected throw", { cid, error: String(err) })
+      // Surface a fake result rather than rejecting; callers only care
+      // about how many replicas landed, not whether the push threw.
+      return { cid, attempted: 0, succeeded: [], failed: [], skippedLowPeers: true } as PushToKResult
     })
+    inFlightPushes.set(key, p)
+    void p.finally(() => {
+      setTimeout(() => inFlightPushes.delete(key), PUSH_RESULT_RETENTION_MS).unref?.()
+    })
+  }
+
+  const awaitReplicationResult = async (cid: string, timeoutMs = 10_000): Promise<PushToKResult | null> => {
+    const p = inFlightPushes.get(cid.toLowerCase())
+    if (!p) return null
+    // Race the stored promise against a timeout so a slow peer can't
+    // pin the HTTP handler. Returning null lets the caller treat the
+    // CID as "replication status unknown" — they emit a best-effort
+    // warning header but still return 200 to the uploader.
+    return await Promise.race<PushToKResult | null>([
+      p,
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs).unref?.()),
+    ])
   }
 
   // Wire-server pull/push handler. Pull: look up locally and return bytes
@@ -265,5 +301,5 @@ export function buildCocIpfsWiring(cfg: CocIpfsWiringConfig): {
     }
   }
 
-  return { blockstoreHooks: { fetchRemote, onPut }, onBlockRequest, pushToK }
+  return { blockstoreHooks: { fetchRemote, onPut }, onBlockRequest, pushToK, awaitReplicationResult }
 }

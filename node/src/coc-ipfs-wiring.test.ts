@@ -445,6 +445,130 @@ describe("coc-ipfs-wiring", () => {
     mgr.stop()
   })
 
+  // --- Phase C3.1: awaitReplicationResult surfaces per-CID push outcomes to
+  // the HTTP add handler so uploaders get an X-COC-Replicas-Warning header
+  // when fewer than minReplicas peers accepted the push.
+  it("awaitReplicationResult returns the PushToKResult after a local PUT", async () => {
+    const dht = makeDht("0x1111")
+    seedDht(dht, [PA, PB, PC])
+    const { mgr } = makeConnMgrWithPush([
+      { id: PA, connected: true, pushResult: true },
+      { id: PB, connected: true, pushResult: true },
+      { id: PC, connected: true, pushResult: true },
+    ])
+
+    const wiring = buildCocIpfsWiring({
+      localNodeId: "0x1111",
+      blockstore, dht, connMgr: mgr,
+      replicationFactor: 3,
+    })
+    blockstore.setHooks(wiring.blockstoreHooks)
+
+    const cid = "QmAwaitOk" as CidString
+    await blockstore.put({ cid, bytes: Buffer.from("payload") })
+
+    const status = await wiring.awaitReplicationResult(cid, 2_000)
+    assert.ok(status, "awaiter must return a result for a known CID")
+    assert.equal(status!.succeeded.length, 3, "3 peers accepted push")
+    assert.equal(status!.failed.length, 0)
+    assert.equal(status!.skippedLowPeers, false)
+    mgr.stop()
+  })
+
+  it("awaitReplicationResult returns null for an unknown CID", async () => {
+    const dht = makeDht("0x1111")
+    seedDht(dht, [PA])
+    const { mgr } = makeConnMgrWithPush([
+      { id: PA, connected: true, pushResult: true },
+    ])
+
+    const wiring = buildCocIpfsWiring({
+      localNodeId: "0x1111",
+      blockstore, dht, connMgr: mgr,
+      replicationFactor: 3,
+    })
+
+    const status = await wiring.awaitReplicationResult("QmNeverPut" as CidString, 500)
+    assert.equal(status, null)
+    mgr.stop()
+  })
+
+  it("awaitReplicationResult surfaces partial failure to the HTTP handler", async () => {
+    const dht = makeDht("0x1111")
+    const POK = "0x2222"
+    const PBAD = "0x3333"
+    seedDht(dht, [POK, PBAD])
+    const { mgr } = makeConnMgrWithPush([
+      { id: POK, connected: true, pushResult: true },
+      { id: PBAD, connected: true, pushResult: false },
+    ])
+
+    const wiring = buildCocIpfsWiring({
+      localNodeId: "0x1111",
+      blockstore, dht, connMgr: mgr,
+      replicationFactor: 2,
+    })
+    blockstore.setHooks(wiring.blockstoreHooks)
+
+    const cid = "QmPartialAwait" as CidString
+    await blockstore.put({ cid, bytes: Buffer.from("payload") })
+
+    const status = await wiring.awaitReplicationResult(cid, 2_000)
+    assert.ok(status)
+    assert.equal(status!.succeeded.length, 1)
+    assert.ok(status!.failed.length >= 1)
+    mgr.stop()
+  })
+
+  it("awaitReplicationResult reports skippedLowPeers when no peers to push to", async () => {
+    const dht = makeDht("0x1111")
+    // No peers seeded — findClosest returns empty.
+    const { mgr } = makeConnMgrWithPush([])
+
+    const wiring = buildCocIpfsWiring({
+      localNodeId: "0x1111",
+      blockstore, dht, connMgr: mgr,
+      replicationFactor: 3,
+    })
+    blockstore.setHooks(wiring.blockstoreHooks)
+
+    const cid = "QmAloneAwait" as CidString
+    await blockstore.put({ cid, bytes: Buffer.from("payload") })
+
+    const status = await wiring.awaitReplicationResult(cid, 1_000)
+    assert.ok(status, "awaiter returns a synthesized skippedLowPeers result, not null")
+    assert.equal(status!.succeeded.length, 0)
+    assert.equal(status!.skippedLowPeers, true)
+    mgr.stop()
+  })
+
+  it("awaitReplicationResult returns null when remote-cache PUT (no pushToK fired)", async () => {
+    const dht = makeDht("0x1111")
+    seedDht(dht, [PA])
+    const { mgr, pushCalls } = makeConnMgrWithPush([
+      { id: PA, connected: true, pushResult: true },
+    ])
+
+    const wiring = buildCocIpfsWiring({
+      localNodeId: "0x1111",
+      blockstore, dht, connMgr: mgr,
+      replicationFactor: 3,
+    })
+    blockstore.setHooks(wiring.blockstoreHooks)
+
+    // putFromPeer simulates a block arriving via push RPC; pushToK must
+    // NOT fire (cascade prevention), so awaitReplicationResult has
+    // nothing to return.
+    await blockstore.putFromPeer({ cid: "QmCacheOnly" as CidString, bytes: Buffer.from("x") })
+
+    const totalPushes = [...pushCalls.values()].reduce((n, calls) => n + calls.length, 0)
+    assert.equal(totalPushes, 0, "remote-cache PUT must not trigger pushToK")
+
+    const status = await wiring.awaitReplicationResult("QmCacheOnly" as CidString, 200)
+    assert.equal(status, null, "no push tracked → awaiter returns null")
+    mgr.stop()
+  })
+
   it("first-success over multiple providers returns the fastest", async () => {
     const cid = "QmRace" as CidString
     const dht = makeDht()
