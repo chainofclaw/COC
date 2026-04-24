@@ -881,6 +881,30 @@ startRpcServer(
     getWireStats: () => wireServer?.getStats(),
     getDhtStats: () => dhtNetwork?.getStats(),
     findProviders: (cid: string, maxK?: number) => dhtNetwork?.findProviders(cid, maxK ?? 3) ?? [],
+    fetchBlockFromPeer: async (cid: string, excludePeerId?: string) => {
+      // Phase C2.4: resolve providers via the DHT, optionally exclude
+      // the prover (passed in by the auditor), ask the first reachable
+      // non-excluded peer for the chunk via the wire BlockRequest
+      // frame (C1.2). Returns null when nobody served within the
+      // per-peer pull timeout.
+      if (!dhtNetwork) return null
+      const providers = dhtNetwork.findProviders(cid, 5)
+      const excluded = excludePeerId ? excludePeerId.toLowerCase() : null
+      const independents = excluded ? providers.filter((p) => p.toLowerCase() !== excluded) : providers
+      if (independents.length === 0) return null
+      // Walk the connected WireClient set and pick the first one whose
+      // remote ID matches an independent provider. Iteration is cheap
+      // (wireClients is capped well below 100 peers per node).
+      const peerSet = new Set(independents.map((p) => p.toLowerCase()))
+      for (const client of wireClients) {
+        if (!client.isConnected()) continue
+        const remoteId = client.getRemoteNodeId()
+        if (!remoteId || !peerSet.has(remoteId.toLowerCase())) continue
+        const bytes = await client.requestBlock(cid, 5000)
+        if (bytes && bytes.length > 0) return bytes
+      }
+      return null
+    },
     getSyncProgress: () => consensus.getSyncProgress(),
     rewardManifestDir: join(config.dataDir, "reward-manifests"),
     getBftEquivocations: (sinceMs: number) => bftEvidenceStore.peek().filter(

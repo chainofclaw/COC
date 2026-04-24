@@ -185,6 +185,14 @@ interface RpcRuntimeOptions {
    * the challenger falls back to trying without a DHT hint.
    */
   findProviders?: (cid: string, maxK?: number) => string[]
+  /**
+   * Phase C2.4: fetch a raw IPFS block from DHT-advertised peers,
+   * optionally excluding a specific peer (the challenge's prover)
+   * so the audit sampling gets bytes from an independent source.
+   * Returns null when no non-excluded provider serves the CID within
+   * the local node's peer-pull timeout.
+   */
+  fetchBlockFromPeer?: (cid: string, excludePeerId?: string) => Promise<Uint8Array | null>
   rewardManifestDir?: string
   getBftEquivocations?: (sinceMs: number) => Array<{ rawEvidence?: Record<string, unknown>; [key: string]: unknown }>
   getSyncProgress?: () => Promise<{ syncing: boolean; currentHeight: bigint; highestPeerHeight: bigint; startingHeight: bigint }>
@@ -1254,6 +1262,20 @@ async function handleRpc(
       const cap = Number.isFinite(rawMaxK) && rawMaxK > 0 ? Math.min(Math.floor(rawMaxK), 64) : 3
       const providers = runtimeOptions?.findProviders?.(cid, cap) ?? []
       return { providers }
+    }
+    case "coc_ipfsFetchBlockFromPeer": {
+      // Phase C2.4: audit sampling. Fetch the raw chunk bytes for `cid`
+      // from a DHT-advertised peer, optionally excluding `excludePeerId`
+      // (the prover). Returns base64-encoded bytes so JSON-RPC can
+      // transport the blob. Returns { bytes: null } when no
+      // non-excluded provider served the CID.
+      const cid = String((payload.params ?? [])[0] ?? "")
+      const excludePeerId = String((payload.params ?? [])[1] ?? "")
+      if (cid.length === 0) {
+        return { bytes: null, error: "cid must be a non-empty string" }
+      }
+      const bytes = await runtimeOptions?.fetchBlockFromPeer?.(cid, excludePeerId || undefined)
+      return { bytes: bytes ? Buffer.from(bytes).toString("base64") : null }
     }
     case "coc_nodeInfo": {
       const height = await Promise.resolve(chain.getHeight())

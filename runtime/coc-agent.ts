@@ -28,6 +28,7 @@ import { IpfsBlockstore } from "../node/src/ipfs-blockstore.ts";
 import { CidRegistryReader, makeCidRegistryEventReader } from "./lib/cid-registry-reader.ts";
 import type { DhtLike } from "./lib/cid-registry-reader.ts";
 import { verifiedStorageBytesFor } from "./lib/pose-score.ts";
+import { auditStorageReceipt, type StorageAuditDeps } from "../services/verifier/storage-audit.ts";
 import { createLogger } from "../node/src/logger.ts";
 import { createNodeSigner, createNodeSignerV2, buildReceiptSignMessage } from "../node/src/crypto/signer.ts";
 import { buildDomain, CHALLENGE_TYPES, RECEIPT_TYPES, REWARD_MANIFEST_TYPES } from "../node/src/crypto/eip712-types.ts";
@@ -105,6 +106,12 @@ const aggregatorSet = (config.aggregatorSet ?? []).map((x) => x.toLowerCase());
 // exist at module-top scope. Kept as `let` so `pickStorageTarget` can
 // read its current value even after async initialization.
 let cidRegistryReader: CidRegistryReader | null = null;
+
+// Phase C2.4: deps for sampled audit re-fetch of storage receipts.
+// Populated in initCidRegistryReader alongside the CidRegistryReader (they
+// share the DHT proxy). Null until init completes; the audit short-
+// circuits to "not-sampled" in that case so the first ticks don't fail.
+let storageAuditDeps: StorageAuditDeps | null = null;
 
 // Machine fingerprint: hostname + primary MAC + operator pubkey
 // Same physical machine always produces the same commitment regardless of port
@@ -1057,6 +1064,43 @@ async function tryChallengeV2(nodeId: string, kind: keyof typeof ChallengeType):
         )
       : { attestations: [], bitmap: 0, quorumMet: v2RequiredWitnesses === 0 };
 
+    // Phase C2.4: 5% audit sampling on Storage receipts. The auditor
+    // pulls the chunk from an independent peer and recomputes leafHash.
+    // On sampled mismatch we stamp ResultCode.InvalidStorageAudit
+    // instead of Ok — still records the witness quorum status so it
+    // doesn't falsely wipe an otherwise-passing witness result.
+    // Sampling is skipped entirely when the audit deps aren't wired
+    // (FF off, or init hasn't completed yet) — receipts then behave
+    // identically to the pre-C2.4 path.
+    let auditVerdict: "pass" | "fail" | "skipped" = "skipped";
+    if (kind === "Storage" && storageAuditDeps) {
+      const responseBody = receiptPayload.responseBody as Record<string, unknown> | undefined;
+      const claimedLeafHash = typeof responseBody?.leafHash === "string" ? responseBody.leafHash : null;
+      const claimedCid = typeof responseBody?.cid === "string" ? responseBody.cid : null;
+      if (claimedLeafHash && claimedCid) {
+        const result = await auditStorageReceipt(storageAuditDeps, {
+          cid: claimedCid,
+          leafHash: claimedLeafHash,
+          proverNodeId: nodeId,
+          chunkIndex: typeof responseBody?.chunkIndex === "number" ? responseBody.chunkIndex : undefined,
+        });
+        if (result.audited && !result.passed) {
+          auditVerdict = "fail";
+          log.warn("storage audit detected leafHash mismatch — flagging prover", {
+            nodeId, cid: claimedCid,
+            expected: result.expected,
+            actual: result.actual,
+          });
+        } else if (result.audited) {
+          auditVerdict = "pass";
+        }
+      }
+    }
+
+    const resultCode = auditVerdict === "fail"
+      ? ResultCode.InvalidStorageAudit
+      : witnessResult.quorumMet ? ResultCode.Ok : ResultCode.WitnessQuorumFail;
+
     const evidenceLeaf = {
       epoch: BigInt(currentEpoch),
       nodeId: nodeId as `0x${string}`,
@@ -1064,7 +1108,7 @@ async function tryChallengeV2(nodeId: string, kind: keyof typeof ChallengeType):
       tipHash,
       tipHeight,
       latencyMs: Number(responseAtMs - challenge.issuedAtMs),
-      resultCode: witnessResult.quorumMet ? ResultCode.Ok : ResultCode.WitnessQuorumFail,
+      resultCode,
       witnessBitmap: witnessResult.bitmap,
     };
 
@@ -1087,8 +1131,14 @@ async function tryChallengeV2(nodeId: string, kind: keyof typeof ChallengeType):
     };
 
     pendingV2.push(verified);
-    updateScore(nodeId, kind, witnessResult.quorumMet, verifiedStorageBytesFor(storageTarget));
-    if (witnessResult.quorumMet) {
+    // Storage challenges fail scoring when either the witness quorum
+    // didn't meet (legacy signal) OR Phase C2.4's audit caught the
+    // prover returning a bad leafHash. storageGb credit only accrues on
+    // both pass — the audit-failed path drops the accumulator since the
+    // prover lied about what it holds.
+    const storageOk = witnessResult.quorumMet && auditVerdict !== "fail";
+    updateScore(nodeId, kind, storageOk, verifiedStorageBytesFor(storageTarget));
+    if (storageOk) {
       recordValidChallengerReceipt(currentEpoch);
     }
   } catch (error) {
@@ -1927,4 +1977,27 @@ async function initCidRegistryReader(): Promise<void> {
   await reader.refresh();
   cidRegistryReader = reader;
   log.info("CidRegistryReader initialized", { poolSize: reader.size() });
+
+  // Phase C2.4 audit sampler — RPC-backed bytes fetch that bypasses
+  // the prover. The node already knows the DHT provider set and its
+  // wire connections; we just tell it the CID and who to exclude, and
+  // it races whoever else is available. Any transport error collapses
+  // into null, which the auditor treats as inconclusive.
+  storageAuditDeps = {
+    fetchChunkExcluding: async (cid: string, excludePeerId: string) => {
+      try {
+        const resp = await requestJson(rpcEndpoint, "POST", {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "coc_ipfsFetchBlockFromPeer",
+          params: [cid, excludePeerId],
+        });
+        const raw = resp.json?.result?.bytes;
+        return typeof raw === "string" && raw.length > 0 ? new Uint8Array(Buffer.from(raw, "base64")) : null;
+      } catch {
+        return null;
+      }
+    },
+  };
+  log.info("storage audit sampler initialized");
 }
