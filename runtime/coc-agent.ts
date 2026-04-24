@@ -178,14 +178,18 @@ async function resolveNodeSignerAddress(
         const { computeAddress } = await import("ethers");
         const addr = computeAddress(pk).toLowerCase();
         nodeSignerAddressCache.set(key, addr);
+        log.info("resolveNodeSignerAddress: on-chain pubkey resolved", { nodeId, addr });
         return addr;
       }
+      log.warn("resolveNodeSignerAddress: getNode returned no/short pubkey", { nodeId, pkLen: pk?.length ?? -1 });
     } catch (err) {
-      log.debug("resolveNodeSignerAddress on-chain lookup failed", { nodeId, error: String(err) });
+      log.warn("resolveNodeSignerAddress on-chain lookup failed", { nodeId, error: String(err) });
     }
   }
   // Legacy fallback: nodeId is a bytes32-padded address.
-  return hex32ToAddress(nodeId);
+  const fallback = hex32ToAddress(nodeId);
+  log.warn("resolveNodeSignerAddress: falling back to hex32ToAddress (likely wrong for v2 nodes)", { nodeId, fallback });
+  return fallback;
 }
 
 const poseAbi = [
