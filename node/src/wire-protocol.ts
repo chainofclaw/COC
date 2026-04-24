@@ -43,6 +43,36 @@ export interface FindNodeResponsePayload {
   peers: Array<{ id: string; address: string }>
 }
 
+/**
+ * Payload for a peer-to-peer IPFS block request or push.
+ *
+ *  - Normal pull: `push=false` (default). The receiver looks `cid` up in
+ *    its local blockstore and returns bytes or `found:false`.
+ *  - Active push: `push=true` with `bytes` set. The receiver verifies
+ *    keccak256(bytes) matches the CID's content hash, stores into its
+ *    blockstore, and replies `found:true`. Used by C1.4 to replicate
+ *    blocks to K nearest peers at PUT time.
+ *
+ * `bytes` is base64 so the JSON frame stays ASCII-clean; the wire
+ * framing already enforces a 16 MiB cap, which is well above our
+ * 256 KiB chunk size so we never have to split a block across frames.
+ */
+export interface BlockRequestPayload {
+  requestId: string
+  cid: string
+  push?: boolean
+  bytes?: string // base64-encoded block content when push=true
+}
+
+/** Payload for a peer-to-peer IPFS block response. */
+export interface BlockResponsePayload {
+  requestId: string
+  cid: string
+  found: boolean
+  bytes?: string // base64-encoded block content when found=true on a pull
+  error?: string // optional diagnostic for push path (hash mismatch, oversize, etc.)
+}
+
 export type MessageType = (typeof MessageType)[keyof typeof MessageType]
 
 /**
@@ -63,6 +93,14 @@ const DEFAULT_PRIORITIES: Partial<Record<number, FramePriority>> = {
   [MessageType.BftPrepare]: FramePriority.CRITICAL,
   [MessageType.BftCommit]: FramePriority.CRITICAL,
   [MessageType.Block]: FramePriority.HIGH,
+  // IPFS block pull (BlockRequest push=false + BlockResponse) carries user
+  // GET latency so it sits at HIGH, right under BFT. Push-side writes
+  // (BlockRequest push=true) are background replication and intentionally
+  // not prioritized here — priority is a per-type default and a frame
+  // can't self-downgrade. Push amplification is bounded instead by the
+  // per-peer token bucket C3.3 will add, which is the right lever.
+  [MessageType.BlockRequest]: FramePriority.HIGH,
+  [MessageType.BlockResponse]: FramePriority.HIGH,
   [MessageType.Transaction]: FramePriority.NORMAL,
   [MessageType.FindNode]: FramePriority.LOW,
   [MessageType.FindNodeResponse]: FramePriority.LOW,

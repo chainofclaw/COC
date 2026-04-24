@@ -155,4 +155,76 @@ export class WireConnectionManager {
     }
     return undefined
   }
+
+  /**
+   * Pull an IPFS block from the first peer in `peerIds` that returns it.
+   *
+   * Tries peers in parallel (bounded by `concurrency`), resolves with the
+   * first non-null response and aborts the rest. If no peer responds with
+   * bytes — all return `null`, or no peers are connected — resolves `null`.
+   * Intended callers iterate DHT provider records (C1.1) and pass the list
+   * here; the C1.3 blockstore fallback wires this up at fetch time.
+   *
+   * Unlike a serial loop, parallel fetch hides tail latency when one of
+   * the advertised providers is slow / in GC / partitioned. `concurrency`
+   * is deliberately small (3 by default) — the goal is first-success, not
+   * network-wide flood.
+   */
+  async requestBlockFromAny(
+    peerIds: string[],
+    cid: string,
+    opts?: { concurrency?: number; timeoutMs?: number },
+  ): Promise<Uint8Array | null> {
+    if (peerIds.length === 0) return null
+    const concurrency = Math.max(1, Math.min(opts?.concurrency ?? 3, peerIds.length))
+    const timeoutMs = opts?.timeoutMs ?? 5000
+
+    return new Promise((resolve) => {
+      let resolved = false
+      const settle = (bytes: Uint8Array | null) => {
+        if (resolved) return
+        resolved = true
+        resolve(bytes)
+      }
+
+      let nextIdx = 0
+      let outstanding = 0
+      let drained = false
+
+      const launchNext = () => {
+        while (!resolved && outstanding < concurrency && nextIdx < peerIds.length) {
+          const peerId = peerIds[nextIdx++]
+          const client = this.findByNodeId(peerId)
+          if (!client) continue
+          outstanding++
+          client.requestBlock(cid, timeoutMs).then((bytes) => {
+            outstanding--
+            if (bytes && bytes.length > 0) {
+              settle(bytes)
+              return
+            }
+            if (drained && outstanding === 0) {
+              settle(null)
+              return
+            }
+            launchNext()
+          }).catch(() => {
+            outstanding--
+            if (drained && outstanding === 0) {
+              settle(null)
+              return
+            }
+            launchNext()
+          })
+        }
+        if (nextIdx >= peerIds.length) drained = true
+        if (drained && outstanding === 0 && !resolved) {
+          // All peers attempted but none were connected — resolve null.
+          settle(null)
+        }
+      }
+
+      launchNext()
+    })
+  }
 }

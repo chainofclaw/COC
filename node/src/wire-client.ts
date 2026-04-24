@@ -7,7 +7,7 @@
 
 import net from "node:net"
 import { FrameDecoder, MessageType, encodeJsonPayload, decodeJsonPayload, buildWireHandshakeMessage } from "./wire-protocol.ts"
-import type { WireFrame, FindNodePayload, FindNodeResponsePayload } from "./wire-protocol.ts"
+import type { WireFrame, FindNodePayload, FindNodeResponsePayload, BlockRequestPayload, BlockResponsePayload } from "./wire-protocol.ts"
 import type { NodeSigner, SignatureVerifier } from "./crypto/signer.ts"
 import crypto from "node:crypto"
 import { createLogger } from "./logger.ts"
@@ -56,11 +56,28 @@ export class WireClient {
     timer: ReturnType<typeof setTimeout>
   }>()
 
+  /**
+   * Outstanding BlockRequest / push replies awaiting BlockResponse. Keyed by
+   * the requestId the client sent; value resolves with the fetched bytes on
+   * a successful pull or `null` otherwise (timeout, not-found, hash
+   * mismatch on push, disconnect). Pull and push both use the same map —
+   * a push resolves to `null` if `found:false`, `empty Uint8Array` if
+   * `found:true`, letting callers distinguish acknowledgment from content.
+   */
+  private readonly pendingBlockRequest = new Map<string, {
+    resolve: (bytes: Uint8Array | null) => void
+    timer: ReturnType<typeof setTimeout>
+  }>()
+
   // Inbound message rate limiting
   private inboundMsgCount = 0
   private inboundWindowStart = 0
   private static readonly MAX_INBOUND_PER_SECOND = 200
   private static readonly MAX_PENDING_FIND_NODE = 50
+  // Block requests can be pipelined but we still bound the in-flight set so a
+  // compromised peer can't starve us by never replying. 100 is generous for
+  // the replication fan-out ceiling (K=3) × simultaneous GETs.
+  private static readonly MAX_PENDING_BLOCK = 100
 
   // Ping/pong latency tracking
   private lastPingSentMs = 0
@@ -94,6 +111,14 @@ export class WireClient {
       clearTimeout(entry.timer)
     }
     this.pendingFindNode.clear()
+    // Resolve pending block requests to null so any awaiting caller returns
+    // quickly instead of hitting its own timeout. The timer is cleared so we
+    // don't double-invoke after the cascade.
+    for (const entry of this.pendingBlockRequest.values()) {
+      clearTimeout(entry.timer)
+      entry.resolve(null)
+    }
+    this.pendingBlockRequest.clear()
     if (this.socket) {
       this.socket.destroy()
       this.socket = null
@@ -194,6 +219,87 @@ export class WireClient {
     })
   }
 
+  /**
+   * Pull an IPFS block from this peer.
+   *
+   * Resolves with the block's bytes on success (peer had the CID and it
+   * decoded cleanly), `null` on: not connected, over the pending-request
+   * cap, peer response `found:false`, timeout (default 5s), or disconnect.
+   * Never rejects — callers iterate through providers and stop at the
+   * first non-null result, so throwing would just complicate that loop.
+   */
+  requestBlock(cid: string, timeoutMs = 5000): Promise<Uint8Array | null> {
+    return new Promise((resolve) => {
+      if (!this.isConnected()) {
+        resolve(null)
+        return
+      }
+      if (this.pendingBlockRequest.size >= WireClient.MAX_PENDING_BLOCK) {
+        resolve(null)
+        return
+      }
+      const requestId = crypto.randomUUID()
+      const timer = setTimeout(() => {
+        this.pendingBlockRequest.delete(requestId)
+        resolve(null)
+      }, timeoutMs)
+
+      this.pendingBlockRequest.set(requestId, { resolve, timer })
+
+      const payload: BlockRequestPayload = { requestId, cid, push: false }
+      const sent = this.sendMessage(MessageType.BlockRequest, payload)
+      if (!sent) {
+        clearTimeout(timer)
+        this.pendingBlockRequest.delete(requestId)
+        resolve(null)
+      }
+    })
+  }
+
+  /**
+   * Push an IPFS block to this peer for replication (C1.4's pushToK).
+   *
+   * Resolves `true` if the peer acknowledged the push with `found:true`
+   * (stored it successfully), `false` otherwise — disconnect, timeout,
+   * pending cap, or `found:false` which peers emit on hash mismatch,
+   * oversize, or storage error. Bytes go over the wire base64-encoded
+   * inside the same frame as the request so a push is a single round-trip;
+   * at 256 KiB / chunk that's a 341 KiB frame, well under the 16 MiB cap.
+   */
+  pushBlock(cid: string, bytes: Uint8Array, timeoutMs = 10_000): Promise<boolean> {
+    return new Promise((resolve) => {
+      if (!this.isConnected()) {
+        resolve(false)
+        return
+      }
+      if (this.pendingBlockRequest.size >= WireClient.MAX_PENDING_BLOCK) {
+        resolve(false)
+        return
+      }
+      const requestId = crypto.randomUUID()
+      const timer = setTimeout(() => {
+        this.pendingBlockRequest.delete(requestId)
+        resolve(false)
+      }, timeoutMs)
+
+      // Convert the ack-or-error into a boolean for the caller. Empty-but-found
+      // reply is success; anything else is failure.
+      this.pendingBlockRequest.set(requestId, {
+        resolve: (buf: Uint8Array | null) => resolve(buf !== null),
+        timer,
+      })
+
+      const b64 = Buffer.from(bytes).toString("base64")
+      const payload: BlockRequestPayload = { requestId, cid, push: true, bytes: b64 }
+      const sent = this.sendMessage(MessageType.BlockRequest, payload)
+      if (!sent) {
+        clearTimeout(timer)
+        this.pendingBlockRequest.delete(requestId)
+        resolve(false)
+      }
+    })
+  }
+
   private attemptConnect(): void {
     if (this.stopped) return
 
@@ -265,6 +371,14 @@ export class WireClient {
         entry.resolve([])
       }
       this.pendingFindNode.clear()
+      // Same story for pending block requests: resolve to null so the
+      // caller can retry a different provider instead of waiting for its
+      // own timeout.
+      for (const entry of this.pendingBlockRequest.values()) {
+        clearTimeout(entry.timer)
+        entry.resolve(null)
+      }
+      this.pendingBlockRequest.clear()
       if (wasConnected) {
         this.cfg.onDisconnected?.()
       }
@@ -383,6 +497,32 @@ export class WireClient {
             return true
           })
           pending.resolve(peers)
+        }
+        break
+      }
+
+      case MessageType.BlockResponse: {
+        const resp = decodeJsonPayload<BlockResponsePayload>(frame)
+        const pending = this.pendingBlockRequest.get(resp.requestId)
+        if (!pending) break
+        clearTimeout(pending.timer)
+        this.pendingBlockRequest.delete(resp.requestId)
+        if (!resp.found) {
+          pending.resolve(null)
+          break
+        }
+        // Push ack path: found=true but bytes absent/empty. Resolve with a
+        // zero-length Uint8Array so the pushBlock() wrapper can distinguish
+        // "peer acknowledged" from "peer said not-found".
+        if (!resp.bytes) {
+          pending.resolve(new Uint8Array(0))
+          break
+        }
+        try {
+          const bytes = new Uint8Array(Buffer.from(resp.bytes, "base64"))
+          pending.resolve(bytes)
+        } catch {
+          pending.resolve(null)
         }
         break
       }
