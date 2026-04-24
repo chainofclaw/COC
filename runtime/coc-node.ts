@@ -144,7 +144,7 @@ const server = http.createServer((req, res) => {
           cid,
           chunkIndex,
         )
-          .then((proof) => {
+          .then(async (proof) => {
             const storageResponseBody = {
                 ok: true,
                 cid,
@@ -155,13 +155,30 @@ const server = http.createServer((req, res) => {
                 merklePath: proof.merklePath,
               };
             const storageResponseAtMs = Date.now();
+            const isV2 = (challenge as any)?.version === 2;
+            // Phase C: for v2 storage receipts, carry tipHash/tipHeight and
+            // sign EIP-712 so the agent's v2 verifier can check the
+            // freshness window. Without these the agent's verifyV2Receipt
+            // rejects with "invalid tipHash". Legacy v1 path stays as is.
+            if (isV2 && nodeSignerV2) {
+              const tip = await fetchLatestBlock();
+              const sig = await signReceiptV2(
+                payload.challengeId!, nodeSigner.poseNodeId, storageResponseBody, storageResponseAtMs,
+                tip.hash, tip.number,
+              );
+              return json(res, 200, {
+                challengeId: payload.challengeId,
+                nodeId: nodeSigner.poseNodeId,
+                responseAtMs: storageResponseAtMs,
+                responseBody: storageResponseBody,
+                responseBodyHash: `0x${keccak256Hex(Buffer.from(stableStringify(storageResponseBody), "utf8"))}`,
+                tipHash: tip.hash,
+                tipHeight: tip.number.toString(),
+                nodeSig: sig,
+              });
+            }
             return json(res, 200, {
               challengeId: payload.challengeId,
-              // Phase C: PoSe receipts advertise poseNodeId (= keccak256(pubkey))
-              // matching the on-chain PoSeManagerV2 NodeRecord, not the
-              // validator's BFT address. The receipt sig is still over
-              // the PoSe layer's canonical message so recovery checks use
-              // this same id — consistent end-to-end.
               nodeId: nodeSigner.poseNodeId,
               responseAtMs: storageResponseAtMs,
               responseBody: storageResponseBody,
@@ -217,6 +234,30 @@ const server = http.createServer((req, res) => {
         kind === "R"
           ? buildRelayResponseBody(payload.challengeId, challenge, responseAtMs)
           : { ok: true, echo: payload.payload ?? null };
+      // Phase C: v2 Relay receipt carries tipHash + EIP-712 signature,
+      // same shape as Uptime/Storage. Without these the agent's
+      // verifyV2Receipt rejects with "invalid tipHash". Fall back to v1
+      // EIP-191 for legacy deployments.
+      if (isV2Challenge && nodeSignerV2) {
+        void (async () => {
+          const tip = await fetchLatestBlock();
+          const sig = await signReceiptV2(
+            payload.challengeId!, nodeSigner.poseNodeId, responseBody, responseAtMs,
+            tip.hash, tip.number,
+          );
+          json(res, 200, {
+            challengeId: payload.challengeId,
+            nodeId: nodeSigner.poseNodeId,
+            responseAtMs,
+            responseBody,
+            responseBodyHash: `0x${keccak256Hex(Buffer.from(stableStringify(responseBody), "utf8"))}`,
+            tipHash: tip.hash,
+            tipHeight: tip.number.toString(),
+            nodeSig: sig,
+          });
+        })();
+        return;
+      }
       return json(res, 200, {
         challengeId: payload.challengeId,
         nodeId: nodeSigner.poseNodeId,
