@@ -331,6 +331,16 @@ export function startRpcServer(
         if (runtimeOptions?.didDataProvider) {
           rpcOpts.didDataProvider = runtimeOptions.didDataProvider
         }
+        // Phase C2.2/C2.4: plumb the DHT provider-lookup and peer-fetch
+        // callbacks through so coc_dhtFindProviders / coc_ipfsFetchBlockFromPeer
+        // handlers can invoke them. Without these forwards the handlers
+        // see `opts.findProviders === undefined` and return empty.
+        if (runtimeOptions?.findProviders) {
+          rpcOpts.findProviders = runtimeOptions.findProviders
+        }
+        if (runtimeOptions?.fetchBlockFromPeer) {
+          rpcOpts.fetchBlockFromPeer = runtimeOptions.fetchBlockFromPeer
+        }
         const scopedOpts = Object.keys(rpcOpts).length > 0 ? rpcOpts : undefined
         const MAX_BATCH_SIZE = 100
         // Batch RPC: charge rate limit for each item in the batch, not just the outer request.
@@ -1260,7 +1270,8 @@ async function handleRpc(
         return { providers: [], error: "cid must be a non-empty string" }
       }
       const cap = Number.isFinite(rawMaxK) && rawMaxK > 0 ? Math.min(Math.floor(rawMaxK), 64) : 3
-      const providers = runtimeOptions?.findProviders?.(cid, cap) ?? []
+      const findProviders = opts?.findProviders as ((cid: string, maxK: number) => string[]) | undefined
+      const providers = findProviders?.(cid, cap) ?? []
       return { providers }
     }
     case "coc_ipfsFetchBlockFromPeer": {
@@ -1274,7 +1285,8 @@ async function handleRpc(
       if (cid.length === 0) {
         return { bytes: null, error: "cid must be a non-empty string" }
       }
-      const bytes = await runtimeOptions?.fetchBlockFromPeer?.(cid, excludePeerId || undefined)
+      const fetchBlockFromPeer = opts?.fetchBlockFromPeer as ((cid: string, exclude?: string) => Promise<Uint8Array | null>) | undefined
+      const bytes = await fetchBlockFromPeer?.(cid, excludePeerId || undefined)
       return { bytes: bytes ? Buffer.from(bytes).toString("base64") : null }
     }
     case "coc_nodeInfo": {
