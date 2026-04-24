@@ -157,10 +157,15 @@ const server = http.createServer((req, res) => {
             const storageResponseAtMs = Date.now();
             return json(res, 200, {
               challengeId: payload.challengeId,
-              nodeId: nodeSigner.nodeId,
+              // Phase C: PoSe receipts advertise poseNodeId (= keccak256(pubkey))
+              // matching the on-chain PoSeManagerV2 NodeRecord, not the
+              // validator's BFT address. The receipt sig is still over
+              // the PoSe layer's canonical message so recovery checks use
+              // this same id — consistent end-to-end.
+              nodeId: nodeSigner.poseNodeId,
               responseAtMs: storageResponseAtMs,
               responseBody: storageResponseBody,
-              nodeSig: signReceipt(payload.challengeId, nodeSigner.nodeId, storageResponseBody, storageResponseAtMs),
+              nodeSig: signReceipt(payload.challengeId, nodeSigner.poseNodeId, storageResponseBody, storageResponseAtMs),
             });
           })
           .catch((error) => {
@@ -181,12 +186,12 @@ const server = http.createServer((req, res) => {
           if (isV2Challenge && nodeSignerV2) {
             const tip = await fetchLatestBlock();
             const sig = await signReceiptV2(
-              payload.challengeId!, nodeSigner.nodeId, uptimeBody, responseAtMs,
+              payload.challengeId!, nodeSigner.poseNodeId, uptimeBody, responseAtMs,
               tip.hash, tip.number,
             );
             return json(res, 200, {
               challengeId: payload.challengeId,
-              nodeId: nodeSigner.nodeId,
+              nodeId: nodeSigner.poseNodeId,
               responseAtMs,
               responseBody: uptimeBody,
               responseBodyHash: `0x${keccak256Hex(Buffer.from(stableStringify(uptimeBody), "utf8"))}`,
@@ -197,10 +202,10 @@ const server = http.createServer((req, res) => {
           }
           return json(res, 200, {
             challengeId: payload.challengeId,
-            nodeId: nodeSigner.nodeId,
+            nodeId: nodeSigner.poseNodeId,
             responseAtMs,
             responseBody: uptimeBody,
-            nodeSig: signReceipt(payload.challengeId!, nodeSigner.nodeId, uptimeBody, responseAtMs),
+            nodeSig: signReceipt(payload.challengeId!, nodeSigner.poseNodeId, uptimeBody, responseAtMs),
           });
         };
         fetchBlockHash(blockNumber)
@@ -214,10 +219,10 @@ const server = http.createServer((req, res) => {
           : { ok: true, echo: payload.payload ?? null };
       return json(res, 200, {
         challengeId: payload.challengeId,
-        nodeId: nodeSigner.nodeId,
+        nodeId: nodeSigner.poseNodeId,
         responseAtMs,
         responseBody,
-        nodeSig: signReceipt(payload.challengeId, nodeSigner.nodeId, responseBody, responseAtMs),
+        nodeSig: signReceipt(payload.challengeId, nodeSigner.poseNodeId, responseBody, responseAtMs),
       });
     });
     return;
