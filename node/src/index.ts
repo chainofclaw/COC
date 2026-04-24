@@ -41,6 +41,8 @@ import { WireServer } from "./wire-server.ts"
 import { WireClient } from "./wire-client.ts"
 import { MessageType, encodeJsonPayload } from "./wire-protocol.ts"
 import { DhtNetwork } from "./dht-network.ts"
+import { buildCocIpfsWiring } from "./coc-ipfs-wiring.ts"
+import { IpfsRepairLoop } from "./coc-ipfs-repair.ts"
 import { exportStateSnapshot, importStateSnapshot } from "./state-snapshot.ts"
 import type { StateSnapshot } from "./state-snapshot.ts"
 import type { IStateTrie } from "./storage/state-trie.ts"
@@ -1072,6 +1074,70 @@ if (config.enableDht) {
   log.info("DHT peer discovery started", { bootstrapPeers: config.dhtBootstrapPeers.length })
 }
 
+// Phase C wiring: glue IpfsBlockstore <-> DhtNetwork <-> Wire so that
+// local PUTs announce + replicate to K peers, remote misses fall back
+// to peer fetch, and the HTTP PUT handler can surface replica shortfalls.
+// Only attach when both Wire and DHT are enabled — without either,
+// the wiring has no peers to talk to.
+let ipfsRepairLoop: IpfsRepairLoop | undefined
+if (wireServer && dhtNetwork) {
+  // Adapter that matches the subset of WireConnectionManager that
+  // buildCocIpfsWiring uses: findByNodeId (push side) and
+  // requestBlockFromAny (pull side). index.ts keeps its own
+  // wireClients array + wireClientByPeerId Map rather than owning a
+  // WireConnectionManager, so we bridge without changing construction.
+  const connMgrAdapter = {
+    findByNodeId(nodeId: string) {
+      const client = wireClientByPeerId.get(nodeId)
+      if (client && client.isConnected()) return client
+      for (const c of wireClients) {
+        if (c.isConnected() && c.getRemoteNodeId() === nodeId) return c
+      }
+      return undefined
+    },
+    async requestBlockFromAny(
+      peerIds: string[],
+      cid: string,
+      opts?: { concurrency?: number; timeoutMs?: number },
+    ): Promise<Uint8Array | null> {
+      if (peerIds.length === 0) return null
+      const timeoutMs = opts?.timeoutMs ?? 5000
+      for (const peerId of peerIds) {
+        const client = this.findByNodeId(peerId)
+        if (!client) continue
+        try {
+          const bytes = await client.requestBlock(cid, timeoutMs)
+          if (bytes && bytes.length > 0) return bytes
+        } catch { /* try next */ }
+      }
+      return null
+    },
+  } as unknown as import("./wire-connection-manager.ts").WireConnectionManager
+
+  const wiring = buildCocIpfsWiring({
+    localNodeId: config.nodeId,
+    blockstore: ipfsStore,
+    dht: dhtNetwork,
+    connMgr: connMgrAdapter,
+    replicationFactor: config.ipfsReplicationFactor,
+  })
+  ipfsStore.setHooks(wiring.blockstoreHooks)
+  wireServer.setOnBlockRequest(wiring.onBlockRequest)
+  ipfs.setAwaitReplicationResult(wiring.awaitReplicationResult, config.ipfsMinReplicas)
+
+  // Phase C3.3 repair loop: 10 min sweep tops up under-replicated pins.
+  ipfsRepairLoop = new IpfsRepairLoop({
+    blockstore: ipfsStore,
+    dht: dhtNetwork,
+    pushToK: wiring.pushToK,
+  })
+  ipfsRepairLoop.start()
+  log.info("Phase C IPFS wiring attached", {
+    replicationFactor: config.ipfsReplicationFactor,
+    minReplicas: config.ipfsMinReplicas,
+  })
+}
+
 // Prometheus metrics server
 const metricsPort = Number(process.env.COC_METRICS_PORT ?? 9100)
 const metricsHandle = startMetricsServer({
@@ -1101,6 +1167,7 @@ async function shutdown(signal: string) {
   if (wireServer) wireServer.stop()
   for (const client of wireClients) client.disconnect()
   if (dhtNetwork) dhtNetwork.stop()
+  if (ipfsRepairLoop) ipfsRepairLoop.stop()
   await p2p.stop()
   pubsub.stop()
   await ipfs.stop()

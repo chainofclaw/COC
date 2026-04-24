@@ -104,6 +104,10 @@ export interface NodeConfig {
   // by the wiring layer; peerCount < 2 ⇒ skip with a once-per-minute warn
   // (see coc-ipfs-wiring.ts).
   ipfsReplicationFactor: number
+  // Phase C3.1: minimum replica count before the HTTP PUT handler emits
+  // an `X-COC-Replicas-Warning` header. Default 2, matching K=3 with
+  // 1 slack. Single-peer deployments should set 1 to silence the warning.
+  ipfsMinReplicas: number
   // Node identity key (hex private key for signing)
   nodePrivateKey?: string
   // RPC authentication (optional Bearer token)
@@ -453,6 +457,7 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     enableSnapSync: false,
     snapSyncThreshold: 100,
     ipfsReplicationFactor: 3,
+    ipfsMinReplicas: 2,
     nodePrivateKey,
     rpcAuthToken,
     enableAdminRpc,

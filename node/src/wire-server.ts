@@ -115,6 +115,18 @@ export class WireServer {
     this.seenBlocks = cfg.sharedSeenBlocks ?? new BoundedSet<Hex>(10_000)
   }
 
+  /**
+   * Post-construction attachment point for the C1.2 BlockRequest handler.
+   * index.ts builds the wire-server before the blockstore/DHT wiring is
+   * ready, so we expose this setter to inject `onBlockRequest` once
+   * `buildCocIpfsWiring` returns. Absent this call, the server responds
+   * to every BlockRequest with `found:false`, which is the safe default
+   * for a node that hasn't wired up the IPFS layer yet.
+   */
+  setOnBlockRequest(handler: WireServerConfig["onBlockRequest"]): void {
+    this.cfg.onBlockRequest = handler
+  }
+
   start(): void {
     this.server = net.createServer((socket) => {
       this.handleConnection(socket)

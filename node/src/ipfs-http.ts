@@ -62,6 +62,23 @@ export class IpfsHttpServer {
   }
 
   /**
+   * Post-construction attachment for Phase C3.1's replication awaiter.
+   * index.ts builds the HTTP server before the blockstore/DHT wiring
+   * is ready (to keep the IPFS API responsive during boot), so the
+   * awaiter is injected once `buildCocIpfsWiring` returns. Absent this
+   * call, `handleAdd` skips the replica-status check and no
+   * `X-COC-Replicas-Warning` header is emitted — the safe default for
+   * single-node deployments or during the boot window.
+   */
+  setAwaitReplicationResult(
+    awaiter: IpfsServerConfig["awaitReplicationResult"],
+    minReplicas?: number,
+  ): void {
+    this.cfg.awaitReplicationResult = awaiter
+    if (typeof minReplicas === "number") this.cfg.minReplicas = minReplicas
+  }
+
+  /**
    * Attach MFS and Pubsub subsystems.
    */
   attachSubsystems(opts: { mfs?: IpfsMfs; pubsub?: IpfsPubsub }): void {
