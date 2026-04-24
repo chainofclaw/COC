@@ -470,3 +470,132 @@ describe("DhtNetwork", () => {
     assert.equal(stats.verifyFallbackTcpFailures, 1)
   })
 })
+
+// --- Phase C1.1: provider records + TTL.
+// See plans/coc-evm-abstract-turtle.md §C1.1. Locks in that
+//   putProvider / findProviders form a content-routing layer on top of the
+//   Kademlia peer-routing table, and that TTL expiry both happens lazily
+//   on query (so callers never see stale entries) and actively on refresh.
+
+describe("DhtNetwork provider records", () => {
+  function newNetwork(): DhtNetwork {
+    return new DhtNetwork({
+      localId: "0xaa",
+      bootstrapPeers: [],
+      wireClients: [],
+      onPeerDiscovered: () => {},
+    })
+  }
+
+  const cidA = "bafyreic0ffee" + "a".repeat(40)
+  const cidB = "bafyreic0ffee" + "b".repeat(40)
+  const peer1 = "0x1111111111111111111111111111111111111111"
+  const peer2 = "0x2222222222222222222222222222222222222222"
+  const peer3 = "0x3333333333333333333333333333333333333333"
+
+  it("putProvider then findProviders returns the peer", () => {
+    const net = newNetwork()
+    net.putProvider(cidA, peer1)
+    const live = net.findProviders(cidA)
+    assert.deepEqual(live, [peer1.toLowerCase()])
+  })
+
+  it("findProviders returns empty for unknown CID", () => {
+    const net = newNetwork()
+    assert.deepEqual(net.findProviders(cidA), [])
+  })
+
+  it("putProvider bumps expiry when the same peer re-announces", () => {
+    const net = newNetwork()
+    net.putProvider(cidA, peer1, 100)
+    // Re-announce with a longer TTL — original would've expired at +100 ms.
+    net.putProvider(cidA, peer1, 60_000)
+    // Sleep past the first TTL but well short of the bumped one.
+    const start = Date.now()
+    while (Date.now() - start < 150) { /* busy wait ~150 ms */ }
+    assert.deepEqual(net.findProviders(cidA), [peer1.toLowerCase()])
+  })
+
+  it("findProviders caps at maxK and drops expired entries lazily", () => {
+    const net = newNetwork()
+    net.putProvider(cidA, peer1, 60_000)
+    net.putProvider(cidA, peer2, 60_000)
+    net.putProvider(cidA, peer3, 60_000)
+    const capped = net.findProviders(cidA, 2)
+    assert.equal(capped.length, 2)
+    // All three entries should still be in the map — cap is query-side only.
+    const all = net.findProviders(cidA, 10)
+    assert.equal(all.length, 3)
+  })
+
+  it("removeExpiredProviders drops expired entries and reports count", async () => {
+    const net = newNetwork()
+    net.putProvider(cidA, peer1, 20) // short TTL
+    net.putProvider(cidA, peer2, 60_000)
+    await new Promise((r) => setTimeout(r, 40))
+    const removed = net.removeExpiredProviders()
+    assert.equal(removed, 1, "expired peer1 should have been dropped")
+    const live = net.findProviders(cidA)
+    assert.deepEqual(live, [peer2.toLowerCase()])
+  })
+
+  it("findProviders does lazy expiry even if removeExpiredProviders hasn't fired", async () => {
+    const net = newNetwork()
+    net.putProvider(cidA, peer1, 20)
+    net.putProvider(cidA, peer2, 60_000)
+    await new Promise((r) => setTimeout(r, 40))
+    // No explicit removeExpiredProviders call.
+    const live = net.findProviders(cidA)
+    assert.deepEqual(live, [peer2.toLowerCase()])
+  })
+
+  it("MAX_PROVIDERS_PER_CID is enforced by evicting soonest-to-expire", () => {
+    const net = newNetwork()
+    // Fill to the cap (64) plus one more. The earliest-expiring should be evicted.
+    for (let i = 0; i < 64; i++) {
+      const peer = `0x${"0".repeat(38)}${i.toString(16).padStart(2, "0")}`
+      net.putProvider(cidA, peer, 60_000 + i) // peer 0 has shortest TTL
+    }
+    const newPeer = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    net.putProvider(cidA, newPeer, 120_000)
+    const all = net.findProviders(cidA, 1000)
+    assert.equal(all.length, 64, "capacity stays at MAX_PROVIDERS_PER_CID")
+    assert.ok(all.includes(newPeer.toLowerCase()), "new peer is retained")
+    // Peer 0 (shortest TTL) should be gone.
+    assert.ok(!all.includes(`0x${"0".repeat(38)}00`), "soonest-to-expire was evicted")
+  })
+
+  it("multiple CIDs are tracked independently", () => {
+    const net = newNetwork()
+    net.putProvider(cidA, peer1, 60_000)
+    net.putProvider(cidB, peer2, 60_000)
+    assert.deepEqual(net.findProviders(cidA), [peer1.toLowerCase()])
+    assert.deepEqual(net.findProviders(cidB), [peer2.toLowerCase()])
+  })
+
+  it("stats expose provider counters", () => {
+    const net = newNetwork()
+    net.putProvider(cidA, peer1, 60_000)
+    net.putProvider(cidA, peer2, 60_000)
+    net.putProvider(cidB, peer1, 60_000)
+    const stats = net.getStats()
+    assert.equal(stats.providerCidsTracked, 2)
+    assert.equal(stats.providerEntriesTotal, 3)
+    assert.equal(stats.providersPut, 3)
+  })
+
+  it("CID / peerId are case-insensitive", () => {
+    const net = newNetwork()
+    net.putProvider("BAFY-" + "a".repeat(50), "0xABCDEF".padEnd(42, "0"))
+    const found = net.findProviders("bafy-" + "a".repeat(50))
+    assert.equal(found.length, 1)
+    assert.equal(found[0], ("0xABCDEF".padEnd(42, "0")).toLowerCase())
+  })
+
+  it("ttlMs <= 0 is a no-op (no entry added)", () => {
+    const net = newNetwork()
+    net.putProvider(cidA, peer1, 0)
+    net.putProvider(cidA, peer2, -1)
+    assert.deepEqual(net.findProviders(cidA), [])
+  })
+})
