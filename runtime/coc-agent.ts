@@ -27,6 +27,7 @@ import type { UnixFsFileMeta, Hex } from "../node/src/ipfs-types.ts";
 import { IpfsBlockstore } from "../node/src/ipfs-blockstore.ts";
 import { CidRegistryReader, makeCidRegistryEventReader } from "./lib/cid-registry-reader.ts";
 import type { DhtLike } from "./lib/cid-registry-reader.ts";
+import { verifiedStorageBytesFor } from "./lib/pose-score.ts";
 import { createLogger } from "../node/src/logger.ts";
 import { createNodeSigner, createNodeSignerV2, buildReceiptSignMessage } from "../node/src/crypto/signer.ts";
 import { buildDomain, CHALLENGE_TYPES, RECEIPT_TYPES, REWARD_MANIFEST_TYPES } from "../node/src/crypto/eip712-types.ts";
@@ -1086,7 +1087,7 @@ async function tryChallengeV2(nodeId: string, kind: keyof typeof ChallengeType):
     };
 
     pendingV2.push(verified);
-    updateScore(nodeId, kind, witnessResult.quorumMet, storageTarget?.fileSize);
+    updateScore(nodeId, kind, witnessResult.quorumMet, verifiedStorageBytesFor(storageTarget));
     if (witnessResult.quorumMet) {
       recordValidChallengerReceipt(currentEpoch);
     }
@@ -1350,7 +1351,7 @@ async function tryChallenge(nodeId: string, kind: keyof typeof ChallengeType): P
   try {
     const verified = verifier.toVerifiedReceipt(challenge, receiptPayload, BigInt(Date.now()));
     pending.push(verified);
-    updateScore(nodeId, kind, true, storageTarget?.fileSize);
+    updateScore(nodeId, kind, true, verifiedStorageBytesFor(storageTarget));
     recordValidChallengerReceipt(currentEpoch);
   } catch (error) {
     updateScore(nodeId, kind, false);
@@ -1407,21 +1408,23 @@ function buildQuerySpec(
  * Pick a Storage-challenge target. Two paths, gated on FF
  * `poseStorageFromBlockstore` (runtime/lib/config.ts):
  *
- *   - FF on (Phase C2.2): source CIDs from the on-chain CidRegistry
+ *   - FF on (Phase C2.2+C2.3): source CIDs from the on-chain CidRegistry
  *     event log, filter out CIDs with zero DHT providers, resolve
- *     merkle metadata via the blockstore fetch-or-serve path. This is
- *     the production path — agents across the cluster share a
- *     consistent challenge pool and monopoly CIDs are skipped.
- *   - FF off (legacy): read local `file-meta.json`, unchanged from the
- *     pre-C2.2 behavior.
+ *     merkle metadata via the blockstore fetch-or-serve path. Returns
+ *     `chunkSize` — the byte length of the specific chunk being
+ *     challenged, which C2.3's verifiedStorageBytes accumulator
+ *     credits on a successful verification.
+ *   - FF off (legacy): read local `file-meta.json`. Returns `fileSize`
+ *     (whole-file bytes), the pre-C2.3 metric. Retained so existing
+ *     deployments' scoring behavior doesn't shift before the operator
+ *     opts in.
  *
- * `chunkSize` is populated on the FF path so C2.3's storageBps
- * accumulator can credit the actual bytes verified; legacy path sets
- * fileSize only since chunkSize isn't stored in the meta file.
+ * Both fields are optional — callers must prefer `chunkSize` over
+ * `fileSize`, falling back only when the FF-off path is in use.
  */
 async function pickStorageTarget(
   storageDirPath: string,
-): Promise<{ cid: string; chunkIndex: number; merkleRoot: string; fileSize: number; chunkSize?: number } | null> {
+): Promise<{ cid: string; chunkIndex: number; merkleRoot: string; fileSize?: number; chunkSize?: number } | null> {
   if (cidRegistryReader) {
     const target = await cidRegistryReader.pickRandomChallengeTarget();
     if (!target) {
@@ -1432,9 +1435,6 @@ async function pickStorageTarget(
       cid: target.cid,
       chunkIndex: target.chunkIndex,
       merkleRoot: target.merkleRoot,
-      // fileSize is not known without a full scan and chunkSize already
-      // carries the per-chunk number that matters for storageBps.
-      fileSize: target.chunkSize,
       chunkSize: target.chunkSize,
     };
   }
@@ -1454,6 +1454,7 @@ async function pickStorageTarget(
     fileSize: target.size,
   };
 }
+
 
 async function readFileMeta(storageDirPath: string): Promise<Record<string, UnixFsFileMeta>> {
   try {
