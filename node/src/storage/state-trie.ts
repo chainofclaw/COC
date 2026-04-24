@@ -397,13 +397,6 @@ export class PersistentStateTrie implements IStateTrie {
     return this.lastStateRoot
   }
 
-  /**
-   * Track storage trie DB adapters so we can release them from cache alongside
-   * their tries when a storage trie is evicted or abandoned on revert.
-   * Storage tries are created dynamically (e.g. during contract deploy).
-   */
-  private storageTrieAdapters = new Map<string, TrieDBAdapter>()
-
   private checkpointStateRoot: string | null = null
 
   async checkpoint(): Promise<void> {
@@ -436,9 +429,11 @@ export class PersistentStateTrie implements IStateTrie {
         // Storage trie created after checkpoint has no frame to revert — remove it.
         // Its mid-block writes already reached LevelDB directly; the block is being
         // rolled back so we drop this trie from cache and let the account's persisted
-        // storageRoot drive the next reload.
+        // storageRoot drive the next reload. The orphaned LevelDB nodes are
+        // content-addressed (keyed by their own hash) so they can never be
+        // reached through the reverted account's storageRoot — they are dead
+        // storage, not a correctness hazard.
         this.storageTries.delete(addr)
-        this.storageTrieAdapters.delete(addr)
       }
     }
     // Invalidate caches and dirty tracking on revert
@@ -451,7 +446,6 @@ export class PersistentStateTrie implements IStateTrie {
 
   async clearStorage(address: string): Promise<void> {
     this.storageTries.delete(address)
-    this.storageTrieAdapters.delete(address)
     // Reset account storage root to empty
     const account = await this.get(address)
     if (account) {
@@ -517,7 +511,6 @@ export class PersistentStateTrie implements IStateTrie {
 
   async close(): Promise<void> {
     this.storageTries.clear()
-    this.storageTrieAdapters.clear()
     this.accountCache.clear()
     this.dirtyAddresses.clear()
   }
@@ -566,7 +559,6 @@ export class PersistentStateTrie implements IStateTrie {
     this.evictLru()
 
     const trieDb = new TrieDBAdapter(this.db, `ss:${address}:`)
-    this.storageTrieAdapters.set(address, trieDb)
     const rootBytes = storageRoot !== "0x" + "0".repeat(64) ? hexToBytes(storageRoot) : undefined
 
     storageTrie = new Trie({ db: trieDb as any, root: rootBytes })
