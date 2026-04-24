@@ -1104,7 +1104,17 @@ async function tryChallengeV2(nodeId: string, kind: keyof typeof ChallengeType):
       nodeId,
       poseV2Contract ? async (id) => (await poseV2Contract.getNode(id)) as { pubkeyNode?: string } : undefined,
     );
-    if (!agentSignerV2.eip712.verifyTypedData(RECEIPT_TYPES, receiptData, receiptPayload.nodeSig, nodeAddr)) {
+    const sigOk = agentSignerV2.eip712.verifyTypedData(RECEIPT_TYPES, receiptData, receiptPayload.nodeSig, nodeAddr);
+    if (!sigOk) {
+      log.warn("debug: v2 sig verify failed", {
+        nodeId, nodeAddr,
+        challengeId: receiptData.challengeId,
+        responseAtMs: receiptData.responseAtMs.toString(),
+        responseBodyHash: receiptData.responseBodyHash,
+        tipHash: receiptData.tipHash,
+        tipHeight: receiptData.tipHeight.toString(),
+        sigLen: receiptPayload.nodeSig.length,
+      });
       throw new Error("invalid node receipt signature");
     }
 
