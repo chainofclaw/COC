@@ -10,6 +10,8 @@ import crypto from "node:crypto"
 import { FrameDecoder, MessageType, encodeJsonPayload, decodeJsonPayload, buildWireHandshakeMessage } from "./wire-protocol.ts"
 import type { WireFrame, FindNodePayload, FindNodeResponsePayload, BlockRequestPayload, BlockResponsePayload } from "./wire-protocol.ts"
 import { keccak256 } from "ethers"
+import { CID } from "multiformats/cid"
+import { sha256 } from "multiformats/hashes/sha2"
 import type { ChainBlock, Hex } from "./blockchain-types.ts"
 import type { BftMessage } from "./bft.ts"
 import type { NodeSigner, SignatureVerifier } from "./crypto/signer.ts"
@@ -607,8 +609,30 @@ export class WireServer {
             conn.socket.write(encodeJsonPayload(MessageType.BlockResponse, resp))
             break
           }
-          const digest = keccak256(bytesIn)
-          if (digest.toLowerCase() !== cid.toLowerCase()) {
+          // Verify the claimed CID matches the bytes. Phase C supports two
+          // CID conventions:
+          //   1. Legacy "0x..." keccak256 hex (COC raw-block blockstore layout)
+          //   2. IPFS CIDv1 base32 (UnixFS / DAG-PB — what /api/v0/add emits)
+          // Both must be checked; a mismatch in either ⇒ reject without
+          // invoking the handler so a malicious peer can't mislabel bytes.
+          const verifyCid = async (): Promise<boolean> => {
+            if (cid.startsWith("0x")) {
+              return keccak256(bytesIn).toLowerCase() === cid.toLowerCase()
+            }
+            try {
+              const parsed = CID.parse(cid)
+              const d = await sha256.digest(bytesIn)
+              if (parsed.multihash.digest.length !== d.digest.length) return false
+              for (let i = 0; i < d.digest.length; i++) {
+                if (parsed.multihash.digest[i] !== d.digest[i]) return false
+              }
+              return true
+            } catch {
+              return false
+            }
+          }
+          const verified = await verifyCid()
+          if (!verified) {
             const resp: BlockResponsePayload = { requestId: reqId, cid, found: false, error: "hash mismatch" }
             conn.socket.write(encodeJsonPayload(MessageType.BlockResponse, resp))
             break
