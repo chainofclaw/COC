@@ -38,6 +38,18 @@ export interface IStateTrie {
   revert(): Promise<void>
   close(): Promise<void>
   stateRoot(): string | null
+  /**
+   * Compute the current in-memory stateRoot from live trie state, without
+   * any side effects. Unlike `stateRoot()` — which returns the last-committed
+   * root and goes stale after `put`/`delete` — this always reflects the
+   * current node set.
+   *
+   * Phase B speculative dry-run uses this to read the post-execution root
+   * without invoking `commit()` (which would flush the isolation frame
+   * through the shared adapter and defeat the dry-run contract). Safe to
+   * call during an active checkpoint.
+   */
+  computeStateRoot(): string
   setStateRoot(root: string, opts?: { persist?: boolean }): Promise<void>
   hasStateRoot(root: string): Promise<boolean>
   clearStorage(address: string): Promise<void>
@@ -414,6 +426,10 @@ export class PersistentStateTrie implements IStateTrie {
     return this.lastStateRoot
   }
 
+  computeStateRoot(): string {
+    return bytesToHex(this.trie.root())
+  }
+
   private checkpointStateRoot: string | null = null
 
   async checkpoint(): Promise<void> {
@@ -744,6 +760,13 @@ export class InMemoryStateTrie implements IStateTrie {
 
   stateRoot(): string | null {
     return this.lastRoot
+  }
+
+  computeStateRoot(): string {
+    // Mirror commit()'s hash: sorted addresses joined, then keccak256. No
+    // side effects — doesn't update lastRoot.
+    const addresses = Array.from(this.accounts.keys()).sort()
+    return keccak256(toUtf8Bytes(addresses.join(",")))
   }
 
   async setStateRoot(_root: string, _opts?: { persist?: boolean }): Promise<void> {
