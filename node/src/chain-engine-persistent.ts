@@ -320,56 +320,23 @@ export class PersistentChainEngine {
    * protocol's backward-compat rules lets the cluster still finalize so
    * long as the group reaches quorum overall.
    */
-  async speculativelyComputeStateRoot(block: ChainBlock): Promise<Hex | undefined> {
-    if (!this.stateTrie) return undefined
-
-    await this.evm.checkpointState()
-    await this.stateTrie.checkpoint()
-    try {
-      const executionTimestamp = BigInt(Math.floor(block.timestampMs / 1000))
-      const blockContext = {
-        blockNumber: block.number,
-        baseFeePerGas: block.baseFee ?? 0n,
-        excessBlobGas: block.excessBlobGas,
-        parentBeaconBlockRoot: block.parentBeaconBlockRoot ? hexToBytes(block.parentBeaconBlockRoot) : undefined,
-        timestamp: executionTimestamp,
-      }
-      await this.evm.applyBlockContext(blockContext)
-      const blockEnv = this.evm.prepareBlock(block.number, blockContext)
-      const { blockCommon, executionBlock } = blockEnv._internal as { blockCommon: any; executionBlock: any }
-      const baseFee = block.baseFee ?? 0n
-      const blockNumberHex = `0x${block.number.toString(16)}`
-
-      for (let i = 0; i < block.txs.length; i++) {
-        // `trustBlock=true` matches the BFT-finalized apply path: speculative
-        // runs happen in the pre-commit window so we trust the block's
-        // ordering and sidestep nonce/balance pre-validation quirks that
-        // only affect locally-built blocks.
-        await this.evm.executeRawTxInBlock(
-          block.txs[i], blockCommon, executionBlock,
-          block.number, i, block.hash,
-          baseFee, blockNumberHex,
-          undefined, true,
-        )
-      }
-
-      // commit staged writes into the (checkpointed) state trie so stateRoot
-      // reflects them, then read. The outer revert below undoes all of it.
-      await this.evm.commitState()
-      const root = this.stateTrie.stateRoot()
-      return (root ?? undefined) as Hex | undefined
-    } catch (err) {
-      log.warn("speculativelyComputeStateRoot failed", {
-        height: block.number.toString(),
-        hash: block.hash,
-        error: String(err),
-      })
-      return undefined
-    } finally {
-      // Always undo everything — speculative, never persist.
-      try { await this.evm.revertState() } catch { /* no checkpoint to revert */ }
-      try { await this.stateTrie!.revert() } catch { /* no checkpoint to revert */ }
-    }
+  async speculativelyComputeStateRoot(_block: ChainBlock): Promise<Hex | undefined> {
+    // Disabled for persistent engine: PersistentStateTrie.commit() unconditionally
+    // calls flushOverlay() which batch-writes the overlay Map to LevelDB, and
+    // ethereumjs VM's internal runTx() calls stateManager.commit() at the end
+    // of each tx. The speculative checkpoint/revert pattern therefore leaks
+    // post-execution account state to disk before we can undo it — observed
+    // on testnet as validators reporting polluted `eth_getTransactionCount`
+    // after rejecting a block via BFT NACK.
+    //
+    // Returning undefined here falls back to hash-only BFT quorum (legacy
+    // pickWinningVoteGroup behavior) — safe when at least one voter has
+    // undefined stateRoot, but loses the stateRoot-divergence protection
+    // that PR #7 was designed to give. Re-enabling requires either:
+    //   - a trie layer that supports nested overlay with scoped flush, or
+    //   - per-block shallowCopy stateManager with EVM re-bind for sim,
+    // both of which are larger refactors than fit the current debug loop.
+    return undefined
   }
 
   async proposeNextBlock(deferApply = false): Promise<ChainBlock | null> {
