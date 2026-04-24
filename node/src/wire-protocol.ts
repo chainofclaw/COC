@@ -21,6 +21,10 @@ export const MessageType = {
   Transaction: 0x11,
   BlockRequest: 0x12,
   BlockResponse: 0x13,
+  // Phase C gossip: one-hop CID provider advertisement. Sender tells
+  // the receiver "I hold CID X" so the receiver can add `(X, senderId)`
+  // to its provider records and route future GETs accordingly.
+  ProviderAdvertise: 0x14,
   Snapshot: 0x20,
   SnapshotRequest: 0x21,
   BftPrepare: 0x30,
@@ -73,6 +77,28 @@ export interface BlockResponsePayload {
   error?: string // optional diagnostic for push path (hash mismatch, oversize, etc.)
 }
 
+/**
+ * Phase C cross-node DHT provider gossip.
+ *
+ * Sender: "I (the peer whose remoteNodeId is known from the authenticated
+ * handshake) hold this CID for `ttlMs` from now." Receiver adds the claim
+ * to its local DHT via `putProvider(cid, senderId, ttlMs)`.
+ *
+ * One-hop: the receiver MUST NOT re-broadcast. Each node floods its own
+ * CIDs to its directly-connected peers; multi-hop convergence happens
+ * because every peer does the same.
+ *
+ * Security: receiver IGNORES any provider ID field in the payload —
+ * the authenticated sender ID from the handshake is the only trusted
+ * source. A byzantine peer can only claim to hold CIDs itself, it
+ * cannot slander a third party.
+ */
+export interface ProviderAdvertisePayload {
+  cid: string
+  /** Optional TTL in ms; if omitted or invalid, receiver uses its own default (24 h). */
+  ttlMs?: number
+}
+
 export type MessageType = (typeof MessageType)[keyof typeof MessageType]
 
 /**
@@ -101,6 +127,7 @@ const DEFAULT_PRIORITIES: Partial<Record<number, FramePriority>> = {
   // per-peer token bucket C3.3 will add, which is the right lever.
   [MessageType.BlockRequest]: FramePriority.HIGH,
   [MessageType.BlockResponse]: FramePriority.HIGH,
+  [MessageType.ProviderAdvertise]: FramePriority.LOW,
   [MessageType.Transaction]: FramePriority.NORMAL,
   [MessageType.FindNode]: FramePriority.LOW,
   [MessageType.FindNodeResponse]: FramePriority.LOW,

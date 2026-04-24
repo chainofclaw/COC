@@ -157,6 +157,22 @@ export class WireConnectionManager {
   }
 
   /**
+   * Phase C cross-node gossip: enumerate every currently-connected peer
+   * ID so the wiring layer can broadcast ProviderAdvertise frames.
+   * Snapshot — caller iterates the returned array, the manager is free
+   * to churn connections in parallel.
+   */
+  listConnectedPeerIds(): string[] {
+    const ids: string[] = []
+    for (const [, conn] of this.connections) {
+      if (!conn.client.isConnected()) continue
+      const id = conn.client.getRemoteNodeId()
+      if (id) ids.push(id)
+    }
+    return ids
+  }
+
+  /**
    * Pull an IPFS block from the first peer in `peerIds` that returns it.
    *
    * Tries peers in parallel (bounded by `concurrency`), resolves with the

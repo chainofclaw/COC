@@ -266,6 +266,20 @@ export class WireClient {
    * inside the same frame as the request so a push is a single round-trip;
    * at 256 KiB / chunk that's a 341 KiB frame, well under the 16 MiB cap.
    */
+  /**
+   * Phase C cross-node DHT gossip: tell this peer that the local node
+   * holds `cid`. One-hop fire-and-forget — no response frame, no
+   * pending-request tracking. Receiver's wire-server will treat the
+   * authenticated handshake ID as the provider, so we don't send one
+   * in the payload.
+   */
+  sendProviderAdvertise(cid: string, ttlMs?: number): boolean {
+    if (!this.isConnected()) return false
+    const payload: { cid: string; ttlMs?: number } = { cid }
+    if (typeof ttlMs === "number") payload.ttlMs = ttlMs
+    return this.sendMessage(MessageType.ProviderAdvertise, payload)
+  }
+
   pushBlock(cid: string, bytes: Uint8Array, timeoutMs = 10_000): Promise<boolean> {
     return new Promise((resolve) => {
       if (!this.isConnected()) {

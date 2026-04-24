@@ -63,6 +63,18 @@ export interface WireServerConfig {
     push: boolean,
     bytes?: Uint8Array,
   ) => Promise<Uint8Array | null>
+  /**
+   * Phase C cross-node DHT provider gossip: invoked when a
+   * ProviderAdvertise frame arrives. `providerId` is the authenticated
+   * sender (from the handshake), NOT any field in the payload — this
+   * prevents a byzantine peer from slandering a third party. Handler
+   * should call `dht.putProvider(cid, providerId, ttlMs)`.
+   */
+  onProviderAdvertise?: (
+    cid: string,
+    providerId: string,
+    ttlMs?: number,
+  ) => void
   getHeight: () => Promise<bigint | Promise<bigint>>
   /** Called after a new (non-duplicate) tx arrives via wire, for cross-protocol relay */
   onTxRelay?: (rawTx: Hex) => Promise<void>
@@ -127,6 +139,15 @@ export class WireServer {
    */
   setOnBlockRequest(handler: WireServerConfig["onBlockRequest"]): void {
     this.cfg.onBlockRequest = handler
+  }
+
+  /**
+   * Post-construction attachment for the ProviderAdvertise gossip
+   * handler. Same rationale as `setOnBlockRequest`: the wiring module
+   * doesn't exist yet when wire-server is built.
+   */
+  setOnProviderAdvertise(handler: WireServerConfig["onProviderAdvertise"]): void {
+    this.cfg.onProviderAdvertise = handler
   }
 
   start(): void {
@@ -675,6 +696,26 @@ export class WireServer {
 
       case MessageType.BlockResponse: {
         // Handled by pending request callbacks (see WireClient).
+        break
+      }
+
+      case MessageType.ProviderAdvertise: {
+        // Phase C cross-node DHT provider gossip. The sender's nodeId is
+        // the only trusted provider identity — we ignore any field the
+        // payload tried to claim for someone else. The handler is
+        // installed by buildCocIpfsWiring via setOnProviderAdvertise.
+        if (!this.cfg.onProviderAdvertise || !conn.nodeId) break
+        const req = decodeJsonPayload<{ cid?: string; ttlMs?: number }>(frame)
+        const cid = typeof req?.cid === "string" ? req.cid : ""
+        if (cid.length === 0 || cid.length > 256) break
+        const ttlMs = typeof req?.ttlMs === "number" && req.ttlMs > 0 && req.ttlMs <= 7 * 24 * 60 * 60 * 1000
+          ? req.ttlMs
+          : undefined
+        try {
+          this.cfg.onProviderAdvertise(cid, conn.nodeId, ttlMs)
+        } catch (err) {
+          log.debug("onProviderAdvertise threw", { cid, peer: conn.nodeId, error: String(err) })
+        }
         break
       }
 

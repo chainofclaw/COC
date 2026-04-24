@@ -1095,6 +1095,15 @@ if (wireServer && dhtNetwork) {
       }
       return undefined
     },
+    listConnectedPeerIds(): string[] {
+      const ids: string[] = []
+      for (const c of wireClients) {
+        if (!c.isConnected()) continue
+        const id = c.getRemoteNodeId()
+        if (id) ids.push(id)
+      }
+      return ids
+    },
     async requestBlockFromAny(
       peerIds: string[],
       cid: string,
@@ -1123,6 +1132,12 @@ if (wireServer && dhtNetwork) {
   })
   ipfsStore.setHooks(wiring.blockstoreHooks)
   wireServer.setOnBlockRequest(wiring.onBlockRequest)
+  // Cross-node DHT provider gossip: when a peer says "I hold X",
+  // add (X, peer) to our local DHT. Authenticated sender ID comes
+  // from the wire-server handshake, NOT from the payload.
+  wireServer.setOnProviderAdvertise((cid, providerId, ttlMs) => {
+    dhtNetwork!.putProvider(cid, providerId, ttlMs)
+  })
   ipfs.setAwaitReplicationResult(wiring.awaitReplicationResult, config.ipfsMinReplicas)
 
   // Phase C3.3 repair loop: 10 min sweep tops up under-replicated pins.

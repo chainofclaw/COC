@@ -227,12 +227,39 @@ describe("coc-ipfs-wiring", () => {
           pushCalls.get(p.id)!.push({ cid, len: bytes.length })
           return p.pushResult
         },
+        sendProviderAdvertise: () => true,
         disconnect: () => {},
       } as unknown as import("./wire-client.ts").WireClient
       // @ts-expect-error — private-field write for test fan-out
       mgr.connections.set(p.id, { client, host: "h", port: 1, connectedAtMs: 0 })
     }
     return { mgr, pushCalls }
+  }
+
+  // Extended variant that tracks ProviderAdvertise sends for gossip tests.
+  function makeConnMgrWithAdvertise(peers: Array<{ id: string; connected: boolean }>): {
+    mgr: WireConnectionManager
+    advertiseCalls: Map<string, Array<{ cid: string; ttlMs?: number }>>
+  } {
+    const mgr = new WireConnectionManager({ nodeId: "local", chainId: 1 })
+    const advertiseCalls = new Map<string, Array<{ cid: string; ttlMs?: number }>>()
+    for (const p of peers) {
+      advertiseCalls.set(p.id, [])
+      const client = {
+        isConnected: () => p.connected,
+        getRemoteNodeId: () => p.id,
+        requestBlock: async () => null,
+        pushBlock: async () => true,
+        sendProviderAdvertise: (cid: string, ttlMs?: number) => {
+          advertiseCalls.get(p.id)!.push({ cid, ttlMs })
+          return true
+        },
+        disconnect: () => {},
+      } as unknown as import("./wire-client.ts").WireClient
+      // @ts-expect-error — private-field write
+      mgr.connections.set(p.id, { client, host: "h", port: 1, connectedAtMs: 0 })
+    }
+    return { mgr, advertiseCalls }
   }
 
   // Seed the DHT routing table with synthetic peers so findClosest has
@@ -566,6 +593,99 @@ describe("coc-ipfs-wiring", () => {
 
     const status = await wiring.awaitReplicationResult("QmCacheOnly" as CidString, 200)
     assert.equal(status, null, "no push tracked → awaiter returns null")
+    mgr.stop()
+  })
+
+  // --- Phase C cross-node DHT provider gossip:
+  //     onPut must fire sendProviderAdvertise to every connected peer so
+  //     the other nodes add us to their provider records and route GETs
+  //     here without first having to push bytes. This is the test that
+  //     would have caught the pre-hotfix testnet gap where each node
+  //     only knew about itself.
+  it("onPut broadcasts ProviderAdvertise to every connected peer", async () => {
+    const localId = "0x1111"
+    const dht = makeDht(localId)
+    seedDht(dht, [PA, PB, PC])
+    const { mgr, advertiseCalls } = makeConnMgrWithAdvertise([
+      { id: PA, connected: true },
+      { id: PB, connected: true },
+      { id: PC, connected: true },
+    ])
+
+    const wiring = buildCocIpfsWiring({
+      localNodeId: localId,
+      blockstore, dht, connMgr: mgr,
+      replicationFactor: 3,
+    })
+    blockstore.setHooks(wiring.blockstoreHooks)
+
+    await blockstore.put({ cid: "QmGossip1" as CidString, bytes: Buffer.from("x") })
+    await new Promise((r) => setTimeout(r, 30))
+
+    // Every connected peer should have received one advertise frame.
+    for (const id of [PA, PB, PC]) {
+      const calls = advertiseCalls.get(id)!
+      assert.equal(calls.length, 1, `peer ${id} should have one advertise call`)
+      assert.equal(calls[0].cid, "QmGossip1")
+    }
+    mgr.stop()
+  })
+
+  it("remote-cache PUT also broadcasts advertise (so re-cachers help discovery)", async () => {
+    const localId = "0x1111"
+    const dht = makeDht(localId)
+    seedDht(dht, [PA])
+    const { mgr, advertiseCalls } = makeConnMgrWithAdvertise([
+      { id: PA, connected: true },
+    ])
+
+    const wiring = buildCocIpfsWiring({
+      localNodeId: localId,
+      blockstore, dht, connMgr: mgr,
+      replicationFactor: 3,
+    })
+    blockstore.setHooks(wiring.blockstoreHooks)
+
+    // Simulate cache-back from a remote fetch — should still advertise
+    // so whoever pulled from us learns WE hold it too, but MUST NOT
+    // trigger pushToK (that would cascade). Test below tracks both.
+    await blockstore.putFromPeer({ cid: "QmCacheGossip" as CidString, bytes: Buffer.from("y") })
+    await new Promise((r) => setTimeout(r, 30))
+
+    assert.equal(advertiseCalls.get(PA)!.length, 1, "cache-back still advertises")
+    assert.equal(advertiseCalls.get(PA)![0].cid, "QmCacheGossip")
+    mgr.stop()
+  })
+
+  it("reannounce source emits advertise per pin so remote TTLs stay alive", async () => {
+    const localId = "0x1111"
+    const dht = makeDht(localId)
+    seedDht(dht, [PA])
+    const { mgr, advertiseCalls } = makeConnMgrWithAdvertise([
+      { id: PA, connected: true },
+    ])
+
+    // Pin two CIDs in the blockstore before wiring so that the
+    // re-announce source has material to work with.
+    await blockstore.put({ cid: "QmReann1" as CidString, bytes: Buffer.from("a") })
+    await blockstore.put({ cid: "QmReann2" as CidString, bytes: Buffer.from("b") })
+    await blockstore.pin("QmReann1" as CidString)
+    await blockstore.pin("QmReann2" as CidString)
+
+    buildCocIpfsWiring({
+      localNodeId: localId,
+      blockstore, dht, connMgr: mgr,
+      replicationFactor: 3,
+    })
+
+    // Clear any advertise calls that fell out of the initial setup.
+    advertiseCalls.set(PA, [])
+    // Trigger the re-announce tick manually (production cadence is 12h).
+    await dht.reannounceSelfProviders()
+
+    const calls = advertiseCalls.get(PA)!
+    const cids = calls.map((c) => c.cid).sort()
+    assert.deepEqual(cids, ["QmReann1", "QmReann2"], "every pinned CID re-advertised")
     mgr.stop()
   })
 

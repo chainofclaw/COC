@@ -141,14 +141,6 @@ export function buildCocIpfsWiring(cfg: CocIpfsWiringConfig): {
   // devnet doesn't spam its log every PUT.
   let lastLowPeerWarnMs = 0
 
-  // Phase C3.2: attach the blockstore's pin list as the DHT's re-announce
-  // source so the periodic republish loop bumps TTLs for every CID the
-  // local node still holds. Without this, a long-lived node's own
-  // provider records expire after 24 h and peers stop routing GETs here
-  // even though the bytes are still on disk. Attaching is idempotent;
-  // DhtNetwork.setReannouncePinSource just overwrites the previous ref.
-  cfg.dht.setReannouncePinSource(() => cfg.blockstore.listPins())
-
   const fetchRemote = async (cid: CidString): Promise<Uint8Array | null> => {
     const providers = cfg.dht.findProviders(cid, fanOut)
     if (providers.length === 0) {
@@ -239,15 +231,36 @@ export function buildCocIpfsWiring(cfg: CocIpfsWiringConfig): {
   const inFlightPushes = new Map<string, Promise<PushToKResult>>()
   const PUSH_RESULT_RETENTION_MS = 30_000
 
+  // Phase C cross-node provider gossip: one-hop broadcast to every
+  // currently-connected peer so they can add us to their provider
+  // records. `broadcastProviderAdvertise` is also called from the
+  // DHT's self-reannounce loop (see below) to keep remote records
+  // alive past the 24 h TTL.
+  const broadcastProviderAdvertise = (cid: string, ttlMs?: number): number => {
+    let sent = 0
+    for (const peerId of cfg.connMgr.listConnectedPeerIds?.() ?? []) {
+      const client = cfg.connMgr.findByNodeId(peerId)
+      if (!client || !client.isConnected()) continue
+      if (client.sendProviderAdvertise?.(cid, ttlMs)) sent++
+    }
+    return sent
+  }
+
   const onPut = (cid: CidString, bytes: Uint8Array, opts?: OnPutOptions): void => {
-    // Always self-announce. Cheap (in-memory DHT map) and buys the
-    // snowball-provider effect C1.3 depends on.
+    // Always self-announce locally. Cheap (in-memory DHT map) and buys
+    // the snowball-provider effect C1.3 depends on.
     cfg.dht.putProvider(cid, cfg.localNodeId)
+
+    // Phase C gossip: also tell every directly-connected peer so they
+    // can route future GETs here. Fire-and-forget; the receiver's
+    // wire-server treats it as best-effort and deduplicates on
+    // `putProvider` (CID, peerId) → expiry bump.
+    broadcastProviderAdvertise(cid)
 
     // Only fire pushToK for local PUTs. A cache-back from remote fetch
     // (source: "remote-cache") must NOT push, or every GET would amplify
     // into K pushes and cascade exponentially. Discovery-based diffusion
-    // via putProvider above is sufficient in that case.
+    // via putProvider + broadcast above is sufficient in that case.
     const source = opts?.source ?? "local"
     if (source !== "local") return
 
@@ -265,6 +278,20 @@ export function buildCocIpfsWiring(cfg: CocIpfsWiringConfig): {
       setTimeout(() => inFlightPushes.delete(key), PUSH_RESULT_RETENTION_MS).unref?.()
     })
   }
+
+  // Phase C3.2 + cross-node gossip: attach the blockstore's pin list as
+  // the DHT's re-announce source so the periodic republish loop bumps
+  // TTLs for every CID the local node still holds. The source also
+  // emits a ProviderAdvertise gossip for each pin so peer DHTs bump
+  // *their* records of us in lock-step with our local entries —
+  // without this, remote records expire at 24 h even though the node
+  // still holds the bytes. Batched to ≤ 100 CIDs per tick to avoid a
+  // fresh-restart thundering herd.
+  cfg.dht.setReannouncePinSource(async () => {
+    const pins = await cfg.blockstore.listPins()
+    for (const cid of pins.slice(0, 100)) broadcastProviderAdvertise(cid)
+    return pins
+  })
 
   const awaitReplicationResult = async (cid: string, timeoutMs = 10_000): Promise<PushToKResult | null> => {
     const p = inFlightPushes.get(cid.toLowerCase())
