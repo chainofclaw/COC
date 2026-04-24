@@ -291,3 +291,117 @@ test("PersistentStateTrie: discard clears caches", async () => {
   // After discard, cache is cleared — get should re-read from DB (which has nothing committed)
   // This tests that discard clears the in-memory caches
 })
+
+// --- GH #6 regression: v6 CheckpointDB stack must return to 0 after each
+// commit or revert. If commit() doesn't pop the frame, every applyBlock
+// leaks a frame and state drifts per-validator under any mid-block revert.
+// See plans/coc-evm-abstract-turtle.md (Phase A4).
+
+// Peek into the private v6 Trie instance to read its CheckpointDB stack.
+function checkpointStackDepth(trie: PersistentStateTrie): number {
+  const t = trie as unknown as { trie: { _db: { checkpoints: unknown[] } } }
+  return t.trie._db.checkpoints.length
+}
+
+test("PersistentStateTrie: checkpoint/commit leaves stack depth 0", async () => {
+  const db = new MemoryDatabase()
+  const trie = new PersistentStateTrie(db)
+
+  assert.strictEqual(checkpointStackDepth(trie), 0)
+
+  for (let i = 0; i < 50; i++) {
+    await trie.checkpoint()
+    assert.strictEqual(checkpointStackDepth(trie), 1, `depth==1 during block ${i}`)
+    await trie.put(`0x${(0x1000 + i).toString(16).padStart(40, "0")}`, {
+      ...testAccount,
+      nonce: BigInt(i),
+    })
+    await trie.commit()
+    assert.strictEqual(checkpointStackDepth(trie), 0, `depth==0 after commit ${i}`)
+  }
+})
+
+test("PersistentStateTrie: checkpoint/revert leaves stack depth 0 and no partial writes", async () => {
+  const db = new MemoryDatabase()
+  const trie = new PersistentStateTrie(db)
+
+  // Establish a committed baseline so we can verify revert didn't disturb it.
+  const baseAddr = "0xba5e0000000000000000000000000000000ba5e0"
+  const transientAddr = "0xdeadbeef0000000000000000000000000000dead"
+
+  await trie.checkpoint()
+  await trie.put(baseAddr, { ...testAccount, nonce: 1n })
+  const baselineRoot = await trie.commit()
+  assert.strictEqual(checkpointStackDepth(trie), 0)
+
+  // Attempt a "block" that checkpoints, writes a transient account, then reverts.
+  await trie.checkpoint()
+  assert.strictEqual(checkpointStackDepth(trie), 1)
+  await trie.put(transientAddr, { ...testAccount, nonce: 99n })
+  await trie.revert()
+  assert.strictEqual(checkpointStackDepth(trie), 0)
+
+  // The transient account must not be readable — its write must have stayed
+  // in the CheckpointDB's keyValueMap and been discarded, never reaching LevelDB.
+  assert.strictEqual(await trie.get(transientAddr), null)
+
+  // Root must be restored to the pre-checkpoint value.
+  assert.strictEqual(trie.stateRoot(), baselineRoot)
+
+  // Re-opening from the same underlying DB must show no transient writes either.
+  const reopened = new PersistentStateTrie(db)
+  await reopened.init()
+  assert.strictEqual(await reopened.get(transientAddr), null)
+  assert.strictEqual(reopened.stateRoot(), baselineRoot)
+})
+
+test("PersistentStateTrie: alternating commit/revert cycles keep stack bounded", async () => {
+  const db = new MemoryDatabase()
+  const trie = new PersistentStateTrie(db)
+
+  // 100 cycles, every third one reverts — models applyBlock's success + failure mix.
+  for (let i = 0; i < 100; i++) {
+    await trie.checkpoint()
+    assert.strictEqual(checkpointStackDepth(trie), 1, `depth==1 mid-cycle ${i}`)
+    await trie.put(`0x${(0x2000 + i).toString(16).padStart(40, "0")}`, {
+      ...testAccount,
+      nonce: BigInt(i),
+    })
+    if (i % 3 === 0) {
+      await trie.revert()
+    } else {
+      await trie.commit()
+    }
+    assert.strictEqual(checkpointStackDepth(trie), 0, `depth==0 after cycle ${i}`)
+  }
+})
+
+test("PersistentStateTrie: nested checkpoints (block + runTx) balance on commit", async () => {
+  // Matches applyBlock's actual pattern: evm.checkpointState() stacks a frame
+  // on top of the block-level checkpoint every time the EVM enters runTx.
+  const db = new MemoryDatabase()
+  const trie = new PersistentStateTrie(db)
+
+  const nestedAddr = "0xdeed0000000000000000000000000000deed0001"
+
+  await trie.checkpoint() // outer (block-level)
+  assert.strictEqual(checkpointStackDepth(trie), 1)
+
+  await trie.checkpoint() // inner (runTx)
+  assert.strictEqual(checkpointStackDepth(trie), 2)
+
+  await trie.put(nestedAddr, { ...testAccount, nonce: 7n })
+
+  await trie.commit() // inner commit (runTx success)
+  assert.strictEqual(checkpointStackDepth(trie), 1)
+
+  await trie.commit() // outer commit (block success)
+  assert.strictEqual(checkpointStackDepth(trie), 0)
+
+  // Both frames' writes must have flushed to LevelDB on the final pop.
+  const reopened = new PersistentStateTrie(db)
+  await reopened.init()
+  const acc = await reopened.get(nestedAddr)
+  assert.ok(acc)
+  assert.strictEqual(acc.nonce, 7n)
+})

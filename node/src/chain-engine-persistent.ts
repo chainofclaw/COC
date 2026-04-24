@@ -321,21 +321,23 @@ export class PersistentChainEngine {
    * long as the group reaches quorum overall.
    */
   async speculativelyComputeStateRoot(_block: ChainBlock): Promise<Hex | undefined> {
-    // Disabled for persistent engine: PersistentStateTrie.commit() unconditionally
-    // calls flushOverlay() which batch-writes the overlay Map to LevelDB, and
-    // ethereumjs VM's internal runTx() calls stateManager.commit() at the end
-    // of each tx. The speculative checkpoint/revert pattern therefore leaks
-    // post-execution account state to disk before we can undo it — observed
-    // on testnet as validators reporting polluted `eth_getTransactionCount`
-    // after rejecting a block via BFT NACK.
+    // Kept disabled on the persistent engine while the stateRoot-divergence
+    // fix (Phase A in plans/coc-evm-abstract-turtle.md) is soaked on testnet.
     //
-    // Returning undefined here falls back to hash-only BFT quorum (legacy
-    // pickWinningVoteGroup behavior) — safe when at least one voter has
-    // undefined stateRoot, but loses the stateRoot-divergence protection
-    // that PR #7 was designed to give. Re-enabling requires either:
-    //   - a trie layer that supports nested overlay with scoped flush, or
-    //   - per-block shallowCopy stateManager with EVM re-bind for sim,
-    // both of which are larger refactors than fit the current debug loop.
+    // The original leak — PersistentStateTrie.commit() flushing an adapter
+    // overlay to LevelDB even while a checkpoint was active — has been
+    // eliminated: commit()/revert() now delegate directly to v6
+    // CheckpointDB.commit()/revert(), so buffered writes during a speculative
+    // dry-run stay in the frame's in-memory keyValueMap and get discarded on
+    // revert. Re-enabling speculation is the Phase B work tracked in the
+    // same plan; it should use @ethereumjs/statemanager `shallowCopy` (or an
+    // equivalent read-only trie fork) rather than revert-in-place so the
+    // primary state manager never takes a checkpoint we don't intend to
+    // commit.
+    //
+    // Returning undefined keeps BFT on hash-only quorum — safe when at least
+    // one voter also returns undefined, but loses the stateRoot-divergence
+    // protection introduced by PR #7.
     return undefined
   }
 
