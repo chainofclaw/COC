@@ -1319,10 +1319,19 @@ async function ensureNodeRegistered(): Promise<void> {
       Buffer.from(messageHash.slice(2), "hex"),
     );
 
-    // Build endpoint attestation: node signs "coc-endpoint:{endpointCommitment}:{nodeId}"
-    const endpointMsg = `coc-endpoint:${endpointCommitment}:${nodeId}`;
+    // Build endpoint attestation matching contract's
+    //   keccak256(abi.encodePacked("coc-endpoint:", endpointCommitment, nodeId))
+    // abi.encodePacked with a string + two bytes32 = 13 + 32 + 32 = 77 bytes.
+    // Previous UTF-8 `"coc-endpoint:${hex}:${hex}"` form produced a completely
+    // different digest and made every v2 registerNode tx revert.
+    const endpointPacked = Buffer.concat([
+      Buffer.from("coc-endpoint:", "utf8"),
+      Buffer.from(endpointCommitment.slice(2), "hex"),
+      Buffer.from(nodeId.slice(2), "hex"),
+    ]);
+    const endpointHash = keccak256(endpointPacked);
     const endpointAttestation = agentSigner.signBytes(
-      Buffer.from(keccak256(toUtf8Bytes(endpointMsg)).slice(2), "hex"),
+      Buffer.from(endpointHash.slice(2), "hex"),
     );
 
     const tx = await retryAsync(
