@@ -24,6 +24,9 @@ import { ResultCode } from "../services/common/pose-types-v2.ts";
 import { buildMerkleProof } from "../services/common/merkle.ts";
 import { hashPair } from "../node/src/ipfs-merkle.ts";
 import type { UnixFsFileMeta, Hex } from "../node/src/ipfs-types.ts";
+import { IpfsBlockstore } from "../node/src/ipfs-blockstore.ts";
+import { CidRegistryReader, makeCidRegistryEventReader } from "./lib/cid-registry-reader.ts";
+import type { DhtLike } from "./lib/cid-registry-reader.ts";
 import { createLogger } from "../node/src/logger.ts";
 import { createNodeSigner, createNodeSignerV2, buildReceiptSignMessage } from "../node/src/crypto/signer.ts";
 import { buildDomain, CHALLENGE_TYPES, RECEIPT_TYPES, REWARD_MANIFEST_TYPES } from "../node/src/crypto/eip712-types.ts";
@@ -93,6 +96,14 @@ const agentSigner = createNodeSigner(operatorPrivateKey);
 const localAgentNodeId = keccak256(signer.signingKey.publicKey).toLowerCase() as `0x${string}`;
 const challengerSet = (config.challengerSet ?? []).map((x) => x.toLowerCase());
 const aggregatorSet = (config.aggregatorSet ?? []).map((x) => x.toLowerCase());
+
+// Phase C2.2: optionally source Storage-challenge targets from the on-chain
+// CidRegistry + DHT pre-filter instead of a per-agent local file-meta.json.
+// The reader is constructed lazily (see below near agent startup) because
+// it needs a CidRegistry contract binding + a DHT proxy, neither of which
+// exist at module-top scope. Kept as `let` so `pickStorageTarget` can
+// read its current value even after async initialization.
+let cidRegistryReader: CidRegistryReader | null = null;
 
 // Machine fingerprint: hostname + primary MAC + operator pubkey
 // Same physical machine always produces the same commitment regardless of port
@@ -1392,9 +1403,41 @@ function buildQuerySpec(
   return { method: "eth_blockNumber", minBlockNumber };
 }
 
+/**
+ * Pick a Storage-challenge target. Two paths, gated on FF
+ * `poseStorageFromBlockstore` (runtime/lib/config.ts):
+ *
+ *   - FF on (Phase C2.2): source CIDs from the on-chain CidRegistry
+ *     event log, filter out CIDs with zero DHT providers, resolve
+ *     merkle metadata via the blockstore fetch-or-serve path. This is
+ *     the production path — agents across the cluster share a
+ *     consistent challenge pool and monopoly CIDs are skipped.
+ *   - FF off (legacy): read local `file-meta.json`, unchanged from the
+ *     pre-C2.2 behavior.
+ *
+ * `chunkSize` is populated on the FF path so C2.3's storageBps
+ * accumulator can credit the actual bytes verified; legacy path sets
+ * fileSize only since chunkSize isn't stored in the meta file.
+ */
 async function pickStorageTarget(
   storageDirPath: string,
-): Promise<{ cid: string; chunkIndex: number; merkleRoot: string; fileSize: number } | null> {
+): Promise<{ cid: string; chunkIndex: number; merkleRoot: string; fileSize: number; chunkSize?: number } | null> {
+  if (cidRegistryReader) {
+    const target = await cidRegistryReader.pickRandomChallengeTarget();
+    if (!target) {
+      log.warn("no viable challenge target from CidRegistry (all monopoly CIDs or empty pool)");
+      return null;
+    }
+    return {
+      cid: target.cid,
+      chunkIndex: target.chunkIndex,
+      merkleRoot: target.merkleRoot,
+      // fileSize is not known without a full scan and chunkSize already
+      // carries the per-chunk number that matters for storageBps.
+      fileSize: target.chunkSize,
+      chunkSize: target.chunkSize,
+    };
+  }
   const meta = await readFileMeta(storageDirPath);
   const entries = Object.values(meta);
   if (entries.length === 0) {
@@ -1824,5 +1867,63 @@ function resolveEndpointFingerprintMode(input: unknown): "strict" | "legacy" {
   return "strict";
 }
 
+// Initialize the Phase C2.2 challenge-target source. Runs async but does
+// not block the first tick — while the initial CidRegistry scan is in
+// flight, pickStorageTarget sees `cidRegistryReader === null` and falls
+// back to the legacy meta path. Once populated, subsequent ticks use
+// the blockstore-backed target picker.
+if (config.poseStorageFromBlockstore) {
+  void initCidRegistryReader().catch((err) => {
+    log.warn("CidRegistryReader init failed; falling back to legacy meta path", { error: String(err) });
+  });
+}
+
 setInterval(() => void tick(), intervalMs);
 void tick();
+
+async function initCidRegistryReader(): Promise<void> {
+  const cidRegistryAddress = config.cidRegistryAddress;
+  if (!cidRegistryAddress) {
+    log.warn("poseStorageFromBlockstore enabled but cidRegistryAddress not configured, falling back to legacy");
+    return;
+  }
+  // Minimal ABI: just the event we iterate.
+  const CID_REGISTRY_ABI = [
+    "event CidRegistered(bytes32 indexed cidHash, string cid, address indexed registrant)",
+  ];
+  const registry = new Contract(cidRegistryAddress, CID_REGISTRY_ABI, provider);
+  const blockstore = new IpfsBlockstore(storageDir);
+
+  // DHT proxy: call the node's `coc_dhtFindProviders` RPC so the agent
+  // doesn't need its own peer table. nodeUrl is the local coc-node HTTP
+  // endpoint; we reuse the existing requestJson helper for consistency
+  // with the rest of the agent's node calls.
+  const rpcEndpoint = process.env.COC_RPC_URL ?? "http://127.0.0.1:18780";
+  const dhtProxy: DhtLike = {
+    findProviders: async (cid: string, maxK = 3): Promise<string[]> => {
+      try {
+        const resp = await requestJson(rpcEndpoint, "POST", {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "coc_dhtFindProviders",
+          params: [cid, maxK],
+        });
+        const raw = resp.json?.result?.providers;
+        if (!Array.isArray(raw)) return [];
+        return raw.filter((p: unknown): p is string => typeof p === "string");
+      } catch (err) {
+        log.debug("DHT proxy findProviders failed", { cid, error: String(err) });
+        return [];
+      }
+    },
+  };
+
+  const reader = new CidRegistryReader({
+    blockstore,
+    dht: dhtProxy,
+    contractReader: makeCidRegistryEventReader(registry as unknown as import("./lib/cid-registry-reader.ts").CidRegistryContractLike),
+  });
+  await reader.refresh();
+  cidRegistryReader = reader;
+  log.info("CidRegistryReader initialized", { poolSize: reader.size() });
+}

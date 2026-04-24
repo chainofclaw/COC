@@ -178,6 +178,13 @@ interface RpcRuntimeOptions {
   getP2PStats?: () => unknown
   getWireStats?: () => unknown
   getDhtStats?: () => unknown
+  /**
+   * Phase C2.2: expose DHT provider lookups to the PoSe challenger so it
+   * can pre-filter monopoly CIDs before issuing a Storage challenge.
+   * When omitted, `coc_dhtFindProviders` returns an empty array and
+   * the challenger falls back to trying without a DHT hint.
+   */
+  findProviders?: (cid: string, maxK?: number) => string[]
   rewardManifestDir?: string
   getBftEquivocations?: (sinceMs: number) => Array<{ rawEvidence?: Record<string, unknown>; [key: string]: unknown }>
   getSyncProgress?: () => Promise<{ syncing: boolean; currentHeight: bigint; highestPeerHeight: bigint; startingHeight: bigint }>
@@ -1233,6 +1240,20 @@ async function handleRpc(
         }))
       }
       return []
+    }
+    case "coc_dhtFindProviders": {
+      // Phase C2.2: the PoSe challenger pre-filters monopoly CIDs by
+      // asking the local DHT who currently advertises a given CID
+      // before committing to a Storage challenge. Mirror of
+      // DhtNetwork.findProviders; returns an array of lowercased peer IDs.
+      const cid = String((payload.params ?? [])[0] ?? "")
+      const rawMaxK = Number((payload.params ?? [])[1] ?? 3)
+      if (cid.length === 0) {
+        return { providers: [], error: "cid must be a non-empty string" }
+      }
+      const cap = Number.isFinite(rawMaxK) && rawMaxK > 0 ? Math.min(Math.floor(rawMaxK), 64) : 3
+      const providers = runtimeOptions?.findProviders?.(cid, cap) ?? []
+      return { providers }
     }
     case "coc_nodeInfo": {
       const height = await Promise.resolve(chain.getHeight())

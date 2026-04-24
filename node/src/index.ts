@@ -880,6 +880,7 @@ startRpcServer(
     getP2PStats: () => p2p.getStats(),
     getWireStats: () => wireServer?.getStats(),
     getDhtStats: () => dhtNetwork?.getStats(),
+    findProviders: (cid: string, maxK?: number) => dhtNetwork?.findProviders(cid, maxK ?? 3) ?? [],
     getSyncProgress: () => consensus.getSyncProgress(),
     rewardManifestDir: join(config.dataDir, "reward-manifests"),
     getBftEquivocations: (sinceMs: number) => bftEvidenceStore.peek().filter(

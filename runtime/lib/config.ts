@@ -73,6 +73,15 @@ export interface CocRuntimeConfig {
    * time.
    */
   poseStorageFromBlockstore?: boolean;
+  /**
+   * Phase C2.2: address of the deployed CidRegistry contract on whichever
+   * chain the agent watches. When `poseStorageFromBlockstore` is on AND
+   * this is set, the agent sources Storage-challenge CIDs from the
+   * contract's `CidRegistered` event log with a DHT pre-filter; if this
+   * is unset the agent falls back to the legacy local file-meta.json
+   * path and logs a warning. Not required when the FF is off.
+   */
+  cidRegistryAddress?: string;
 }
 
 export function resolveDataDir(): string {
