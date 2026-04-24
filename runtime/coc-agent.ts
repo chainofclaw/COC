@@ -1297,7 +1297,9 @@ async function ensureNodeRegistered(): Promise<void> {
 
     // Query progressive bond requirement from contract (v2 uses the same MIN_BOND << operatorNodeCount rule).
     const operatorCount = Number(await retryAsync(() => registerContract.operatorNodeCount(signer.address), txRetryOptions));
-    const bondRequired = useV2 ? (MIN_BOND_WEI << operatorCount) : await retryAsync(() => poseContract!.requiredBond(signer.address) as Promise<bigint>, txRetryOptions);
+    // MIN_BOND_WEI is BigInt; operatorCount comes from Number(...). The
+    // `<<` operator rejects mixed types, so convert to BigInt explicitly.
+    const bondRequired = useV2 ? (MIN_BOND_WEI << BigInt(operatorCount)) : await retryAsync(() => poseContract!.requiredBond(signer.address) as Promise<bigint>, txRetryOptions);
 
     const serviceCommitment = keccak256(toUtf8Bytes(`service:${signer.address.toLowerCase()}`));
     const fingerprint = computeMachineFingerprint(pubkey);
@@ -1972,7 +1974,10 @@ async function initCidRegistryReader(): Promise<void> {
   const reader = new CidRegistryReader({
     blockstore,
     dht: dhtProxy,
-    contractReader: makeCidRegistryEventReader(registry as unknown as import("./lib/cid-registry-reader.ts").CidRegistryContractLike),
+    contractReader: makeCidRegistryEventReader(
+      registry as unknown as import("./lib/cid-registry-reader.ts").CidRegistryContractLike,
+      { latestBlock: async () => Number(await provider.getBlockNumber()) },
+    ),
   });
   await reader.refresh();
   cidRegistryReader = reader;

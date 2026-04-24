@@ -229,8 +229,35 @@ export class CidRegistryReader {
  * of `args` varies between ethers.js v6 (object with named keys) and
  * older test fixtures (array), so we handle both.
  */
-export function makeCidRegistryEventReader(contract: CidRegistryContractLike): () => Promise<string[]> {
+export function makeCidRegistryEventReader(
+  contract: CidRegistryContractLike,
+  opts?: { blockChunk?: number; latestBlock?: () => Promise<number> },
+): () => Promise<string[]> {
+  // COC nodes cap eth_getLogs at 10 000 blocks per call, so a naive
+  // `0..latest` scan fails once the chain passes 10 000 blocks. Chunk
+  // the scan into windows and concat; each window still only returns
+  // the contract's own CidRegistered events so the total bandwidth
+  // is unchanged — just spread across more RPC round trips.
+  const blockChunk = Math.max(100, opts?.blockChunk ?? 9000)
   return async () => {
+    const getLatest = opts?.latestBlock
+    let latest: number | "latest" = "latest"
+    if (getLatest) {
+      try { latest = await getLatest() } catch { latest = "latest" }
+    }
+    if (typeof latest === "number") {
+      const out: string[] = []
+      for (let from = 0; from <= latest; from += blockChunk) {
+        const to = Math.min(latest, from + blockChunk - 1)
+        const events = await contract.queryFilter(contract.filters.CidRegistered(), from, to)
+        for (const event of events) {
+          const cid = extractCid(event)
+          if (cid) out.push(cid)
+        }
+      }
+      return out
+    }
+    // Fallback (tests / small chains) — single call.
     const events = await contract.queryFilter(contract.filters.CidRegistered(), 0, "latest")
     const out: string[] = []
     for (const event of events) {
