@@ -145,6 +145,49 @@ function hex32ToAddress(hex32: string): string {
   return `0x${clean.slice(-40)}`.toLowerCase();
 }
 
+/**
+ * Phase C: resolve the signer address for a PoSe v2 nodeId.
+ *
+ * Legacy convention: nodeId = validator address left-padded to bytes32.
+ * Phase C / PoSe v2 convention: nodeId = keccak256(pubkey), which is a
+ * completely different 32-byte hash from the validator's ETH address.
+ *
+ * The contract stores the pubkey in NodeRecord.pubkeyNode, so we read
+ * it on demand and derive the address via ethers `computeAddress`
+ * (= keccak256(pubkey[1:])[-20:] — the standard secp256k1 address).
+ *
+ * Cached in memory to avoid hitting the chain on every tick. Cache key
+ * is lowercased nodeId. Entries are immutable (a node's pubkey doesn't
+ * change post-registration) so no invalidation needed.
+ */
+const nodeSignerAddressCache = new Map<string, string>();
+async function resolveNodeSignerAddress(
+  nodeId: string,
+  getNode?: (nodeId: string) => Promise<{ pubkeyNode?: string } | null>,
+): Promise<string> {
+  const key = nodeId.toLowerCase();
+  const cached = nodeSignerAddressCache.get(key);
+  if (cached) return cached;
+  if (getNode) {
+    try {
+      const record = await getNode(nodeId);
+      const pk = record?.pubkeyNode;
+      if (pk && typeof pk === "string" && pk.startsWith("0x") && pk.length >= 132) {
+        // ethers computeAddress expects 0x04-prefixed uncompressed or
+        // 0x02/0x03-prefixed compressed; NodeRecord.pubkey is 0x04||X||Y
+        const { computeAddress } = await import("ethers");
+        const addr = computeAddress(pk).toLowerCase();
+        nodeSignerAddressCache.set(key, addr);
+        return addr;
+      }
+    } catch (err) {
+      log.debug("resolveNodeSignerAddress on-chain lookup failed", { nodeId, error: String(err) });
+    }
+  }
+  // Legacy fallback: nodeId is a bytes32-padded address.
+  return hex32ToAddress(nodeId);
+}
+
 const poseAbi = [
   "event NodeRegistered(bytes32 indexed nodeId, address indexed operator, uint8 serviceFlags, uint256 bondAmount)",
   "function registerNode(bytes32 nodeId, bytes pubkeyNode, uint8 serviceFlags, bytes32 serviceCommitment, bytes32 endpointCommitment, bytes32 metadataHash, bytes ownershipSig, bytes endpointAttestation) payable",
@@ -1049,7 +1092,14 @@ async function tryChallengeV2(nodeId: string, kind: keyof typeof ChallengeType):
       tipHash,
       tipHeight,
     };
-    const nodeAddr = hex32ToAddress(nodeId);
+    // Phase C: nodeId is keccak256(pubkey), not an ETH address. The
+    // actual signer address is computeAddress(pubkey), which we look up
+    // from the on-chain NodeRecord (cached per nodeId so we hit the
+    // chain once per peer).
+    const nodeAddr = await resolveNodeSignerAddress(
+      nodeId,
+      poseV2Contract ? async (id) => (await poseV2Contract.getNode(id)) as { pubkeyNode?: string } : undefined,
+    );
     if (!agentSignerV2.eip712.verifyTypedData(RECEIPT_TYPES, receiptData, receiptPayload.nodeSig, nodeAddr)) {
       throw new Error("invalid node receipt signature");
     }
