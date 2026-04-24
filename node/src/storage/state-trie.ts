@@ -47,6 +47,23 @@ export interface IStateTrie {
   iterateStorage(address: string): AsyncIterable<{ slot: string; value: string }>
   /** Create a copy-on-write branch sharing the underlying data */
   fork(): Promise<IStateTrie>
+  /**
+   * Create an isolated branch for a speculative dry-run (BFT stateRoot vote,
+   * or any "compute post-state without committing" path).
+   *
+   * Unlike `fork()`, the returned trie:
+   *  - does NOT inherit parent checkpoint frames (so writes on the fork
+   *    can never escape into the parent's outstanding checkpoint)
+   *  - has its own in-memory `CheckpointDB` frame already open — every
+   *    write stays in that frame's `keyValueMap` and, as long as the
+   *    caller does **not** commit, never hits the shared underlying DB.
+   *
+   * The caller is expected to discard the returned trie after the dry-run
+   * completes (by dropping the reference — GC handles the rest). Calling
+   * `.commit()` on this trie will flush writes to the shared backing DB
+   * and defeat the isolation contract; don't do that.
+   */
+  forkForDryRun(): Promise<IStateTrie>
   /** Merge branch differences back into this trie */
   merge(branch: IStateTrie): Promise<void>
   /** Discard a forked branch and release resources */
@@ -614,6 +631,38 @@ export class PersistentStateTrie implements IStateTrie {
     return forked
   }
 
+  /**
+   * Isolated dry-run fork for speculative post-state computation.
+   *
+   * Implementation: `v6 Trie.shallowCopy(false)` returns a new `Trie` with
+   *   - the same `root` hash,
+   *   - a **new** `TrieDBAdapter` that still points at the shared `IDatabase`,
+   *   - an **empty** `CheckpointDB` stack.
+   *
+   * We immediately push one checkpoint onto that stack so all subsequent
+   * writes park in `CheckpointDB.keyValueMap` (per-frame in-memory map).
+   * Reads fall through: first the frame's map, then the shared DB. Writes
+   * on the fork therefore cannot reach LevelDB unless the caller commits
+   * that frame — which is exactly what this API forbids.
+   *
+   * The returned trie is NOT registered anywhere on `this`; the caller
+   * owns its lifetime and lets GC clean it up.
+   */
+  async forkForDryRun(): Promise<IStateTrie> {
+    const forked = new PersistentStateTrie(this.db, {
+      maxCachedTries: this.maxCachedTries,
+      maxAccountCache: this.maxAccountCache,
+    })
+    // shallowCopy(false) — do NOT inherit parent checkpoints. The fork starts
+    // with the parent's committed root but a fresh (empty) CheckpointDB.
+    forked.trie = this.trie.shallowCopy(false)
+    forked.lastStateRoot = this.lastStateRoot
+    // Open the isolation frame. Writes from here on land only in the frame's
+    // in-memory keyValueMap; they reach LevelDB only on outermost commit.
+    await forked.checkpoint()
+    return forked
+  }
+
   /** Merge all accounts from branch into this trie */
   async merge(branch: IStateTrie): Promise<void> {
     for await (const { address, state } of branch.iterateAccounts()) {
@@ -773,6 +822,16 @@ export class InMemoryStateTrie implements IStateTrie {
     }
     forked.lastRoot = this.lastRoot
     return forked
+  }
+
+  /**
+   * Dry-run fork: identical to `fork()` for InMemoryStateTrie — there's no
+   * shared backing store to pollute, so isolation is structural by
+   * construction. Declared separately to keep the IStateTrie interface
+   * honest and let PersistentStateTrie diverge when it needs to.
+   */
+  async forkForDryRun(): Promise<IStateTrie> {
+    return this.fork()
   }
 
   /** Merge branch state into this trie (branch wins on conflict) */

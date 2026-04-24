@@ -147,6 +147,27 @@ export class PersistentStateManager {
     await this.trie.commit()
   }
 
+  /**
+   * Isolated shallow copy for speculative / dry-run EVM execution.
+   *
+   * Builds a new `PersistentStateManager` that wraps an `IStateTrie.forkForDryRun()`
+   * branch: same root, independent in-memory checkpoint frame, **no writes can
+   * reach the shared LevelDB** as long as callers discard the copy instead of
+   * committing it. The BFT stateRoot-vote path (see
+   * `PersistentChainEngine.speculativelyComputeStateRoot`) relies on this to
+   * evaluate the post-block stateRoot without mutating validator state.
+   *
+   * This method deliberately does NOT implement ethereumjs's
+   * `StateManagerInterface.shallowCopy` contract — that method is sync and the
+   * returned object is free to share state with the parent. Ours is async (the
+   * underlying trie fork requires opening a v6 checkpoint frame) and
+   * explicitly isolated; hence the distinct Promise-returning signature.
+   */
+  async shallowCopy(): Promise<PersistentStateManager> {
+    const forkedTrie = await this.trie.forkForDryRun()
+    return new PersistentStateManager(forkedTrie)
+  }
+
   getStateRoot(): Uint8Array {
     const root = this.trie.stateRoot()
     return root ? hexToBytes(root) : new Uint8Array(32)
