@@ -291,3 +291,223 @@ test("PersistentStateTrie: discard clears caches", async () => {
   // After discard, cache is cleared — get should re-read from DB (which has nothing committed)
   // This tests that discard clears the in-memory caches
 })
+
+// --- GH #6 regression: v6 CheckpointDB stack must return to 0 after each
+// commit or revert. If commit() doesn't pop the frame, every applyBlock
+// leaks a frame and state drifts per-validator under any mid-block revert.
+// See plans/coc-evm-abstract-turtle.md (Phase A4).
+
+// Peek into the private v6 Trie instance to read its CheckpointDB stack.
+function checkpointStackDepth(trie: PersistentStateTrie): number {
+  const t = trie as unknown as { trie: { _db: { checkpoints: unknown[] } } }
+  return t.trie._db.checkpoints.length
+}
+
+test("PersistentStateTrie: checkpoint/commit leaves stack depth 0", async () => {
+  const db = new MemoryDatabase()
+  const trie = new PersistentStateTrie(db)
+
+  assert.strictEqual(checkpointStackDepth(trie), 0)
+
+  for (let i = 0; i < 50; i++) {
+    await trie.checkpoint()
+    assert.strictEqual(checkpointStackDepth(trie), 1, `depth==1 during block ${i}`)
+    await trie.put(`0x${(0x1000 + i).toString(16).padStart(40, "0")}`, {
+      ...testAccount,
+      nonce: BigInt(i),
+    })
+    await trie.commit()
+    assert.strictEqual(checkpointStackDepth(trie), 0, `depth==0 after commit ${i}`)
+  }
+})
+
+test("PersistentStateTrie: checkpoint/revert leaves stack depth 0 and no partial writes", async () => {
+  const db = new MemoryDatabase()
+  const trie = new PersistentStateTrie(db)
+
+  // Establish a committed baseline so we can verify revert didn't disturb it.
+  const baseAddr = "0xba5e0000000000000000000000000000000ba5e0"
+  const transientAddr = "0xdeadbeef0000000000000000000000000000dead"
+
+  await trie.checkpoint()
+  await trie.put(baseAddr, { ...testAccount, nonce: 1n })
+  const baselineRoot = await trie.commit()
+  assert.strictEqual(checkpointStackDepth(trie), 0)
+
+  // Attempt a "block" that checkpoints, writes a transient account, then reverts.
+  await trie.checkpoint()
+  assert.strictEqual(checkpointStackDepth(trie), 1)
+  await trie.put(transientAddr, { ...testAccount, nonce: 99n })
+  await trie.revert()
+  assert.strictEqual(checkpointStackDepth(trie), 0)
+
+  // The transient account must not be readable — its write must have stayed
+  // in the CheckpointDB's keyValueMap and been discarded, never reaching LevelDB.
+  assert.strictEqual(await trie.get(transientAddr), null)
+
+  // Root must be restored to the pre-checkpoint value.
+  assert.strictEqual(trie.stateRoot(), baselineRoot)
+
+  // Re-opening from the same underlying DB must show no transient writes either.
+  const reopened = new PersistentStateTrie(db)
+  await reopened.init()
+  assert.strictEqual(await reopened.get(transientAddr), null)
+  assert.strictEqual(reopened.stateRoot(), baselineRoot)
+})
+
+test("PersistentStateTrie: alternating commit/revert cycles keep stack bounded", async () => {
+  const db = new MemoryDatabase()
+  const trie = new PersistentStateTrie(db)
+
+  // 100 cycles, every third one reverts — models applyBlock's success + failure mix.
+  for (let i = 0; i < 100; i++) {
+    await trie.checkpoint()
+    assert.strictEqual(checkpointStackDepth(trie), 1, `depth==1 mid-cycle ${i}`)
+    await trie.put(`0x${(0x2000 + i).toString(16).padStart(40, "0")}`, {
+      ...testAccount,
+      nonce: BigInt(i),
+    })
+    if (i % 3 === 0) {
+      await trie.revert()
+    } else {
+      await trie.commit()
+    }
+    assert.strictEqual(checkpointStackDepth(trie), 0, `depth==0 after cycle ${i}`)
+  }
+})
+
+test("PersistentStateTrie: nested checkpoints (block + runTx) balance on commit", async () => {
+  // Matches applyBlock's actual pattern: evm.checkpointState() stacks a frame
+  // on top of the block-level checkpoint every time the EVM enters runTx.
+  const db = new MemoryDatabase()
+  const trie = new PersistentStateTrie(db)
+
+  const nestedAddr = "0xdeed0000000000000000000000000000deed0001"
+
+  await trie.checkpoint() // outer (block-level)
+  assert.strictEqual(checkpointStackDepth(trie), 1)
+
+  await trie.checkpoint() // inner (runTx)
+  assert.strictEqual(checkpointStackDepth(trie), 2)
+
+  await trie.put(nestedAddr, { ...testAccount, nonce: 7n })
+
+  await trie.commit() // inner commit (runTx success)
+  assert.strictEqual(checkpointStackDepth(trie), 1)
+
+  await trie.commit() // outer commit (block success)
+  assert.strictEqual(checkpointStackDepth(trie), 0)
+
+  // Both frames' writes must have flushed to LevelDB on the final pop.
+  const reopened = new PersistentStateTrie(db)
+  await reopened.init()
+  const acc = await reopened.get(nestedAddr)
+  assert.ok(acc)
+  assert.strictEqual(acc.nonce, 7n)
+})
+
+// --- GH #6 follow-up: mid-block storage trie orphans.
+// When a new storage trie is created *after* the block-level checkpoint
+// (e.g. a contract deploy with putStorageAt on a fresh address), v6 hasn't
+// pushed a frame onto that trie — its writes bypass CheckpointDB and land
+// directly in LevelDB via the adapter. A subsequent revert() cannot undo
+// those writes, but it must not let them surface through the trie either.
+// This locks down the *safe* behavior: orphan nodes may remain in LevelDB
+// (harmless because MPT nodes are content-addressed and unreachable from
+// the reverted account's storageRoot) but cannot influence future reads.
+
+test("PersistentStateTrie: mid-block storage trie writes are orphaned on revert, not reachable", async () => {
+  const db = new MemoryDatabase()
+  const trie = new PersistentStateTrie(db)
+
+  // Establish a committed baseline — an unrelated account so we can assert
+  // revert() didn't rewind anything it shouldn't.
+  const baseAddr = "0xba5e0000000000000000000000000000000ba5e1"
+  await trie.put(baseAddr, { ...testAccount, nonce: 1n })
+  const baselineRoot = await trie.commit()
+
+  const contractAddr = "0xc0ffee00000000000000000000000000c0ffee01"
+  const slot = "0x" + "0".repeat(63) + "1"
+  const value = "0x" + "0".repeat(62) + "42"
+
+  // "Enter a block" by checkpointing the main trie. The storage trie for
+  // contractAddr doesn't exist yet, so it has no frame — this is the
+  // scenario: checkpoint → first touch of a fresh storage trie → revert.
+  await trie.checkpoint()
+  assert.strictEqual(checkpointStackDepth(trie), 1)
+
+  // First storage write on the fresh contract address. Internally this
+  // creates a new Trie via getStorageTrie(), which goes directly through
+  // the adapter because there's no checkpoint on the new trie.
+  await trie.putStorageAt(contractAddr, slot, value)
+
+  // Sanity: the in-memory view during the block sees the write.
+  const midBlockRead = await trie.getStorageAt(contractAddr, slot)
+  assert.notStrictEqual(midBlockRead, "0x0", "mid-block read should see the write")
+
+  // Simulate block failure — revert the block-level checkpoint.
+  await trie.revert()
+  assert.strictEqual(checkpointStackDepth(trie), 0)
+  assert.strictEqual(trie.stateRoot(), baselineRoot, "root must snap back to baseline")
+
+  // Post-revert, the contract account write (which went through the
+  // checkpointed main trie) must be gone — its frame was dropped.
+  assert.strictEqual(await trie.get(contractAddr), null, "account must not be reachable")
+
+  // Post-revert, the storage slot must be unreachable via the API.
+  // getStorageAt() has no account → emptyRoot fallback → "0x0".
+  assert.strictEqual(
+    await trie.getStorageAt(contractAddr, slot),
+    "0x0",
+    "reverted storage must not leak into reads",
+  )
+
+  // Known limitation: the orphan nodes from the mid-block write DO remain in
+  // LevelDB. They're content-addressed and unreachable from any committed
+  // root, so they are dead bytes rather than a correctness issue. We assert
+  // their presence here so this behavior stays deliberate — if a future
+  // refactor eliminates the orphans, this test should be relaxed rather
+  // than silently drift.
+  const orphanKeys = await db.getKeysWithPrefix(`ss:${contractAddr}:`)
+  assert.ok(orphanKeys.length > 0, "expected orphan storage nodes to be in LevelDB")
+
+  // Re-opening must reflect only the baseline — no ghost slot, no ghost account.
+  const reopened = new PersistentStateTrie(db)
+  await reopened.init()
+  assert.strictEqual(reopened.stateRoot(), baselineRoot)
+  assert.strictEqual(await reopened.get(contractAddr), null)
+  assert.strictEqual(await reopened.getStorageAt(contractAddr, slot), "0x0")
+
+  // Baseline account must still be intact.
+  const baseState = await reopened.get(baseAddr)
+  assert.ok(baseState)
+  assert.strictEqual(baseState.nonce, 1n)
+})
+
+test("PersistentStateTrie: committed mid-block storage writes persist and are reachable", async () => {
+  // Counterpart to the orphan test: when the block commits (not reverts),
+  // the same mid-block-created storage trie's writes must be part of the
+  // final state. Otherwise the "direct-to-LevelDB" path is hiding broken
+  // semantics rather than being a deliberate tradeoff.
+  const db = new MemoryDatabase()
+  const trie = new PersistentStateTrie(db)
+
+  const contractAddr = "0xc0ffee00000000000000000000000000c0ffee02"
+  const slot = "0x" + "0".repeat(63) + "1"
+  const value = "0x" + "0".repeat(62) + "77"
+
+  await trie.checkpoint()
+  await trie.putStorageAt(contractAddr, slot, value)
+  const committedRoot = await trie.commit()
+
+  assert.strictEqual(checkpointStackDepth(trie), 0)
+
+  // Immediately readable via the same trie instance.
+  assert.strictEqual(await trie.getStorageAt(contractAddr, slot), value)
+
+  // Must survive a fresh open.
+  const reopened = new PersistentStateTrie(db)
+  await reopened.init()
+  assert.strictEqual(reopened.stateRoot(), committedRoot)
+  assert.strictEqual(await reopened.getStorageAt(contractAddr, slot), value)
+})

@@ -58,54 +58,25 @@ export interface IStateTrie {
 }
 
 /**
- * Adapter to make IDatabase compatible with @ethereumjs/trie v6 DB interface.
- * Trie v6 passes unprefixed hex strings for both keys AND values (not Uint8Array).
- * We convert hex string values to/from binary for LevelDB storage.
- */
-/**
  * Adapter making IDatabase compatible with @ethereumjs/trie v6 DB interface.
  *
- * Supports an in-memory write overlay for atomic checkpoint/revert:
- * - enableOverlay(): all writes go to an in-memory Map instead of LevelDB
- * - flushOverlay(): batch-write all buffered entries to LevelDB
- * - discardOverlay(): throw away buffered writes (revert)
- * - Reads check overlay first, then fall through to LevelDB
+ * Pure pass-through: hex-string keys from the trie are concatenated with our
+ * prefix and stored in LevelDB; binary values are encoded/decoded as needed.
  *
- * This prevents partial LevelDB pollution when applyBlock fails mid-execution.
+ * Atomic checkpoint/revert is handled by v6's own `CheckpointDB` layer
+ * (see node_modules/@ethereumjs/trie/dist/esm/db/checkpoint.js): while a
+ * checkpoint is active, writes stay in an in-memory `keyValueMap` and only
+ * flush to this adapter when the outermost commit pops the final frame.
+ * An earlier revision of this file layered a second overlay here, which was
+ * dead code — v6 never routes checkpoint-phase writes through the adapter.
  */
 class TrieDBAdapter {
   private db: IDatabase
   private prefix: string
-  private overlay: Map<string, Uint8Array | null> | null = null // null = overlay disabled
 
   constructor(db: IDatabase, prefix: string = STATE_TRIE_PREFIX) {
     this.db = db
     this.prefix = prefix
-  }
-
-  enableOverlay(): void {
-    if (!this.overlay) this.overlay = new Map()
-  }
-
-  async flushOverlay(): Promise<void> {
-    if (!this.overlay || this.overlay.size === 0) {
-      this.overlay = null
-      return
-    }
-    const ops: Array<{ type: "put" | "del"; key: string; value?: Uint8Array }> = []
-    for (const [key, value] of this.overlay) {
-      if (value === null) {
-        ops.push({ type: "del", key })
-      } else {
-        ops.push({ type: "put", key, value })
-      }
-    }
-    await this.db.batch(ops)
-    this.overlay = null
-  }
-
-  discardOverlay(): void {
-    this.overlay = null
   }
 
   private toKeyStr(key: string | Uint8Array): string {
@@ -126,12 +97,6 @@ class TrieDBAdapter {
 
   async get(key: string | Uint8Array): Promise<string | undefined> {
     const prefixedKey = this.prefix + this.toKeyStr(key)
-    // Check overlay first
-    if (this.overlay?.has(prefixedKey)) {
-      const val = this.overlay.get(prefixedKey)
-      if (val === null) return undefined // deleted in overlay
-      return this.fromBytes(val)
-    }
     const result = await this.db.get(prefixedKey)
     if (!result) return undefined
     return this.fromBytes(result)
@@ -139,34 +104,15 @@ class TrieDBAdapter {
 
   async put(key: string | Uint8Array, value: Uint8Array | string): Promise<void> {
     const prefixedKey = this.prefix + this.toKeyStr(key)
-    if (this.overlay) {
-      this.overlay.set(prefixedKey, this.toBytes(value))
-      return
-    }
     await this.db.put(prefixedKey, this.toBytes(value))
   }
 
   async del(key: string | Uint8Array): Promise<void> {
     const prefixedKey = this.prefix + this.toKeyStr(key)
-    if (this.overlay) {
-      this.overlay.set(prefixedKey, null) // mark as deleted
-      return
-    }
     await this.db.del(prefixedKey)
   }
 
   async batch(ops: Array<{ type: "put" | "del"; key: string | Uint8Array; value?: Uint8Array | string }>): Promise<void> {
-    if (this.overlay) {
-      for (const op of ops) {
-        const prefixedKey = this.prefix + this.toKeyStr(op.key)
-        if (op.type === "del") {
-          this.overlay.set(prefixedKey, null)
-        } else {
-          this.overlay.set(prefixedKey, op.value ? this.toBytes(op.value) : new Uint8Array(0))
-        }
-      }
-      return
-    }
     const batchOps = ops.map((op) => ({
       type: op.type,
       key: this.prefix + this.toKeyStr(op.key),
@@ -179,10 +125,7 @@ class TrieDBAdapter {
   async close(): Promise<void> {}
 
   shallowCopy(): TrieDBAdapter {
-    const copy = new TrieDBAdapter(this.db, this.prefix)
-    // Share overlay reference so forked tries also buffer
-    if (this.overlay) copy.overlay = this.overlay
-    return copy
+    return new TrieDBAdapter(this.db, this.prefix)
   }
 }
 
@@ -383,7 +326,10 @@ export class PersistentStateTrie implements IStateTrie {
 
     const encoder = new TextEncoder()
 
-    // Batch: sync storage roots into account trie for all dirty addresses
+    // Batch: sync storage roots into account trie for all dirty addresses.
+    // These put() calls go through the v6 CheckpointDB: when a checkpoint is
+    // active, writes stay in its in-memory keyValueMap; when not, they flow
+    // directly through the adapter to LevelDB.
     for (const address of dirtySnapshot) {
       const storageTrie = this.storageTries.get(address)
       if (!storageTrie) continue
@@ -409,16 +355,34 @@ export class PersistentStateTrie implements IStateTrie {
       this.accountCache.set(address, updatedAccount)
     }
 
-    await (this.trie as Trie & { persistRoot?: () => Promise<void> }).persistRoot?.()
-    this.lastStateRoot = bytesToHex(this.trie.root())
-
-    // Flush all overlay writes to LevelDB atomically.
-    // This must happen AFTER trie.persistRoot() so all trie nodes are in the overlay,
-    // and BEFORE returning so the committed state is durable.
-    await this.trieDb.flushOverlay()
-    for (const [addr, adapter] of this.storageTrieAdapters) {
-      await adapter.flushOverlay()
+    // When a checkpoint is active, pop it off the v6 CheckpointDB stack. The
+    // outermost commit flushes all buffered writes through the adapter in a
+    // single batch; inner commits merge their frame into the parent. Without
+    // this call the stack grows one frame per checkpoint() forever — the
+    // original shape of GH #6 state divergence.
+    //
+    // Uses `hasCheckpoints()` (not `checkpointStateRoot`) because the sentinel
+    // is null on the first checkpoint of a fresh trie — we'd otherwise skip
+    // pop and leak a frame on genesis-adjacent blocks.
+    //
+    // Storage tries created before the checkpoint are popped alongside. New
+    // storage tries created mid-block have no checkpoint frame (see
+    // getStorageTrie below); their commit() throws "trying to commit when
+    // not checkpointed" — we swallow that since their writes already flowed
+    // straight to LevelDB via the adapter.
+    if (this.trie.hasCheckpoints()) {
+      await this.trie.commit()
+      for (const storageTrie of this.storageTries.values()) {
+        try {
+          await storageTrie.commit()
+        } catch {
+          // Storage trie created after checkpoint — no frame to pop
+        }
+      }
+      this.checkpointStateRoot = null
     }
+
+    this.lastStateRoot = bytesToHex(this.trie.root())
 
     // Persist state root for recovery across restarts
     await this.db.put(STATE_ROOT_KEY, encoder.encode(this.lastStateRoot))
@@ -433,45 +397,43 @@ export class PersistentStateTrie implements IStateTrie {
     return this.lastStateRoot
   }
 
-  /**
-   * Track storage trie DB adapters so we can enable/flush/discard overlays on them.
-   * Storage tries are created dynamically (e.g. during contract deploy), so we
-   * need to track their adapters separately from the main trie adapter.
-   */
-  private storageTrieAdapters = new Map<string, TrieDBAdapter>()
-
   private checkpointStateRoot: string | null = null
 
   async checkpoint(): Promise<void> {
     // Save the current state root so revert() can restore it
     // (instead of clearing to null which breaks snapshot requests)
     this.checkpointStateRoot = this.lastStateRoot
-    this.trieDb.enableOverlay()
     await this.trie.checkpoint()
-    for (const [addr, storageTrie] of this.storageTries.entries()) {
-      const adapter = this.storageTrieAdapters.get(addr)
-      if (adapter) adapter.enableOverlay()
+    for (const storageTrie of this.storageTries.values()) {
       await storageTrie.checkpoint()
     }
   }
 
   async revert(): Promise<void> {
-    try {
-      await this.trie.revert()
-    } catch (err) {
-      log.warn("trie revert failed (no matching checkpoint?)", { error: String(err) })
-    }
-    // Discard all buffered writes — nothing hits LevelDB
-    this.trieDb.discardOverlay()
-    for (const [addr, storageTrie] of this.storageTries.entries()) {
-      const adapter = this.storageTrieAdapters.get(addr)
-      if (adapter) adapter.discardOverlay()
+    // Pop the v6 CheckpointDB frame; its buffered writes never touch LevelDB.
+    if (this.trie.hasCheckpoints()) {
       try {
-        await storageTrie.revert()
-      } catch {
-        // Storage trie created after checkpoint has no checkpoint to revert — remove it
+        await this.trie.revert()
+      } catch (err) {
+        log.warn("trie revert failed (no matching checkpoint?)", { error: String(err) })
+      }
+    }
+    for (const [addr, storageTrie] of this.storageTries.entries()) {
+      if (storageTrie.hasCheckpoints()) {
+        try {
+          await storageTrie.revert()
+        } catch (err) {
+          log.warn("storage trie revert failed", { address: addr, error: String(err) })
+        }
+      } else {
+        // Storage trie created after checkpoint has no frame to revert — remove it.
+        // Its mid-block writes already reached LevelDB directly; the block is being
+        // rolled back so we drop this trie from cache and let the account's persisted
+        // storageRoot drive the next reload. The orphaned LevelDB nodes are
+        // content-addressed (keyed by their own hash) so they can never be
+        // reached through the reverted account's storageRoot — they are dead
+        // storage, not a correctness hazard.
         this.storageTries.delete(addr)
-        this.storageTrieAdapters.delete(addr)
       }
     }
     // Invalidate caches and dirty tracking on revert
@@ -484,7 +446,6 @@ export class PersistentStateTrie implements IStateTrie {
 
   async clearStorage(address: string): Promise<void> {
     this.storageTries.delete(address)
-    this.storageTrieAdapters.delete(address)
     // Reset account storage root to empty
     const account = await this.get(address)
     if (account) {
@@ -550,7 +511,6 @@ export class PersistentStateTrie implements IStateTrie {
 
   async close(): Promise<void> {
     this.storageTries.clear()
-    this.storageTrieAdapters.clear()
     this.accountCache.clear()
     this.dirtyAddresses.clear()
   }
@@ -599,10 +559,6 @@ export class PersistentStateTrie implements IStateTrie {
     this.evictLru()
 
     const trieDb = new TrieDBAdapter(this.db, `ss:${address}:`)
-    // If main trie is in overlay mode (checkpoint active), enable overlay on new
-    // storage tries too — prevents LevelDB pollution for newly deployed contracts.
-    if (this.trieDb["overlay"]) trieDb.enableOverlay()
-    this.storageTrieAdapters.set(address, trieDb)
     const rootBytes = storageRoot !== "0x" + "0".repeat(64) ? hexToBytes(storageRoot) : undefined
 
     storageTrie = new Trie({ db: trieDb as any, root: rootBytes })
