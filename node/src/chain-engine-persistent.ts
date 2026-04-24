@@ -349,6 +349,22 @@ export class PersistentChainEngine {
     // fail-open contract the previous stub promised.
     if (!this.stateTrie) return undefined
 
+    // Adversarial test hook: force a specific "computed" stateRoot so
+    // integration tests (scripts/adversarial-stateroot-divergence.sh) can
+    // validate the pair-quorum defense end-to-end on a live devnet. The
+    // env var is deliberately prefixed COC_UNSAFE_ to make accidental
+    // production use highly visible in node-config dumps / process listings.
+    // Never set in a real deployment — you're telling BFT to vote on a
+    // stateRoot that has no relationship to actual post-block state.
+    const adversarial = process.env.COC_UNSAFE_ADVERSARIAL_SPEC_ROOT
+    if (adversarial && /^0x[0-9a-fA-F]{64}$/.test(adversarial)) {
+      log.warn("COC_UNSAFE_ADVERSARIAL_SPEC_ROOT is set — returning poisoned root", {
+        height: block.number.toString(),
+        poisonRoot: adversarial,
+      })
+      return adversarial as Hex
+    }
+
     let dryTrie: IStateTrie | null = null
     try {
       dryTrie = await this.stateTrie.forkForDryRun()

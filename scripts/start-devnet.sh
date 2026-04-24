@@ -155,9 +155,21 @@ JSON
   PID_FILE="${RUN_DIR}/node-${i}.pid"
 
   METRICS_PORT=$((BASE_METRICS + IDX))
-  COC_METRICS_PORT=${METRICS_PORT} \
-  COC_NODE_KEY="${NODE_KEY}" \
-  COC_NODE_CONFIG="${DATA_DIR}/node-config.json" \
+  # Per-node env override: let callers target a specific node with an extra
+  # env var (e.g. the adversarial-stateroot-divergence.sh script sets
+  # COC_UNSAFE_ADVERSARIAL_SPEC_ROOT on a single node to validate the BFT
+  # pair-quorum defense). Format: COC_NODE_${i}_ENV="FOO=bar BAZ=qux" — one
+  # space-separated list of KEY=VAL pairs, or empty.
+  PER_NODE_ENV_VAR="COC_NODE_${i}_ENV"
+  PER_NODE_ENV="${!PER_NODE_ENV_VAR:-}"
+  if [[ -n "$PER_NODE_ENV" ]]; then
+    echo "  per-node env for node-${i}: ${PER_NODE_ENV}"
+  fi
+  env \
+    COC_METRICS_PORT="${METRICS_PORT}" \
+    COC_NODE_KEY="${NODE_KEY}" \
+    COC_NODE_CONFIG="${DATA_DIR}/node-config.json" \
+    ${PER_NODE_ENV} \
     node --experimental-strip-types "${ROOT}/node/src/index.ts" >"${LOG_FILE}" 2>&1 &
   echo $! > "${PID_FILE}"
   echo "started node-${i} (${NODE_ID}): rpc=${RPC_PORT} p2p=${P2P_PORT} ws=${WS_PORT} wire=${WIRE_PORT} ipfs=${IPFS_PORT} metrics=${METRICS_PORT} pid=$(cat "${PID_FILE}")"
@@ -198,7 +210,15 @@ while true; do
   sleep 1
 done
 
-# Deploy SoulRegistry contract to the first node
+# Deploy SoulRegistry contract to the first node.
+# Skippable via COC_SKIP_SOUL_DEPLOY=1 — set by adversarial-stateroot-
+# divergence.sh's Scenario B where the cluster is deliberately stalled
+# and the deploy's tx would hang forever waiting for finalization.
+if [[ "${COC_SKIP_SOUL_DEPLOY:-}" == "1" ]]; then
+  echo "COC_SKIP_SOUL_DEPLOY=1 — skipping SoulRegistry deploy"
+  echo "devnet started at ${RUN_DIR}"
+  exit 0
+fi
 SOUL_RPC="http://127.0.0.1:${BASE_RPC}"
 # Use the prefunded Hardhat account #0 as deployer
 SOUL_PK="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
