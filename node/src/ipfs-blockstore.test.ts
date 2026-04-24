@@ -197,4 +197,38 @@ describe("IpfsBlockstore", () => {
     assert.equal(fetchCalls, 1)
     assert.equal(putCalls, 1)
   })
+
+  // --- Phase C1.4: source-tagged put hook.
+
+  it("put() tags onPut with source=local by default", async () => {
+    const received: Array<{ cid: string; source: string | undefined }> = []
+    store.setHooks({
+      onPut: (cid, _bytes, opts) => { received.push({ cid, source: opts?.source }) },
+    })
+    await store.put(makeBlock("QmLocalTag", "x"))
+    assert.deepEqual(received, [{ cid: "QmLocalTag", source: "local" }])
+  })
+
+  it("putFromPeer tags onPut with source=remote-cache", async () => {
+    const received: Array<{ cid: string; source: string | undefined }> = []
+    store.setHooks({
+      onPut: (cid, _bytes, opts) => { received.push({ cid, source: opts?.source }) },
+    })
+    await store.putFromPeer(makeBlock("QmPushRecv", "peer-delivered"))
+    assert.deepEqual(received, [{ cid: "QmPushRecv", source: "remote-cache" }])
+    // Actual bytes persisted identically to a local put.
+    const back = await store.get("QmPushRecv" as CidString)
+    assert.equal(back.bytes.toString(), "peer-delivered")
+  })
+
+  it("fetchRemote cache-back tags onPut with source=remote-cache", async () => {
+    const received: Array<{ cid: string; source: string | undefined }> = []
+    store.setHooks({
+      fetchRemote: async () => Buffer.from("from-peer"),
+      onPut: (cid, _bytes, opts) => { received.push({ cid, source: opts?.source }) },
+    })
+    await store.get("QmFetched" as CidString)
+    assert.equal(received.length, 1)
+    assert.equal(received[0].source, "remote-cache")
+  })
 })

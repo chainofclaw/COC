@@ -17,14 +17,25 @@ const PINS_FILE = "pins.json"
  *    written to the local blockstore before the get result is returned,
  *    so the next access is free.
  *
- *  - `onPut(cid, bytes)`: fired immediately after a successful local
- *    write. C1.4 uses this to self-announce into DHT and push replicas
- *    to K nearest peers. Handlers must not throw — any error is logged
- *    upstream and the `put` itself still reports success to the caller.
+ *  - `onPut(cid, bytes, opts)`: fired immediately after a successful
+ *    write. `opts.source` distinguishes a caller-driven write
+ *    (`"local"` — user PUT, push RPC) from a cache-back of a remotely
+ *    fetched block (`"remote-cache"` — fallback in `get()`). C1.4 uses
+ *    this to push to K nearest peers on local PUT only — firing on
+ *    remote-cache would cause every fetch to amplify into K pushes,
+ *    cascading into a traffic storm. Both sources self-announce into
+ *    the DHT (provider discovery), which is cheap. Handlers must not
+ *    throw: errors are swallowed so the put itself still reports
+ *    success to the caller.
  */
 export interface IpfsBlockstoreHooks {
   fetchRemote?: (cid: CidString) => Promise<Uint8Array | null>
-  onPut?: (cid: CidString, bytes: Uint8Array) => void
+  onPut?: (cid: CidString, bytes: Uint8Array, opts?: OnPutOptions) => void
+}
+
+export interface OnPutOptions {
+  /** How the bytes arrived. Default "local" (caller-driven write). */
+  source?: "local" | "remote-cache"
 }
 
 export class IpfsBlockstore {
@@ -51,6 +62,30 @@ export class IpfsBlockstore {
   }
 
   async put(block: IpfsBlock): Promise<void> {
+    return this.doPut(block, "local")
+  }
+
+  /**
+   * Store a block delivered by an inbound push RPC (wire-server's
+   * `onBlockRequest` push path). Identical on-disk effect to `put()`
+   * but tags the onPut hook with `source: "remote-cache"` so the C1.4
+   * pushToK replicator doesn't cascade the push forward — the
+   * upstream PUT already fanned the block out to its own K nearest
+   * peers, and re-fanning would cause exponential traffic growth.
+   *
+   * The local node still self-announces as a provider (C1.3 snowball),
+   * so discovery-based diffusion continues to work.
+   */
+  async putFromPeer(block: IpfsBlock): Promise<void> {
+    return this.doPut(block, "remote-cache")
+  }
+
+  /**
+   * Internal write path used by `put()`, `putFromPeer()`, and the
+   * remote-cache path inside `get()`. Keeping the hook invocation here
+   * gives us one chokepoint for the `source` discriminator.
+   */
+  private async doPut(block: IpfsBlock, source: "local" | "remote-cache"): Promise<void> {
     await this.init()
     const path = this.blockPath(block.cid)
     await writeFile(path, block.bytes)
@@ -59,7 +94,7 @@ export class IpfsBlockstore {
     // surface to callers who just saw their put succeed to disk.
     if (this.hooks.onPut) {
       try {
-        this.hooks.onPut(block.cid, block.bytes)
+        this.hooks.onPut(block.cid, block.bytes, { source })
       } catch {
         /* swallow; wiring layer logs its own errors */
       }
@@ -90,13 +125,14 @@ export class IpfsBlockstore {
       if (!remote) throw err
 
       // Cache locally BEFORE returning so the second GET is a hot path.
-      // We intentionally call put() (not a direct write) so the onPut
-      // hook also fires — self-announcing a CID we just cached lets
-      // other peers discover a new provider without waiting for the
-      // next re-announce tick. The put happens atomically w.r.t. the
-      // caller's return because put awaits before we resolve.
+      // Routed through the private doPut with source="remote-cache" so the
+      // onPut hook still fires for DHT self-announce (cheap, desirable —
+      // see the snowball-provider note in C1.3) but so that C1.4's
+      // pushToK can suppress the K-way replication push that a true
+      // local PUT would trigger. Without this discriminator, every
+      // fetch would fan out into K pushes and cascade into a storm.
       try {
-        await this.put({ cid, bytes: remote })
+        await this.doPut({ cid, bytes: remote }, "remote-cache")
       } catch {
         // Caching is best-effort. If write fails we still return the
         // fetched bytes so the caller's GET succeeds; the next GET
