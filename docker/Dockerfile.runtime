@@ -24,6 +24,9 @@ COPY node/src ./node/src
 COPY runtime/*.ts ./runtime/
 COPY runtime/lib ./runtime/lib
 COPY services ./services
+# nodeops is imported by runtime/lib/nodeops-runtime.ts for agent hooks;
+# without it the agent crashloops on ERR_MODULE_NOT_FOUND at startup.
+COPY nodeops ./nodeops
 COPY config.example.json ./
 
 ENV COC_DATA_DIR=/data/coc
