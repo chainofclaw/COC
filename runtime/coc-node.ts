@@ -23,6 +23,61 @@ const storageDir = resolveStorageDir(config.dataDir, config.storageDir);
 // With FF off, we keep the pre-baked `file-meta.json` path so existing
 // deployments behave identically until operator flips the switch.
 const poseStorageFromBlockstore = config.poseStorageFromBlockstore === true;
+
+// Post-incident defense (2026-04-25): when the coc-node prover sidecar
+// shares a docker volume with a validator's leveldb, the volume MUST be
+// mounted read-only — otherwise both processes can fight over LevelDB
+// LOCK files and corrupt the chain state trie. Probe the mount at
+// startup and refuse to launch if RW. See
+// docs/incident-2026-04-25-chain-halt-post-mortem-{zh,en}.md.
+//
+// Heuristic: try to write a tiny scratch file under storageDir. If the
+// write succeeds, the mount is RW. If it fails with EROFS / EACCES,
+// the mount is effectively read-only. We do NOT use os.statfs flags
+// because docker's overlay layer doesn't always report ST_RDONLY even
+// when the underlying mount is :ro — empirical write probe is more
+// reliable across docker versions.
+async function probeMountIsReadOnly(dir: string): Promise<boolean> {
+  const fs = await import("node:fs/promises");
+  const path = await import("node:path");
+  const { existsSync, mkdirSync } = await import("node:fs");
+  if (!existsSync(dir)) {
+    try { mkdirSync(dir, { recursive: true }); } catch { /* may itself fail on RO; that's fine */ }
+  }
+  const probe = path.join(dir, ".ro-probe-" + process.pid);
+  try {
+    await fs.writeFile(probe, "x");
+    await fs.unlink(probe);
+    return false;  // write succeeded → not read-only
+  } catch (err: unknown) {
+    const code = (err as { code?: string }).code;
+    if (code === "EROFS" || code === "EACCES" || code === "EPERM") return true;
+    // Other errors (ENOENT, ENOTDIR) → can't probe; assume not RO so
+    // we don't false-positive crash the prover on a misconfigured path.
+    log.warn("RO mount probe inconclusive", { dir, err: String(err) });
+    return false;
+  }
+}
+
+if (poseStorageFromBlockstore) {
+  const isReadOnly = await probeMountIsReadOnly(storageDir);
+  const enforce = process.env.COC_REQUIRE_RO_STORAGE !== "0";
+  if (!isReadOnly) {
+    const msg = `storageDir ${storageDir} is mounted RW. ` +
+      `If this process is a prover sidecar sharing a validator's leveldb volume, ` +
+      `this WILL eventually corrupt the chain (see incident 2026-04-25). ` +
+      `Mount the volume :ro, or set COC_REQUIRE_RO_STORAGE=0 to acknowledge and bypass.`;
+    if (enforce) {
+      log.error(msg);
+      throw new Error("storage volume must be read-only for prover sidecar (set COC_REQUIRE_RO_STORAGE=0 to bypass)");
+    } else {
+      log.warn(msg);
+    }
+  } else {
+    log.info("storage mount confirmed read-only", { storageDir });
+  }
+}
+
 const storageBlockstore = poseStorageFromBlockstore ? new IpfsBlockstore(storageDir) : undefined;
 const merkleLeavesCache = new MerkleLeavesCache(500);
 
