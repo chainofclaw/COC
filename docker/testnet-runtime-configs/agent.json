@@ -22,5 +22,9 @@
   "pendingArchivePath": "/data/coc/runtime/pending-receipts-archive.jsonl",
   "pendingV2ArchivePath": "/data/coc/runtime/pending-receipts-v2-archive.jsonl",
   "nonceRegistryPath": "/data/coc/runtime/nonce-registry.log",
-  "protocolVersion": 1
+  "protocolVersion": 2,
+  "chainId": 18780,
+  "l1RpcUrl": "http://node-1:18780",
+  "poseManagerV2Address": "0xCD8a1C3ba11CF5ECfa6267617243239504a98d90",
+  "verifyingContract": "0xCD8a1C3ba11CF5ECfa6267617243239504a98d90"
 }
