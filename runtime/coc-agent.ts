@@ -955,7 +955,11 @@ async function tick(): Promise<void> {
       metricsPromWriteFailed: runtimeStats.metricsPromWriteFailed,
     });
   } catch (error) {
-    log.error("tick failed", { error: String(error) });
+    const err = error as Error;
+    log.error("tick failed", {
+      error: String(error),
+      stack: err?.stack ? err.stack.split("\n").slice(0, 8).join(" | ") : undefined,
+    });
   } finally {
     tickInProgress = false;
   }
