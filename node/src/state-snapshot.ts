@@ -149,13 +149,19 @@ export async function importStateSnapshot(
   validateSnapshot(snapshot)
 
   // Checkpoint for atomic rollback on failure
+  log.info("snap-debug: import begin", { accounts: snapshot.accounts.length })
   await stateTrie.checkpoint()
+  log.info("snap-debug: import after-checkpoint")
 
   let accountsImported = 0
   let codeImported = 0
 
   try {
     for (const acc of snapshot.accounts) {
+      const slotCount = acc.storage.length
+      if (accountsImported < 5 || accountsImported % 25 === 0 || slotCount > 0) {
+        log.info("snap-debug: import account", { idx: accountsImported, addr: acc.address, slots: slotCount, hasCode: !!acc.code })
+      }
       // Import contract code first (needed before account reference)
       if (acc.code) {
         const codeBytes = hexStrToBytes(acc.code)
@@ -187,13 +193,20 @@ export async function importStateSnapshot(
       // Import storage slots — putStorageAt rolls the storage trie forward
       // and updates the account's storageRoot to the locally-derived value
       // each iteration. Same data → same trie shape → matches peer's root.
+      let slotIdx = 0
       for (const { slot, value } of acc.storage) {
+        if (slotIdx === 0 || slotIdx % 50 === 0) {
+          log.info("snap-debug: putStorageAt", { addr: acc.address, slotIdx, totalSlots: acc.storage.length })
+        }
         await stateTrie.putStorageAt(acc.address, slot, value)
+        slotIdx++
       }
     }
+    log.info("snap-debug: import pre-commit", { accountsImported, codeImported })
 
     // Commit to persist and generate new state root
     const newRoot = await stateTrie.commit()
+    log.info("snap-debug: import post-commit", { newRoot })
 
     // Verify stateRoot if expected value provided
     if (expectedStateRoot && newRoot !== expectedStateRoot) {
