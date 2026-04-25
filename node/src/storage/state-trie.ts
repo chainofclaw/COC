@@ -384,8 +384,20 @@ export class PersistentStateTrie implements IStateTrie {
 
     this.lastStateRoot = bytesToHex(this.trie.root())
 
-    // Persist state root for recovery across restarts
-    await this.db.put(STATE_ROOT_KEY, encoder.encode(this.lastStateRoot))
+    // Persist STATE_ROOT_KEY ONLY when the underlying CheckpointDB stack is
+    // fully drained. With nested checkpoints (chain-engine-persistent's
+    // applyBlock takes two: one via the EVM stateManager wrapper and one
+    // directly on stateTrie), the inner commit only merges its frame into
+    // the outer frame's keyValueMap — the root node still lives in memory.
+    // If we persisted STATE_ROOT_KEY here, a crash before the outer commit
+    // would leave the on-disk pointer naming a hash whose node never
+    // reached LevelDB; init() would then load a "dangling" root and the
+    // next put would silently lose state (testnet symptom 2026-04-25 —
+    // node-1 reported stateRoot=0x9b23169… with 0 accounts because the
+    // root node simply wasn't there). The outer commit handles the persist.
+    if (!this.trie.hasCheckpoints()) {
+      await this.db.put(STATE_ROOT_KEY, encoder.encode(this.lastStateRoot))
+    }
 
     return this.lastStateRoot
   }
