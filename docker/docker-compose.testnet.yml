@@ -240,7 +240,12 @@ services:
     environment:
       - COC_DATA_DIR=/data/coc/runtime
       - COC_CONFIG=/data/coc/runtime/relayer.json
-      - COC_SLASHER_PK=${COC_SLASHER_PK:-0xdbda1821b80551c171720b42e0ca60ef6d611f8c6e3853e54af5d3f8ef500c4c}
+      # Hardhat #0 — same key as PoSeManagerV2 deployer/owner so finalizeEpochV2
+      # / initEpochNonce (onlyOwner) succeed. The previously-default key
+      # (0xdbda...c4c → 0x8642...DA45) reverted with "not owner" because the
+      # contract was deployed under #0. Override only if you transferOwnership
+      # to a separate operational signer.
+      - COC_SLASHER_PK=${COC_SLASHER_PK:-0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80}
     volumes:
       - runtime-data:/data/coc/runtime
       - ./testnet-runtime-configs/relayer.json:/data/coc/runtime/relayer.json:ro
