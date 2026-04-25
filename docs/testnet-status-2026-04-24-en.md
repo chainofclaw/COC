@@ -444,6 +444,28 @@ ssh coc-testnet 'docker exec coc-node-1 sh -c "head -c 4096 /dev/urandom > /tmp/
 - Explorer (local HTTP): `http://199.192.16.79:3000` if exposed via reverse proxy, otherwise `ssh -L 3000:127.0.0.1:3000 coc-testnet` for local forwarding.
 - Faucet: `http://199.192.16.79:3003`
 
+### 10.7 Cross-validator stateRoot audit (added 2026-04-25)
+
+`scripts/state-divergence-audit.ts` actively detects GH#3 / 2026-04-25-incident-style silent state divergence.
+
+```bash
+# One-shot check (CI / cron friendly)
+node --experimental-strip-types scripts/state-divergence-audit.ts \
+  --rpcs http://199.192.16.79:28780,http://199.192.16.79:28782,http://199.192.16.79:28784 \
+  --history 100
+# exit 0 = consistent; exit 1 = divergence; exit 2 = couldn't reach quorum
+
+# Watch mode (daemon)
+node --experimental-strip-types scripts/state-divergence-audit.ts \
+  --rpcs http://node-1:18780,http://node-2:18780,http://node-3:18780 \
+  --watch --interval 30 --quiet
+# Quiet mode: consistent ticks suppress output; only logs on transitions/divergence
+```
+
+Default RPC list can also come from env var `COC_AUDIT_RPCS=url1,url2,url3`.
+
+Recommended: run as `--watch --interval 60` in a systemd service, pipe to your log aggregator / alerting. Future Prometheus-alertmanager integration can directly reuse the exit codes.
+
 ## 11. Known Issues & Next Steps
 
 ### 11.1 Phase C remnants (all defer to the next phase)

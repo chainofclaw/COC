@@ -443,6 +443,28 @@ ssh coc-testnet 'docker exec coc-node-1 sh -c "head -c 4096 /dev/urandom > /tmp/
 - Explorer（本机 HTTP）: `http://199.192.16.79:3000`（如果反向代理开放）或者 `ssh -L 3000:127.0.0.1:3000 coc-testnet` 本地转发
 - Faucet: `http://199.192.16.79:3003`
 
+### 10.7 跨节点 stateRoot 一致性审计（2026-04-25 增）
+
+`scripts/state-divergence-audit.ts` — 主动检测 GH#3 / 2026-04-25 incident 类型的 silent state divergence。
+
+```bash
+# 一次性检查（CI / cron 友好）
+node --experimental-strip-types scripts/state-divergence-audit.ts \
+  --rpcs http://199.192.16.79:28780,http://199.192.16.79:28782,http://199.192.16.79:28784 \
+  --history 100
+# exit 0 = 一致；exit 1 = 分叉；exit 2 = 多数 RPC 不可达
+
+# 持续监控（Daemon）
+node --experimental-strip-types scripts/state-divergence-audit.ts \
+  --rpcs http://node-1:18780,http://node-2:18780,http://node-3:18780 \
+  --watch --interval 30 --quiet
+# 安静模式：consistent 不打印；只在 transition 或 divergence 时输出
+```
+
+也可以通过环境变量 `COC_AUDIT_RPCS=url1,url2,url3` 设置默认值。
+
+建议：用 `--watch --interval 60` 跑成 systemd service，转发输出到日志聚合 / 告警系统。后续 P0 任务接入 Prometheus alertmanager 时直接复用这个脚本的退出码。
+
 ## 11. 已知遗留问题 & 下一步
 
 ### 11.1 Phase C 遗留（均属于下一阶段工作）
