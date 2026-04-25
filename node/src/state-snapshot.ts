@@ -163,24 +163,30 @@ export async function importStateSnapshot(
         codeImported++
       }
 
-      // Import account state — but NOT the peer's storageRoot. Writing the
-      // peer-side root verbatim then calling putStorageAt would re-instantiate
-      // the storage trie at a hash whose nodes don't exist in our DB; the
-      // first traversal pops an empty stack and @ethereumjs/trie throws
-      // "Stack underflow". Start with empty storageRoot and let putStorageAt
-      // accumulate the local root from the slots we're about to import.
+      // Import account state. For accounts WITH storage, write the empty
+      // sentinel first and let putStorageAt below accumulate the local root —
+      // writing the peer's hash verbatim would point our trie at a root whose
+      // nodes don't exist locally and the first traversal would throw
+      // "Stack underflow" (testnet repro 2026-04-25).
+      // For accounts WITHOUT storage we keep the peer's storageRoot verbatim:
+      // it might be the EthereumJS canonical empty (KECCAK256_RLP_S =
+      // 0x56e81f17…) for EVM-touched accounts, or COC's 0x000… sentinel for
+      // accounts only ever written through our trie. Overriding either form
+      // with the other diverges the encoded account JSON and cascades into
+      // the account trie root → stateRoot mismatch.
+      const hasStorage = acc.storage.length > 0
       const accountState: AccountState = {
         nonce: BigInt(acc.nonce),
         balance: BigInt(acc.balance),
-        storageRoot: "0x" + "0".repeat(64),
+        storageRoot: hasStorage ? "0x" + "0".repeat(64) : acc.storageRoot,
         codeHash: acc.codeHash,
       }
       await stateTrie.put(acc.address, accountState)
       accountsImported++
 
-      // Import storage slots — putStorageAt will roll the storage root forward
-      // as each slot is added, leaving the account with the locally-derived
-      // storageRoot equal to the peer's (since same data → same trie shape).
+      // Import storage slots — putStorageAt rolls the storage trie forward
+      // and updates the account's storageRoot to the locally-derived value
+      // each iteration. Same data → same trie shape → matches peer's root.
       for (const { slot, value } of acc.storage) {
         await stateTrie.putStorageAt(acc.address, slot, value)
       }

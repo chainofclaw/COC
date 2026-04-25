@@ -44,6 +44,54 @@ describe("importStateSnapshot: contract accounts with storage", () => {
     assert.equal(v, "0x" + "11".repeat(32), "storage slot should be readable")
   })
 
+  it("preserves peer storageRoot for accounts with no storage", async () => {
+    // Externally-touched accounts on testnet can carry storageRoot equal to
+    // EthereumJS's KECCAK256_RLP_S (canonical empty trie root, 0x56e81f17…)
+    // instead of COC's 0x000… sentinel. Earlier fix attempts overrode every
+    // account's storageRoot to 0x000, which made the encoded account JSON
+    // diverge from the peer's and cascaded into a stateRoot mismatch on
+    // verify. Verify the importer keeps the peer's value when there are no
+    // slots to import — both forms must round-trip exactly as written.
+    const db = new MemoryDatabase()
+    const trie = new PersistentStateTrie(db)
+    await trie.init()
+
+    const KECCAK256_RLP_S =
+      "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421"
+
+    const snapshot = {
+      version: 1 as const,
+      stateRoot: "0x" + "aa".repeat(32),
+      blockHeight: "1",
+      blockHash: "0x" + "00".repeat(32),
+      createdAtMs: Date.now(),
+      accounts: [
+        {
+          address: "0x" + "aa".repeat(20),
+          nonce: "1",
+          balance: "0",
+          storageRoot: KECCAK256_RLP_S,
+          codeHash: "0x" + "00".repeat(32),
+          storage: [],
+        },
+        {
+          address: "0x" + "bb".repeat(20),
+          nonce: "1",
+          balance: "0",
+          storageRoot: "0x" + "00".repeat(32),
+          codeHash: "0x" + "00".repeat(32),
+          storage: [],
+        },
+      ],
+    }
+
+    await importStateSnapshot(trie, snapshot)
+    const a = await trie.get("0x" + "aa".repeat(20))
+    const b = await trie.get("0x" + "bb".repeat(20))
+    assert.equal(a?.storageRoot, KECCAK256_RLP_S, "EthereumJS empty root must round-trip")
+    assert.equal(b?.storageRoot, "0x" + "00".repeat(32), "COC sentinel must round-trip")
+  })
+
   it("imports a snapshot with storage into a fresh PersistentStateTrie (zero peer root)", async () => {
     const db = new MemoryDatabase()
     const trie = new PersistentStateTrie(db)
