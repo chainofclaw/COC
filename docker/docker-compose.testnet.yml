@@ -124,6 +124,85 @@ services:
       - coc-rpc
     restart: unless-stopped
 
+  # Phase C PoSe v2 prover sidecars.
+  # Each prover serves /pose/challenge + /pose/receipt for ONE validator
+  # using that validator's private key. The prover reads chunk bytes from
+  # the validator's blockstore (storage/blocks subdir) to build live
+  # Merkle proofs for storage challenges.
+  #
+  # ⚠️ Volume MUST be mounted :ro. Sharing a RW volume with the validator
+  # caused a 95-min testnet halt on 2026-04-25 (see
+  # docs/incident-2026-04-25-chain-halt-post-mortem-{zh,en}.md).
+  # LevelDB does not safely tolerate two processes opening the same DB
+  # files even if only one writes; cross-container lock semantics under
+  # force-recreate are unreliable.
+  prover-1: &prover-base
+    image: ${COC_RUNTIME_IMAGE:-ghcr.io/chainofclaw/coc-runtime}:${IMAGE_TAG:-latest}
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.runtime
+    container_name: coc-prover-1
+    command: ["runtime/coc-node.ts"]
+    environment:
+      - COC_CONFIG=/app/config.json
+      - COC_NODE_PK=${COC_NODE1_PK:-0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80}
+      - COC_RPC_URL=http://node-1:18780
+    volumes:
+      - node1-data:/data/coc:ro    # ← :ro is mandatory; see header comment
+      - ./testnet-runtime-configs/provers/node-1.json:/app/config.json:ro
+    ports:
+      - "127.0.0.1:19901:18800"
+    networks:
+      coc-rpc:
+        aliases:
+          - prover-1   # agent.json's nodeEndpoints reference http://prover-1:18800
+    depends_on:
+      node-1:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles:
+      - pose
+
+  prover-2:
+    <<: *prover-base
+    container_name: coc-prover-2
+    environment:
+      - COC_CONFIG=/app/config.json
+      - COC_NODE_PK=${COC_NODE2_PK:-0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d}
+      - COC_RPC_URL=http://node-2:18780
+    volumes:
+      - node2-data:/data/coc:ro
+      - ./testnet-runtime-configs/provers/node-2.json:/app/config.json:ro
+    ports:
+      - "127.0.0.1:19902:18800"
+    networks:
+      coc-rpc:
+        aliases:
+          - prover-2
+    depends_on:
+      node-2:
+        condition: service_healthy
+
+  prover-3:
+    <<: *prover-base
+    container_name: coc-prover-3
+    environment:
+      - COC_CONFIG=/app/config.json
+      - COC_NODE_PK=${COC_NODE3_PK:-0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a}
+      - COC_RPC_URL=http://node-3:18780
+    volumes:
+      - node3-data:/data/coc:ro
+      - ./testnet-runtime-configs/provers/node-3.json:/app/config.json:ro
+    ports:
+      - "127.0.0.1:19903:18800"
+    networks:
+      coc-rpc:
+        aliases:
+          - prover-3
+    depends_on:
+      node-3:
+        condition: service_healthy
+
   agent:
     image: ${COC_RUNTIME_IMAGE:-ghcr.io/chainofclaw/coc-runtime}:${IMAGE_TAG:-latest}
     build:

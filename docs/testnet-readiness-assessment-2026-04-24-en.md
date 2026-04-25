@@ -9,14 +9,17 @@
 
 ## 0. Executive Summary
 
-> **As a testnet (validating technical viability): ~90% complete.**
-> **As a production mainnet: ~55-65% complete.**
+> **As a testnet (validating technical viability): ~88% complete** (lowered from 90% after 2026-04-25 incident).
+> **As a production mainnet: ~50-60% complete** (lowered from 55-65%).
 
-The main shortfall is not in the protocol itself but in the **multi-stakeholder** dimensions:
+The main shortfall is not in the protocol itself but in the **multi-stakeholder + operational maturity** dimensions:
 
 ✅ **Protocol stack is essentially ready** — consensus, EVM, P2P storage, PoSe all run end-to-end.
-🟡 **Operational base** is partially in place — monitoring/logs exist; backups are simple, alerting absent.
+🟡 **Operational base** is partially in place — monitoring/logs exist; backups are simple, **alerting absent**.
 ❌ **Genuine decentralized economy** has not started — 3 hardhat test keys, no stake market, no permissionless validator join.
+❌ **No active state-divergence detection** — the 2026-04-25 incident exposed that node-2 had been on a divergent state branch undetected.
+
+> **2026-04-25 P1 incident key lesson**: testnet had a 95-min full halt (see `incident-2026-04-25-chain-halt-post-mortem-en.md`). **Direct root cause: deployment review missed prover sidecar's RW mount (now fixed). Indirect root causes: no alerting (took 1.5h before user noticed) + no cross-node stateRoot audit**. Both must be systematically addressed before mainnet launch.
 
 Detailed dimension-by-dimension breakdown follows.
 
@@ -260,8 +263,11 @@ Contract test coverage: **227 tests**, coverage thresholds met. But **no token i
 | Storage data loss risk | 1 down: 0%; 2 down: 0%; 3 down: 100% | multi-replica + EC + long-term archive | ❌ |
 | Equivocation slashing | Detection ✅; slash automation never triggered in prod | auto slash + bond seizure | 🟡 |
 | Double-spend protection | NonceRegistry replay guard | same | ✅ |
+| **Active state-divergence detection** | ❌ **None** (2026-04-25 incident found node-2 had silently diverged) | Periodic cross-node stateRoot audit + auto-freeze | ❌ |
+| **Shared docker volume safety** | ✅ Since 2026-04-25, prover sidecars mandated `:ro` | Codified policy + deploy-time validation | 🟡 |
 | **Disk full / node OOM** | container auto-restart; state checkpoint protection | + monitoring + alerts | 🟡 |
 | **Off-chain recovery if consensus halts** | runbook + backups in place | + automated fallback | 🟡 |
+| **Actual recovery time on consensus halt** | 2026-04-25 measured **95 min** (manual intervention) | < 5 min auto-heal | ❌ |
 
 ---
 
@@ -270,16 +276,24 @@ Contract test coverage: **227 tests**, coverage thresholds met. But **no token i
 | Item | Status | Completion | Notes |
 |---|---|---|---|
 | Docker containerization | ✅ | 100% | All services |
-| docker-compose one-shot deploy | ✅ | 95% | Used on testnet |
+| docker-compose one-shot deploy | ✅ | 90% | Used on testnet; since 2026-04-25 includes prover-1/2/3 service definitions |
 | K8s helm chart | ❌ | 0% | Not done |
 | CI/CD pipeline | 🟡 | 70% | GitHub Actions in place; auto-deploy to testnet not done |
 | Automated backups | 🟡 | 50% | Manual snapshots taken; no cron |
 | Rollback procedure | ✅ | 95% | Two-tier git-tag + image rollback established |
-| Documentation (deploy / ops) | ✅ | 90% | docs/testnet-* series + this assessment |
-| Disaster recovery drill | ❌ | 0% | Never performed |
+| Documentation (deploy / ops / post-mortem) | ✅ | 90% | docs/testnet-* series + this assessment + incident post-mortem |
+| Disaster recovery drill | ❌ | 0% | Never planned; 2026-04-25 incident was an **unplanned DR exercise** (manual 95-min recovery) |
+| **Alerting (PagerDuty / Slack)** | ❌ | 0% | Not done — this is why the 95-min halt went unnoticed |
 | Security audit | 🟡 | 60% | Internal round-3 done; no external auditor engaged |
 | Bug bounty program | ❌ | 0% | Not launched |
 | Bug submission process | ✅ | 80% | GitHub Issues in use |
+| **Production incident post-mortem process** | 🟡 | 70% | First post-mortem written 2026-04-25; process needs standardization |
+
+**Operational maturity overall score: 60% → 50%** (lowered after 2026-04-25 incident).
+Key deductions:
+- 95-min full halt was discovered only via user report (no alerts)
+- prover sidecar default RW was an obvious deployment review miss
+- state divergence had been there for an unknown time but never monitored
 
 ---
 

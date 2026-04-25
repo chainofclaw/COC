@@ -115,6 +115,22 @@ curl http://199.192.16.79:28786/api/v0/cat?arg=<CID>
 ```
 ⚠️ **node-2/3 仍只在容器内 5001**，外部不能直连。Node-1 是当前唯一公开的 IPFS 入口；上传后会自动通过 push-to-K + DHT gossip 复制到其他两个节点。
 
+### 3.3 ⚠️ Docker 卷共享读写约束
+
+**任何 sidecar / 跨容器共享 validator 数据卷的进程必须用 `:ro`（只读）挂载**。
+
+LevelDB 用 fcntl advisory lock 防双写者，但跨容器的 lock 状态在 force-recreate 时会进入"半释放"，触发 LSM compaction 损坏 → state trie 被清空。**实际事故已发生过**：2026-04-25 prover sidecar 用默认 RW 挂载导致测试网停产 95 min（详见 `incident-2026-04-25-chain-halt-post-mortem-zh.md`）。
+
+| 容器 | 应当的卷模式 | 当前测试网 |
+|---|---|---|
+| `coc-node-{1,2,3}` | RW（自己写自己的 leveldb） | ✅ |
+| `coc-sync-node` | RW（独立 sync-data 卷） | ✅ |
+| `coc-prover-{1,2,3}` | **`:ro` (只读 RO)** ← 关键 | ✅ 自 2026-04-25 起 |
+| `coc-agent` | `:ro` 只读访问 `node1-data` 用作 shared blockstore | ✅ |
+| `coc-relayer` | 自己的 `runtime-data` 卷，RW 没问题 | ✅ |
+
+**如果新加 sidecar 容器**：默认必须 `:ro`，除非有明确写需求并确认目标卷不被其他进程持锁。**永远不要让两个进程对同一 leveldb-state / leveldb-chain 目录都有 RW 权限**。
+
 ## 4. 链参数
 
 | 参数 | 值 |

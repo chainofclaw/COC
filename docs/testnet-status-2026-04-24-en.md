@@ -116,6 +116,22 @@ curl http://199.192.16.79:28786/api/v0/cat?arg=<CID>
 ```
 ⚠️ **node-2/3 are still container-only at port 5001**. Node-1 is the sole public IPFS entry; uploads automatically replicate to the other two via push-to-K + DHT gossip.
 
+### 3.3 ⚠️ Docker Volume RW Constraint
+
+**Any sidecar / cross-container process sharing a validator's data volume must mount it as `:ro` (read-only)**.
+
+LevelDB uses fcntl advisory locks to prevent dual writers, but cross-container lock state can enter a "half-released" condition during force-recreate, triggering LSM compaction corruption that wipes the state trie. **A real incident occurred**: 2026-04-25 the prover sidecars used default RW mounts, causing a 95-min testnet halt (see `incident-2026-04-25-chain-halt-post-mortem-en.md`).
+
+| Container | Required mount mode | Current testnet |
+|---|---|---|
+| `coc-node-{1,2,3}` | RW (writes its own leveldb) | ✅ |
+| `coc-sync-node` | RW (independent sync-data volume) | ✅ |
+| `coc-prover-{1,2,3}` | **`:ro` (read-only)** ← critical | ✅ since 2026-04-25 |
+| `coc-agent` | `:ro` access to `node1-data` as shared blockstore | ✅ |
+| `coc-relayer` | Own `runtime-data` volume, RW is fine | ✅ |
+
+**When adding new sidecar containers**: default to `:ro` unless there's an explicit write requirement and you've confirmed no other process holds a lock on the target volume. **Never let two processes have RW access to the same leveldb-state / leveldb-chain directory.**
+
 ## 4. Chain Parameters
 
 | Parameter | Value |
