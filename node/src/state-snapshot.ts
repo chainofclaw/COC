@@ -163,17 +163,24 @@ export async function importStateSnapshot(
         codeImported++
       }
 
-      // Import account state
+      // Import account state — but NOT the peer's storageRoot. Writing the
+      // peer-side root verbatim then calling putStorageAt would re-instantiate
+      // the storage trie at a hash whose nodes don't exist in our DB; the
+      // first traversal pops an empty stack and @ethereumjs/trie throws
+      // "Stack underflow". Start with empty storageRoot and let putStorageAt
+      // accumulate the local root from the slots we're about to import.
       const accountState: AccountState = {
         nonce: BigInt(acc.nonce),
         balance: BigInt(acc.balance),
-        storageRoot: acc.storageRoot,
+        storageRoot: "0x" + "0".repeat(64),
         codeHash: acc.codeHash,
       }
       await stateTrie.put(acc.address, accountState)
       accountsImported++
 
-      // Import storage slots
+      // Import storage slots — putStorageAt will roll the storage root forward
+      // as each slot is added, leaving the account with the locally-derived
+      // storageRoot equal to the peer's (since same data → same trie shape).
       for (const { slot, value } of acc.storage) {
         await stateTrie.putStorageAt(acc.address, slot, value)
       }
