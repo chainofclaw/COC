@@ -740,7 +740,6 @@ export class ConsensusEngine {
       // if state fails for all peers, we skip block import entirely.
       let stateImported = false
       let importedStateHeight: bigint = 0n
-      log.info("snap-debug: entering state-import loop", { peerCount: peers.length, trustedStateRoot })
       for (const peer of peers) {
         try {
           const stateSnap = snapshotCache.get(peer.url) ?? null
@@ -779,11 +778,8 @@ export class ConsensusEngine {
             }
           }
 
-          log.info("snap-debug: pre importStateSnapshot", { peer: peer.url, accounts: stateSnap.accounts.length })
           const importResult = await this.snapSync.importStateSnapshot(stateSnap, trustedStateRoot)
-          log.info("snap-debug: post importStateSnapshot", { peer: peer.url, imported: importResult.accountsImported })
           await this.snapSync.setStateRoot(trustedStateRoot)
-          log.info("snap-debug: post setStateRoot")
 
           // Restore governance (hash already validated above)
           if (importResult.validators && this.snapSync.restoreGovernance) {
@@ -809,7 +805,6 @@ export class ConsensusEngine {
       }
 
       // Import blocks only after state is confirmed
-      log.info("snap-debug: pre block-import", { blocks: snapshot.blocks.length, importedStateHeight: importedStateHeight.toString() })
       let blocksImported = false
       const bsEngine = this.chain as IBlockSyncEngine
       const ssEngine = this.chain as ISnapshotSyncEngine
@@ -818,7 +813,6 @@ export class ConsensusEngine {
       } else if (typeof ssEngine.makeSnapshot === "function") {
         blocksImported = await ssEngine.maybeAdoptSnapshot({ blocks: snapshot.blocks, updatedAtMs: Date.now() })
       }
-      log.info("snap-debug: post block-import", { blocksImported })
 
       if (!blocksImported) {
         log.warn("snap sync: block adoption failed after state import")

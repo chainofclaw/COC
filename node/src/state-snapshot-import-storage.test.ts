@@ -92,6 +92,63 @@ describe("importStateSnapshot: contract accounts with storage", () => {
     assert.equal(b?.storageRoot, "0x" + "00".repeat(32), "COC sentinel must round-trip")
   })
 
+  it("rolls STATE_ROOT_KEY back to original root when expected mismatch fails", async () => {
+    // Regression for the 2026-04-25 testnet recovery cascade. If
+    // importStateSnapshot commits an unexpected root and then throws on the
+    // mismatch check, the on-disk STATE_ROOT_KEY pointer used to remain
+    // pointing at the bad root. The next process start would init() against
+    // it, the trie would walk a partially-formed shape, and the next put()
+    // would silently hang inside _updateNode. The fix: restore the
+    // pre-import root via setStateRoot in the catch block.
+    const db = new MemoryDatabase()
+    const trie = new PersistentStateTrie(db)
+    await trie.init()
+
+    // Establish a known-good baseline state with one account.
+    await trie.put("0x" + "11".repeat(20), {
+      nonce: 1n,
+      balance: 100n,
+      storageRoot: "0x" + "00".repeat(64).slice(0, 64),
+      codeHash: "0x" + "00".repeat(64).slice(0, 64),
+    })
+    await trie.commit()
+    const baselineRoot = trie.stateRoot()
+    assert.ok(baselineRoot, "baseline must commit a root")
+
+    // Try to import a snapshot whose accounts won't reproduce the claimed root.
+    const bogusExpected = "0x" + "ee".repeat(32)
+    const snapshot = {
+      version: 1 as const,
+      stateRoot: bogusExpected,
+      blockHeight: "10",
+      blockHash: "0x" + "00".repeat(32),
+      createdAtMs: Date.now(),
+      accounts: [
+        {
+          address: "0x" + "22".repeat(20),
+          nonce: "9",
+          balance: "1",
+          storageRoot: "0x" + "00".repeat(32),
+          codeHash: "0x" + "00".repeat(32),
+          storage: [],
+        },
+      ],
+    }
+
+    await assert.rejects(
+      () => importStateSnapshot(trie, snapshot, bogusExpected),
+      /state root mismatch/,
+    )
+
+    // Critical: post-failure root must equal the pre-import baseline. If this
+    // regresses, the next process start init() will silently hang on snap-sync.
+    assert.equal(
+      trie.stateRoot(),
+      baselineRoot,
+      "STATE_ROOT_KEY must be rolled back to pre-import root after mismatch failure",
+    )
+  })
+
   it("imports a snapshot with storage into a fresh PersistentStateTrie (zero peer root)", async () => {
     const db = new MemoryDatabase()
     const trie = new PersistentStateTrie(db)

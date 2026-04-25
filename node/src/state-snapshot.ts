@@ -148,20 +148,20 @@ export async function importStateSnapshot(
 ): Promise<{ accountsImported: number; codeImported: number; validators?: Array<{ id: string; address: string; stake: bigint; active: boolean }> }> {
   validateSnapshot(snapshot)
 
+  // Capture pre-import root so we can roll STATE_ROOT_KEY back if commit
+  // produces a wrong root. Without this, the bad root persists and the next
+  // process start init()s on top of an inconsistent trie — observed on
+  // 2026-04-25 testnet recovery as a silent hang in the next snap-sync.
+  const originalRoot = stateTrie.stateRoot()
+
   // Checkpoint for atomic rollback on failure
-  log.info("snap-debug: import begin", { accounts: snapshot.accounts.length })
   await stateTrie.checkpoint()
-  log.info("snap-debug: import after-checkpoint")
 
   let accountsImported = 0
   let codeImported = 0
 
   try {
     for (const acc of snapshot.accounts) {
-      const slotCount = acc.storage.length
-      if (accountsImported < 5 || accountsImported % 25 === 0 || slotCount > 0) {
-        log.info("snap-debug: import account", { idx: accountsImported, addr: acc.address, slots: slotCount, hasCode: !!acc.code })
-      }
       // Import contract code first (needed before account reference)
       if (acc.code) {
         const codeBytes = hexStrToBytes(acc.code)
@@ -193,22 +193,20 @@ export async function importStateSnapshot(
       // Import storage slots — putStorageAt rolls the storage trie forward
       // and updates the account's storageRoot to the locally-derived value
       // each iteration. Same data → same trie shape → matches peer's root.
-      let slotIdx = 0
       for (const { slot, value } of acc.storage) {
-        if (slotIdx === 0 || slotIdx % 50 === 0) {
-          log.info("snap-debug: putStorageAt", { addr: acc.address, slotIdx, totalSlots: acc.storage.length })
-        }
         await stateTrie.putStorageAt(acc.address, slot, value)
-        slotIdx++
       }
     }
-    log.info("snap-debug: import pre-commit", { accountsImported, codeImported })
 
-    // Commit to persist and generate new state root
+    // Commit to persist and generate new state root.
     const newRoot = await stateTrie.commit()
-    log.info("snap-debug: import post-commit", { newRoot })
 
-    // Verify stateRoot if expected value provided
+    // Verify stateRoot if expected value provided. NOTE: commit() above has
+    // already persisted STATE_ROOT_KEY pointing at newRoot — if newRoot is
+    // wrong we MUST roll the persisted pointer back via setStateRoot in the
+    // catch below, otherwise the next process start will init() on this bad
+    // root and silently hang on the first put (observed during 2026-04-25
+    // testnet recovery).
     if (expectedStateRoot && newRoot !== expectedStateRoot) {
       throw new Error(
         `state root mismatch after import: expected ${expectedStateRoot}, got ${newRoot}`,
@@ -233,8 +231,23 @@ export async function importStateSnapshot(
 
     return { accountsImported, codeImported, validators: importedValidators }
   } catch (err) {
-    // Rollback partial import on any failure
+    // Rollback. revert() handles still-checkpointed paths; for the
+    // post-commit verification failure, the checkpoint frame is already
+    // gone so revert() is a no-op — explicitly restore STATE_ROOT_KEY to
+    // the pre-import root via setStateRoot. Skip restore if there was no
+    // committed root before (fresh trie) — leaving STATE_ROOT_KEY unset is
+    // the correct state for a never-initialized trie.
     await stateTrie.revert()
+    if (originalRoot) {
+      try {
+        await stateTrie.setStateRoot(originalRoot)
+      } catch (restoreErr) {
+        log.warn("state snapshot rollback: setStateRoot failed", {
+          originalRoot,
+          error: String(restoreErr),
+        })
+      }
+    }
     throw err
   }
 }
