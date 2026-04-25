@@ -1832,6 +1832,34 @@ async function refreshRewardTargets(epochId: number): Promise<void> {
     }
   }
 
+  // PoSe v2: chain-discovered nodeIds are keccak256(pubkey) (32-byte hash),
+  // but agent.json's nodeEndpoints map is keyed by operator address (20-byte).
+  // For each nodeId we don't already have, look up its pubkey on-chain, derive
+  // the operator address, and copy the address-keyed URL into the map under
+  // the 32-byte alias. This is one-shot per node and cached in the map.
+  const getNode = (registerContract && typeof (registerContract as { getNode?: unknown }).getNode === "function")
+    ? (registerContract as unknown as { getNode: (id: string) => Promise<{ pubkeyNode?: string }> }).getNode.bind(registerContract)
+    : undefined;
+  const { computeAddress } = await import("ethers");
+  for (const nodeId of nodeIds) {
+    const key = nodeId.toLowerCase();
+    if (nodeEndpointMap.has(key)) continue;
+    if (!getNode) continue;
+    try {
+      const record = await retryAsync(() => getNode(nodeId), txRetryOptions);
+      const pk = record?.pubkeyNode;
+      if (typeof pk !== "string" || !pk.startsWith("0x") || pk.length < 132) continue;
+      const addr = computeAddress(pk).toLowerCase();
+      const addrUrl = nodeEndpointMap.get(addr);
+      if (addrUrl) {
+        nodeEndpointMap.set(key, addrUrl);
+        log.info("nodeEndpoint resolved via on-chain pubkey", { nodeId, addr });
+      }
+    } catch (err) {
+      log.warn("nodeEndpoint on-chain pubkey lookup failed", { nodeId, error: String(err) });
+    }
+  }
+
   const missingEndpointNodeIds: string[] = [];
   const challengeableNodeIds: string[] = [];
   for (const nodeId of nodeIds) {
