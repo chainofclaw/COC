@@ -91,6 +91,7 @@
 | node-3 WS | `28785` | — | |
 | node-3 P2P | `29784` | — | |
 | node-3 Wire | `29785` | — | |
+| **node-1 IPFS HTTP** | **`28786`** | **5001** | **Added 2026-04-25**: UnixFS `/api/v0/add`, `/api/v0/cat`, `/ipfs/<cid>` gateway for external testing. ⚠️ **No auth, no rate limit** — testnet only. |
 | sync-node RPC | `18780` | — | Read-only aggregating RPC (public entry) |
 | sync-node WS | `18781` | — | |
 | Explorer | `3000` | 3000 | Next.js dev server (127.0.0.1 only) |
@@ -103,9 +104,17 @@
 |---|---|---|
 | prover-1/2/3 | `prover-N:18800` | PoSe challenge/receipt handling |
 | agent metrics | `agent:9200` | Runtime internal metrics |
-| node-N IPFS | `node-N:5001` | IPFS HTTP API (UnixFS /api/v0/add, /cat) |
+| node-2/3 IPFS | `node-N:5001` | IPFS HTTP API; container-only. node-1 is exposed via host port 28786 |
 
-⚠️ **Note**: IPFS HTTP (5001) is **not** exposed on the host. Any testing requires `docker exec <container>` followed by `curl localhost:5001` from inside the container.
+✅ **Since 2026-04-25, node-1's IPFS HTTP is publicly accessible** at `http://199.192.16.79:28786`. External clients can directly PUT/GET:
+```bash
+# Upload
+curl -X POST http://199.192.16.79:28786/api/v0/add -F file=@somefile.bin
+
+# Download
+curl http://199.192.16.79:28786/api/v0/cat?arg=<CID>
+```
+⚠️ **node-2/3 are still container-only at port 5001**. Node-1 is the sole public IPFS entry; uploads automatically replicate to the other two via push-to-K + DHT gossip.
 
 ## 4. Chain Parameters
 
@@ -396,8 +405,20 @@ ssh coc-testnet 'docker logs --tail 50 coc-relayer'
 ssh coc-testnet 'docker logs --tail 50 coc-prover-1'
 ```
 
-### 10.5 PUT a test file to IPFS
+### 10.5 PUT/GET test files via IPFS
 
+**External direct (recommended, available since 2026-04-25)**:
+```bash
+# Upload
+head -c 4096 /dev/urandom > /tmp/t.bin
+curl -sf -X POST http://199.192.16.79:28786/api/v0/add -F file=@/tmp/t.bin
+# → {"Name":"t.bin","Hash":"bafybe...","Size":"4096"}
+
+# Download (note 50 MiB readFile cap)
+curl -sf "http://199.192.16.79:28786/api/v0/cat?arg=<CID>" -o out.bin
+```
+
+**Container-internal (legacy path; also for node-2/3)**:
 ```bash
 ssh coc-testnet 'docker exec coc-node-1 sh -c "head -c 4096 /dev/urandom > /tmp/t.bin && curl -sf -X POST http://localhost:5001/api/v0/add -F file=@/tmp/t.bin"'
 ```
@@ -431,6 +452,7 @@ ssh coc-testnet 'docker exec coc-node-1 sh -c "head -c 4096 /dev/urandom > /tmp/
 | Date | Version | Change |
 |---|---|---|
 | 2026-04-24 | 1.0 | Initial snapshot after Phase C Step 2 full deployment |
+| 2026-04-25 | 1.1 | node-1 IPFS HTTP exposed on host port `28786` → container `5001` for external testing. compose backup at `docker-compose.testnet.yml.bak.20260425-010705`. Node-2/3 remain container-only on 5001. |
 
 ---
 

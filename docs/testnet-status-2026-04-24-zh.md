@@ -90,6 +90,7 @@
 | node-3 WS | `28785` | — | |
 | node-3 P2P | `29784` | — | |
 | node-3 Wire | `29785` | — | |
+| **node-1 IPFS HTTP** | **`28786`** | **5001** | **2026-04-25 新增**：UnixFS `/api/v0/add`、`/api/v0/cat`、`/ipfs/<cid>` gateway，便于外部测试。⚠️ **无 auth、无 rate limit**，仅测试网用 |
 | sync-node RPC | `18780` | — | 只读聚合查询入口（官方 RPC） |
 | sync-node WS | `18781` | — | |
 | Explorer | `3000` | 3000 | Next.js dev server（仅 127.0.0.1） |
@@ -102,9 +103,17 @@
 |---|---|---|
 | prover-1/2/3 | `prover-N:18800` | PoSe challenge/receipt 处理 |
 | agent metrics | `agent:9200` | 运行时内部指标 |
-| node-N IPFS | `node-N:5001` | IPFS HTTP API（UnixFS /api/v0/add, /cat） |
+| node-2/3 IPFS | `node-N:5001` | IPFS HTTP API；只在容器内可见。node-1 已通过 host port 28786 对外开放 |
 
-⚠️ **注意**：IPFS HTTP (5001) **没有暴露**到主机。任何测试需要 `docker exec <container>` 后从容器内 curl 本地 5001。
+✅ **2026-04-25 起 node-1 IPFS HTTP 已公开**于 `http://199.192.16.79:28786`。可以直接外部 PUT/GET 测试：
+```bash
+# 上传
+curl -X POST http://199.192.16.79:28786/api/v0/add -F file=@somefile.bin
+
+# 取回
+curl http://199.192.16.79:28786/api/v0/cat?arg=<CID>
+```
+⚠️ **node-2/3 仍只在容器内 5001**，外部不能直连。Node-1 是当前唯一公开的 IPFS 入口；上传后会自动通过 push-to-K + DHT gossip 复制到其他两个节点。
 
 ## 4. 链参数
 
@@ -395,8 +404,20 @@ ssh coc-testnet 'docker logs --tail 50 coc-relayer'
 ssh coc-testnet 'docker logs --tail 50 coc-prover-1'
 ```
 
-### 10.5 PUT 测试文件到 IPFS
+### 10.5 PUT/GET 测试文件到 IPFS
 
+**外部直连（推荐，2026-04-25 后可用）**：
+```bash
+# 上传
+head -c 4096 /dev/urandom > /tmp/t.bin
+curl -sf -X POST http://199.192.16.79:28786/api/v0/add -F file=@/tmp/t.bin
+# → {"Name":"t.bin","Hash":"bafybe...","Size":"4096"}
+
+# 取回（注意 50 MiB readFile 上限）
+curl -sf "http://199.192.16.79:28786/api/v0/cat?arg=<CID>" -o out.bin
+```
+
+**容器内（沿用旧路径，node-2/3 也用此）**：
 ```bash
 ssh coc-testnet 'docker exec coc-node-1 sh -c "head -c 4096 /dev/urandom > /tmp/t.bin && curl -sf -X POST http://localhost:5001/api/v0/add -F file=@/tmp/t.bin"'
 ```
@@ -430,6 +451,7 @@ ssh coc-testnet 'docker exec coc-node-1 sh -c "head -c 4096 /dev/urandom > /tmp/
 | 时间 | 版本 | 变更 |
 |---|---|---|
 | 2026-04-24 | 1.0 | 初版：Phase C Step 2 完整上线后的测试网配置快照 |
+| 2026-04-25 | 1.1 | node-1 IPFS HTTP 端口对外开放（host port `28786` → 容器 `5001`），便于外部测试 PUT/GET。compose 备份 `docker-compose.testnet.yml.bak.20260425-010705`。Node-2/3 仍只在容器内 5001。 |
 
 ---
 
