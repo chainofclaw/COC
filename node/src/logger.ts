@@ -47,7 +47,14 @@ export function createLogger(component: string): Logger {
       entry.data = data
     }
 
-    const line = JSON.stringify(entry)
+    // Coerce BigInt to decimal string — JSON.stringify throws on bigint by
+    // default, which would crash the entire log call (and any tick() that
+    // passed BigInt values into log.info). Observed on 2026-04-26 testnet:
+    // emitEpochScores logged a stats object whose nonce/balance fields were
+    // BigInt and brought the agent down silently every tick.
+    const line = JSON.stringify(entry, (_k, v) =>
+      typeof v === "bigint" ? v.toString() : v,
+    )
     if (level === "error") {
       process.stderr.write(line + "\n")
     } else {
