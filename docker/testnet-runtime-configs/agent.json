@@ -2,10 +2,13 @@
   "dataDir": "/data/coc/runtime",
   "nodeUrl": "http://node-1:18780",
   "nodeEndpoints": {
-    "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266": "http://node-1:18780",
-    "0x70997970c51812dc3a010c7d01b50e0d17dc79c8": "http://node-2:18780",
-    "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc": "http://node-3:18780"
+    "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266": "http://prover-1:18800",
+    "0x70997970c51812dc3a010c7d01b50e0d17dc79c8": "http://prover-2:18800",
+    "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc": "http://prover-3:18800"
   },
+  "challengerSet": ["0x864293a7801c8171c4bf394813c3fcd8ffaeda45"],
+  "aggregatorSet": ["0x864293a7801c8171c4bf394813c3fcd8ffaeda45"],
+  "allowEmptyBatchWitnessSubmission": true,
   "nodeIds": [
     "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
     "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
