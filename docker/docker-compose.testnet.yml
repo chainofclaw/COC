@@ -22,6 +22,10 @@ services:
       - "29780:19780"
       - "29781:19781"
       - "9101:9100"
+      # IPFS HTTP API (UnixFS /api/v0/add, /api/v0/cat, /ipfs/<cid> gateway).
+      # Single public entry — node-2/3 keep 5001 internal-only by design.
+      # ⚠ No auth, no rate limit on the exposed port — testnet only.
+      - "28786:5001"
     volumes:
       - node1-data:/data/coc
       - ./testnet-configs/node-1.json:/data/coc/node-config.json:ro
