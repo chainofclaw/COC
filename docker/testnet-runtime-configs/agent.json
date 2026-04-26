@@ -6,8 +6,8 @@
     "0x70997970c51812dc3a010c7d01b50e0d17dc79c8": "http://prover-2:18800",
     "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc": "http://prover-3:18800"
   },
-  "challengerSet": ["0x864293a7801c8171c4bf394813c3fcd8ffaeda45"],
-  "aggregatorSet": ["0x864293a7801c8171c4bf394813c3fcd8ffaeda45"],
+  "challengerSet": ["0x0fc876c0b47575cfa81de526c1ac0e7b5b6b427a"],
+  "aggregatorSet": ["0x0fc876c0b47575cfa81de526c1ac0e7b5b6b427a"],
   "allowEmptyBatchWitnessSubmission": true,
   "nodeIds": [
     "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
