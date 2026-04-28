@@ -575,6 +575,8 @@ const runtimeStats = {
 };
 let lastMetricsWriteAtMs = 0;
 let tickInProgress = false;
+let tickStartedAtMs = 0;
+const TICK_HANG_TIMEOUT_MS = 5 * 60 * 1000;
 let lastTickOverlapLogAtMs = 0;
 let tickOverlapSuppressedSinceLastLog = 0;
 let selfNodeRegistered = false;
@@ -791,6 +793,7 @@ async function tick(): Promise<void> {
     return;
   }
   tickInProgress = true;
+  tickStartedAtMs = Date.now();
   try {
     await refreshLatestBlock();
     await refreshSelfNodeStatus();
@@ -958,6 +961,7 @@ async function tick(): Promise<void> {
     log.error("tick failed", { error: String(error) });
   } finally {
     tickInProgress = false;
+    tickStartedAtMs = 0;
   }
 }
 
@@ -2034,6 +2038,23 @@ if (config.poseStorageFromBlockstore) {
 
 setInterval(() => void tick(), intervalMs);
 void tick();
+
+// Watchdog: force-release tickInProgress if a tick has been awaiting for
+// longer than TICK_HANG_TIMEOUT_MS. Without this, a hung await inside the
+// tick body (e.g. unresolved on-chain query during a chain stall, observed
+// 3 times on 2026-04-26) leaves tickInProgress=true forever, causing every
+// subsequent tick to skip silently with no path to recovery short of
+// process restart.
+setInterval(() => {
+  if (tickInProgress && tickStartedAtMs > 0) {
+    const elapsedMs = Date.now() - tickStartedAtMs;
+    if (elapsedMs > TICK_HANG_TIMEOUT_MS) {
+      log.error("tick watchdog: forcing release after hang", { elapsedMs });
+      tickInProgress = false;
+      tickStartedAtMs = 0;
+    }
+  }
+}, 30_000);
 
 async function initCidRegistryReader(): Promise<void> {
   const cidRegistryAddress = config.cidRegistryAddress;

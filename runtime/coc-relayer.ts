@@ -126,6 +126,8 @@ const disputeExecutor = poseV2Contract && signer
   : null;
 
 let tickInProgress = false;
+let tickStartedAtMs = 0;
+const TICK_HANG_TIMEOUT_MS = 5 * 60 * 1000;
 let tickOverlapSkipped = 0;
 
 if (disputeExecutor && disputeExecutor.pendingCount > 0) {
@@ -142,6 +144,7 @@ async function tick(): Promise<void> {
     return;
   }
   tickInProgress = true;
+  tickStartedAtMs = Date.now();
   try {
     if (useV2) {
       await tryInitEpochNonce();
@@ -159,6 +162,7 @@ async function tick(): Promise<void> {
     log.error("tick failed", { error: String(error) });
   } finally {
     tickInProgress = false;
+    tickStartedAtMs = 0;
   }
 }
 
@@ -613,4 +617,20 @@ export function bridgeBftSlash(evidence: EquivocationEvidence): void {
 }
 
 setInterval(() => void tick(), intervalMs);
+
+// Watchdog: force-release tickInProgress if a tick has been awaiting longer
+// than TICK_HANG_TIMEOUT_MS. Without this, a hung await inside the tick
+// body (e.g. unresolved on-chain query during a chain stall, observed once
+// on 2026-04-26 with 126 minutes of skipped ticks) leaves tickInProgress=
+// true forever and only a process restart recovers.
+setInterval(() => {
+  if (tickInProgress && tickStartedAtMs > 0) {
+    const elapsedMs = Date.now() - tickStartedAtMs;
+    if (elapsedMs > TICK_HANG_TIMEOUT_MS) {
+      log.error("tick watchdog: forcing release after hang", { elapsedMs });
+      tickInProgress = false;
+      tickStartedAtMs = 0;
+    }
+  }
+}, 30_000);
 void tick();
