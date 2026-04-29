@@ -709,25 +709,74 @@ test("PersistentStateTrie: stateRoot() restored after init() loads STATE_ROOT_KE
   }
 })
 
-test("PersistentStateTrie: revert with null checkpointStateRoot routes through invalidator", async () => {
+test("PersistentStateTrie: revert restores lastStateRoot from live trie root, not cached checkpoint slot", async () => {
+  // Replaces the previous "routes through invalidator" test, which pinned
+  // the old buggy behavior where revert() left lastStateRoot null when
+  // checkpointStateRoot was null. The fix in this commit reads
+  // `trie.root()` after revert — the v6 CheckpointDB has already rolled
+  // the underlying root back to the pre-frame state, so we just trust it.
   const db = new MemoryDatabase()
   const trie = new PersistentStateTrie(db)
   await trie.init()
   await trie.put("0xdead0000000000000000000000000000dead0001", testAccount)
   const committed = await trie.commit()
 
-  // Simulate the pathological case: invalidate lastStateRoot via put(),
-  // then checkpoint() with the now-null lastStateRoot, then revert.
-  // checkpointStateRoot will be null at revert time, so revert() must
-  // route through invalidateLastStateRoot rather than silently nulling
-  // (which would skip the call-site capture).
+  // A put OUTSIDE any checkpoint changes the root permanently (writes
+  // flush through the v6 CheckpointDB adapter to LevelDB). The next
+  // checkpoint+revert sequence pops only the empty frame; trie root
+  // reflects the put.
   await trie.put("0xdead0000000000000000000000000000dead0002", { ...testAccount, nonce: 9n })
   await trie.checkpoint()
   await trie.revert()
 
-  // Stack capture path: stateRoot() should still return committed
-  // (the disk value) because committedStateRoot wasn't touched.
+  // After revert, stateRoot() returns the live trie root which reflects
+  // both committed account #1 and the post-commit put for #2.
+  // Critically, it must NOT be null — that was the bug.
+  assert.notStrictEqual(trie.stateRoot(), null, "lastStateRoot must not be null after revert")
+  assert.notStrictEqual(trie.stateRoot(), committed, "lastStateRoot must reflect post-commit put #2")
+})
+
+test("PersistentStateTrie: nested checkpoint+revert restores correct lastStateRoot", async () => {
+  // Reproduces the 2026-04-29 testnet stack trace: eth_call's runCall does
+  // checkpoint+simulate+revert. The EVM internally opens nested checkpoints
+  // (one per call frame), and the original single-slot checkpointStateRoot
+  // cache lost the outer frame's saved root when an inner checkpoint
+  // overwrote it with null (because `lastStateRoot` had been invalidated
+  // by an intervening put). Outer revert then restored null instead of
+  // the original root, leaving the trie permanently broken until the next
+  // applyBlock commit.
+  //
+  // Fix: revert() reads `trie.root()` directly, side-stepping the cached
+  // checkpointStateRoot entirely. This test pins the regression.
+  const db = new MemoryDatabase()
+  const trie = new PersistentStateTrie(db)
+  await trie.init()
+  await trie.put("0xdead0000000000000000000000000000dead0001", testAccount)
+  const committed = await trie.commit()
   assert.strictEqual(trie.stateRoot(), committed)
+
+  // Outer checkpoint (frame A)
+  await trie.checkpoint()
+  await trie.put("0xdead0000000000000000000000000000dead0002", { ...testAccount, nonce: 2n })
+  // Inner checkpoint (frame B) opened while lastStateRoot is null —
+  // the previous code captured `checkpointStateRoot = null` here and
+  // OVERWROTE the outer frame's saved value of `committed`.
+  await trie.checkpoint()
+  await trie.put("0xdead0000000000000000000000000000dead0003", { ...testAccount, nonce: 3n })
+  // Inner revert (frame B) — should pop frame B; trie root should now
+  // reflect just frame A's writes.
+  await trie.revert()
+  // Outer revert (frame A) — should pop frame A; trie root should now
+  // be back to `committed`.
+  await trie.revert()
+
+  // The bug manifested as stateRoot() returning null/fallback here
+  // instead of the actual restored root.
+  assert.strictEqual(
+    trie.stateRoot(),
+    committed,
+    "lastStateRoot must restore to pre-outer-checkpoint root after nested revert",
+  )
 })
 
 test("PersistentStateTrie: forkForDryRun inherits committedStateRoot for fallback semantics", async () => {
