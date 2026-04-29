@@ -22,7 +22,12 @@ export async function requestJson(url: string, method: string, body?: unknown): 
       reject(new Error(`request timeout after ${REQUEST_TIMEOUT_MS}ms`));
     });
     req.on("error", reject);
-    if (body) req.write(JSON.stringify(body));
+    // BigInts appear in Phase C v2 challenge payloads (epochId, timestamps,
+    // nonce). JSON.stringify throws "Do not know how to serialize a BigInt",
+    // so coerce to decimal strings on the wire. Receivers already parse
+    // numeric fields with BigInt(...) via pose-types-v2 Zod, so this is
+    // a round-trip-safe projection.
+    if (body) req.write(JSON.stringify(body, (_k, v) => typeof v === "bigint" ? v.toString() : v));
     req.end();
   });
 }

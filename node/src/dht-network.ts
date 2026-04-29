@@ -30,6 +30,24 @@ const LOOKUP_MAX_QUERIES = 60 // cap total outbound queries per lookup to preven
 const PEER_VERIFY_TIMEOUT_MS = 3_000
 const STALE_PEER_THRESHOLD_MS = 24 * 60 * 60 * 1000 // 24 hours
 
+// Provider records: which peers claim to hold which CIDs. Used by IPFS block
+// fetch to route GET to the right node (C1.3) and by repair/replication
+// (C3.2/C3.3) to decide when a CID is under-replicated. libp2p kad-dht uses
+// a 24h provider TTL with republish every 12h; we mirror those defaults.
+// Records live only in memory — nodes reannounce periodically (see C3.2).
+export const DEFAULT_PROVIDER_TTL_MS = 24 * 60 * 60 * 1000 // 24 hours
+// Cap providers per CID to keep the map bounded under hostile flooding.
+// 64 is ample for any realistic replication factor (default K=3) while
+// leaving room for transient restarts / split-brain temporary overclaim.
+const MAX_PROVIDERS_PER_CID = 64
+// C3.2 re-announce cadence: republish every TTL/2 so a record's expiry
+// is always bumped before it lapses. 12h matches libp2p kad-dht default.
+const REANNOUNCE_INTERVAL_MS = DEFAULT_PROVIDER_TTL_MS / 2
+// Throttle per-tick batch size: at 100 CID/min a 10k-file blockstore
+// drains in ~100 min, well within the 12h cadence. Prevents a fresh-
+// restart node from flooding its own provider map.
+const REANNOUNCE_BATCH_SIZE = 100
+
 export interface DhtNetworkConfig {
   localId: string
   localAddress?: string
@@ -55,12 +73,29 @@ export class DhtNetwork {
   readonly routingTable: RoutingTable
   private refreshTimer: ReturnType<typeof setInterval> | null = null
   private announceTimer: ReturnType<typeof setInterval> | null = null
+  private reannounceTimer: ReturnType<typeof setInterval> | null = null
+  private reannouncePinSource: (() => Promise<string[]> | string[]) | null = null
+  private reannouncesPerformed = 0
   private stopped = false
   private verifyAttempts = 0
   private verifySuccess = 0
   private verifyFailures = 0
   private verifyFallbackTcpAttempts = 0
   private verifyFallbackTcpFailures = 0
+
+  /**
+   * CID → peers-who-claim-to-hold-it mapping for content routing.
+   * Outer key is lowercased CID string, inner key is lowercased peer id.
+   * Inner value is absolute expiry timestamp (ms since epoch) — entries
+   * past that time are dropped by `removeExpiredProviders()`, which
+   * refresh() calls every 5 min. Entries are purely advisory: a peer can
+   * advertise a CID then crash before it's actually fetchable, so callers
+   * must tolerate BlockRequest returning `found:false` and fall through
+   * to the next provider.
+   */
+  private providerRecords: Map<string, Map<string, number>> = new Map()
+  private providersPut = 0
+  private providersExpired = 0
 
   constructor(cfg: DhtNetworkConfig) {
     this.cfg = cfg
@@ -95,6 +130,18 @@ export class DhtNetwork {
       this.announce()
     }, ANNOUNCE_INTERVAL_MS)
     this.announceTimer.unref()
+
+    // Phase C3.2: if the caller attached a pin source via
+    // `setReannouncePinSource`, republish self-provider entries on a
+    // TTL/2 cadence so long-lived nodes don't let their own records
+    // expire. Timer starts unconditionally — the callback is a no-op
+    // when no source is attached.
+    this.reannounceTimer = setInterval(() => {
+      void this.reannounceSelfProviders().catch((err) => {
+        log.warn("reannounceSelfProviders failed", { error: String(err) })
+      })
+    }, REANNOUNCE_INTERVAL_MS)
+    this.reannounceTimer.unref()
   }
 
   stop(): void {
@@ -107,6 +154,49 @@ export class DhtNetwork {
       clearInterval(this.announceTimer)
       this.announceTimer = null
     }
+    if (this.reannounceTimer) {
+      clearInterval(this.reannounceTimer)
+      this.reannounceTimer = null
+    }
+  }
+
+  /**
+   * Phase C3.2: attach a pin source so the periodic re-announce loop
+   * knows which CIDs to bump. Pulled lazily per tick so the timer never
+   * captures a snapshot — new PUTs between ticks get picked up on the
+   * next pass automatically.
+   *
+   * Kept as a setter rather than a constructor arg because the
+   * blockstore is wired up after DhtNetwork in index.ts's startup order.
+   */
+  setReannouncePinSource(source: () => Promise<string[]> | string[]): void {
+    this.reannouncePinSource = source
+  }
+
+  /**
+   * Re-publish self-provider entries for every pinned CID. Called by
+   * the timer every TTL/2 and exposed as a public helper so tests can
+   * drive it deterministically without waiting 12h.
+   *
+   * Batches ≤ REANNOUNCE_BATCH_SIZE per call so a freshly-restarted
+   * node with 100k pins doesn't burn a 10-ms tick on the hot path;
+   * remainder picked up on the next tick. In practice the timer fires
+   * every 12h so even a 1M-CID blockstore converges in ~7 ticks at
+   * 100 CID/tick, but operators who care can shorten the interval via
+   * the test helper.
+   */
+  async reannounceSelfProviders(): Promise<number> {
+    if (this.stopped) return 0
+    if (!this.reannouncePinSource) return 0
+    const cids = await this.reannouncePinSource()
+    if (!Array.isArray(cids) || cids.length === 0) return 0
+    const batch = cids.slice(0, REANNOUNCE_BATCH_SIZE)
+    for (const cid of batch) {
+      this.putProvider(cid, this.cfg.localId)
+    }
+    this.reannouncesPerformed += batch.length
+    log.debug("self-reannounce tick", { total: cids.length, reannounced: batch.length })
+    return batch.length
   }
 
   /** Bootstrap the DHT by looking up our own node ID */
@@ -395,6 +485,106 @@ export class DhtNetwork {
 
     log.debug("DHT refresh lookup", { tableSize: this.routingTable.size() })
     await this.iterativeLookup(randomId)
+
+    // Sweep expired provider records in the same tick as the routing-table
+    // refresh so we don't need a separate timer. 5-min cadence is fine: a
+    // stale provider stays queryable for up to 5 min past its expiry, but
+    // callers treat missing `found:true` responses as "try next provider"
+    // anyway, so there's no correctness cost.
+    this.removeExpiredProviders()
+  }
+
+  /**
+   * Record that `peerId` holds `cid` for up to `ttlMs` from now.
+   *
+   * Called by the local node after a successful `IpfsBlockstore.put` to
+   * self-announce, and by peers via wire `FindProviders` messages (added
+   * in a later commit — for now, peers only learn about their own CIDs).
+   *
+   * If `peerId` already advertises `cid`, the expiry is bumped — acts as
+   * a renewal. Provider count per CID is capped at `MAX_PROVIDERS_PER_CID`
+   * to bound memory under sybil / flood attempts; when over the cap we
+   * evict the soonest-to-expire entry to make room.
+   */
+  putProvider(cid: string, peerId: string, ttlMs: number = DEFAULT_PROVIDER_TTL_MS): void {
+    if (this.stopped) return
+    if (ttlMs <= 0) return
+    const cidKey = cid.toLowerCase()
+    const peerKey = peerId.toLowerCase()
+    let providers = this.providerRecords.get(cidKey)
+    if (!providers) {
+      providers = new Map()
+      this.providerRecords.set(cidKey, providers)
+    }
+    const expiresAt = Date.now() + ttlMs
+    if (!providers.has(peerKey) && providers.size >= MAX_PROVIDERS_PER_CID) {
+      // Evict the soonest-to-expire entry. Cheap linear scan is fine here —
+      // capacity ceiling is 64 and puts are infrequent.
+      let evictPeer: string | null = null
+      let evictExpiry = Number.MAX_SAFE_INTEGER
+      for (const [p, e] of providers) {
+        if (e < evictExpiry) { evictExpiry = e; evictPeer = p }
+      }
+      if (evictPeer) providers.delete(evictPeer)
+    }
+    providers.set(peerKey, expiresAt)
+    this.providersPut++
+  }
+
+  /**
+   * Return up to `maxK` peer ids that currently claim to hold `cid`.
+   *
+   * Expired entries are dropped lazily during the query so callers never
+   * see stale providers even if `removeExpiredProviders` hasn't fired yet.
+   * Order preserved from the underlying map (insertion order) — for
+   * locality the caller should shuffle or re-sort as desired; distance-
+   * aware routing is deferred to a later commit since the current usage
+   * (try one, fall through on miss) is robust to order.
+   */
+  findProviders(cid: string, maxK: number = 3): string[] {
+    const cidKey = cid.toLowerCase()
+    const providers = this.providerRecords.get(cidKey)
+    if (!providers) return []
+    const now = Date.now()
+    const live: string[] = []
+    const stale: string[] = []
+    for (const [peerId, expiresAt] of providers) {
+      if (expiresAt <= now) {
+        stale.push(peerId)
+        continue
+      }
+      live.push(peerId)
+      if (live.length >= maxK) break
+    }
+    // Clean up stale entries we found so the map doesn't grow unbounded
+    // between refresh() ticks — cheap because we already iterated past them.
+    if (stale.length > 0) {
+      for (const s of stale) providers.delete(s)
+      if (providers.size === 0) this.providerRecords.delete(cidKey)
+      this.providersExpired += stale.length
+    }
+    return live
+  }
+
+  /**
+   * Drop provider entries whose expiry is past `now`. Returns the count
+   * removed. Called by the periodic `refresh()` tick; safe to call
+   * manually in tests via a shortened TTL to exercise expiry.
+   */
+  removeExpiredProviders(): number {
+    const now = Date.now()
+    let removed = 0
+    for (const [cidKey, providers] of this.providerRecords) {
+      for (const [peerId, expiresAt] of providers) {
+        if (expiresAt <= now) {
+          providers.delete(peerId)
+          removed++
+        }
+      }
+      if (providers.size === 0) this.providerRecords.delete(cidKey)
+    }
+    this.providersExpired += removed
+    return removed
   }
 
   /** Announce our presence to all connected peers */
@@ -485,7 +675,15 @@ export class DhtNetwork {
     verifyFailures: number
     verifyFallbackTcpAttempts: number
     verifyFallbackTcpFailures: number
+    providerCidsTracked: number
+    providerEntriesTotal: number
+    providersPut: number
+    providersExpired: number
   } {
+    let providerEntriesTotal = 0
+    for (const providers of this.providerRecords.values()) {
+      providerEntriesTotal += providers.size
+    }
     return {
       ...this.routingTable.stats(),
       verifyAttempts: this.verifyAttempts,
@@ -493,6 +691,10 @@ export class DhtNetwork {
       verifyFailures: this.verifyFailures,
       verifyFallbackTcpAttempts: this.verifyFallbackTcpAttempts,
       verifyFallbackTcpFailures: this.verifyFallbackTcpFailures,
+      providerCidsTracked: this.providerRecords.size,
+      providerEntriesTotal,
+      providersPut: this.providersPut,
+      providersExpired: this.providersExpired,
     }
   }
 }

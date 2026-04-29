@@ -788,6 +788,7 @@ export class ConsensusEngine {
           }
 
           stateImported = true
+          importedStateHeight = snapHeight
           log.info("snap sync state imported", {
             accounts: stateSnap.accounts.length,
             blockHeight: stateSnap.blockHeight,

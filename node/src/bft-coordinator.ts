@@ -57,11 +57,40 @@ export class BftCoordinator {
   private pendingMessages: BftMessage[] = []
   private deferredBlock: ChainBlock | null = null
   private lastFinalizedHeight: bigint = 0n
+  private lastFinalizedAtMs: number = Date.now()
   private warnedNoVerifier = false
+  private livenessWatchdogTimer: ReturnType<typeof setInterval> | null = null
   readonly equivocationDetector = new EquivocationDetector()
 
   constructor(cfg: BftCoordinatorConfig) {
     this.cfg = cfg
+    // Liveness watchdog: if no block finalizes for LIVENESS_TIMEOUT_MS while
+    // we have an active round, the BFT state is likely deadlocked at a phase
+    // mismatch (observed 2026-04-26: node-1 timed out in commit, node-3 in
+    // prepare, node-2 retried propose forever — restart of node-2 was
+    // required to recover). Force-resetting our local state mimics a
+    // restart in-process, letting fresh proposals start clean.
+    const LIVENESS_TIMEOUT_MS = 5 * 60 * 1000
+    this.livenessWatchdogTimer = setInterval(() => {
+      if (!this.activeRound) return
+      const elapsedMs = Date.now() - this.lastFinalizedAtMs
+      if (elapsedMs > LIVENESS_TIMEOUT_MS) {
+        log.error("BFT liveness watchdog: forcing round + pendingMessages reset after stall", {
+          elapsedMs,
+          activeHeight: this.activeRound.state.height.toString(),
+          activePhase: this.activeRound.state.phase,
+          pendingCount: this.pendingMessages.length,
+        })
+        this.clearRound()
+        this.pendingMessages.length = 0
+        this.deferredBlock = null
+        // Reset the timer baseline so we don't log on every tick after reset
+        this.lastFinalizedAtMs = Date.now()
+      }
+    }, 30_000)
+    if (this.livenessWatchdogTimer && typeof this.livenessWatchdogTimer.unref === "function") {
+      this.livenessWatchdogTimer.unref()
+    }
   }
 
   /**
@@ -70,6 +99,10 @@ export class BftCoordinator {
   stop(): void {
     this.clearRound()
     this.stopLinger()
+    if (this.livenessWatchdogTimer) {
+      clearInterval(this.livenessWatchdogTimer)
+      this.livenessWatchdogTimer = null
+    }
     this.pendingMessages.length = 0
     this.deferredBlock = null
   }
@@ -255,6 +288,7 @@ export class BftCoordinator {
           log.info("BFT round finalized (early commits)", { height: msg.height.toString() })
           const block = this.activeRound.state.proposedBlock
           this.lastFinalizedHeight = msg.height
+          this.lastFinalizedAtMs = Date.now()
           this.startLingerBroadcast(msg.height, block.hash)
           this.clearRound()
           try {
@@ -281,6 +315,7 @@ export class BftCoordinator {
           log.info("BFT round finalized", { height: msg.height.toString() })
           const block = this.activeRound.state.proposedBlock
           this.lastFinalizedHeight = msg.height
+          this.lastFinalizedAtMs = Date.now()
           this.startLingerBroadcast(msg.height, block.hash)
           this.clearRound()
           try {

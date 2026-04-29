@@ -178,6 +178,21 @@ interface RpcRuntimeOptions {
   getP2PStats?: () => unknown
   getWireStats?: () => unknown
   getDhtStats?: () => unknown
+  /**
+   * Phase C2.2: expose DHT provider lookups to the PoSe challenger so it
+   * can pre-filter monopoly CIDs before issuing a Storage challenge.
+   * When omitted, `coc_dhtFindProviders` returns an empty array and
+   * the challenger falls back to trying without a DHT hint.
+   */
+  findProviders?: (cid: string, maxK?: number) => string[]
+  /**
+   * Phase C2.4: fetch a raw IPFS block from DHT-advertised peers,
+   * optionally excluding a specific peer (the challenge's prover)
+   * so the audit sampling gets bytes from an independent source.
+   * Returns null when no non-excluded provider serves the CID within
+   * the local node's peer-pull timeout.
+   */
+  fetchBlockFromPeer?: (cid: string, excludePeerId?: string) => Promise<Uint8Array | null>
   rewardManifestDir?: string
   getBftEquivocations?: (sinceMs: number) => Array<{ rawEvidence?: Record<string, unknown>; [key: string]: unknown }>
   getSyncProgress?: () => Promise<{ syncing: boolean; currentHeight: bigint; highestPeerHeight: bigint; startingHeight: bigint }>
@@ -315,6 +330,16 @@ export function startRpcServer(
         }
         if (runtimeOptions?.didDataProvider) {
           rpcOpts.didDataProvider = runtimeOptions.didDataProvider
+        }
+        // Phase C2.2/C2.4: plumb the DHT provider-lookup and peer-fetch
+        // callbacks through so coc_dhtFindProviders / coc_ipfsFetchBlockFromPeer
+        // handlers can invoke them. Without these forwards the handlers
+        // see `opts.findProviders === undefined` and return empty.
+        if (runtimeOptions?.findProviders) {
+          rpcOpts.findProviders = runtimeOptions.findProviders
+        }
+        if (runtimeOptions?.fetchBlockFromPeer) {
+          rpcOpts.fetchBlockFromPeer = runtimeOptions.fetchBlockFromPeer
         }
         const scopedOpts = Object.keys(rpcOpts).length > 0 ? rpcOpts : undefined
         const MAX_BATCH_SIZE = 100
@@ -1233,6 +1258,36 @@ async function handleRpc(
         }))
       }
       return []
+    }
+    case "coc_dhtFindProviders": {
+      // Phase C2.2: the PoSe challenger pre-filters monopoly CIDs by
+      // asking the local DHT who currently advertises a given CID
+      // before committing to a Storage challenge. Mirror of
+      // DhtNetwork.findProviders; returns an array of lowercased peer IDs.
+      const cid = String((payload.params ?? [])[0] ?? "")
+      const rawMaxK = Number((payload.params ?? [])[1] ?? 3)
+      if (cid.length === 0) {
+        return { providers: [], error: "cid must be a non-empty string" }
+      }
+      const cap = Number.isFinite(rawMaxK) && rawMaxK > 0 ? Math.min(Math.floor(rawMaxK), 64) : 3
+      const findProviders = opts?.findProviders as ((cid: string, maxK: number) => string[]) | undefined
+      const providers = findProviders?.(cid, cap) ?? []
+      return { providers }
+    }
+    case "coc_ipfsFetchBlockFromPeer": {
+      // Phase C2.4: audit sampling. Fetch the raw chunk bytes for `cid`
+      // from a DHT-advertised peer, optionally excluding `excludePeerId`
+      // (the prover). Returns base64-encoded bytes so JSON-RPC can
+      // transport the blob. Returns { bytes: null } when no
+      // non-excluded provider served the CID.
+      const cid = String((payload.params ?? [])[0] ?? "")
+      const excludePeerId = String((payload.params ?? [])[1] ?? "")
+      if (cid.length === 0) {
+        return { bytes: null, error: "cid must be a non-empty string" }
+      }
+      const fetchBlockFromPeer = opts?.fetchBlockFromPeer as ((cid: string, exclude?: string) => Promise<Uint8Array | null>) | undefined
+      const bytes = await fetchBlockFromPeer?.(cid, excludePeerId || undefined)
+      return { bytes: bytes ? Buffer.from(bytes).toString("base64") : null }
     }
     case "coc_nodeInfo": {
       const height = await Promise.resolve(chain.getHeight())

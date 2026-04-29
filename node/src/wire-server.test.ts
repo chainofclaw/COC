@@ -847,3 +847,154 @@ function receiveFrames(socket: net.Socket, decoder: FrameDecoder, minFrames: num
     }, timeoutMs)
   })
 }
+
+// --- Phase C1.2: wire BlockRequest / BlockResponse end-to-end.
+// See plans/coc-evm-abstract-turtle.md §C1.2. Exercises the full path:
+// WireClient.requestBlock / pushBlock → server dispatch with onBlockRequest
+// handler → BlockResponse → pending map resolves.
+
+describe("WireServer BlockRequest/BlockResponse", () => {
+  let server: WireServer | null = null
+  const clients: WireClient[] = []
+
+  afterEach(() => {
+    for (const c of clients) { c.disconnect() }
+    clients.length = 0
+    if (server) { server.stop(); server = null }
+  })
+
+  // Spin up a server + connected WireClient, waiting for handshake.
+  async function spawnPair(
+    onBlockRequest?: (
+      cid: string,
+      push: boolean,
+      bytes?: Uint8Array,
+    ) => Promise<Uint8Array | null>,
+  ): Promise<{ client: WireClient }> {
+    const port = getRandomPort()
+    server = new WireServer({
+      port,
+      nodeId: "server-1",
+      chainId: 18780,
+      onBlock: async () => {},
+      onTx: async () => {},
+      getHeight: () => Promise.resolve(0n),
+      onBlockRequest,
+    })
+    server.start()
+    await new Promise((r) => setTimeout(r, 50))
+
+    const client = new WireClient({
+      host: "127.0.0.1", port, nodeId: "client-1", chainId: 18780,
+    })
+    clients.push(client)
+    client.connect()
+    // Poll for handshake completion — server bootstrap + reverse handshake
+    // needs a tick or two even on localhost.
+    for (let i = 0; i < 50; i++) {
+      if (client.isConnected()) break
+      await new Promise((r) => setTimeout(r, 40))
+    }
+    if (!client.isConnected()) throw new Error("handshake did not complete")
+    return { client }
+  }
+
+  it("pull: client requestBlock receives bytes when handler returns content", async () => {
+    const payload = new Uint8Array([0xde, 0xad, 0xbe, 0xef, 0x01, 0x02, 0x03])
+    const { client } = await spawnPair(async (_cid, push) => {
+      assert.equal(push, false, "pull should arrive with push=false")
+      return payload
+    })
+    const out = await client.requestBlock("0xabc")
+    assert.ok(out, "requestBlock should resolve with bytes")
+    assert.deepEqual(Array.from(out!), Array.from(payload))
+  })
+
+  it("pull: returns null when handler returns null (miss)", async () => {
+    const { client } = await spawnPair(async () => null)
+    const out = await client.requestBlock("0xmiss")
+    assert.equal(out, null)
+  })
+
+  it("pull: returns null on timeout when handler never resolves", async () => {
+    const { client } = await spawnPair(async () => new Promise(() => { /* never */ }))
+    const out = await client.requestBlock("0xhang", 200)
+    assert.equal(out, null)
+  })
+
+  it("pull: returns null when server has no onBlockRequest callback", async () => {
+    const { client } = await spawnPair(undefined)
+    const out = await client.requestBlock("0xabc")
+    assert.equal(out, null)
+  })
+
+  it("push: happy path — server verifies hash, invokes handler, client acks true", async () => {
+    const content = new Uint8Array([1, 2, 3, 4, 5])
+    const { keccak256 } = await import("ethers")
+    const cid = keccak256(content)
+    let received: { cid: string; push: boolean; bytes?: Uint8Array } | null = null
+    const { client } = await spawnPair(async (c, push, bytes) => {
+      received = { cid: c, push, bytes }
+      return new Uint8Array(0) // ack
+    })
+    const ok = await client.pushBlock(cid, content)
+    assert.equal(ok, true)
+    assert.ok(received)
+    assert.equal(received!.cid, cid)
+    assert.equal(received!.push, true)
+    assert.deepEqual(Array.from(received!.bytes!), Array.from(content))
+  })
+
+  it("push: server rejects hash mismatch without invoking handler", async () => {
+    let handlerCalled = false
+    const { client } = await spawnPair(async () => { handlerCalled = true; return new Uint8Array(0) })
+    // Claim the content is `0xbad...` while sending arbitrary bytes.
+    const wrong = await client.pushBlock("0x" + "bad".padEnd(64, "0"), new Uint8Array([9, 9, 9]))
+    assert.equal(wrong, false, "push with wrong hash must fail")
+    assert.equal(handlerCalled, false, "handler must not be invoked on hash mismatch")
+  })
+
+  it("push: oversize payload rejected (> 1 MiB)", async () => {
+    let handlerCalled = false
+    const { client } = await spawnPair(async () => { handlerCalled = true; return new Uint8Array(0) })
+    const big = new Uint8Array(1024 * 1024 + 1)
+    const { keccak256 } = await import("ethers")
+    const cid = keccak256(big)
+    const ok = await client.pushBlock(cid, big)
+    assert.equal(ok, false)
+    assert.equal(handlerCalled, false)
+  })
+
+  it("push: returns false when handler returns null (storage error)", async () => {
+    const content = new Uint8Array([0xaa, 0xbb])
+    const { keccak256 } = await import("ethers")
+    const cid = keccak256(content)
+    const { client } = await spawnPair(async () => null) // simulated storage failure
+    const ok = await client.pushBlock(cid, content)
+    assert.equal(ok, false)
+  })
+
+  it("request: pending requests resolve null on client.disconnect()", async () => {
+    // Handler never answers — we cancel from the client side.
+    const { client } = await spawnPair(async () => new Promise(() => { /* never */ }))
+    const p = client.requestBlock("0xlingering", 30_000)
+    // Small delay to make sure the request was queued.
+    await new Promise((r) => setTimeout(r, 50))
+    client.disconnect()
+    const out = await p
+    assert.equal(out, null, "disconnect should drain pending block requests")
+  })
+
+  it("request: concurrent requests get distinct requestIds and both resolve", async () => {
+    const seq = [new Uint8Array([1]), new Uint8Array([2]), new Uint8Array([3])]
+    let i = 0
+    const { client } = await spawnPair(async () => seq[i++ % seq.length])
+    const results = await Promise.all([
+      client.requestBlock("0x01"),
+      client.requestBlock("0x02"),
+      client.requestBlock("0x03"),
+    ])
+    // All three got bytes (exact payload ordering depends on server dispatch).
+    assert.equal(results.filter((r) => r !== null).length, 3)
+  })
+})
