@@ -594,17 +594,20 @@ export class PersistentStateTrie implements IStateTrie {
     // Invalidate caches and dirty tracking on revert
     this.accountCache.clear()
     this.dirtyAddresses.clear()
-    // Restore to pre-checkpoint state root. If checkpointStateRoot was null
-    // (e.g. checkpoint() was called while lastStateRoot was already
-    // invalidated by a prior put/delete), this leaves lastStateRoot null —
-    // route through the instrumented helper so we capture the call site for
-    // the eventual fallback warn in stateRoot().
-    if (this.checkpointStateRoot !== null) {
-      this.lastStateRoot = this.checkpointStateRoot
-    } else {
-      this.invalidateLastStateRoot("revert")
-    }
+    // Restore lastStateRoot to the trie's now-popped root. After
+    // `this.trie.revert()` the v6 CheckpointDB has dropped the top frame,
+    // and `trie.root()` reflects the pre-frame state. This is the source
+    // of truth — the previous single-slot `checkpointStateRoot` cache
+    // failed under nested checkpoints (EVM call frames open one
+    // checkpoint per frame; the inner checkpoint() captured a null
+    // `lastStateRoot` and overwrote the outer frame's saved value, so
+    // the outer revert ended up restoring null instead of the real root).
+    // Reading `trie.root()` directly side-steps that whole class of bugs
+    // — surfaced in production by the 2026-04-29 testnet stack-trace
+    // (eth_call → runCall → revert → null `lastStateRoot`) captured by
+    // the self-heal instrumentation in commit 881dfb9.
     this.checkpointStateRoot = null
+    this.lastStateRoot = bytesToHex(this.trie.root())
   }
 
   async clearStorage(address: string): Promise<void> {
