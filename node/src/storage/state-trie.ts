@@ -38,6 +38,18 @@ export interface IStateTrie {
   revert(): Promise<void>
   close(): Promise<void>
   stateRoot(): string | null
+  /**
+   * Compute the current in-memory stateRoot from live trie state, without
+   * any side effects. Unlike `stateRoot()` — which returns the last-committed
+   * root and goes stale after `put`/`delete` — this always reflects the
+   * current node set.
+   *
+   * Phase B speculative dry-run uses this to read the post-execution root
+   * without invoking `commit()` (which would flush the isolation frame
+   * through the shared adapter and defeat the dry-run contract). Safe to
+   * call during an active checkpoint.
+   */
+  computeStateRoot(): string
   setStateRoot(root: string, opts?: { persist?: boolean }): Promise<void>
   hasStateRoot(root: string): Promise<boolean>
   clearStorage(address: string): Promise<void>
@@ -47,6 +59,23 @@ export interface IStateTrie {
   iterateStorage(address: string): AsyncIterable<{ slot: string; value: string }>
   /** Create a copy-on-write branch sharing the underlying data */
   fork(): Promise<IStateTrie>
+  /**
+   * Create an isolated branch for a speculative dry-run (BFT stateRoot vote,
+   * or any "compute post-state without committing" path).
+   *
+   * Unlike `fork()`, the returned trie:
+   *  - does NOT inherit parent checkpoint frames (so writes on the fork
+   *    can never escape into the parent's outstanding checkpoint)
+   *  - has its own in-memory `CheckpointDB` frame already open — every
+   *    write stays in that frame's `keyValueMap` and, as long as the
+   *    caller does **not** commit, never hits the shared underlying DB.
+   *
+   * The caller is expected to discard the returned trie after the dry-run
+   * completes (by dropping the reference — GC handles the rest). Calling
+   * `.commit()` on this trie will flush writes to the shared backing DB
+   * and defeat the isolation contract; don't do that.
+   */
+  forkForDryRun(): Promise<IStateTrie>
   /** Merge branch differences back into this trie */
   merge(branch: IStateTrie): Promise<void>
   /** Discard a forked branch and release resources */
@@ -144,6 +173,30 @@ export class PersistentStateTrie implements IStateTrie {
   private lastStateRoot: string | null = null
 
   private trieDb: TrieDBAdapter
+
+  /**
+   * Dry-run mode switch (set to true only by forkForDryRun).
+   *
+   * In normal operation, `putCode` writes bytecode straight to LevelDB (it's
+   * content-addressed by keccak256, so there's no correctness concern) and
+   * `getStorageTrie` creates storage tries without opening their own v6
+   * checkpoint frame.
+   *
+   * Both paths violate the Phase B isolation contract when they happen on
+   * a fork: the code blob hits LevelDB immediately (orphaned if the dry-run
+   * is discarded), and storage trie writes flow through the per-address
+   * adapter straight to LevelDB because the adapter has no checkpoint
+   * context of its own.
+   *
+   * When dryRunMode is true we:
+   *   - intercept putCode into an in-memory `dryRunCodeScratch` Map so the
+   *     fork can read back anything it wrote but LevelDB stays clean;
+   *   - getCode consults the scratch first, then LevelDB;
+   *   - every newly-opened storage trie immediately gets a v6 checkpoint so
+   *     its CheckpointDB parks subsequent puts in memory.
+   */
+  private dryRunMode = false
+  private dryRunCodeScratch: Map<string, Uint8Array> | null = null
 
   constructor(db: IDatabase, opts?: { maxCachedTries?: number; maxAccountCache?: number }) {
     this.db = db
@@ -307,14 +360,27 @@ export class PersistentStateTrie implements IStateTrie {
   }
 
   async getCode(codeHash: string): Promise<Uint8Array | null> {
+    // Dry-run PSM must see writes the fork made in this session before it
+    // falls through to the shared LevelDB (for baseline code).
+    if (this.dryRunMode && this.dryRunCodeScratch?.has(codeHash)) {
+      return this.dryRunCodeScratch.get(codeHash) ?? null
+    }
     const key = CODE_PREFIX + codeHash
     return this.db.get(key)
   }
 
   async putCode(code: Uint8Array): Promise<string> {
     const codeHash = keccak256(code)
+    // On a dry-run fork, park the code in a per-fork scratch map instead of
+    // the shared LevelDB. The fork's `getCode` checks this map first, so
+    // the dry-run sees its own writes. Nothing reaches LevelDB — when the
+    // fork is discarded, the Map is GC'd with it.
+    if (this.dryRunMode) {
+      if (!this.dryRunCodeScratch) this.dryRunCodeScratch = new Map()
+      this.dryRunCodeScratch.set(codeHash, code)
+      return codeHash
+    }
     const key = CODE_PREFIX + codeHash
-
     await this.db.put(key, code)
     return codeHash
   }
@@ -407,6 +473,10 @@ export class PersistentStateTrie implements IStateTrie {
    */
   stateRoot(): string | null {
     return this.lastStateRoot
+  }
+
+  computeStateRoot(): string {
+    return bytesToHex(this.trie.root())
   }
 
   private checkpointStateRoot: string | null = null
@@ -576,6 +646,16 @@ export class PersistentStateTrie implements IStateTrie {
     storageTrie = new Trie({ db: trieDb as any, root: rootBytes })
     this.storageTries.set(address, storageTrie)
 
+    // Dry-run isolation: open a v6 checkpoint on freshly-created storage
+    // tries so their puts stay in the frame's in-memory keyValueMap. Without
+    // this, storage writes for a newly-touched address would flow through
+    // trieDb straight to the shared LevelDB — the same orphan pattern
+    // state-race.test.ts and the mid-block revert test already cover for
+    // the non-fork case.
+    if (this.dryRunMode) {
+      await storageTrie.checkpoint()
+    }
+
     return storageTrie
   }
 
@@ -623,6 +703,43 @@ export class PersistentStateTrie implements IStateTrie {
     })
     forked.trie = this.trie.shallowCopy(true)
     forked.lastStateRoot = this.lastStateRoot
+    return forked
+  }
+
+  /**
+   * Isolated dry-run fork for speculative post-state computation.
+   *
+   * Implementation: `v6 Trie.shallowCopy(false)` returns a new `Trie` with
+   *   - the same `root` hash,
+   *   - a **new** `TrieDBAdapter` that still points at the shared `IDatabase`,
+   *   - an **empty** `CheckpointDB` stack.
+   *
+   * We immediately push one checkpoint onto that stack so all subsequent
+   * writes park in `CheckpointDB.keyValueMap` (per-frame in-memory map).
+   * Reads fall through: first the frame's map, then the shared DB. Writes
+   * on the fork therefore cannot reach LevelDB unless the caller commits
+   * that frame — which is exactly what this API forbids.
+   *
+   * The returned trie is NOT registered anywhere on `this`; the caller
+   * owns its lifetime and lets GC clean it up.
+   */
+  async forkForDryRun(): Promise<IStateTrie> {
+    const forked = new PersistentStateTrie(this.db, {
+      maxCachedTries: this.maxCachedTries,
+      maxAccountCache: this.maxAccountCache,
+    })
+    // shallowCopy(false) — do NOT inherit parent checkpoints. The fork starts
+    // with the parent's committed root but a fresh (empty) CheckpointDB.
+    forked.trie = this.trie.shallowCopy(false)
+    forked.lastStateRoot = this.lastStateRoot
+    // Dry-run mode: intercept putCode into per-fork scratch + auto-checkpoint
+    // newly-opened storage tries so their puts stay in-memory (otherwise
+    // they flow through per-address TrieDBAdapter straight to LevelDB).
+    forked.dryRunMode = true
+    // Open the isolation frame on the account trie. Writes from here on land
+    // only in the frame's in-memory keyValueMap; they reach LevelDB only on
+    // outermost commit — which the forkForDryRun API contract forbids.
+    await forked.checkpoint()
     return forked
   }
 
@@ -709,6 +826,13 @@ export class InMemoryStateTrie implements IStateTrie {
     return this.lastRoot
   }
 
+  computeStateRoot(): string {
+    // Mirror commit()'s hash: sorted addresses joined, then keccak256. No
+    // side effects — doesn't update lastRoot.
+    const addresses = Array.from(this.accounts.keys()).sort()
+    return keccak256(toUtf8Bytes(addresses.join(",")))
+  }
+
   async setStateRoot(_root: string, _opts?: { persist?: boolean }): Promise<void> {
     // No-op for in-memory; state root is just a hash
     this.lastRoot = _root
@@ -785,6 +909,16 @@ export class InMemoryStateTrie implements IStateTrie {
     }
     forked.lastRoot = this.lastRoot
     return forked
+  }
+
+  /**
+   * Dry-run fork: identical to `fork()` for InMemoryStateTrie — there's no
+   * shared backing store to pollute, so isolation is structural by
+   * construction. Declared separately to keep the IStateTrie interface
+   * honest and let PersistentStateTrie diverge when it needs to.
+   */
+  async forkForDryRun(): Promise<IStateTrie> {
+    return this.fork()
   }
 
   /** Merge branch state into this trie (branch wins on conflict) */

@@ -24,6 +24,7 @@ import { PersistentNonceStore } from "./storage/nonce-store.ts"
 import { ChainEventEmitter } from "./chain-events.ts"
 import type { BlockEvent, PendingTxEvent } from "./chain-events.ts"
 import type { IStateTrie } from "./storage/state-trie.ts"
+import { PersistentStateManager } from "./storage/persistent-state-manager.ts"
 import { ValidatorGovernance } from "./validator-governance.ts"
 import type { ValidatorInfo } from "./validator-governance.ts"
 import { createLogger } from "./logger.ts"
@@ -320,25 +321,113 @@ export class PersistentChainEngine {
    * protocol's backward-compat rules lets the cluster still finalize so
    * long as the group reaches quorum overall.
    */
-  async speculativelyComputeStateRoot(_block: ChainBlock): Promise<Hex | undefined> {
-    // Kept disabled on the persistent engine while the stateRoot-divergence
-    // fix (Phase A in plans/coc-evm-abstract-turtle.md) is soaked on testnet.
+  async speculativelyComputeStateRoot(block: ChainBlock): Promise<Hex | undefined> {
+    // Phase B: compute the post-block stateRoot on an isolated fork so the
+    // BFT coordinator can anchor its prepare vote on (blockHash, stateRoot).
+    // PR #7's quorum logic then rejects any proposer whose declared stateRoot
+    // 2/3+ of the validator set can't reproduce — stopping divergence at the
+    // vote stage instead of the apply stage.
     //
-    // The original leak — PersistentStateTrie.commit() flushing an adapter
-    // overlay to LevelDB even while a checkpoint was active — has been
-    // eliminated: commit()/revert() now delegate directly to v6
-    // CheckpointDB.commit()/revert(), so buffered writes during a speculative
-    // dry-run stay in the frame's in-memory keyValueMap and get discarded on
-    // revert. Re-enabling speculation is the Phase B work tracked in the
-    // same plan; it should use @ethereumjs/statemanager `shallowCopy` (or an
-    // equivalent read-only trie fork) rather than revert-in-place so the
-    // primary state manager never takes a checkpoint we don't intend to
-    // commit.
+    // Isolation strategy (see plans/coc-phase-b-stateroot-vote.md):
+    //  1. stateTrie.forkForDryRun() creates an independent PersistentStateTrie
+    //     backed by v6 Trie.shallowCopy(false) — same committed root, empty
+    //     CheckpointDB, already carrying one isolation checkpoint. Writes
+    //     stay in the frame's in-memory keyValueMap.
+    //  2. Wrap the fork in a fresh PersistentStateManager and bind it to a
+    //     dry-run EvmChain inheriting this chain's chainId/hardfork schedule.
+    //  3. Replay the block's txs through the dry-run EVM exactly the way
+    //     applyBlock does (same blockContext, same prepareBlock internals,
+    //     trustBlock=true to skip sender nonce/balance pre-validation that
+    //     would fail on receiver-only state).
+    //  4. Read the post-exec root from the dry-run stateManager and return.
+    //  5. The fork is never committed — the caller drops it and GC reclaims
+    //     the checkpoint frame, so no write ever reaches LevelDB.
     //
-    // Returning undefined keeps BFT on hash-only quorum — safe when at least
-    // one voter also returns undefined, but loses the stateRoot-divergence
-    // protection introduced by PR #7.
-    return undefined
+    // Any failure (missing stateTrie, malformed tx, EVM throw) falls back to
+    // undefined, which the bft-coordinator wrapper translates to "vote
+    // without stateRoot" — hash-only quorum for that round. This is the same
+    // fail-open contract the previous stub promised.
+    if (!this.stateTrie) return undefined
+
+    // Adversarial test hook: force a specific "computed" stateRoot so
+    // integration tests (scripts/adversarial-stateroot-divergence.sh) can
+    // validate the pair-quorum defense end-to-end on a live devnet. The
+    // env var is deliberately prefixed COC_UNSAFE_ to make accidental
+    // production use highly visible in node-config dumps / process listings.
+    // Never set in a real deployment — you're telling BFT to vote on a
+    // stateRoot that has no relationship to actual post-block state.
+    const adversarial = process.env.COC_UNSAFE_ADVERSARIAL_SPEC_ROOT
+    if (adversarial && /^0x[0-9a-fA-F]{64}$/.test(adversarial)) {
+      log.warn("COC_UNSAFE_ADVERSARIAL_SPEC_ROOT is set — returning poisoned root", {
+        height: block.number.toString(),
+        poisonRoot: adversarial,
+      })
+      return adversarial as Hex
+    }
+
+    let dryTrie: IStateTrie | null = null
+    try {
+      dryTrie = await this.stateTrie.forkForDryRun()
+      const drySm = new PersistentStateManager(dryTrie)
+      const dryEvm = await this.evm.createDryRunChain(drySm)
+
+      const blockContext: import("./evm.ts").ExecutionContext = {
+        blockNumber: block.number,
+        baseFeePerGas: block.baseFee ?? 0n,
+        excessBlobGas: block.excessBlobGas,
+        parentBeaconBlockRoot: block.parentBeaconBlockRoot ? hexToBytes(block.parentBeaconBlockRoot) : undefined,
+        timestamp: BigInt(Math.floor(block.timestampMs / 1000)),
+      }
+      await dryEvm.applyBlockContext(blockContext)
+
+      const blockEnv = dryEvm.prepareBlock(block.number, blockContext)
+      const { blockCommon, executionBlock } = blockEnv._internal as { blockCommon: any; executionBlock: any }
+      const baseFee = block.baseFee ?? 0n
+      const blockNumberHex = `0x${block.number.toString(16)}`
+
+      // trustBlock=true mirrors applyBlock's BFT path: skip sender nonce and
+      // balance pre-validation so the dry-run can execute on state that only
+      // mirrors what's relevant. Matches the "deterministic re-execution"
+      // contract.
+      for (let i = 0; i < block.txs.length; i++) {
+        await dryEvm.executeRawTxInBlock(
+          block.txs[i],
+          blockCommon,
+          executionBlock,
+          block.number,
+          i,
+          block.hash,
+          baseFee,
+          blockNumberHex,
+          undefined,
+          true,
+        )
+      }
+
+      // Read the post-execution root directly from the fork's v6 trie.
+      // Cannot use drySm.getStateRoot() / dryTrie.stateRoot() — those return
+      // the cached `lastStateRoot`, which PersistentStateTrie.put() resets
+      // to null after every mutation (kept live only by commit()). A commit
+      // on the fork would flush the isolation frame and defeat the
+      // zero-pollution contract, so we read the live root via the dedicated
+      // side-effect-free API.
+      return dryTrie.computeStateRoot() as Hex
+    } catch (err) {
+      log.warn("speculative stateRoot compute failed; voting without stateRoot", {
+        height: block.number.toString(),
+        hash: block.hash,
+        error: String(err),
+      })
+      return undefined
+    } finally {
+      // The fork is unreferenced after this returns; GC reclaims its
+      // CheckpointDB frame + in-memory keyValueMap. The explicit null is
+      // belt-and-suspenders: if a future caller ever keeps the engine alive
+      // much longer than its stack frame, nulling breaks a potential
+      // closure-capture reference earlier. We do NOT commit — that would
+      // flush the frame to the shared LevelDB.
+      dryTrie = null
+    }
   }
 
   async proposeNextBlock(deferApply = false): Promise<ChainBlock | null> {
