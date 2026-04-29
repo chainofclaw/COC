@@ -124,6 +124,24 @@ export interface NodeConfig {
   // Governance module
   enableGovernance: boolean
   validatorStakes: Array<{ id: string; address: string; stake: string }>
+  /**
+   * On-chain ValidatorRegistry contract address (Sprint 4 of Phase F+G).
+   *
+   * When set, node/src/index.ts spins up a ValidatorRegistryReader that
+   * mirrors the contract's active set + stakes and feeds them into
+   * BftCoordinator.updateValidators on add/remove events. The hardcoded
+   * `validators` and `validatorStakes` config above stays as fallback
+   * for tests / dev networks where the registry isn't deployed.
+   */
+  validatorRegistryAddress?: string
+  /**
+   * Earliest block to scan when bootstrapping the ValidatorRegistryReader.
+   * Defaults to 0; set this to the deploy block of ValidatorRegistry on
+   * a long-running chain to skip historical scan overhead.
+   */
+  validatorRegistryFromBlock?: number
+  /** Reader poll interval (ms). Defaults to 60000. */
+  validatorRegistryPollIntervalMs?: number
   // Identity mapping: nodeId → address for signature verification
   validatorAddresses?: Record<string, string>
   // DID Registry (optional)
@@ -359,6 +377,28 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
       ).map((x) => ({ id: x.id, address: x.address, stake: String((x as Record<string, unknown>).stake ?? "1000000000000000000") }))
     : []
 
+  // ValidatorRegistry on-chain integration (Sprint 4 of Phase F+G).
+  // Optional: when omitted, BFT uses the hardcoded `validators` config.
+  const validatorRegistryAddressRaw = process.env.COC_VALIDATOR_REGISTRY_ADDRESS
+    ?? (user as Record<string, unknown>).validatorRegistryAddress
+  const validatorRegistryAddress = typeof validatorRegistryAddressRaw === "string" && /^0x[0-9a-fA-F]{40}$/.test(validatorRegistryAddressRaw)
+    ? validatorRegistryAddressRaw
+    : undefined
+  const validatorRegistryFromBlockRaw = process.env.COC_VALIDATOR_REGISTRY_FROM_BLOCK
+    ?? (user as Record<string, unknown>).validatorRegistryFromBlock
+  const validatorRegistryFromBlock = typeof validatorRegistryFromBlockRaw === "number"
+    ? validatorRegistryFromBlockRaw
+    : (typeof validatorRegistryFromBlockRaw === "string" && /^\d+$/.test(validatorRegistryFromBlockRaw)
+      ? parseInt(validatorRegistryFromBlockRaw, 10)
+      : undefined)
+  const validatorRegistryPollIntervalMsRaw = process.env.COC_VALIDATOR_REGISTRY_POLL_INTERVAL_MS
+    ?? (user as Record<string, unknown>).validatorRegistryPollIntervalMs
+  const validatorRegistryPollIntervalMs = typeof validatorRegistryPollIntervalMsRaw === "number"
+    ? validatorRegistryPollIntervalMsRaw
+    : (typeof validatorRegistryPollIntervalMsRaw === "string" && /^\d+$/.test(validatorRegistryPollIntervalMsRaw)
+      ? parseInt(validatorRegistryPollIntervalMsRaw, 10)
+      : undefined)
+
   // Validator address mapping for identity alignment
   const userValidatorAddresses = (user as Record<string, unknown>).validatorAddresses
   const validatorAddresses: Record<string, string> | undefined =
@@ -506,6 +546,9 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     enableGovernance,
     validatorStakes,
     validatorAddresses,
+    validatorRegistryAddress,
+    validatorRegistryFromBlock,
+    validatorRegistryPollIntervalMs,
     didEnabled: user.didEnabled ?? false,
     didAuthMode: user.didAuthMode ?? "off",
     evmEngine: normalizeEvmEngine(process.env.COC_EVM_ENGINE ?? (user as Record<string, unknown>).evmEngine),
