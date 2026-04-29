@@ -97,6 +97,17 @@ export interface NodeConfig {
   // State snapshot sync
   enableSnapSync: boolean
   snapSyncThreshold: number
+  // IPFS P2P distribution (Phase C). Replication factor for push-to-K on
+  // local PUT: a freshly-stored block is proactively pushed to this many
+  // of its K-closest peers so the data survives the origin going down.
+  // Default 3. Clamped at runtime to `min(replicationFactor, peerCount-1)`
+  // by the wiring layer; peerCount < 2 ⇒ skip with a once-per-minute warn
+  // (see coc-ipfs-wiring.ts).
+  ipfsReplicationFactor: number
+  // Phase C3.1: minimum replica count before the HTTP PUT handler emits
+  // an `X-COC-Replicas-Warning` header. Default 2, matching K=3 with
+  // 1 slack. Single-peer deployments should set 1 to silence the warning.
+  ipfsMinReplicas: number
   // Node identity key (hex private key for signing)
   nodePrivateKey?: string
   // RPC authentication (optional Bearer token)
@@ -445,6 +456,8 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     dhtRequireAuthenticatedVerify,
     enableSnapSync: false,
     snapSyncThreshold: 100,
+    ipfsReplicationFactor: 3,
+    ipfsMinReplicas: 2,
     nodePrivateKey,
     rpcAuthToken,
     enableAdminRpc,

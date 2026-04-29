@@ -113,6 +113,59 @@ export async function loadRawBlock(store: IpfsBlockstore, cid: CidString): Promi
   return await store.get(cid)
 }
 
+/**
+ * Iterate the UnixFS file at `rootCid` chunk by chunk, yielding the raw
+ * bytes of each leaf in their original order. Blockstore.get may fall
+ * back to a peer fetch (C1.3), so this helper also works when only a
+ * subset of the DAG is held locally. Lazy by construction: callers that
+ * only need one chunk (e.g. Phase C2.1 storage-proof) can break out of
+ * the for-await loop without resolving the rest.
+ *
+ * Handles the single-block case where the whole file is inline in the
+ * root node (no Links) — yields index 0 with the inline data.
+ *
+ * Enforces the same MAX_READ_LINKS / MAX_READ_SIZE guards as readFile
+ * so a malicious DAG can't exhaust memory or I/O.
+ */
+export async function* resolveChunks(
+  store: IpfsBlockstore,
+  rootCid: CidString,
+): AsyncIterable<{ index: number; bytes: Uint8Array }> {
+  const rootBlock = await store.get(rootCid)
+  const rootNode = dagPB.decode(rootBlock.bytes)
+  const unixfs = UnixFS.unmarshal(rootNode.Data ?? new Uint8Array())
+  if (unixfs.type !== "file") {
+    throw new Error("not a unixfs file")
+  }
+
+  // Inline case: small file packed directly into the root node.
+  if (!rootNode.Links || rootNode.Links.length === 0) {
+    yield { index: 0, bytes: unixfs.data ?? new Uint8Array() }
+    return
+  }
+
+  if (rootNode.Links.length > MAX_READ_LINKS) {
+    throw new Error(`too many DAG links: ${rootNode.Links.length} (max ${MAX_READ_LINKS})`)
+  }
+
+  let totalSize = 0
+  let index = 0
+  for (const link of rootNode.Links) {
+    const cid = link.Hash?.toString()
+    if (!cid) continue
+    const leaf = await store.get(cid)
+    const leafNode = dagPB.decode(leaf.bytes)
+    const leafFs = UnixFS.unmarshal(leafNode.Data ?? new Uint8Array())
+    const chunk = leafFs.data ?? new Uint8Array()
+    totalSize += chunk.length
+    if (totalSize > MAX_READ_SIZE) {
+      throw new Error(`resolveChunks exceeds max size: ${totalSize} > ${MAX_READ_SIZE}`)
+    }
+    yield { index, bytes: chunk }
+    index++
+  }
+}
+
 function buildUnixFsRoot(leaves: CidString[], chunkSizes: number[], totalSize: number): dagPB.PBNode {
   const unixfs = new UnixFS({ type: "file", filesize: totalSize })
   const links = leaves.map((cid, i) => dagPB.createLink("", chunkSizes[i] ?? 0, CID.parse(cid)))

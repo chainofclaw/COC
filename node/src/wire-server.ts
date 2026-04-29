@@ -8,7 +8,10 @@
 import net from "node:net"
 import crypto from "node:crypto"
 import { FrameDecoder, MessageType, encodeJsonPayload, decodeJsonPayload, buildWireHandshakeMessage } from "./wire-protocol.ts"
-import type { WireFrame, FindNodePayload, FindNodeResponsePayload } from "./wire-protocol.ts"
+import type { WireFrame, FindNodePayload, FindNodeResponsePayload, BlockRequestPayload, BlockResponsePayload } from "./wire-protocol.ts"
+import { keccak256 } from "ethers"
+import { CID } from "multiformats/cid"
+import { sha256 } from "multiformats/hashes/sha2"
 import type { ChainBlock, Hex } from "./blockchain-types.ts"
 import type { BftMessage } from "./bft.ts"
 import type { NodeSigner, SignatureVerifier } from "./crypto/signer.ts"
@@ -39,6 +42,39 @@ export interface WireServerConfig {
   onTx: (rawTx: Hex) => Promise<void>
   onBftMessage?: (msg: BftMessage) => Promise<void>
   onFindNode?: (targetId: string) => Array<{ id: string; address: string }>
+  /**
+   * IPFS block fetch/push handler.
+   *
+   *  - Pull (`push=false`, `bytes=undefined`): look up `cid` in the local
+   *    blockstore and return its bytes, or `null` if not held locally.
+   *  - Push (`push=true`, `bytes=<content>`): verify the sender's bytes
+   *    hash to `cid`, store in the local blockstore, and return an empty
+   *    `Uint8Array` to ack. Return `null` to reject (hash mismatch,
+   *    oversize, storage error). The server does basic hash verification
+   *    before invoking the callback so handlers can assume `bytes` is
+   *    content-addressed by `cid`.
+   *
+   * Absence of this callback ⇒ the server answers BlockRequest with
+   * `found:false`, which is the correct behavior for nodes that haven't
+   * wired up the IPFS layer yet (e.g., light clients).
+   */
+  onBlockRequest?: (
+    cid: string,
+    push: boolean,
+    bytes?: Uint8Array,
+  ) => Promise<Uint8Array | null>
+  /**
+   * Phase C cross-node DHT provider gossip: invoked when a
+   * ProviderAdvertise frame arrives. `providerId` is the authenticated
+   * sender (from the handshake), NOT any field in the payload — this
+   * prevents a byzantine peer from slandering a third party. Handler
+   * should call `dht.putProvider(cid, providerId, ttlMs)`.
+   */
+  onProviderAdvertise?: (
+    cid: string,
+    providerId: string,
+    ttlMs?: number,
+  ) => void
   getHeight: () => Promise<bigint | Promise<bigint>>
   /** Called after a new (non-duplicate) tx arrives via wire, for cross-protocol relay */
   onTxRelay?: (rawTx: Hex) => Promise<void>
@@ -91,6 +127,27 @@ export class WireServer {
     this.cfg = cfg
     this.seenTx = cfg.sharedSeenTx ?? new BoundedSet<Hex>(50_000)
     this.seenBlocks = cfg.sharedSeenBlocks ?? new BoundedSet<Hex>(10_000)
+  }
+
+  /**
+   * Post-construction attachment point for the C1.2 BlockRequest handler.
+   * index.ts builds the wire-server before the blockstore/DHT wiring is
+   * ready, so we expose this setter to inject `onBlockRequest` once
+   * `buildCocIpfsWiring` returns. Absent this call, the server responds
+   * to every BlockRequest with `found:false`, which is the safe default
+   * for a node that hasn't wired up the IPFS layer yet.
+   */
+  setOnBlockRequest(handler: WireServerConfig["onBlockRequest"]): void {
+    this.cfg.onBlockRequest = handler
+  }
+
+  /**
+   * Post-construction attachment for the ProviderAdvertise gossip
+   * handler. Same rationale as `setOnBlockRequest`: the wiring module
+   * doesn't exist yet when wire-server is built.
+   */
+  setOnProviderAdvertise(handler: WireServerConfig["onProviderAdvertise"]): void {
+    this.cfg.onProviderAdvertise = handler
   }
 
   start(): void {
@@ -526,6 +583,139 @@ export class WireServer {
 
       case MessageType.FindNodeResponse: {
         // Handled by pending request callbacks (see WireClient)
+        break
+      }
+
+      case MessageType.BlockRequest: {
+        if (!conn.handshakeComplete) return
+        const req = decodeJsonPayload<BlockRequestPayload>(frame)
+        const reqId = typeof req.requestId === "string" ? req.requestId : ""
+        const cid = typeof req.cid === "string" ? req.cid : ""
+
+        // Absence of handler ⇒ always answer found:false. This keeps the
+        // wire protocol backward-compatible when the IPFS subsystem isn't
+        // wired — peers just learn "this node doesn't serve CIDs" and
+        // move on to the next provider.
+        if (!this.cfg.onBlockRequest || !cid || !reqId) {
+          const resp: BlockResponsePayload = { requestId: reqId, cid, found: false }
+          conn.socket.write(encodeJsonPayload(MessageType.BlockResponse, resp))
+          break
+        }
+
+        const push = req.push === true
+        let bytesIn: Uint8Array | undefined
+        if (push) {
+          // Push path: decode base64 content, verify keccak256(content)
+          // matches the claimed CID at the hash fragment we can check
+          // (COC CIDs are "0x" + keccak256 hex, matching ipfs-blockstore
+          // layout at node/src/ipfs-blockstore.ts). Hash mismatch ⇒ reject
+          // without invoking the handler so a malicious peer can't force
+          // us to store arbitrary bytes under any label.
+          if (typeof req.bytes !== "string" || req.bytes.length === 0) {
+            const resp: BlockResponsePayload = { requestId: reqId, cid, found: false, error: "bytes missing" }
+            conn.socket.write(encodeJsonPayload(MessageType.BlockResponse, resp))
+            break
+          }
+          try {
+            bytesIn = new Uint8Array(Buffer.from(req.bytes, "base64"))
+          } catch {
+            const resp: BlockResponsePayload = { requestId: reqId, cid, found: false, error: "base64 decode failed" }
+            conn.socket.write(encodeJsonPayload(MessageType.BlockResponse, resp))
+            break
+          }
+          // Cap push bytes at 1 MiB — generous headroom over the 256 KiB
+          // UnixFS chunk size, keeps the door shut on oversized amplification.
+          if (bytesIn.length > 1024 * 1024) {
+            const resp: BlockResponsePayload = { requestId: reqId, cid, found: false, error: "oversize" }
+            conn.socket.write(encodeJsonPayload(MessageType.BlockResponse, resp))
+            break
+          }
+          // Verify the claimed CID matches the bytes. Phase C supports two
+          // CID conventions:
+          //   1. Legacy "0x..." keccak256 hex (COC raw-block blockstore layout)
+          //   2. IPFS CIDv1 base32 (UnixFS / DAG-PB — what /api/v0/add emits)
+          // Both must be checked; a mismatch in either ⇒ reject without
+          // invoking the handler so a malicious peer can't mislabel bytes.
+          const verifyCid = async (): Promise<boolean> => {
+            if (cid.startsWith("0x")) {
+              return keccak256(bytesIn).toLowerCase() === cid.toLowerCase()
+            }
+            try {
+              const parsed = CID.parse(cid)
+              const d = await sha256.digest(bytesIn)
+              if (parsed.multihash.digest.length !== d.digest.length) return false
+              for (let i = 0; i < d.digest.length; i++) {
+                if (parsed.multihash.digest[i] !== d.digest[i]) return false
+              }
+              return true
+            } catch {
+              return false
+            }
+          }
+          const verified = await verifyCid()
+          if (!verified) {
+            const resp: BlockResponsePayload = { requestId: reqId, cid, found: false, error: "hash mismatch" }
+            conn.socket.write(encodeJsonPayload(MessageType.BlockResponse, resp))
+            break
+          }
+        }
+
+        // Handler may throw — wrap so a bug here doesn't tear down the
+        // whole socket dispatch.
+        void (async () => {
+          let out: Uint8Array | null = null
+          try {
+            out = await this.cfg.onBlockRequest!(cid, push, bytesIn)
+          } catch (err) {
+            log.warn("onBlockRequest handler threw", { cid, push, error: String(err) })
+          }
+          let resp: BlockResponsePayload
+          if (out === null) {
+            resp = { requestId: reqId, cid, found: false }
+          } else if (push) {
+            // Ack the push: empty bytes string ⇒ caller sees zero-length
+            // Uint8Array and treats it as "stored OK" (see wire-client
+            // pushBlock wrapper).
+            resp = { requestId: reqId, cid, found: true }
+          } else {
+            resp = {
+              requestId: reqId,
+              cid,
+              found: true,
+              bytes: Buffer.from(out).toString("base64"),
+            }
+          }
+          try {
+            conn.socket.write(encodeJsonPayload(MessageType.BlockResponse, resp))
+          } catch (err) {
+            log.debug("BlockResponse write failed", { cid, error: String(err) })
+          }
+        })()
+        break
+      }
+
+      case MessageType.BlockResponse: {
+        // Handled by pending request callbacks (see WireClient).
+        break
+      }
+
+      case MessageType.ProviderAdvertise: {
+        // Phase C cross-node DHT provider gossip. The sender's nodeId is
+        // the only trusted provider identity — we ignore any field the
+        // payload tried to claim for someone else. The handler is
+        // installed by buildCocIpfsWiring via setOnProviderAdvertise.
+        if (!this.cfg.onProviderAdvertise || !conn.nodeId) break
+        const req = decodeJsonPayload<{ cid?: string; ttlMs?: number }>(frame)
+        const cid = typeof req?.cid === "string" ? req.cid : ""
+        if (cid.length === 0 || cid.length > 256) break
+        const ttlMs = typeof req?.ttlMs === "number" && req.ttlMs > 0 && req.ttlMs <= 7 * 24 * 60 * 60 * 1000
+          ? req.ttlMs
+          : undefined
+        try {
+          this.cfg.onProviderAdvertise(cid, conn.nodeId, ttlMs)
+        } catch (err) {
+          log.debug("onProviderAdvertise threw", { cid, peer: conn.nodeId, error: String(err) })
+        }
         break
       }
 

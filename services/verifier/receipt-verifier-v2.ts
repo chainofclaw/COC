@@ -28,6 +28,18 @@ export interface ReceiptVerifierV2Deps {
   verifyUptimeResult?: (challenge: ChallengeMessageV2, receipt: ReceiptMessageV2) => boolean
   verifyStorageProof?: (challenge: ChallengeMessageV2, receipt: ReceiptMessageV2) => boolean
   verifyRelayResult?: (challenge: ChallengeMessageV2, receipt: ReceiptMessageV2) => boolean
+  /**
+   * Phase C2.4: optional second-opinion audit on a sampled fraction of
+   * storage receipts. When set AND `verifyStorageProof` also passes,
+   * this hook can reject with `InvalidStorageAudit` if the audit
+   * detected a prover-provider collision. See
+   * services/verifier/storage-audit.ts. Async because the audit pulls
+   * bytes from a peer; the v2 verify() method becomes async to
+   * accommodate it.
+   */
+  auditStorageReceipt?: (challenge: ChallengeMessageV2, receipt: ReceiptMessageV2) => Promise<
+    { audited: false } | { audited: true; passed: boolean }
+  >
   tipToleranceBlocks?: number
   currentTipHeight?: () => bigint
   requiredWitnesses: number
@@ -48,11 +60,11 @@ export class ReceiptVerifierV2 {
     this.deps = deps
   }
 
-  verify(
+  async verify(
     challenge: ChallengeMessageV2,
     receipt: ReceiptMessageV2,
     witnesses: WitnessAttestation[],
-  ): VerificationResultV2 {
+  ): Promise<VerificationResultV2> {
     // Layer 1: Nonce replay check
     if (this.deps.nonceRegistry) {
       const v1Like = {
@@ -151,6 +163,21 @@ export class ReceiptVerifierV2 {
     if (challenge.challengeType === ChallengeType.Storage && this.deps.verifyStorageProof) {
       if (!this.deps.verifyStorageProof(challenge, receipt)) {
         return { ok: false, reason: "storage proof invalid", resultCode: ResultCode.StorageProofFail }
+      }
+      // Phase C2.4 second-opinion audit. Only fires on a sampled fraction
+      // of receipts (see storage-audit.ts); when it does fire and
+      // disagrees with the prover's leafHash, flip to InvalidStorageAudit
+      // so forensic replay can separate "prover fabricated Merkle proof"
+      // from "Merkle math itself was wrong".
+      if (this.deps.auditStorageReceipt) {
+        const audit = await this.deps.auditStorageReceipt(challenge, receipt)
+        if (audit.audited && !audit.passed) {
+          return {
+            ok: false,
+            reason: "storage audit: independent peer's bytes disagree with prover leafHash",
+            resultCode: ResultCode.InvalidStorageAudit,
+          }
+        }
       }
     }
     if (challenge.challengeType === ChallengeType.Relay && this.deps.verifyRelayResult) {

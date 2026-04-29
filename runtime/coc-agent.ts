@@ -24,6 +24,11 @@ import { ResultCode } from "../services/common/pose-types-v2.ts";
 import { buildMerkleProof } from "../services/common/merkle.ts";
 import { hashPair } from "../node/src/ipfs-merkle.ts";
 import type { UnixFsFileMeta, Hex } from "../node/src/ipfs-types.ts";
+import { IpfsBlockstore } from "../node/src/ipfs-blockstore.ts";
+import { CidRegistryReader, makeCidRegistryEventReader } from "./lib/cid-registry-reader.ts";
+import type { DhtLike } from "./lib/cid-registry-reader.ts";
+import { verifiedStorageBytesFor } from "./lib/pose-score.ts";
+import { auditStorageReceipt, type StorageAuditDeps } from "../services/verifier/storage-audit.ts";
 import { createLogger } from "../node/src/logger.ts";
 import { createNodeSigner, createNodeSignerV2, buildReceiptSignMessage } from "../node/src/crypto/signer.ts";
 import { buildDomain, CHALLENGE_TYPES, RECEIPT_TYPES, REWARD_MANIFEST_TYPES } from "../node/src/crypto/eip712-types.ts";
@@ -94,6 +99,20 @@ const localAgentNodeId = keccak256(signer.signingKey.publicKey).toLowerCase() as
 const challengerSet = (config.challengerSet ?? []).map((x) => x.toLowerCase());
 const aggregatorSet = (config.aggregatorSet ?? []).map((x) => x.toLowerCase());
 
+// Phase C2.2: optionally source Storage-challenge targets from the on-chain
+// CidRegistry + DHT pre-filter instead of a per-agent local file-meta.json.
+// The reader is constructed lazily (see below near agent startup) because
+// it needs a CidRegistry contract binding + a DHT proxy, neither of which
+// exist at module-top scope. Kept as `let` so `pickStorageTarget` can
+// read its current value even after async initialization.
+let cidRegistryReader: CidRegistryReader | null = null;
+
+// Phase C2.4: deps for sampled audit re-fetch of storage receipts.
+// Populated in initCidRegistryReader alongside the CidRegistryReader (they
+// share the DHT proxy). Null until init completes; the audit short-
+// circuits to "not-sampled" in that case so the first ticks don't fail.
+let storageAuditDeps: StorageAuditDeps | null = null;
+
 // Machine fingerprint: hostname + primary MAC + operator pubkey
 // Same physical machine always produces the same commitment regardless of port
 function computeMachineFingerprint(pubkey: string): string {
@@ -124,6 +143,53 @@ function addressToHex32(address: string): `0x${string}` {
 function hex32ToAddress(hex32: string): string {
   const clean = hex32.startsWith("0x") ? hex32.slice(2) : hex32;
   return `0x${clean.slice(-40)}`.toLowerCase();
+}
+
+/**
+ * Phase C: resolve the signer address for a PoSe v2 nodeId.
+ *
+ * Legacy convention: nodeId = validator address left-padded to bytes32.
+ * Phase C / PoSe v2 convention: nodeId = keccak256(pubkey), which is a
+ * completely different 32-byte hash from the validator's ETH address.
+ *
+ * The contract stores the pubkey in NodeRecord.pubkeyNode, so we read
+ * it on demand and derive the address via ethers `computeAddress`
+ * (= keccak256(pubkey[1:])[-20:] — the standard secp256k1 address).
+ *
+ * Cached in memory to avoid hitting the chain on every tick. Cache key
+ * is lowercased nodeId. Entries are immutable (a node's pubkey doesn't
+ * change post-registration) so no invalidation needed.
+ */
+const nodeSignerAddressCache = new Map<string, string>();
+async function resolveNodeSignerAddress(
+  nodeId: string,
+  getNode?: (nodeId: string) => Promise<{ pubkeyNode?: string } | null>,
+): Promise<string> {
+  const key = nodeId.toLowerCase();
+  const cached = nodeSignerAddressCache.get(key);
+  if (cached) return cached;
+  if (getNode) {
+    try {
+      const record = await getNode(nodeId);
+      const pk = record?.pubkeyNode;
+      if (pk && typeof pk === "string" && pk.startsWith("0x") && pk.length >= 132) {
+        // ethers computeAddress expects 0x04-prefixed uncompressed or
+        // 0x02/0x03-prefixed compressed; NodeRecord.pubkey is 0x04||X||Y
+        const { computeAddress } = await import("ethers");
+        const addr = computeAddress(pk).toLowerCase();
+        nodeSignerAddressCache.set(key, addr);
+        log.info("resolveNodeSignerAddress: on-chain pubkey resolved", { nodeId, addr });
+        return addr;
+      }
+      log.warn("resolveNodeSignerAddress: getNode returned no/short pubkey", { nodeId, pkLen: pk?.length ?? -1 });
+    } catch (err) {
+      log.warn("resolveNodeSignerAddress on-chain lookup failed", { nodeId, error: String(err) });
+    }
+  }
+  // Legacy fallback: nodeId is a bytes32-padded address.
+  const fallback = hex32ToAddress(nodeId);
+  log.warn("resolveNodeSignerAddress: falling back to hex32ToAddress (likely wrong for v2 nodes)", { nodeId, fallback });
+  return fallback;
 }
 
 const poseAbi = [
@@ -509,6 +575,8 @@ const runtimeStats = {
 };
 let lastMetricsWriteAtMs = 0;
 let tickInProgress = false;
+let tickStartedAtMs = 0;
+const TICK_HANG_TIMEOUT_MS = 5 * 60 * 1000;
 let lastTickOverlapLogAtMs = 0;
 let tickOverlapSuppressedSinceLastLog = 0;
 let selfNodeRegistered = false;
@@ -725,6 +793,7 @@ async function tick(): Promise<void> {
     return;
   }
   tickInProgress = true;
+  tickStartedAtMs = Date.now();
   try {
     await refreshLatestBlock();
     await refreshSelfNodeStatus();
@@ -892,6 +961,7 @@ async function tick(): Promise<void> {
     log.error("tick failed", { error: String(error) });
   } finally {
     tickInProgress = false;
+    tickStartedAtMs = 0;
   }
 }
 
@@ -1030,8 +1100,25 @@ async function tryChallengeV2(nodeId: string, kind: keyof typeof ChallengeType):
       tipHash,
       tipHeight,
     };
-    const nodeAddr = hex32ToAddress(nodeId);
-    if (!agentSignerV2.eip712.verifyTypedData(RECEIPT_TYPES, receiptData, receiptPayload.nodeSig, nodeAddr)) {
+    // Phase C: nodeId is keccak256(pubkey), not an ETH address. The
+    // actual signer address is computeAddress(pubkey), which we look up
+    // from the on-chain NodeRecord (cached per nodeId so we hit the
+    // chain once per peer).
+    const nodeAddr = await resolveNodeSignerAddress(
+      nodeId,
+      poseV2Contract ? async (id) => (await poseV2Contract.getNode(id)) as { pubkeyNode?: string } : undefined,
+    );
+    const sigOk = agentSignerV2.eip712.verifyTypedData(RECEIPT_TYPES, receiptData, receiptPayload.nodeSig, nodeAddr);
+    if (!sigOk) {
+      log.warn("debug: v2 sig verify failed", {
+        nodeId, nodeAddr,
+        challengeId: receiptData.challengeId,
+        responseAtMs: receiptData.responseAtMs.toString(),
+        responseBodyHash: receiptData.responseBodyHash,
+        tipHash: receiptData.tipHash,
+        tipHeight: receiptData.tipHeight.toString(),
+        sigLen: receiptPayload.nodeSig.length,
+      });
       throw new Error("invalid node receipt signature");
     }
 
@@ -1045,6 +1132,43 @@ async function tryChallengeV2(nodeId: string, kind: keyof typeof ChallengeType):
         )
       : { attestations: [], bitmap: 0, quorumMet: v2RequiredWitnesses === 0 };
 
+    // Phase C2.4: 5% audit sampling on Storage receipts. The auditor
+    // pulls the chunk from an independent peer and recomputes leafHash.
+    // On sampled mismatch we stamp ResultCode.InvalidStorageAudit
+    // instead of Ok — still records the witness quorum status so it
+    // doesn't falsely wipe an otherwise-passing witness result.
+    // Sampling is skipped entirely when the audit deps aren't wired
+    // (FF off, or init hasn't completed yet) — receipts then behave
+    // identically to the pre-C2.4 path.
+    let auditVerdict: "pass" | "fail" | "skipped" = "skipped";
+    if (kind === "Storage" && storageAuditDeps) {
+      const responseBody = receiptPayload.responseBody as Record<string, unknown> | undefined;
+      const claimedLeafHash = typeof responseBody?.leafHash === "string" ? responseBody.leafHash : null;
+      const claimedCid = typeof responseBody?.cid === "string" ? responseBody.cid : null;
+      if (claimedLeafHash && claimedCid) {
+        const result = await auditStorageReceipt(storageAuditDeps, {
+          cid: claimedCid,
+          leafHash: claimedLeafHash,
+          proverNodeId: nodeId,
+          chunkIndex: typeof responseBody?.chunkIndex === "number" ? responseBody.chunkIndex : undefined,
+        });
+        if (result.audited && !result.passed) {
+          auditVerdict = "fail";
+          log.warn("storage audit detected leafHash mismatch — flagging prover", {
+            nodeId, cid: claimedCid,
+            expected: result.expected,
+            actual: result.actual,
+          });
+        } else if (result.audited) {
+          auditVerdict = "pass";
+        }
+      }
+    }
+
+    const resultCode = auditVerdict === "fail"
+      ? ResultCode.InvalidStorageAudit
+      : witnessResult.quorumMet ? ResultCode.Ok : ResultCode.WitnessQuorumFail;
+
     const evidenceLeaf = {
       epoch: BigInt(currentEpoch),
       nodeId: nodeId as `0x${string}`,
@@ -1052,7 +1176,7 @@ async function tryChallengeV2(nodeId: string, kind: keyof typeof ChallengeType):
       tipHash,
       tipHeight,
       latencyMs: Number(responseAtMs - challenge.issuedAtMs),
-      resultCode: witnessResult.quorumMet ? ResultCode.Ok : ResultCode.WitnessQuorumFail,
+      resultCode,
       witnessBitmap: witnessResult.bitmap,
     };
 
@@ -1075,8 +1199,14 @@ async function tryChallengeV2(nodeId: string, kind: keyof typeof ChallengeType):
     };
 
     pendingV2.push(verified);
-    updateScore(nodeId, kind, witnessResult.quorumMet, storageTarget?.fileSize);
-    if (witnessResult.quorumMet) {
+    // Storage challenges fail scoring when either the witness quorum
+    // didn't meet (legacy signal) OR Phase C2.4's audit caught the
+    // prover returning a bad leafHash. storageGb credit only accrues on
+    // both pass — the audit-failed path drops the accumulator since the
+    // prover lied about what it holds.
+    const storageOk = witnessResult.quorumMet && auditVerdict !== "fail";
+    updateScore(nodeId, kind, storageOk, verifiedStorageBytesFor(storageTarget));
+    if (storageOk) {
       recordValidChallengerReceipt(currentEpoch);
     }
   } catch (error) {
@@ -1235,7 +1365,9 @@ async function ensureNodeRegistered(): Promise<void> {
 
     // Query progressive bond requirement from contract (v2 uses the same MIN_BOND << operatorNodeCount rule).
     const operatorCount = Number(await retryAsync(() => registerContract.operatorNodeCount(signer.address), txRetryOptions));
-    const bondRequired = useV2 ? (MIN_BOND_WEI << operatorCount) : await retryAsync(() => poseContract!.requiredBond(signer.address) as Promise<bigint>, txRetryOptions);
+    // MIN_BOND_WEI is BigInt; operatorCount comes from Number(...). The
+    // `<<` operator rejects mixed types, so convert to BigInt explicitly.
+    const bondRequired = useV2 ? (MIN_BOND_WEI << BigInt(operatorCount)) : await retryAsync(() => poseContract!.requiredBond(signer.address) as Promise<bigint>, txRetryOptions);
 
     const serviceCommitment = keccak256(toUtf8Bytes(`service:${signer.address.toLowerCase()}`));
     const fingerprint = computeMachineFingerprint(pubkey);
@@ -1255,10 +1387,19 @@ async function ensureNodeRegistered(): Promise<void> {
       Buffer.from(messageHash.slice(2), "hex"),
     );
 
-    // Build endpoint attestation: node signs "coc-endpoint:{endpointCommitment}:{nodeId}"
-    const endpointMsg = `coc-endpoint:${endpointCommitment}:${nodeId}`;
+    // Build endpoint attestation matching contract's
+    //   keccak256(abi.encodePacked("coc-endpoint:", endpointCommitment, nodeId))
+    // abi.encodePacked with a string + two bytes32 = 13 + 32 + 32 = 77 bytes.
+    // Previous UTF-8 `"coc-endpoint:${hex}:${hex}"` form produced a completely
+    // different digest and made every v2 registerNode tx revert.
+    const endpointPacked = Buffer.concat([
+      Buffer.from("coc-endpoint:", "utf8"),
+      Buffer.from(endpointCommitment.slice(2), "hex"),
+      Buffer.from(nodeId.slice(2), "hex"),
+    ]);
+    const endpointHash = keccak256(endpointPacked);
     const endpointAttestation = agentSigner.signBytes(
-      Buffer.from(keccak256(toUtf8Bytes(endpointMsg)).slice(2), "hex"),
+      Buffer.from(endpointHash.slice(2), "hex"),
     );
 
     const tx = await retryAsync(
@@ -1339,7 +1480,7 @@ async function tryChallenge(nodeId: string, kind: keyof typeof ChallengeType): P
   try {
     const verified = verifier.toVerifiedReceipt(challenge, receiptPayload, BigInt(Date.now()));
     pending.push(verified);
-    updateScore(nodeId, kind, true, storageTarget?.fileSize);
+    updateScore(nodeId, kind, true, verifiedStorageBytesFor(storageTarget));
     recordValidChallengerReceipt(currentEpoch);
   } catch (error) {
     updateScore(nodeId, kind, false);
@@ -1392,9 +1533,40 @@ function buildQuerySpec(
   return { method: "eth_blockNumber", minBlockNumber };
 }
 
+/**
+ * Pick a Storage-challenge target. Two paths, gated on FF
+ * `poseStorageFromBlockstore` (runtime/lib/config.ts):
+ *
+ *   - FF on (Phase C2.2+C2.3): source CIDs from the on-chain CidRegistry
+ *     event log, filter out CIDs with zero DHT providers, resolve
+ *     merkle metadata via the blockstore fetch-or-serve path. Returns
+ *     `chunkSize` — the byte length of the specific chunk being
+ *     challenged, which C2.3's verifiedStorageBytes accumulator
+ *     credits on a successful verification.
+ *   - FF off (legacy): read local `file-meta.json`. Returns `fileSize`
+ *     (whole-file bytes), the pre-C2.3 metric. Retained so existing
+ *     deployments' scoring behavior doesn't shift before the operator
+ *     opts in.
+ *
+ * Both fields are optional — callers must prefer `chunkSize` over
+ * `fileSize`, falling back only when the FF-off path is in use.
+ */
 async function pickStorageTarget(
   storageDirPath: string,
-): Promise<{ cid: string; chunkIndex: number; merkleRoot: string; fileSize: number } | null> {
+): Promise<{ cid: string; chunkIndex: number; merkleRoot: string; fileSize?: number; chunkSize?: number } | null> {
+  if (cidRegistryReader) {
+    const target = await cidRegistryReader.pickRandomChallengeTarget();
+    if (!target) {
+      log.warn("no viable challenge target from CidRegistry (all monopoly CIDs or empty pool)");
+      return null;
+    }
+    return {
+      cid: target.cid,
+      chunkIndex: target.chunkIndex,
+      merkleRoot: target.merkleRoot,
+      chunkSize: target.chunkSize,
+    };
+  }
   const meta = await readFileMeta(storageDirPath);
   const entries = Object.values(meta);
   if (entries.length === 0) {
@@ -1411,6 +1583,7 @@ async function pickStorageTarget(
     fileSize: target.size,
   };
 }
+
 
 async function readFileMeta(storageDirPath: string): Promise<Record<string, UnixFsFileMeta>> {
   try {
@@ -1663,6 +1836,34 @@ async function refreshRewardTargets(epochId: number): Promise<void> {
     }
   }
 
+  // PoSe v2: chain-discovered nodeIds are keccak256(pubkey) (32-byte hash),
+  // but agent.json's nodeEndpoints map is keyed by operator address (20-byte).
+  // For each nodeId we don't already have, look up its pubkey on-chain, derive
+  // the operator address, and copy the address-keyed URL into the map under
+  // the 32-byte alias. This is one-shot per node and cached in the map.
+  const getNode = (registerContract && typeof (registerContract as { getNode?: unknown }).getNode === "function")
+    ? (registerContract as unknown as { getNode: (id: string) => Promise<{ pubkeyNode?: string }> }).getNode.bind(registerContract)
+    : undefined;
+  const { computeAddress } = await import("ethers");
+  for (const nodeId of nodeIds) {
+    const key = nodeId.toLowerCase();
+    if (nodeEndpointMap.has(key)) continue;
+    if (!getNode) continue;
+    try {
+      const record = await retryAsync(() => getNode(nodeId), txRetryOptions);
+      const pk = record?.pubkeyNode;
+      if (typeof pk !== "string" || !pk.startsWith("0x") || pk.length < 132) continue;
+      const addr = computeAddress(pk).toLowerCase();
+      const addrUrl = nodeEndpointMap.get(addr);
+      if (addrUrl) {
+        nodeEndpointMap.set(key, addrUrl);
+        log.info("nodeEndpoint resolved via on-chain pubkey", { nodeId, addr });
+      }
+    } catch (err) {
+      log.warn("nodeEndpoint on-chain pubkey lookup failed", { nodeId, error: String(err) });
+    }
+  }
+
   const missingEndpointNodeIds: string[] = [];
   const challengeableNodeIds: string[] = [];
   for (const nodeId of nodeIds) {
@@ -1824,5 +2025,109 @@ function resolveEndpointFingerprintMode(input: unknown): "strict" | "legacy" {
   return "strict";
 }
 
+// Initialize the Phase C2.2 challenge-target source. Runs async but does
+// not block the first tick — while the initial CidRegistry scan is in
+// flight, pickStorageTarget sees `cidRegistryReader === null` and falls
+// back to the legacy meta path. Once populated, subsequent ticks use
+// the blockstore-backed target picker.
+if (config.poseStorageFromBlockstore) {
+  void initCidRegistryReader().catch((err) => {
+    log.warn("CidRegistryReader init failed; falling back to legacy meta path", { error: String(err) });
+  });
+}
+
 setInterval(() => void tick(), intervalMs);
 void tick();
+
+// Watchdog: force-release tickInProgress if a tick has been awaiting for
+// longer than TICK_HANG_TIMEOUT_MS. Without this, a hung await inside the
+// tick body (e.g. unresolved on-chain query during a chain stall, observed
+// 3 times on 2026-04-26) leaves tickInProgress=true forever, causing every
+// subsequent tick to skip silently with no path to recovery short of
+// process restart.
+setInterval(() => {
+  if (tickInProgress && tickStartedAtMs > 0) {
+    const elapsedMs = Date.now() - tickStartedAtMs;
+    if (elapsedMs > TICK_HANG_TIMEOUT_MS) {
+      log.error("tick watchdog: forcing release after hang", { elapsedMs });
+      tickInProgress = false;
+      tickStartedAtMs = 0;
+    }
+  }
+}, 30_000);
+
+async function initCidRegistryReader(): Promise<void> {
+  const cidRegistryAddress = config.cidRegistryAddress;
+  if (!cidRegistryAddress) {
+    log.warn("poseStorageFromBlockstore enabled but cidRegistryAddress not configured, falling back to legacy");
+    return;
+  }
+  // Minimal ABI: just the event we iterate.
+  const CID_REGISTRY_ABI = [
+    "event CidRegistered(bytes32 indexed cidHash, string cid, address indexed registrant)",
+  ];
+  const registry = new Contract(cidRegistryAddress, CID_REGISTRY_ABI, provider);
+  const blockstore = new IpfsBlockstore(storageDir);
+
+  // DHT proxy: call the node's `coc_dhtFindProviders` RPC so the agent
+  // doesn't need its own peer table. nodeUrl is the local coc-node HTTP
+  // endpoint; we reuse the existing requestJson helper for consistency
+  // with the rest of the agent's node calls.
+  // Default to the already-configured node URL so Docker-networked
+  // agents reach node-1 by service name; falls back to localhost only
+  // when neither env var nor config is set (bare-metal single-host dev).
+  const rpcEndpoint = process.env.COC_RPC_URL ?? nodeUrl ?? "http://127.0.0.1:18780";
+  const dhtProxy: DhtLike = {
+    findProviders: async (cid: string, maxK = 3): Promise<string[]> => {
+      try {
+        const resp = await requestJson(rpcEndpoint, "POST", {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "coc_dhtFindProviders",
+          params: [cid, maxK],
+        });
+        const raw = resp.json?.result?.providers;
+        if (!Array.isArray(raw)) return [];
+        return raw.filter((p: unknown): p is string => typeof p === "string");
+      } catch (err) {
+        log.debug("DHT proxy findProviders failed", { cid, error: String(err) });
+        return [];
+      }
+    },
+  };
+
+  const reader = new CidRegistryReader({
+    blockstore,
+    dht: dhtProxy,
+    contractReader: makeCidRegistryEventReader(
+      registry as unknown as import("./lib/cid-registry-reader.ts").CidRegistryContractLike,
+      { latestBlock: async () => Number(await provider.getBlockNumber()) },
+    ),
+  });
+  await reader.refresh();
+  cidRegistryReader = reader;
+  log.info("CidRegistryReader initialized", { poolSize: reader.size() });
+
+  // Phase C2.4 audit sampler — RPC-backed bytes fetch that bypasses
+  // the prover. The node already knows the DHT provider set and its
+  // wire connections; we just tell it the CID and who to exclude, and
+  // it races whoever else is available. Any transport error collapses
+  // into null, which the auditor treats as inconclusive.
+  storageAuditDeps = {
+    fetchChunkExcluding: async (cid: string, excludePeerId: string) => {
+      try {
+        const resp = await requestJson(rpcEndpoint, "POST", {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "coc_ipfsFetchBlockFromPeer",
+          params: [cid, excludePeerId],
+        });
+        const raw = resp.json?.result?.bytes;
+        return typeof raw === "string" && raw.length > 0 ? new Uint8Array(Buffer.from(raw, "base64")) : null;
+      } catch {
+        return null;
+      }
+    },
+  };
+  log.info("storage audit sampler initialized");
+}

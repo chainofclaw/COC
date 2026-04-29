@@ -863,6 +863,26 @@ export class EvmChain {
     return replay
   }
 
+  /**
+   * Build a dry-run EVM bound to the provided stateManager, inheriting this
+   * chain's chainId + hardfork schedule. Intended for speculative execution
+   * against a forked state manager (see `PersistentStateManager.shallowCopy`)
+   * to pre-compute a block's post-state without touching the primary trie.
+   *
+   * Unlike `createReplayChain()` this does NOT re-apply prefund accounts —
+   * the caller is responsible for passing in a stateManager that already has
+   * whatever state it needs (typically the parent's committed state).
+   */
+  async createDryRunChain(stateManager: unknown): Promise<EvmChain> {
+    return EvmChain.create(this.getChainId(), stateManager, {
+      hardfork: this.hardfork,
+      hardforkSchedule: this.hardforkSchedule.map((entry) => ({
+        blockNumber: Number(entry.blockNumber),
+        hardfork: entry.hardfork,
+      })),
+    })
+  }
+
   async traceCall(
     params: { from?: string; to: string; data?: string; value?: string; gas?: string },
     options: TraceOptions = {},

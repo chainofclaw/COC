@@ -5,5 +5,8 @@
   "rewardManifestDir": "/data/coc/runtime/reward-manifests",
   "pendingChallengesPath": "/data/coc/runtime/pending-challenges-v2.json",
   "relayerIntervalMs": 60000,
-  "protocolVersion": 1
+  "protocolVersion": 2,
+  "chainId": 18780,
+  "poseManagerV2Address": "0xCD8a1C3ba11CF5ECfa6267617243239504a98d90",
+  "verifyingContract": "0xCD8a1C3ba11CF5ECfa6267617243239504a98d90"
 }
