@@ -5,7 +5,11 @@ import type { Hex32, ChallengeType } from "./pose-types.ts"
 
 export const PROTOCOL_VERSION_V2 = 2
 
-// Result codes for evidence leaves (mirrors Solidity uint8)
+// Result codes for evidence leaves (mirrors Solidity uint8).
+// Stays within the uint8 space the on-chain EvidenceLeafV2 already
+// accepts (PoSeTypesV2.sol EvidenceLeafV2.resultCode is uint8), so
+// Phase C2.4's new code slots in without a typehash bump or contract
+// redeploy.
 export const ResultCode = {
   Ok: 0,
   Timeout: 1,
@@ -15,6 +19,16 @@ export const ResultCode = {
   TipMismatch: 5,
   NonceMismatch: 6,
   WitnessQuorumFail: 7,
+  /**
+   * Phase C2.4: 5% audit sampling caught a mismatch between the
+   * Merkle leaf the prover returned and the chunk bytes an
+   * independent peer reproduced. Prover and DHT provider colluded
+   * (or the prover fabricated a Merkle proof for bytes it doesn't
+   * hold). Treated like StorageProofFail for scoring purposes, but
+   * distinguished in evidence so forensic replay can tell "Merkle
+   * math mismatch" apart from "bytes don't reproduce hash".
+   */
+  InvalidStorageAudit: 8,
 } as const
 
 export type ResultCode = (typeof ResultCode)[keyof typeof ResultCode]

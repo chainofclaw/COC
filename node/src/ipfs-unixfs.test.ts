@@ -4,7 +4,8 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { IpfsBlockstore } from "./ipfs-blockstore.ts"
-import { UnixFsBuilder, storeRawBlock, loadRawBlock } from "./ipfs-unixfs.ts"
+import { UnixFsBuilder, storeRawBlock, loadRawBlock, resolveChunks } from "./ipfs-unixfs.ts"
+import { hashLeaf, buildMerkleRoot } from "./ipfs-merkle.ts"
 
 let tmpDir: string
 let store: IpfsBlockstore
@@ -104,5 +105,105 @@ describe("storeRawBlock / loadRawBlock", () => {
     const stored = await storeRawBlock(store, data)
     // CIDv1 starts with "b" (base32)
     assert.ok(stored.cid.startsWith("b"))
+  })
+})
+
+describe("resolveChunks (Phase C2.1)", () => {
+  it("yields one chunk for a small inline-data file", async () => {
+    const data = new TextEncoder().encode("inline")
+    const meta = await builder.addFile("small.txt", data)
+    const collected: Array<{ index: number; bytes: Uint8Array }> = []
+    for await (const chunk of resolveChunks(store, meta.cid)) {
+      collected.push({ index: chunk.index, bytes: new Uint8Array(chunk.bytes) })
+    }
+    assert.equal(collected.length, meta.leaves.length)
+    const concatenated = Buffer.concat(collected.map((c) => Buffer.from(c.bytes)))
+    assert.deepEqual(new Uint8Array(concatenated), data)
+  })
+
+  it("yields multiple chunks in original order for multi-chunk file", async () => {
+    const data = new TextEncoder().encode("abcdefghijklmnopqrstuvwxyz0123456789")
+    const meta = await builder.addFile("multi.txt", data, 10)
+    assert.ok(meta.leaves.length > 1, "test needs > 1 chunk to be meaningful")
+
+    const collected: Array<{ index: number; bytes: Uint8Array }> = []
+    for await (const chunk of resolveChunks(store, meta.cid)) {
+      collected.push({ index: chunk.index, bytes: new Uint8Array(chunk.bytes) })
+    }
+    // Indexes are 0..N-1 in order.
+    assert.deepEqual(collected.map((c) => c.index), collected.map((_, i) => i))
+    // Concatenation round-trips to the original input.
+    const joined = Buffer.concat(collected.map((c) => Buffer.from(c.bytes)))
+    assert.deepEqual(new Uint8Array(joined), data)
+  })
+
+  it("chunks are individually hashable and match the file meta leaves", async () => {
+    const data = new TextEncoder().encode("merkle-target content for phase C2.1 proof")
+    const meta = await builder.addFile("proof.txt", data, 8)
+    assert.ok(meta.merkleLeaves.length > 1)
+
+    const hashes: string[] = []
+    for await (const chunk of resolveChunks(store, meta.cid)) {
+      hashes.push(hashLeaf(chunk.bytes))
+    }
+    // Live-derived leaf hashes must match what UnixFsBuilder stamped
+    // into the meta — content-addressed both ways.
+    assert.deepEqual(hashes, meta.merkleLeaves)
+    assert.equal(buildMerkleRoot(hashes), meta.merkleRoot)
+  })
+
+  it("callers can break early without resolving all chunks", async () => {
+    const data = new TextEncoder().encode("a".repeat(100))
+    const meta = await builder.addFile("break.txt", data, 5) // 20 chunks
+
+    let count = 0
+    for await (const _chunk of resolveChunks(store, meta.cid)) {
+      count++
+      if (count === 3) break
+    }
+    assert.equal(count, 3, "for-await break must stop the generator early")
+  })
+
+  it("throws when the cid does not exist in the store", async () => {
+    await assert.rejects(
+      async () => {
+        for await (const _ of resolveChunks(store, "bafyNotPresent" as any)) { /* drain */ }
+      },
+      // Plain blockstore error from missing CID file.
+      (err: NodeJS.ErrnoException) => err.code === "ENOENT",
+    )
+  })
+
+  it("works through the blockstore fetchRemote fallback (C1.3 chaining)", async () => {
+    // Set up a "source" store with the file, then a fresh "mirror" store
+    // that can only reach the source via fetchRemote. resolveChunks
+    // should still yield the full file by cascading through the
+    // blockstore's fallback mechanism one chunk at a time.
+    const data = new TextEncoder().encode("cascading fetch target data")
+    const sourceMeta = await builder.addFile("cascade.txt", data, 8)
+
+    const mirrorDir = await mkdtemp(join(tmpdir(), "unixfs-mirror-"))
+    try {
+      const mirror = new IpfsBlockstore(mirrorDir)
+      mirror.setHooks({
+        fetchRemote: async (cid) => {
+          try {
+            const b = await store.get(cid)
+            return b.bytes
+          } catch {
+            return null
+          }
+        },
+      })
+
+      const collected: Uint8Array[] = []
+      for await (const chunk of resolveChunks(mirror, sourceMeta.cid)) {
+        collected.push(new Uint8Array(chunk.bytes))
+      }
+      const joined = Buffer.concat(collected.map((c) => Buffer.from(c)))
+      assert.deepEqual(new Uint8Array(joined), data)
+    } finally {
+      await rm(mirrorDir, { recursive: true, force: true })
+    }
   })
 })

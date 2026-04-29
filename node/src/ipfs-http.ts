@@ -21,6 +21,29 @@ export interface IpfsServerConfig {
   port: number
   storageDir: string
   nodeId?: string
+  /**
+   * Phase C3.1: the uploader blocks on replication results and gets a
+   * warning header when fewer than `minReplicas` peers acknowledged the
+   * push. `minReplicas=2` (default) matches the K=3 replication target
+   * with 1 slack — a 3-validator testnet where any peer is temporarily
+   * unreachable still returns 200 without the warning, but a cluster
+   * where only the uploader holds the bytes emits the warning so
+   * operators catch the under-replication before C3.3's repair loop
+   * has a chance to react.
+   */
+  minReplicas?: number
+  /**
+   * Optional awaiter supplied by coc-ipfs-wiring.ts's
+   * `awaitReplicationResult`. Keeps the HTTP server decoupled from the
+   * DHT / wire manager — when undefined, the replication warning path
+   * is a no-op and uploads behave exactly like pre-C3.1.
+   */
+  awaitReplicationResult?: (cid: string, timeoutMs?: number) => Promise<{
+    attempted: number
+    succeeded: string[]
+    failed: string[]
+    skippedLowPeers: boolean
+  } | null>
 }
 
 export class IpfsHttpServer {
@@ -36,6 +59,23 @@ export class IpfsHttpServer {
     this.cfg = cfg
     this.store = store
     this.unixfs = unixfs
+  }
+
+  /**
+   * Post-construction attachment for Phase C3.1's replication awaiter.
+   * index.ts builds the HTTP server before the blockstore/DHT wiring
+   * is ready (to keep the IPFS API responsive during boot), so the
+   * awaiter is injected once `buildCocIpfsWiring` returns. Absent this
+   * call, `handleAdd` skips the replica-status check and no
+   * `X-COC-Replicas-Warning` header is emitted — the safe default for
+   * single-node deployments or during the boot window.
+   */
+  setAwaitReplicationResult(
+    awaiter: IpfsServerConfig["awaitReplicationResult"],
+    minReplicas?: number,
+  ): void {
+    this.cfg.awaitReplicationResult = awaiter
+    if (typeof minReplicas === "number") this.cfg.minReplicas = minReplicas
   }
 
   /**
@@ -192,13 +232,73 @@ export class IpfsHttpServer {
     await this.store.pin(meta.cid)
     await this.saveFileMeta(meta)
 
+    // Phase C3.1: await the replication fan-out triggered by the onPut
+    // hook on each chunk + the root CID, aggregate the worst-case
+    // per-CID replica count, and emit a warning header when the figure
+    // is below minReplicas. The response still returns 200 so small
+    // clusters (e.g. 1-node devnet) don't block uploads entirely —
+    // the warning surfaces the shortfall so the operator sees it, and
+    // C3.3's repair loop will backfill as peers come online.
+    const replicaStatus = await this.collectReplicaStatus(meta.cid, meta.leaves)
+    const headers: Record<string, string> = { "content-type": "application/json" }
+    const minReplicas = this.cfg.minReplicas ?? 2
+    if (replicaStatus && replicaStatus.worstReplicaCount < minReplicas) {
+      headers["X-COC-Replicas-Warning"] = `got ${replicaStatus.worstReplicaCount}/${minReplicas} (cid=${replicaStatus.worstCid})`
+      log.warn("under-replicated PUT", {
+        rootCid: meta.cid,
+        worstCid: replicaStatus.worstCid,
+        minReplicas,
+        worst: replicaStatus.worstReplicaCount,
+      })
+    }
+
     const result: IpfsAddResult = {
       Name: filename ?? "file",
       Hash: meta.cid,
       Size: meta.size.toString(),
     }
-    res.writeHead(200, { "content-type": "application/json" })
+    res.writeHead(200, headers)
     res.end(`${JSON.stringify(result)}\n`)
+  }
+
+  /**
+   * Collect per-chunk replication status for the just-PUT DAG. Returns
+   * null when the wiring isn't attached (replication gating is a no-op)
+   * or when no push promises landed in the awaiter's tracking map
+   * (happens on tiny clusters where pushToK skipped due to no peers).
+   *
+   * `worstReplicaCount` is the minimum successful-replica count across
+   * every chunk + root. A single CID under-replicated in a large file
+   * trips the warning even if the other 99 chunks landed cleanly —
+   * that single missing chunk means the file isn't reliably retrievable.
+   */
+  private async collectReplicaStatus(
+    rootCid: string,
+    leafCids: string[],
+  ): Promise<{ worstCid: string; worstReplicaCount: number } | null> {
+    const awaiter = this.cfg.awaitReplicationResult
+    if (!awaiter) return null
+    const cidsToCheck = Array.from(new Set([rootCid, ...leafCids]))
+    // Parallel awaits — onPut fires pushToK immediately per chunk so
+    // these promises are already in flight by the time we get here.
+    const results = await Promise.all(cidsToCheck.map(async (cid) => ({
+      cid,
+      status: await awaiter(cid, 8_000),
+    })))
+    let worstCid = rootCid
+    let worstCount = Infinity
+    let anyTracked = false
+    for (const { cid, status } of results) {
+      if (!status) continue // replication was skipped (no peers) or timed out
+      anyTracked = true
+      const replicas = status.succeeded.length
+      if (replicas < worstCount) {
+        worstCount = replicas
+        worstCid = cid
+      }
+    }
+    if (!anyTracked) return null
+    return { worstCid, worstReplicaCount: worstCount === Infinity ? 0 : worstCount }
   }
 
   private async handleVersion(res: http.ServerResponse): Promise<void> {

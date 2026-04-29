@@ -22,6 +22,31 @@ RUN_DIR="${ROOT}/.run/devnet-${NODES}"
 rm -rf "$RUN_DIR"
 mkdir -p "$RUN_DIR"
 
+# Well-known anvil dev keys — deterministic test keys, safe for local devnet.
+# The wire handshake verifier (node/src/wire-client.ts:339) compares the
+# recovered signature address against hs.nodeId directly, so nodeId MUST be
+# a 0x-prefixed Ethereum address for handshake to succeed. testnet uses
+# these same keys in docker-compose.testnet.yml; devnet used to assign
+# friendly "node-N" strings as nodeId which broke every handshake.
+ANVIL_KEYS=(
+  "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+  "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
+  "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a"
+  "0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6"
+  "0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a"
+  "0x8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba"
+  "0x92db14e403b83dfe3df233f83dfa3a0d7096f21ca9b0d6d6b8d88b2b4ec1564e"
+)
+ANVIL_ADDRS=(
+  "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"
+  "0x70997970c51812dc3a010c7d01b50e0d17dc79c8"
+  "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc"
+  "0x90f79bf6eb2c4f870365e785982e1f101e93b906"
+  "0x15d34aaf54267db7d7c367839aaf71a00a2c6a65"
+  "0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc"
+  "0x976ea74026e726554db657fa54763abd0c3a0aa9"
+)
+
 # Pre-check: ensure no port collisions with existing processes
 check_port() {
   local port=$1
@@ -42,13 +67,15 @@ done
 
 for i in $(seq 1 "$NODES"); do
   IDX=$((i - 1))
-  NODE_ID="node-${i}"
+  NODE_ID="${ANVIL_ADDRS[$IDX]}"
+  NODE_KEY="${ANVIL_KEYS[$IDX]}"
   RPC_PORT=$((BASE_RPC + IDX))
   P2P_PORT=$((BASE_P2P + IDX))
   IPFS_PORT=$((BASE_IPFS + IDX))
   WS_PORT=$((BASE_WS + IDX))
   WIRE_PORT=$((BASE_WIRE + IDX))
-  DATA_DIR="${RUN_DIR}/${NODE_ID}"
+  # Data dir keeps the friendly "node-N" name for readability (logs, pidfiles).
+  DATA_DIR="${RUN_DIR}/node-${i}"
   mkdir -p "$DATA_DIR"
 
   PEERS_JSON="[]"
@@ -63,12 +90,13 @@ for i in $(seq 1 "$NODES"); do
       JDX=$((j - 1))
       PP=$((BASE_P2P + JDX))
       WP=$((BASE_WIRE + JDX))
+      PEER_ADDR="${ANVIL_ADDRS[$JDX]}"
       if [[ -n "$PEERS" ]]; then
         PEERS+=" ,"
         DHT_PEERS+=" ,"
       fi
-      PEERS+="{\"id\":\"node-${j}\",\"url\":\"http://127.0.0.1:${PP}\"}"
-      DHT_PEERS+="{\"id\":\"node-${j}\",\"address\":\"127.0.0.1\",\"port\":${WP}}"
+      PEERS+="{\"id\":\"${PEER_ADDR}\",\"url\":\"http://127.0.0.1:${PP}\"}"
+      DHT_PEERS+="{\"id\":\"${PEER_ADDR}\",\"address\":\"127.0.0.1\",\"port\":${WP}}"
     done
     PEERS_JSON="[${PEERS}]"
     DHT_PEERS_JSON="[${DHT_PEERS}]"
@@ -76,10 +104,11 @@ for i in $(seq 1 "$NODES"); do
 
   VALIDATORS=""
   for j in $(seq 1 "$NODES"); do
+    JDX=$((j - 1))
     if [[ -n "$VALIDATORS" ]]; then
       VALIDATORS+=","
     fi
-    VALIDATORS+="\"node-${j}\""
+    VALIDATORS+="\"${ANVIL_ADDRS[$JDX]}\""
   done
 
   cat > "${DATA_DIR}/node-config.json" <<JSON
@@ -122,13 +151,28 @@ for i in $(seq 1 "$NODES"); do
 }
 JSON
 
-  LOG_FILE="${RUN_DIR}/${NODE_ID}.log"
-  PID_FILE="${RUN_DIR}/${NODE_ID}.pid"
+  LOG_FILE="${RUN_DIR}/node-${i}.log"
+  PID_FILE="${RUN_DIR}/node-${i}.pid"
 
   METRICS_PORT=$((BASE_METRICS + IDX))
-  COC_METRICS_PORT=${METRICS_PORT} COC_NODE_CONFIG="${DATA_DIR}/node-config.json" node --experimental-strip-types "${ROOT}/node/src/index.ts" >"${LOG_FILE}" 2>&1 &
+  # Per-node env override: let callers target a specific node with an extra
+  # env var (e.g. the adversarial-stateroot-divergence.sh script sets
+  # COC_UNSAFE_ADVERSARIAL_SPEC_ROOT on a single node to validate the BFT
+  # pair-quorum defense). Format: COC_NODE_${i}_ENV="FOO=bar BAZ=qux" — one
+  # space-separated list of KEY=VAL pairs, or empty.
+  PER_NODE_ENV_VAR="COC_NODE_${i}_ENV"
+  PER_NODE_ENV="${!PER_NODE_ENV_VAR:-}"
+  if [[ -n "$PER_NODE_ENV" ]]; then
+    echo "  per-node env for node-${i}: ${PER_NODE_ENV}"
+  fi
+  env \
+    COC_METRICS_PORT="${METRICS_PORT}" \
+    COC_NODE_KEY="${NODE_KEY}" \
+    COC_NODE_CONFIG="${DATA_DIR}/node-config.json" \
+    ${PER_NODE_ENV} \
+    node --experimental-strip-types "${ROOT}/node/src/index.ts" >"${LOG_FILE}" 2>&1 &
   echo $! > "${PID_FILE}"
-  echo "started ${NODE_ID}: rpc=${RPC_PORT} p2p=${P2P_PORT} ws=${WS_PORT} wire=${WIRE_PORT} ipfs=${IPFS_PORT} metrics=${METRICS_PORT} pid=$(cat "${PID_FILE}")"
+  echo "started node-${i} (${NODE_ID}): rpc=${RPC_PORT} p2p=${P2P_PORT} ws=${WS_PORT} wire=${WIRE_PORT} ipfs=${IPFS_PORT} metrics=${METRICS_PORT} pid=$(cat "${PID_FILE}")"
 done
 
 # Wait for all nodes to respond to RPC
@@ -166,7 +210,15 @@ while true; do
   sleep 1
 done
 
-# Deploy SoulRegistry contract to the first node
+# Deploy SoulRegistry contract to the first node.
+# Skippable via COC_SKIP_SOUL_DEPLOY=1 — set by adversarial-stateroot-
+# divergence.sh's Scenario B where the cluster is deliberately stalled
+# and the deploy's tx would hang forever waiting for finalization.
+if [[ "${COC_SKIP_SOUL_DEPLOY:-}" == "1" ]]; then
+  echo "COC_SKIP_SOUL_DEPLOY=1 — skipping SoulRegistry deploy"
+  echo "devnet started at ${RUN_DIR}"
+  exit 0
+fi
 SOUL_RPC="http://127.0.0.1:${BASE_RPC}"
 # Use the prefunded Hardhat account #0 as deployer
 SOUL_PK="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"

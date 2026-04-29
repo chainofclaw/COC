@@ -148,6 +148,12 @@ export async function importStateSnapshot(
 ): Promise<{ accountsImported: number; codeImported: number; validators?: Array<{ id: string; address: string; stake: bigint; active: boolean }> }> {
   validateSnapshot(snapshot)
 
+  // Capture pre-import root so we can roll STATE_ROOT_KEY back if commit
+  // produces a wrong root. Without this, the bad root persists and the next
+  // process start init()s on top of an inconsistent trie — observed on
+  // 2026-04-25 testnet recovery as a silent hang in the next snap-sync.
+  const originalRoot = stateTrie.stateRoot()
+
   // Checkpoint for atomic rollback on failure
   await stateTrie.checkpoint()
 
@@ -163,26 +169,44 @@ export async function importStateSnapshot(
         codeImported++
       }
 
-      // Import account state
+      // Import account state. For accounts WITH storage, write the empty
+      // sentinel first and let putStorageAt below accumulate the local root —
+      // writing the peer's hash verbatim would point our trie at a root whose
+      // nodes don't exist locally and the first traversal would throw
+      // "Stack underflow" (testnet repro 2026-04-25).
+      // For accounts WITHOUT storage we keep the peer's storageRoot verbatim:
+      // it might be the EthereumJS canonical empty (KECCAK256_RLP_S =
+      // 0x56e81f17…) for EVM-touched accounts, or COC's 0x000… sentinel for
+      // accounts only ever written through our trie. Overriding either form
+      // with the other diverges the encoded account JSON and cascades into
+      // the account trie root → stateRoot mismatch.
+      const hasStorage = acc.storage.length > 0
       const accountState: AccountState = {
         nonce: BigInt(acc.nonce),
         balance: BigInt(acc.balance),
-        storageRoot: acc.storageRoot,
+        storageRoot: hasStorage ? "0x" + "0".repeat(64) : acc.storageRoot,
         codeHash: acc.codeHash,
       }
       await stateTrie.put(acc.address, accountState)
       accountsImported++
 
-      // Import storage slots
+      // Import storage slots — putStorageAt rolls the storage trie forward
+      // and updates the account's storageRoot to the locally-derived value
+      // each iteration. Same data → same trie shape → matches peer's root.
       for (const { slot, value } of acc.storage) {
         await stateTrie.putStorageAt(acc.address, slot, value)
       }
     }
 
-    // Commit to persist and generate new state root
+    // Commit to persist and generate new state root.
     const newRoot = await stateTrie.commit()
 
-    // Verify stateRoot if expected value provided
+    // Verify stateRoot if expected value provided. NOTE: commit() above has
+    // already persisted STATE_ROOT_KEY pointing at newRoot — if newRoot is
+    // wrong we MUST roll the persisted pointer back via setStateRoot in the
+    // catch below, otherwise the next process start will init() on this bad
+    // root and silently hang on the first put (observed during 2026-04-25
+    // testnet recovery).
     if (expectedStateRoot && newRoot !== expectedStateRoot) {
       throw new Error(
         `state root mismatch after import: expected ${expectedStateRoot}, got ${newRoot}`,
@@ -207,8 +231,23 @@ export async function importStateSnapshot(
 
     return { accountsImported, codeImported, validators: importedValidators }
   } catch (err) {
-    // Rollback partial import on any failure
+    // Rollback. revert() handles still-checkpointed paths; for the
+    // post-commit verification failure, the checkpoint frame is already
+    // gone so revert() is a no-op — explicitly restore STATE_ROOT_KEY to
+    // the pre-import root via setStateRoot. Skip restore if there was no
+    // committed root before (fresh trie) — leaving STATE_ROOT_KEY unset is
+    // the correct state for a never-initialized trie.
     await stateTrie.revert()
+    if (originalRoot) {
+      try {
+        await stateTrie.setStateRoot(originalRoot)
+      } catch (restoreErr) {
+        log.warn("state snapshot rollback: setStateRoot failed", {
+          originalRoot,
+          error: String(restoreErr),
+        })
+      }
+    }
     throw err
   }
 }

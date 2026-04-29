@@ -79,4 +79,89 @@ describe("WireConnectionManager", () => {
     assert.equal(sent, 0)
     mgr.stop()
   })
+
+  // Phase C1.2: requestBlockFromAny. Exercises the "first-success"
+  // fan-out against a mock WireClient pool, so we don't need a real TCP
+  // server. We poke the private connections map directly via the typed
+  // surface — ugly but keeps the test focused on fan-out semantics.
+
+  it("requestBlockFromAny resolves with the first non-null bytes", async () => {
+    const mgr = new WireConnectionManager(baseCfg)
+    // Inject mock clients keyed by nodeId.
+    const mk = (id: string, bytes: Uint8Array | null, delayMs: number) => ({
+      isConnected: () => true,
+      getRemoteNodeId: () => id,
+      requestBlock: async () => {
+        await new Promise((r) => setTimeout(r, delayMs))
+        return bytes
+      },
+      disconnect: () => {},
+    }) as unknown as import("./wire-client.ts").WireClient
+
+    // @ts-expect-error private map access for test wiring
+    mgr.connections.set("a", { client: mk("peer-a", null, 50), host: "h", port: 1, connectedAtMs: 0 })
+    // @ts-expect-error
+    mgr.connections.set("b", { client: mk("peer-b", new Uint8Array([9, 9]), 10), host: "h", port: 2, connectedAtMs: 0 })
+    // @ts-expect-error
+    mgr.connections.set("c", { client: mk("peer-c", new Uint8Array([7, 7]), 200), host: "h", port: 3, connectedAtMs: 0 })
+
+    const t0 = Date.now()
+    const out = await mgr.requestBlockFromAny(["peer-a", "peer-b", "peer-c"], "0xcid", { concurrency: 3 })
+    const elapsed = Date.now() - t0
+    assert.ok(out, "some peer should have returned bytes")
+    // peer-b is the fastest non-null responder at ~10ms, so result is its payload.
+    assert.deepEqual(Array.from(out!), [9, 9])
+    // And we didn't wait for peer-c's 200ms response.
+    assert.ok(elapsed < 150, `elapsed=${elapsed}ms, should abort on first hit`)
+    mgr.stop()
+  })
+
+  it("requestBlockFromAny returns null when all peers miss", async () => {
+    const mgr = new WireConnectionManager(baseCfg)
+    const mk = (id: string) => ({
+      isConnected: () => true,
+      getRemoteNodeId: () => id,
+      requestBlock: async () => null,
+      disconnect: () => {},
+    }) as unknown as import("./wire-client.ts").WireClient
+    // @ts-expect-error
+    mgr.connections.set("a", { client: mk("peer-a"), host: "h", port: 1, connectedAtMs: 0 })
+    // @ts-expect-error
+    mgr.connections.set("b", { client: mk("peer-b"), host: "h", port: 2, connectedAtMs: 0 })
+
+    const out = await mgr.requestBlockFromAny(["peer-a", "peer-b"], "0xcid")
+    assert.equal(out, null)
+    mgr.stop()
+  })
+
+  it("requestBlockFromAny skips disconnected peers and tries next", async () => {
+    const mgr = new WireConnectionManager(baseCfg)
+    const mkDisconnected = (id: string) => ({
+      isConnected: () => false,
+      getRemoteNodeId: () => id,
+      requestBlock: async () => new Uint8Array([1]),
+      disconnect: () => {},
+    }) as unknown as import("./wire-client.ts").WireClient
+    const mkConnected = (id: string, bytes: Uint8Array) => ({
+      isConnected: () => true,
+      getRemoteNodeId: () => id,
+      requestBlock: async () => bytes,
+      disconnect: () => {},
+    }) as unknown as import("./wire-client.ts").WireClient
+    // @ts-expect-error
+    mgr.connections.set("a", { client: mkDisconnected("peer-a"), host: "h", port: 1, connectedAtMs: null })
+    // @ts-expect-error
+    mgr.connections.set("b", { client: mkConnected("peer-b", new Uint8Array([42])), host: "h", port: 2, connectedAtMs: 0 })
+
+    const out = await mgr.requestBlockFromAny(["peer-a", "peer-b"], "0xcid")
+    assert.deepEqual(Array.from(out!), [42])
+    mgr.stop()
+  })
+
+  it("requestBlockFromAny returns null for empty peer list", async () => {
+    const mgr = new WireConnectionManager(baseCfg)
+    const out = await mgr.requestBlockFromAny([], "0xcid")
+    assert.equal(out, null)
+    mgr.stop()
+  })
 })

@@ -2,10 +2,14 @@
   "dataDir": "/data/coc/runtime",
   "nodeUrl": "http://node-1:18780",
   "nodeEndpoints": {
-    "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266": "http://node-1:18780",
-    "0x70997970c51812dc3a010c7d01b50e0d17dc79c8": "http://node-2:18780",
-    "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc": "http://node-3:18780"
+    "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266": "http://prover-1:18800",
+    "0x70997970c51812dc3a010c7d01b50e0d17dc79c8": "http://prover-2:18800",
+    "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc": "http://prover-3:18800",
+    "0x0fc876c0b47575cfa81de526c1ac0e7b5b6b427a": "http://127.0.0.1:1"
   },
+  "challengerSet": ["0x0fc876c0b47575cfa81de526c1ac0e7b5b6b427a"],
+  "aggregatorSet": ["0x0fc876c0b47575cfa81de526c1ac0e7b5b6b427a"],
+  "allowEmptyBatchWitnessSubmission": true,
   "nodeIds": [
     "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
     "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
@@ -22,5 +26,9 @@
   "pendingArchivePath": "/data/coc/runtime/pending-receipts-archive.jsonl",
   "pendingV2ArchivePath": "/data/coc/runtime/pending-receipts-v2-archive.jsonl",
   "nonceRegistryPath": "/data/coc/runtime/nonce-registry.log",
-  "protocolVersion": 1
+  "protocolVersion": 2,
+  "chainId": 18780,
+  "l1RpcUrl": "http://node-1:18780",
+  "poseManagerV2Address": "0xCD8a1C3ba11CF5ECfa6267617243239504a98d90",
+  "verifyingContract": "0xCD8a1C3ba11CF5ECfa6267617243239504a98d90"
 }
