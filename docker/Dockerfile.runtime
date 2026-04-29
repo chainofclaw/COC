@@ -28,13 +28,23 @@ COPY services ./services
 # without it the agent crashloops on ERR_MODULE_NOT_FOUND at startup.
 COPY nodeops ./nodeops
 COPY config.example.json ./
+COPY docker/runtime-entrypoint.sh /usr/local/bin/runtime-entrypoint.sh
+RUN chmod +x /usr/local/bin/runtime-entrypoint.sh
 
 ENV COC_DATA_DIR=/data/coc
 ENV COC_CONFIG=/data/coc/config.json
 
-RUN mkdir -p /data/coc && chown -R coc:coc /data/coc
+# Pre-create + chown the directories that named volumes will mount onto.
+# When a named volume mounts an EMPTY directory, docker copies the image's
+# content at that path into the volume — this preserves uid 999 ownership
+# on first volume creation. Existing root-owned volumes are fixed by the
+# entrypoint script's chown -R at runtime startup (see runtime-entrypoint.sh).
+RUN mkdir -p /data/coc/runtime/reward-manifests /data/coc/runtime/storage \
+    && chown -R coc:coc /data/coc
 VOLUME /data/coc
 
-USER coc
-ENTRYPOINT ["node", "--experimental-strip-types"]
+# NOTE: We deliberately stay USER root here so the entrypoint can chown
+# the mounted volume on startup (see runtime-entrypoint.sh comment).
+# The script drops to uid 999 (coc) via `su` before exec'ing node.
+ENTRYPOINT ["/usr/local/bin/runtime-entrypoint.sh", "node", "--experimental-strip-types"]
 CMD ["runtime/coc-agent.ts"]
