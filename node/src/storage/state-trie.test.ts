@@ -633,3 +633,120 @@ test("PersistentStateTrie.forkForDryRun: parent checkpoint stack unaffected", as
   await trie.commit()
   assert.strictEqual(checkpointStackDepth(trie), 0)
 })
+
+// stateRoot() committedStateRoot fallback — covers the 2026-04-29 testnet
+// recurring corruption where lastStateRoot went null mid-run while disk
+// STATE_ROOT_KEY was intact, causing the p2p state-snapshot endpoint to
+// fail and BFT to stall for 2 hours.
+
+test("PersistentStateTrie: stateRoot() falls back to committedStateRoot when lastStateRoot is nullified", async () => {
+  const db = new MemoryDatabase()
+  const trie = new PersistentStateTrie(db)
+  await trie.init()
+
+  // Bring the trie to a committed state root.
+  await trie.put("0xdead0000000000000000000000000000dead0001", testAccount)
+  const committed = await trie.commit()
+  assert.strictEqual(trie.stateRoot(), committed, "committed root visible immediately")
+
+  // Simulate the GH#3 incident: a put() invalidates lastStateRoot, but no
+  // subsequent commit() refreshes it. Without the fallback, exportStateSnapshot
+  // would throw "no committed root" even though disk holds `committed`.
+  await trie.put("0xdead0000000000000000000000000000dead0002", { ...testAccount, nonce: 9n })
+
+  // Without commit, lastStateRoot is null — but stateRoot() must still
+  // return the last persisted root for snapshot consumers.
+  const fallback = trie.stateRoot()
+  assert.strictEqual(
+    fallback,
+    committed,
+    "stateRoot() returns committedStateRoot when lastStateRoot is nullified",
+  )
+})
+
+test("PersistentStateTrie: stateRoot() returns null on a fresh trie before any commit", async () => {
+  const db = new MemoryDatabase()
+  const trie = new PersistentStateTrie(db)
+  await trie.init()
+  // Never written, never committed — must still return null (genesis case).
+  assert.strictEqual(trie.stateRoot(), null)
+})
+
+test("PersistentStateTrie: stateRoot() restored after init() loads STATE_ROOT_KEY", async () => {
+  const tmpDir = mkdtempSync(join(tmpdir(), "coc-trie-fallback-"))
+  try {
+    let committed: string
+
+    // First instance: write + commit, then close.
+    {
+      const db1 = new LevelDatabase(tmpDir, "state")
+      await db1.open()
+      const trie1 = new PersistentStateTrie(db1)
+      await trie1.init()
+      await trie1.put("0xdead0000000000000000000000000000dead0001", testAccount)
+      committed = await trie1.commit()
+      await db1.close()
+    }
+
+    // Second instance: load committedStateRoot from disk via init().
+    const db2 = new LevelDatabase(tmpDir, "state")
+    await db2.open()
+    const trie2 = new PersistentStateTrie(db2)
+    await trie2.init()
+
+    // Now simulate a put without commit — lastStateRoot becomes null,
+    // but committedStateRoot was just loaded from disk in init().
+    await trie2.put("0xdead0000000000000000000000000000dead0002", { ...testAccount, nonce: 7n })
+    assert.strictEqual(
+      trie2.stateRoot(),
+      committed,
+      "stateRoot() falls back to disk-loaded committedStateRoot after init()",
+    )
+
+    await db2.close()
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true })
+  }
+})
+
+test("PersistentStateTrie: revert with null checkpointStateRoot routes through invalidator", async () => {
+  const db = new MemoryDatabase()
+  const trie = new PersistentStateTrie(db)
+  await trie.init()
+  await trie.put("0xdead0000000000000000000000000000dead0001", testAccount)
+  const committed = await trie.commit()
+
+  // Simulate the pathological case: invalidate lastStateRoot via put(),
+  // then checkpoint() with the now-null lastStateRoot, then revert.
+  // checkpointStateRoot will be null at revert time, so revert() must
+  // route through invalidateLastStateRoot rather than silently nulling
+  // (which would skip the call-site capture).
+  await trie.put("0xdead0000000000000000000000000000dead0002", { ...testAccount, nonce: 9n })
+  await trie.checkpoint()
+  await trie.revert()
+
+  // Stack capture path: stateRoot() should still return committed
+  // (the disk value) because committedStateRoot wasn't touched.
+  assert.strictEqual(trie.stateRoot(), committed)
+})
+
+test("PersistentStateTrie: forkForDryRun inherits committedStateRoot for fallback semantics", async () => {
+  const db = new MemoryDatabase()
+  const parent = new PersistentStateTrie(db)
+  await parent.init()
+  await parent.put("0xdead0000000000000000000000000000dead0001", testAccount)
+  const committed = await parent.commit()
+
+  const fork = await parent.forkForDryRun()
+  // Inherits both lastStateRoot and committedStateRoot.
+  assert.strictEqual(fork.stateRoot(), committed, "fork starts with parent's committed root")
+
+  // After a put on the fork, fork.lastStateRoot is null but
+  // committedStateRoot is still inherited — stateRoot() falls back.
+  await fork.put("0xdead0000000000000000000000000000dead0002", { ...testAccount, nonce: 11n })
+  assert.strictEqual(
+    fork.stateRoot(),
+    committed,
+    "fork stateRoot() also falls back when its lastStateRoot is nullified",
+  )
+})

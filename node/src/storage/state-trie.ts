@@ -171,6 +171,35 @@ export class PersistentStateTrie implements IStateTrie {
   private readonly maxCachedTries: number
   private readonly maxAccountCache: number
   private lastStateRoot: string | null = null
+  /**
+   * Last state root we know reached LevelDB via STATE_ROOT_KEY.
+   *
+   * `lastStateRoot` is invalidated to null on every put/delete (see lines below)
+   * and re-set only by `commit()`. If `put()` happens but no `commit()` follows
+   * (e.g. a stuck or buggy code path), `lastStateRoot` stays null forever and
+   * downstream readers like `exportStateSnapshot` throw "no committed root"
+   * even though disk holds a perfectly valid root from the previous block.
+   *
+   * Observed 2026-04-29 testnet incident: ~3.5 hours after Phase B deploy,
+   * node-1's `lastStateRoot` went null mid-run with no OOM/RPC trigger; the
+   * on-disk STATE_ROOT_KEY was intact (root node present in `s:` namespace).
+   * BFT could no longer compute speculative roots → 2-hour chain stall.
+   *
+   * `committedStateRoot` mirrors STATE_ROOT_KEY's value across init() and
+   * commit() and is NEVER nulled by put/delete/revert. `stateRoot()` falls
+   * back to it when `lastStateRoot` is null, returning the last known-good
+   * persisted root instead of null. Callers that need the in-memory live
+   * root should use `computeStateRoot()` (Phase B addition).
+   */
+  private committedStateRoot: string | null = null
+  /**
+   * Throttle for null-read instrumentation: only emit one warn per second
+   * to avoid log spam if a caller keeps reading stateRoot() during a stuck
+   * apply window. The captured stack at last-nullify lets us identify the
+   * root-cause call site when this fires in production.
+   */
+  private lastNullifyStack: string | null = null
+  private lastNullReadWarnAtMs = 0
 
   private trieDb: TrieDBAdapter
 
@@ -222,6 +251,7 @@ export class PersistentStateTrie implements IStateTrie {
           await candidate.get(new Uint8Array(20))
           this.trie = candidate
           this.lastStateRoot = rootHex
+          this.committedStateRoot = rootHex
         } catch (err) {
           // Corrupted state root on disk — start with fresh trie instead of crashing
           log.warn("corrupted state root in storage, starting fresh trie", {
@@ -280,7 +310,7 @@ export class PersistentStateTrie implements IStateTrie {
     this.evictAccountCache()
     this.accountCache.set(address, { ...state })
     this.dirtyAddresses.add(address)
-    this.lastStateRoot = null // Invalidate cached root
+    this.invalidateLastStateRoot("put")
   }
 
   async delete(address: string): Promise<void> {
@@ -289,7 +319,7 @@ export class PersistentStateTrie implements IStateTrie {
     this.accountCache.delete(address)
     this.dirtyAddresses.delete(address)
     this.storageTries.delete(address)
-    this.lastStateRoot = null
+    this.invalidateLastStateRoot("delete")
   }
 
   async setStateRoot(root: string, opts?: { persist?: boolean }): Promise<void> {
@@ -303,7 +333,25 @@ export class PersistentStateTrie implements IStateTrie {
     if (opts?.persist !== false) {
       const encoder = new TextEncoder()
       await this.db.put(STATE_ROOT_KEY, encoder.encode(root))
+      this.committedStateRoot = root
     }
+  }
+
+  /**
+   * Invalidate the cached `lastStateRoot` and capture the call site for
+   * post-mortem instrumentation. The committedStateRoot is left untouched —
+   * `stateRoot()` will fall back to it so downstream readers get the last
+   * persisted value rather than null.
+   *
+   * Capturing `Error().stack` is cheap relative to the put/delete it follows
+   * (single allocation, no symbolication until printed). We hold onto the
+   * string so the next `stateRoot()` returning the fallback can attribute
+   * blame on its first throttled warn.
+   */
+  private invalidateLastStateRoot(reason: "put" | "delete" | "revert"): void {
+    this.lastStateRoot = null
+    // Stack capture is a no-op until we read .stack; cheap to keep around.
+    this.lastNullifyStack = new Error(`lastStateRoot nullified by ${reason}`).stack ?? null
   }
 
   async hasStateRoot(root: string): Promise<boolean> {
@@ -463,16 +511,41 @@ export class PersistentStateTrie implements IStateTrie {
     // root node simply wasn't there). The outer commit handles the persist.
     if (!this.trie.hasCheckpoints()) {
       await this.db.put(STATE_ROOT_KEY, encoder.encode(this.lastStateRoot))
+      this.committedStateRoot = this.lastStateRoot
     }
 
     return this.lastStateRoot
   }
 
   /**
-   * Get the last committed state root without recomputing.
+   * Get the last cached state root.
+   *
+   * Returns `lastStateRoot` when valid, or falls back to `committedStateRoot`
+   * (the last value persisted to STATE_ROOT_KEY) when `lastStateRoot` has
+   * been invalidated by an uncommitted put/delete or a revert against a
+   * pre-genesis checkpoint. The fallback path is throttle-warned with the
+   * captured `lastNullifyStack` so we can identify the offending caller in
+   * production — e.g. the recurring node-1 corruption on 2026-04-29 testnet.
+   *
+   * Never returns null when STATE_ROOT_KEY has ever been persisted on this
+   * instance, which is the contract `exportStateSnapshot` and the BFT
+   * `speculativelyComputeStateRoot` need.
    */
   stateRoot(): string | null {
-    return this.lastStateRoot
+    if (this.lastStateRoot !== null) return this.lastStateRoot
+    if (this.committedStateRoot === null) return null
+    // Fallback path: lastStateRoot is invalidated, but we know a
+    // committed root was on disk. Warn (throttled) so production logs
+    // record the call site that nullified us.
+    const nowMs = Date.now()
+    if (nowMs - this.lastNullReadWarnAtMs > 1_000) {
+      this.lastNullReadWarnAtMs = nowMs
+      log.warn("stateRoot() falling back to committedStateRoot (lastStateRoot is null)", {
+        committedStateRoot: this.committedStateRoot,
+        nullifyStack: this.lastNullifyStack ?? "<unknown — nulled before instrumentation>",
+      })
+    }
+    return this.committedStateRoot
   }
 
   computeStateRoot(): string {
@@ -521,8 +594,16 @@ export class PersistentStateTrie implements IStateTrie {
     // Invalidate caches and dirty tracking on revert
     this.accountCache.clear()
     this.dirtyAddresses.clear()
-    // Restore to pre-checkpoint state root (not null — null breaks snapshot requests)
-    this.lastStateRoot = this.checkpointStateRoot
+    // Restore to pre-checkpoint state root. If checkpointStateRoot was null
+    // (e.g. checkpoint() was called while lastStateRoot was already
+    // invalidated by a prior put/delete), this leaves lastStateRoot null —
+    // route through the instrumented helper so we capture the call site for
+    // the eventual fallback warn in stateRoot().
+    if (this.checkpointStateRoot !== null) {
+      this.lastStateRoot = this.checkpointStateRoot
+    } else {
+      this.invalidateLastStateRoot("revert")
+    }
     this.checkpointStateRoot = null
   }
 
@@ -703,6 +784,7 @@ export class PersistentStateTrie implements IStateTrie {
     })
     forked.trie = this.trie.shallowCopy(true)
     forked.lastStateRoot = this.lastStateRoot
+    forked.committedStateRoot = this.committedStateRoot
     return forked
   }
 
@@ -732,6 +814,7 @@ export class PersistentStateTrie implements IStateTrie {
     // with the parent's committed root but a fresh (empty) CheckpointDB.
     forked.trie = this.trie.shallowCopy(false)
     forked.lastStateRoot = this.lastStateRoot
+    forked.committedStateRoot = this.committedStateRoot
     // Dry-run mode: intercept putCode into per-fork scratch + auto-checkpoint
     // newly-opened storage tries so their puts stay in-memory (otherwise
     // they flow through per-address TrieDBAdapter straight to LevelDB).
