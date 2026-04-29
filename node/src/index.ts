@@ -731,18 +731,46 @@ if (bftEnabled) {
     reader.on("validatorAdded", applyActiveSet)
     reader.on("validatorRemoved", applyActiveSet)
 
-    // Fire-and-forget init; failures are logged but don't block node startup.
-    reader.init()
-      .then(() => {
-        applyActiveSet()
-        reader.start()
-      })
-      .catch((err) => {
-        log.error("ValidatorRegistryReader init failed; falling back to hardcoded validators", {
-          address: config.validatorRegistryAddress,
-          error: String(err),
-        })
-      })
+    // Init can race with our own RPC server: when the reader points at
+    // 127.0.0.1:<rpcPort> (the default), it fires before startRpcServer
+    // is called below at the bottom of this file, so the first init()
+    // hits ECONNREFUSED. Solution: bound retry with backoff. The reader's
+    // poll loop also re-scans on every tick, so even a permanent init()
+    // failure self-heals once RPC comes up — but eager retry shortens the
+    // gap between node startup and the first BFT validator-set update.
+    const initWithRetry = async (): Promise<void> => {
+      const MAX_ATTEMPTS = 6
+      const BACKOFF_MS = 5_000
+      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        try {
+          await reader.init()
+          applyActiveSet()
+          reader.start()
+          return
+        } catch (err) {
+          const isLast = attempt === MAX_ATTEMPTS
+          log.warn("ValidatorRegistryReader init attempt failed", {
+            attempt,
+            maxAttempts: MAX_ATTEMPTS,
+            error: String(err),
+            willRetry: !isLast,
+          })
+          if (isLast) {
+            log.error("ValidatorRegistryReader init exhausted retries; starting poll loop in fallback mode", {
+              address: config.validatorRegistryAddress,
+            })
+            // Even after init failure, run start() so the periodic
+            // scanToTip eventually picks up the active set when RPC
+            // becomes reachable. Without this, the reader is permanently
+            // dead and the BFT set is stuck on hardcoded fallback.
+            reader.start()
+            return
+          }
+          await new Promise((r) => setTimeout(r, BACKOFF_MS))
+        }
+      }
+    }
+    void initWithRetry()
   }
 }
 
