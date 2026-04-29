@@ -51,6 +51,8 @@ import { metrics } from "./metrics.ts"
 import { BftSlashingHandler } from "./bft-slashing.ts"
 import { EvidenceReason } from "../../services/verifier/anti-cheat-policy.ts"
 import { hashSlashEvidencePayload, resolveEvidencePaths } from "../../services/common/slash-evidence.ts"
+import { ValidatorRegistryReader } from "../../runtime/lib/validator-registry-reader.ts"
+import type { ValidatorEntry } from "../../runtime/lib/validator-registry-reader.ts"
 
 const log = createLogger("node")
 
@@ -337,6 +339,10 @@ const bftSlashingHandler = hasGovernance(chain)
 
 // Initialize BFT coordinator after P2P is ready
 if (bftEnabled) {
+  // Default validators come from hardcoded config. When
+  // validatorRegistryAddress is set (Sprint 4 of Phase F+G), the
+  // ValidatorRegistryReader below replaces this initial set with the
+  // contract's active set and keeps it in sync via add/remove events.
   const validators = config.validators.map((id) => ({
     id,
     stake: 1_000_000_000_000_000_000n, // 1 ETH default stake
@@ -684,6 +690,60 @@ if (bftEnabled) {
     },
   })
   log.info("BFT consensus enabled", { validators: config.validators.length })
+
+  // Sprint 4 of Phase F+G: when a ValidatorRegistry contract is configured,
+  // bootstrap the BFT validator set from it and keep it in sync via event
+  // polling. The hardcoded `validators` config above remains the fallback
+  // path (no `validatorRegistryAddress` ⇒ this branch is skipped).
+  if (config.validatorRegistryAddress) {
+    const reader = new ValidatorRegistryReader({
+      rpcUrl: process.env.COC_VALIDATOR_REGISTRY_RPC_URL || `http://127.0.0.1:${config.rpcPort}`,
+      address: config.validatorRegistryAddress as `0x${string}`,
+      persistPath: join(config.dataDir, "validator-registry-reader.state.json"),
+      pollIntervalMs: config.validatorRegistryPollIntervalMs,
+      fromBlock: config.validatorRegistryFromBlock !== undefined
+        ? BigInt(config.validatorRegistryFromBlock)
+        : undefined,
+    })
+
+    const applyActiveSet = () => {
+      const active = reader.getActiveSet()
+      if (active.length === 0) {
+        log.warn("ValidatorRegistry returned empty active set; keeping fallback validators", {
+          fallbackCount: validators.length,
+        })
+        return
+      }
+      const next = active.map((e: ValidatorEntry) => ({
+        // Match BFT's lowercase-address convention. nodeId's trailing 20 B
+        // hex is the validator's EVM address (per ValidatorRegistry's
+        // keccak256(pubkey[1:]) convention).
+        id: ("0x" + e.nodeId.slice(-40)).toLowerCase(),
+        stake: e.stake,
+      }))
+      bftCoordinator?.updateValidators(next)
+      log.info("BFT validator set updated from ValidatorRegistry", {
+        count: next.length,
+        ids: next.map((v) => v.id),
+      })
+    }
+
+    reader.on("validatorAdded", applyActiveSet)
+    reader.on("validatorRemoved", applyActiveSet)
+
+    // Fire-and-forget init; failures are logged but don't block node startup.
+    reader.init()
+      .then(() => {
+        applyActiveSet()
+        reader.start()
+      })
+      .catch((err) => {
+        log.error("ValidatorRegistryReader init failed; falling back to hardcoded validators", {
+          address: config.validatorRegistryAddress,
+          error: String(err),
+        })
+      })
+  }
 }
 
 const ipfsStore = new IpfsBlockstore(config.storageDir)
