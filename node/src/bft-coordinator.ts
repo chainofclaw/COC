@@ -434,6 +434,42 @@ export class BftCoordinator {
     }
   }
 
+  /**
+   * Diagnostic-only dump: emit the full per-validator vote table at the
+   * moment a round times out. Lets the operator see exactly which
+   * (blockHash, stateRoot) pairs each validator endorsed, plus the
+   * proposed block's tx hashes. Together these are sufficient to replay
+   * the divergent block locally and identify the source of
+   * non-determinism (Phase B pair-quorum rejection mode, observed
+   * 2026-04-29 testnet at heights 137,965 and 139,021).
+   *
+   * Goes to log.warn (not error) — a timeout is unfortunate but expected
+   * under the protocol's guarantees, and the log entry is a diagnostic
+   * artifact, not a runtime error.
+   */
+  private dumpDivergenceDiagnostics(round: BftRound): void {
+    const dumpVotes = (votes: Map<string, { blockHash: Hex; stateRoot?: Hex }>) =>
+      [...votes.entries()].map(([id, v]) => ({
+        id,
+        blockHash: v.blockHash,
+        stateRoot: v.stateRoot ?? "<unset>",
+      }))
+    const proposed = round.state.proposedBlock
+    log.warn("BFT divergence diagnostic — Phase B pair-quorum rejected at timeout", {
+      height: round.state.height.toString(),
+      phase: round.state.phase,
+      proposedBlockHash: proposed?.hash ?? "<no proposed block>",
+      proposedTxCount: proposed?.txs.length ?? 0,
+      // Tx hashes are the keccak of the raw bytes — we don't have a precomputed
+      // hash on ChainBlock.txs (which is `string[]` of raw RLP). Skip per-tx
+      // detail in the log to keep the entry compact; the raw txs are still
+      // available via eth_getBlockByNumber if a deeper replay is needed.
+      proposedProposer: proposed?.proposer ?? "<none>",
+      prepareVotes: dumpVotes(round.state.prepareVotes),
+      commitVotes: dumpVotes(round.state.commitVotes),
+    })
+  }
+
   private startTimeout(): void {
     if (!this.activeRound) return
 
@@ -446,6 +482,16 @@ export class BftCoordinator {
           height: this.activeRound.state.height.toString(),
           phase: this.activeRound.state.phase,
         })
+        // Diagnostic dump for the recurring "Phase B pair-quorum rejection"
+        // testnet stalls (2026-04-29 onward): when a round times out in
+        // prepare phase with N≥2 prepare votes, the failure mode is almost
+        // always "validators agree on blockHash but disagree on stateRoot",
+        // i.e. deterministic execution divergence. Dump the full vote map
+        // so we can spot the divergent triple, plus the proposed block's
+        // tx hashes so we can replay locally and find the non-determinism
+        // source. Cheap (a few hundred bytes per timeout); only fires on
+        // actual timeouts so log volume stays bounded.
+        this.dumpDivergenceDiagnostics(this.activeRound)
         this.activeRound.fail()
         this.clearRound()
         this.processDeferredBlock().catch((err) => {
