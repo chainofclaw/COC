@@ -69,6 +69,31 @@ export interface BftCoordinatorConfig {
   onPeerQuorumDiverged?: (
     info: { height: bigint; peerBlockHash: Hex; peerStateRoot: Hex; localStateRoot?: Hex },
   ) => void
+  /**
+   * Phase H5: callback fired when peer-quorum divergence persists across
+   * `persistentDivergenceThreshold` consecutive BFT rounds. The H4 snap-
+   * sync didn't cure us — usually because local leveldb is on-disk
+   * corrupted and incremental block replay re-produces the same divergent
+   * state. Parent wires this to `consensus.forceSnapSync()` which imports
+   * a full state snapshot from peers (overwrites local trie state),
+   * eliminating the manual `rsync leveldb-state+leveldb-chain` recovery
+   * we've been doing by hand. Rate limited at the parent (default 15 min).
+   *
+   * Counter resets on any successful round finalization (early or full
+   * commit) so a transient divergence storm doesn't escalate.
+   */
+  onPersistentDivergence?: (info: {
+    height: bigint
+    consecutiveCount: number
+    lastPeerBlockHash: Hex
+    lastPeerStateRoot: Hex
+  }) => void
+  /**
+   * Number of consecutive peer-quorum divergences before triggering
+   * `onPersistentDivergence`. Default 3. Each successful finalize resets
+   * the counter.
+   */
+  persistentDivergenceThreshold?: number
 }
 
 /**
@@ -86,6 +111,12 @@ export class BftCoordinator {
   private lastFinalizedAtMs: number = Date.now()
   private warnedNoVerifier = false
   private livenessWatchdogTimer: ReturnType<typeof setInterval> | null = null
+  // Phase H5: counts consecutive BFT rounds where peers reached quorum on
+  // a state we couldn't reproduce. Resets on any successful local finalize.
+  // When the counter crosses persistentDivergenceThreshold, the parent is
+  // notified to escalate from incremental sync (H4) to full state-snapshot
+  // import (H5).
+  private consecutivePeerDivergenceCount = 0
   readonly equivocationDetector = new EquivocationDetector()
 
   constructor(cfg: BftCoordinatorConfig) {
@@ -319,6 +350,9 @@ export class BftCoordinator {
           const block = this.activeRound.state.proposedBlock
           this.lastFinalizedHeight = msg.height
           this.lastFinalizedAtMs = Date.now()
+          // Phase H5: successful finalize means peers and we agree —
+          // reset the persistent-divergence counter.
+          this.consecutivePeerDivergenceCount = 0
           this.startLingerBroadcast(msg.height, block.hash)
           this.clearRound()
           try {
@@ -346,6 +380,9 @@ export class BftCoordinator {
           const block = this.activeRound.state.proposedBlock
           this.lastFinalizedHeight = msg.height
           this.lastFinalizedAtMs = Date.now()
+          // Phase H5: successful finalize means peers and we agree —
+          // reset the persistent-divergence counter.
+          this.consecutivePeerDivergenceCount = 0
           this.startLingerBroadcast(msg.height, block.hash)
           this.clearRound()
           try {
@@ -591,25 +628,66 @@ export class BftCoordinator {
         // proposer round-robin eventually rotates back to the lagging
         // node and the chain deadlocks (2026-04-30 testnet stall at
         // height 146,668).
-        if (this.cfg.onPeerQuorumDiverged) {
-          try {
-            const divergence = this.detectPeerQuorumDivergence(this.activeRound)
-            if (divergence) {
-              log.warn("BFT peer-quorum divergence detected — triggering catch-up", {
-                height: this.activeRound.state.height.toString(),
-                peerBlockHash: divergence.peerBlockHash,
-                peerStateRoot: divergence.peerStateRoot,
-                localStateRoot: divergence.localStateRoot ?? "<unset>",
-              })
+        //
+        // Phase H5: also bump the consecutive-divergence counter; when it
+        // crosses the threshold (default 3) we notify the parent to
+        // escalate from incremental sync to full state-snapshot import
+        // (the in-process equivalent of the manual leveldb rsync recovery
+        // we've been doing by hand on the testnet).
+        const divergence = (this.cfg.onPeerQuorumDiverged || this.cfg.onPersistentDivergence)
+          ? (() => {
+              try {
+                return this.detectPeerQuorumDivergence(this.activeRound)
+              } catch (err) {
+                log.warn("BFT detectPeerQuorumDivergence threw", { error: String(err) })
+                return null
+              }
+            })()
+          : null
+        if (divergence) {
+          if (this.cfg.onPeerQuorumDiverged) {
+            log.warn("BFT peer-quorum divergence detected — triggering catch-up", {
+              height: this.activeRound.state.height.toString(),
+              peerBlockHash: divergence.peerBlockHash,
+              peerStateRoot: divergence.peerStateRoot,
+              localStateRoot: divergence.localStateRoot ?? "<unset>",
+            })
+            try {
               this.cfg.onPeerQuorumDiverged({
                 height: this.activeRound.state.height,
                 peerBlockHash: divergence.peerBlockHash,
                 peerStateRoot: divergence.peerStateRoot,
                 localStateRoot: divergence.localStateRoot,
               })
+            } catch (err) {
+              log.warn("BFT onPeerQuorumDiverged callback threw", { error: String(err) })
             }
-          } catch (err) {
-            log.warn("BFT onPeerQuorumDiverged callback threw", { error: String(err) })
+          }
+
+          // Phase H5: track consecutive divergences and escalate at threshold.
+          this.consecutivePeerDivergenceCount += 1
+          const threshold = this.cfg.persistentDivergenceThreshold ?? 3
+          if (
+            this.cfg.onPersistentDivergence
+            && this.consecutivePeerDivergenceCount >= threshold
+          ) {
+            log.error("BFT persistent peer-quorum divergence — escalating to full state-snapshot import", {
+              height: this.activeRound.state.height.toString(),
+              consecutiveCount: this.consecutivePeerDivergenceCount,
+              threshold,
+              lastPeerBlockHash: divergence.peerBlockHash,
+              lastPeerStateRoot: divergence.peerStateRoot,
+            })
+            try {
+              this.cfg.onPersistentDivergence({
+                height: this.activeRound.state.height,
+                consecutiveCount: this.consecutivePeerDivergenceCount,
+                lastPeerBlockHash: divergence.peerBlockHash,
+                lastPeerStateRoot: divergence.peerStateRoot,
+              })
+            } catch (err) {
+              log.warn("BFT onPersistentDivergence callback threw", { error: String(err) })
+            }
           }
         }
 

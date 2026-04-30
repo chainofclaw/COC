@@ -410,6 +410,65 @@ export class ConsensusEngine {
     await this.trySync()
   }
 
+  /**
+   * Phase H5: Force a state-snapshot import from peers, bypassing the
+   * usual gap-based heuristics. Used when the BFT layer has detected
+   * persistent divergence — i.e. snap-sync wouldn't trigger via
+   * `requestSyncNow` because the gap is small (a few blocks), but the
+   * local trie is corrupted at-rest and incremental block replay can't
+   * recover it. Equivalent in effect to today's manual leveldb rsync
+   * recovery, but in-process.
+   *
+   * Returns true when the snapshot import succeeded and the local tip
+   * advanced; false when no peer responded with a usable snapshot.
+   * Idempotent: a sync already in flight short-circuits to false rather
+   * than racing.
+   */
+  async forceSnapSync(): Promise<boolean> {
+    if (!this.cfg.enableSnapSync || !this.snapSync) {
+      log.warn("forceSnapSync called but snap-sync disabled or unavailable")
+      return false
+    }
+    if (this.syncInFlight) {
+      log.info("forceSnapSync skipped — sync already in flight")
+      return false
+    }
+    this.syncInFlight = true
+    try {
+      const snapshots = await this.p2p.fetchSnapshots()
+      // Pick the snapshot with the highest tip — that's the most-advanced
+      // peer's view we can trust to import. Empty/equal heights still get
+      // a chance via trySnapSync's per-peer voting downstream.
+      let best: { blocks: ChainBlock[] } | null = null
+      let bestHeight = -1n
+      for (const snap of snapshots) {
+        const tip = snap.blocks?.[snap.blocks.length - 1]
+        if (!tip) continue
+        const h = BigInt(tip.number)
+        if (h > bestHeight) {
+          bestHeight = h
+          best = snap
+        }
+      }
+      if (!best) {
+        log.warn("forceSnapSync: no peer snapshot available")
+        return false
+      }
+      log.warn("forceSnapSync: starting state-snapshot import from peers", {
+        bestPeerTipHeight: bestHeight.toString(),
+        localHeight: (await Promise.resolve(this.chain.getHeight())).toString(),
+      })
+      const ok = await this.trySnapSync(best)
+      log.warn("forceSnapSync: complete", {
+        ok,
+        localHeightAfter: (await Promise.resolve(this.chain.getHeight())).toString(),
+      })
+      return ok
+    } finally {
+      this.syncInFlight = false
+    }
+  }
+
   private async trySync(): Promise<void> {
     if (this.syncInFlight) return
     this.syncInFlight = true

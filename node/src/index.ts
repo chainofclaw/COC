@@ -208,6 +208,13 @@ let bftCoordinator: BftCoordinator | undefined
 // Module-scope so the cooldown survives across BftCoordinator callbacks.
 let lastPeerDivergenceSyncMs = 0
 const PEER_DIVERGENCE_SYNC_COOLDOWN_MS = 60_000
+
+// Phase H5: rate-limit forced state-snapshot import (the "manual rsync"
+// equivalent). Much longer cooldown than H4 — escalation should NOT happen
+// often and a misfiring recovery loop overwriting state would be worse than
+// just letting the chain stay stuck for human intervention.
+let lastForceSnapSyncMs = 0
+const FORCE_SNAP_SYNC_COOLDOWN_MS = 15 * 60 * 1000
 const bftEnabled = config.enableBft && config.validators.length >= 3
 
 // State snapshot export cache (30s TTL, keyed by tip hash)
@@ -744,6 +751,44 @@ if (bftEnabled) {
         log.warn("BFT peer-quorum requestSyncNow failed", { error: String(err) })
       })
     },
+    persistentDivergenceThreshold: process.env.COC_PERSISTENT_DIVERGENCE_THRESHOLD
+      ? Number(process.env.COC_PERSISTENT_DIVERGENCE_THRESHOLD)
+      : undefined,
+    onPersistentDivergence: process.env.COC_BFT_AUTO_RECOVERY === "1"
+      ? (info) => {
+          // Phase H5: H4's incremental snap-sync didn't cure the divergence
+          // — usually because the local leveldb is on-disk corrupted and
+          // block replay re-produces the same divergent state. Escalate to
+          // forceSnapSync which imports a full state snapshot from peers
+          // (the in-process equivalent of `rsync leveldb-state +
+          // leveldb-chain` we've been doing manually).
+          //
+          // Default-OFF in production via COC_BFT_AUTO_RECOVERY=1 env gate
+          // because a misfiring recovery loop overwriting good state would
+          // be catastrophic. testnet enables to validate the path.
+          if (!consensus) return
+          const nowMs = Date.now()
+          const sinceLastMs = nowMs - lastForceSnapSyncMs
+          if (sinceLastMs < FORCE_SNAP_SYNC_COOLDOWN_MS) {
+            log.warn("BFT persistent-divergence forceSnapSync skipped (cooldown)", {
+              height: info.height.toString(),
+              consecutiveCount: info.consecutiveCount,
+              remainingMs: FORCE_SNAP_SYNC_COOLDOWN_MS - sinceLastMs,
+            })
+            return
+          }
+          lastForceSnapSyncMs = nowMs
+          log.error("BFT persistent peer-quorum divergence — triggering forceSnapSync (auto-recovery)", {
+            height: info.height.toString(),
+            consecutiveCount: info.consecutiveCount,
+            lastPeerBlockHash: info.lastPeerBlockHash,
+            lastPeerStateRoot: info.lastPeerStateRoot,
+          })
+          consensus.forceSnapSync().catch((err) => {
+            log.error("BFT forceSnapSync failed", { error: String(err) })
+          })
+        }
+      : undefined,
   })
   log.info("BFT consensus enabled", { validators: config.validators.length })
 
