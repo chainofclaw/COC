@@ -580,18 +580,18 @@ test("PersistentStateTrie.forkForDryRun: parent root unchanged by fork mutations
   await trie.checkpoint()
   await trie.put("0xcafe000000000000000000000000000000cafe00", { ...testAccount, nonce: 7n })
   await trie.commit()
-  const parentRootBefore = trie.computeStateRoot()
+  const parentRootBefore = await trie.computeStateRoot()
 
   const fork = await trie.forkForDryRun()
-  const forkRootBefore = fork.computeStateRoot()
+  const forkRootBefore = await fork.computeStateRoot()
   assert.strictEqual(forkRootBefore, parentRootBefore, "fork starts at parent's committed root")
 
   // Diverge the fork.
   await fork.put("0xcafe000000000000000000000000000000cafe01", { ...testAccount, nonce: 99n })
-  const forkRootAfter = fork.computeStateRoot()
+  const forkRootAfter = await fork.computeStateRoot()
   assert.notStrictEqual(forkRootAfter, parentRootBefore, "fork root advanced after fork put")
 
-  const parentRootAfter = trie.computeStateRoot()
+  const parentRootAfter = await trie.computeStateRoot()
   assert.strictEqual(
     parentRootAfter,
     parentRootBefore,
@@ -797,5 +797,46 @@ test("PersistentStateTrie: forkForDryRun inherits committedStateRoot for fallbac
     fork.stateRoot(),
     committed,
     "fork stateRoot() also falls back when its lastStateRoot is nullified",
+  )
+})
+
+test("PersistentStateTrie: computeStateRoot syncs dirty storage tries before reading root", async () => {
+  // Reproduces the 2026-04-30 testnet bug: empty block 140,392 mutates
+  // BEACON_ROOTS storage via prepareVmForExecution. The storage trie
+  // root changed but the account record on the parent trie still
+  // pointed at the OLD storageRoot. computeStateRoot() returned the
+  // STALE account-trie root, so per-node speculative-compute results
+  // diverged. With 3-validator equal-stake BFT (quorum strictly > 2/3
+  // → all 3 must agree), one divergence stalled the chain.
+  //
+  // Fix: computeStateRoot() now syncs dirty storage tries into the
+  // account trie (idempotent, no checkpoint pop, no LevelDB write)
+  // before reading root.
+  const db = new MemoryDatabase()
+  const trie = new PersistentStateTrie(db)
+  await trie.init()
+
+  // Set up an account, then commit so it has a baseline.
+  const addr = "0xdead0000000000000000000000000000dead0001"
+  await trie.put(addr, testAccount)
+  const committed = await trie.commit()
+
+  // Write to its storage. This dirties the address but only the storage
+  // trie root changes; the account record still points at the OLD
+  // (zero) storageRoot until commit() syncs.
+  const slot = "0x" + "00".repeat(31) + "01"
+  const value = "0x" + "00".repeat(31) + "ff"
+  await trie.putStorageAt(addr, slot, value)
+
+  // Without the fix, computeStateRoot() would return the same hash as
+  // `committed` (because the account trie's record for `addr` still
+  // points at the old empty-storage root). With the fix, the dirty
+  // storage trie is synced into the account record and root reflects
+  // the storage write.
+  const computed = await trie.computeStateRoot()
+  assert.notStrictEqual(
+    computed,
+    committed,
+    "computeStateRoot must reflect storage writes (account record synced from dirty storage trie)",
   )
 })

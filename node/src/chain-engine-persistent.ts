@@ -411,7 +411,14 @@ export class PersistentChainEngine {
       // on the fork would flush the isolation frame and defeat the
       // zero-pollution contract, so we read the live root via the dedicated
       // side-effect-free API.
-      return dryTrie.computeStateRoot() as Hex
+      //
+      // computeStateRoot() is async because it syncs dirty storage tries
+      // into the account trie before reading root — without that sync,
+      // the BEACON_ROOTS storage write that prepareVmForExecution does on
+      // every Cancun block isn't reflected in trie.root(), and three
+      // validators dry-running the same empty block produced divergent
+      // stateRoots (testnet stall at height 140,392 on 2026-04-30).
+      return (await dryTrie.computeStateRoot()) as Hex
     } catch (err) {
       log.warn("speculative stateRoot compute failed; voting without stateRoot", {
         height: block.number.toString(),

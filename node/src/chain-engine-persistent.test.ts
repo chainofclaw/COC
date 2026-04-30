@@ -776,7 +776,7 @@ test("speculativelyComputeStateRoot: spec root matches post-apply root", async (
     assert.ok(spec, "speculative root must be defined for a well-formed block")
 
     await ctx.engine.applyBlock(candidate!, true)
-    const applied = ctx.trie.computeStateRoot()
+    const applied = await ctx.trie.computeStateRoot()
     assert.strictEqual(spec, applied, "spec root must equal apply root")
   } finally {
     await ctx.close()
@@ -790,7 +790,7 @@ test("speculativelyComputeStateRoot: zero side effects on main trie and LevelDB"
     const candidate = await ctx.engine.proposeNextBlock(true)
     assert.ok(candidate)
 
-    const rootBefore = ctx.trie.computeStateRoot()
+    const rootBefore = await ctx.trie.computeStateRoot()
     const stackBefore = (ctx.trie as unknown as { trie: { _db: { checkpoints: unknown[] } } }).trie._db.checkpoints.length
 
     // Snapshot all state-related LevelDB keys.
@@ -803,7 +803,7 @@ test("speculativelyComputeStateRoot: zero side effects on main trie and LevelDB"
 
     await ctx.engine.speculativelyComputeStateRoot(candidate!)
 
-    const rootAfter = ctx.trie.computeStateRoot()
+    const rootAfter = await ctx.trie.computeStateRoot()
     const stackAfter = (ctx.trie as unknown as { trie: { _db: { checkpoints: unknown[] } } }).trie._db.checkpoints.length
     const keysAfter: string[] = []
     for (const p of prefixes) {
@@ -844,9 +844,9 @@ test("speculativelyComputeStateRoot: returns undefined on malformed tx, main unc
       parentBeaconBlockRoot: malformed.parentBeaconBlockRoot,
     })
 
-    const rootBefore = ctx.trie.computeStateRoot()
+    const rootBefore = await ctx.trie.computeStateRoot()
     const spec = await ctx.engine.speculativelyComputeStateRoot(malformed)
-    const rootAfter = ctx.trie.computeStateRoot()
+    const rootAfter = await ctx.trie.computeStateRoot()
 
     assert.strictEqual(spec, undefined, "spec must return undefined on EVM throw")
     assert.strictEqual(rootAfter, rootBefore, "main root unchanged despite spec failure")
@@ -866,12 +866,12 @@ test("speculativelyComputeStateRoot: concurrent dry-runs don't cross-pollute", a
     const candidate = await ctx.engine.proposeNextBlock(true)
     assert.ok(candidate)
 
-    const rootBefore = ctx.trie.computeStateRoot()
+    const rootBefore = await ctx.trie.computeStateRoot()
     const [rootA, rootB] = await Promise.all([
       ctx.engine.speculativelyComputeStateRoot(candidate!),
       ctx.engine.speculativelyComputeStateRoot(candidate!),
     ])
-    const rootAfter = ctx.trie.computeStateRoot()
+    const rootAfter = await ctx.trie.computeStateRoot()
 
     assert.ok(rootA, "concurrent call A should return a root")
     assert.ok(rootB, "concurrent call B should return a root")
