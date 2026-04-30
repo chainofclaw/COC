@@ -29,9 +29,26 @@
  * Exits 0 if no differences found, 1 if any differences found.
  */
 
+import { dirname, basename } from "node:path"
 import { LevelDatabase } from "../storage/db.ts"
 import { PersistentStateTrie } from "../storage/state-trie.ts"
 import type { AccountState } from "../storage/state-trie.ts"
+
+/**
+ * `LevelDatabase(dataDir, namespace)` resolves to `dataDir/leveldb-{namespace}`.
+ * The diff tool's CLI accepts the full final path (e.g.
+ * `/var/lib/docker/volumes/docker_node1-data/_data/leveldb-state.broken.20260430T1737Z`),
+ * so we split it back into (dataDir, namespace) here. If the path doesn't
+ * follow the `leveldb-{namespace}` convention we fall back to opening it
+ * directly via a marker namespace pointed at its parent.
+ */
+function openLevelDb(fullPath: string): LevelDatabase {
+  const dir = dirname(fullPath)
+  const base = basename(fullPath)
+  const prefix = "leveldb-"
+  const namespace = base.startsWith(prefix) ? base.slice(prefix.length) : base
+  return new LevelDatabase(dir, namespace)
+}
 
 interface AccountDiff {
   address: string
@@ -81,8 +98,8 @@ const DEFAULT_MAX_STORAGE_SLOTS = 64
 const SAMPLE_LIMIT = 32
 
 export async function compareStates(opts: StateDiffOptions): Promise<StateDiffReport> {
-  const dbA = new LevelDatabase(opts.pathA)
-  const dbB = new LevelDatabase(opts.pathB)
+  const dbA = openLevelDb(opts.pathA)
+  const dbB = openLevelDb(opts.pathB)
   await dbA.open()
   await dbB.open()
   const trieA = new PersistentStateTrie(dbA)

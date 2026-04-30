@@ -20,15 +20,18 @@ import { compareStates } from "./state-diff.ts"
 
 async function withTrie<T>(
   fn: (trie: PersistentStateTrie, dbPath: string) => Promise<T>,
-): Promise<{ result: T; dbPath: string }> {
+): Promise<{ result: T; dbPath: string; leveldbDir: string }> {
   const dbPath = mkdtempSync(join(tmpdir(), "coc-state-diff-test-"))
   const db = new LevelDatabase(dbPath)
+  // LevelDatabase resolves `dataDir/leveldb-default` — that's the path
+  // the diff tool's `openLevelDb` needs to receive verbatim.
+  const leveldbDir = join(dbPath, "leveldb-default")
   await db.open()
   const trie = new PersistentStateTrie(db)
   await trie.init()
   const result = await fn(trie, dbPath)
   await db.close()
-  return { result, dbPath }
+  return { result, dbPath, leveldbDir }
 }
 
 const ADDR_A = "0x" + "11".repeat(20)
@@ -38,7 +41,7 @@ const EMPTY_STORAGE_ROOT = "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001
 const EMPTY_CODE_HASH = "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"
 
 test("Phase H8: compareStates returns zero diffs when both tries identical", async () => {
-  const { dbPath: dbA } = await withTrie(async (trie) => {
+  const { dbPath: dbA, leveldbDir: leveldbDirA } = await withTrie(async (trie) => {
     await trie.put(ADDR_A, {
       nonce: 1n,
       balance: 100n,
@@ -47,7 +50,7 @@ test("Phase H8: compareStates returns zero diffs when both tries identical", asy
     })
     await trie.commit()
   })
-  const { dbPath: dbB } = await withTrie(async (trie) => {
+  const { dbPath: dbB, leveldbDir: leveldbDirB } = await withTrie(async (trie) => {
     await trie.put(ADDR_A, {
       nonce: 1n,
       balance: 100n,
@@ -57,7 +60,7 @@ test("Phase H8: compareStates returns zero diffs when both tries identical", asy
     await trie.commit()
   })
   try {
-    const report = await compareStates({ pathA: dbA, pathB: dbB })
+    const report = await compareStates({ pathA: leveldbDirA, pathB: leveldbDirB })
     assert.strictEqual(report.differingCount, 0)
     assert.strictEqual(report.onlyInACount, 0)
     assert.strictEqual(report.onlyInBCount, 0)
@@ -69,7 +72,7 @@ test("Phase H8: compareStates returns zero diffs when both tries identical", asy
 })
 
 test("Phase H8: surfaces field-level differences (balance + nonce)", async () => {
-  const { dbPath: dbA } = await withTrie(async (trie) => {
+  const { dbPath: dbA, leveldbDir: leveldbDirA } = await withTrie(async (trie) => {
     await trie.put(ADDR_A, {
       nonce: 5n,
       balance: 100n,
@@ -78,7 +81,7 @@ test("Phase H8: surfaces field-level differences (balance + nonce)", async () =>
     })
     await trie.commit()
   })
-  const { dbPath: dbB } = await withTrie(async (trie) => {
+  const { dbPath: dbB, leveldbDir: leveldbDirB } = await withTrie(async (trie) => {
     await trie.put(ADDR_A, {
       nonce: 5n,
       balance: 200n, // different balance
@@ -88,7 +91,7 @@ test("Phase H8: surfaces field-level differences (balance + nonce)", async () =>
     await trie.commit()
   })
   try {
-    const report = await compareStates({ pathA: dbA, pathB: dbB })
+    const report = await compareStates({ pathA: leveldbDirA, pathB: leveldbDirB })
     assert.strictEqual(report.differingCount, 1)
     const diff = report.differingAccounts[0]
     assert.strictEqual(diff.address, ADDR_A.toLowerCase())
@@ -102,7 +105,7 @@ test("Phase H8: surfaces field-level differences (balance + nonce)", async () =>
 })
 
 test("Phase H8: surfaces accounts present only on one side", async () => {
-  const { dbPath: dbA } = await withTrie(async (trie) => {
+  const { dbPath: dbA, leveldbDir: leveldbDirA } = await withTrie(async (trie) => {
     await trie.put(ADDR_A, {
       nonce: 1n,
       balance: 100n,
@@ -117,7 +120,7 @@ test("Phase H8: surfaces accounts present only on one side", async () => {
     })
     await trie.commit()
   })
-  const { dbPath: dbB } = await withTrie(async (trie) => {
+  const { dbPath: dbB, leveldbDir: leveldbDirB } = await withTrie(async (trie) => {
     await trie.put(ADDR_A, {
       nonce: 1n,
       balance: 100n,
@@ -134,7 +137,7 @@ test("Phase H8: surfaces accounts present only on one side", async () => {
     await trie.commit()
   })
   try {
-    const report = await compareStates({ pathA: dbA, pathB: dbB })
+    const report = await compareStates({ pathA: leveldbDirA, pathB: leveldbDirB })
     assert.strictEqual(report.matchingCount, 1, "ADDR_A is identical")
     assert.strictEqual(report.onlyInACount, 1, "ADDR_B is in A only")
     assert.strictEqual(report.onlyInBCount, 1, "ADDR_C is in B only")
@@ -151,7 +154,7 @@ test("Phase H8: enumerates per-slot differences for accounts with divergent stor
   const SLOT_2 = "0x" + "02".padStart(64, "0")
   const SLOT_3 = "0x" + "03".padStart(64, "0")
 
-  const { dbPath: dbA } = await withTrie(async (trie) => {
+  const { dbPath: dbA, leveldbDir: leveldbDirA } = await withTrie(async (trie) => {
     await trie.put(ADDR_A, {
       nonce: 1n,
       balance: 100n,
@@ -162,7 +165,7 @@ test("Phase H8: enumerates per-slot differences for accounts with divergent stor
     await trie.putStorageAt(ADDR_A, SLOT_2, "0x" + "bb".padStart(64, "0"))
     await trie.commit()
   })
-  const { dbPath: dbB } = await withTrie(async (trie) => {
+  const { dbPath: dbB, leveldbDir: leveldbDirB } = await withTrie(async (trie) => {
     await trie.put(ADDR_A, {
       nonce: 1n,
       balance: 100n,
@@ -176,7 +179,7 @@ test("Phase H8: enumerates per-slot differences for accounts with divergent stor
     await trie.commit()
   })
   try {
-    const report = await compareStates({ pathA: dbA, pathB: dbB })
+    const report = await compareStates({ pathA: leveldbDirA, pathB: leveldbDirB })
     // Account-level diff: storageRoot changed.
     assert.strictEqual(report.differingCount, 1)
     assert.ok(report.differingAccounts[0].fieldChanges?.includes("storageRoot"))
