@@ -279,10 +279,13 @@ export class BftCoordinator {
       }
     }
 
-    // Check for equivocation on prepare/commit votes — drop vote if detected
+    // Check for equivocation on prepare/commit votes — drop vote if detected.
+    // Phase I3b: pass msg.signature so the resulting evidence carries both
+    // signatures and can be submitted to the on-chain EquivocationDetector
+    // for permissionless slashing.
     if (msg.type === "prepare" || msg.type === "commit") {
       const evidence = this.equivocationDetector.recordVote(
-        msg.senderId, msg.height, msg.type, msg.blockHash,
+        msg.senderId, msg.height, msg.type, msg.blockHash, msg.signature,
       )
       if (evidence) {
         this.cfg.onEquivocation?.(evidence)
