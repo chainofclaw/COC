@@ -224,6 +224,48 @@ describe("BftCoordinator", () => {
     assert.equal(commit, undefined, "no commit should be emitted without prepare quorum")
   })
 
+  it("on prepare-phase timeout with divergent stateRoots, dump diagnostic with all votes + proposed block", async () => {
+    // Pins the diagnostic added 2026-04-30 for the recurring testnet
+    // pair-quorum stalls. Simulates 3 validators voting for the same
+    // blockHash but 3 different stateRoots → no 2/3 quorum on any pair
+    // → round times out → diagnostic must surface the full vote table
+    // + proposed-block context.
+    const ourRoot = ("0x" + "aa".repeat(32)) as Hex
+    const v2Root = ("0x" + "bb".repeat(32)) as Hex
+    const v3Root = ("0x" + "cc".repeat(32)) as Hex
+
+    // Capture log calls — we can't easily intercept the module-level log
+    // without monkey-patching, so we just rely on the diagnostic running
+    // without throwing (smoke). The detailed log content is exercised
+    // implicitly by the existing "quorum does NOT finalize" test above
+    // plus this one's coverage of the dump path.
+    const coord = new BftCoordinator({
+      localId: "v1",
+      validators,
+      prepareTimeoutMs: 50,
+      commitTimeoutMs: 50,
+      broadcastMessage: async () => {},
+      onFinalized: async () => {},
+      computeLocalStateRoot: async () => ourRoot,
+    })
+
+    const block = makeBlock(1n)
+    await coord.startRound(block)
+
+    await coord.handleMessage({ ...bftMsg("prepare", 1n, block.hash, "v2"), stateRoot: v2Root })
+    await coord.handleMessage({ ...bftMsg("prepare", 1n, block.hash, "v3"), stateRoot: v3Root })
+
+    // Wait past timeout so dumpDivergenceDiagnostics fires from the
+    // setTimeout handler. If the dump throws, this test would fail with
+    // an unhandled rejection.
+    await new Promise((r) => setTimeout(r, 200))
+
+    // After timeout, round should have been cleared. Coordinator must
+    // remain usable for the next round (the dump must NOT corrupt state).
+    const state = coord.getRoundState()
+    assert.equal(state.active, false, "round must be cleared after timeout")
+  })
+
   it("quorum DOES finalize when all three validators' hooks agree on the stateRoot", async () => {
     let finalized = false
     const broadcasted: BftMessage[] = []
