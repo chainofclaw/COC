@@ -266,6 +266,108 @@ describe("BftCoordinator", () => {
     assert.equal(state.active, false, "round must be cleared after timeout")
   })
 
+  it("Phase H4: fires onPeerQuorumDiverged when ≥2/3 of OTHER validators converge on a stateRoot we can't reproduce", async () => {
+    // Pins the 2026-04-30 testnet stall: relaxedQuorum lets node-2/3
+    // finalize on (hash, peerRoot) using their 2-of-3 stake while node-1
+    // votes alone with localRoot. Without H4 the lagging node sits silent
+    // until the next syncIntervalMs tick (30-60s); the chain has already
+    // deadlocked by then because the proposer round-robin returned to it.
+    const ourRoot = ("0x" + "aa".repeat(32)) as Hex
+    const peerRoot = ("0x" + "bb".repeat(32)) as Hex
+
+    let divergence: { height: bigint; peerBlockHash: Hex; peerStateRoot: Hex; localStateRoot?: Hex } | null = null
+    const coord = new BftCoordinator({
+      localId: "v1",
+      validators,
+      prepareTimeoutMs: 50,
+      commitTimeoutMs: 50,
+      broadcastMessage: async () => {},
+      onFinalized: async () => {},
+      computeLocalStateRoot: async () => ourRoot,
+      onPeerQuorumDiverged: (info) => { divergence = info },
+    })
+
+    const block = makeBlock(1n)
+    await coord.startRound(block)
+
+    // v2 + v3 prepare with a stateRoot v1 (us) can't reproduce. Together
+    // they hold 200/300 stake = 2/3 → relaxedQuorum quorum threshold.
+    await coord.handleMessage({ ...bftMsg("prepare", 1n, block.hash, "v2"), stateRoot: peerRoot })
+    await coord.handleMessage({ ...bftMsg("prepare", 1n, block.hash, "v3"), stateRoot: peerRoot })
+
+    // Wait past timeout so the H4 detection runs.
+    await new Promise((r) => setTimeout(r, 200))
+
+    assert.ok(divergence, "onPeerQuorumDiverged must fire")
+    assert.equal(divergence!.height, 1n)
+    assert.equal(divergence!.peerBlockHash, block.hash)
+    assert.equal(divergence!.peerStateRoot, peerRoot)
+    assert.equal(divergence!.localStateRoot, ourRoot)
+  })
+
+  it("Phase H4: does NOT fire onPeerQuorumDiverged when local matches peer quorum", async () => {
+    // When all three nodes agree on the same stateRoot, the round
+    // finalizes via early-commits — no divergence to surface. The
+    // callback must NOT fire spuriously even if the timeout path hits
+    // for an unrelated reason (e.g. commit-phase timeout).
+    const agreed = ("0x" + "cc".repeat(32)) as Hex
+    let divergenceFiredCount = 0
+    const coord = new BftCoordinator({
+      localId: "v1",
+      validators,
+      prepareTimeoutMs: 50,
+      commitTimeoutMs: 50,
+      broadcastMessage: async () => {},
+      onFinalized: async () => {},
+      computeLocalStateRoot: async () => agreed,
+      onPeerQuorumDiverged: () => { divergenceFiredCount++ },
+    })
+
+    const block = makeBlock(1n)
+    await coord.startRound(block)
+
+    // All three agree — but no commits, so the commit phase will time out.
+    await coord.handleMessage({ ...bftMsg("prepare", 1n, block.hash, "v2"), stateRoot: agreed })
+    await coord.handleMessage({ ...bftMsg("prepare", 1n, block.hash, "v3"), stateRoot: agreed })
+
+    await new Promise((r) => setTimeout(r, 200))
+
+    assert.equal(divergenceFiredCount, 0, "no peer divergence to report when local matches quorum")
+  })
+
+  it("Phase H4: does NOT fire when only 1 of 2 other validators votes — peer quorum not reached", async () => {
+    // 1/3 stake from v2 with a different root is NOT 2/3 quorum, so peers
+    // CAN'T finalize without us. We're not "lagging behind" yet — the
+    // round just timed out for normal reasons (e.g. unresponsive v3).
+    // Triggering catch-up here would cause a sync storm whenever a
+    // single validator is offline.
+    const ourRoot = ("0x" + "aa".repeat(32)) as Hex
+    const v2Root = ("0x" + "bb".repeat(32)) as Hex
+
+    let divergenceFiredCount = 0
+    const coord = new BftCoordinator({
+      localId: "v1",
+      validators,
+      prepareTimeoutMs: 50,
+      commitTimeoutMs: 50,
+      broadcastMessage: async () => {},
+      onFinalized: async () => {},
+      computeLocalStateRoot: async () => ourRoot,
+      onPeerQuorumDiverged: () => { divergenceFiredCount++ },
+    })
+
+    const block = makeBlock(1n)
+    await coord.startRound(block)
+
+    // Only v2 votes — v3 is silent. peer pair (hash, v2Root) has only
+    // 100/300 = 1/3 stake. Below 2/3 threshold.
+    await coord.handleMessage({ ...bftMsg("prepare", 1n, block.hash, "v2"), stateRoot: v2Root })
+
+    await new Promise((r) => setTimeout(r, 200))
+
+    assert.equal(divergenceFiredCount, 0, "single peer with different root is below 2/3 quorum")
+  })
+
   it("quorum DOES finalize when all three validators' hooks agree on the stateRoot", async () => {
     let finalized = false
     const broadcasted: BftMessage[] = []
