@@ -1328,6 +1328,97 @@ test("Phase I2: I1 block reward + I2 priority fee both credit proposer in same b
   }
 })
 
+test("Phase H10: applyBlock throws stateRoot mismatch when block.stateRoot != computed (no sig required)", async () => {
+  // Pins the 2026-04-30 silent-skip bug. Pre-H10 gating required all of
+  // (signatureVerifier + block.stateRootSig + !locallyProposed) before the
+  // equality check fired. Some BFT-finalized block paths arrive without
+  // a stateRootSig (legacy compat / wire-dedup retries), so the check
+  // skipped and a divergent local stateRoot was committed silently.
+  // After H10 the equality check fires whenever both block.stateRoot and
+  // computed stateRoot are present.
+  const tmpDir = mkdtempSync(join(tmpdir(), "coc-h10-"))
+  const db = new LevelDatabase(join(tmpDir, "state"))
+  await db.open()
+  const trie = new PersistentStateTrie(db)
+  await trie.init()
+  const sm = new PersistentStateManager(trie)
+  const evm = await EvmChain.create(SPEC_CHAIN_ID, sm)
+  const wallet = Wallet.createRandom()
+
+  const engine = new PersistentChainEngine(
+    {
+      dataDir: tmpDir,
+      nodeId: wallet.address,
+      chainId: SPEC_CHAIN_ID,
+      validators: [wallet.address],
+      finalityDepth: 3,
+      maxTxPerBlock: 50,
+      minGasPriceWei: 1n,
+      stateTrie: trie,
+      // No signatureEnforcement override — defaults to "enforce", which
+      // turns the H10 mismatch detection into a hard throw.
+    },
+    evm,
+  )
+  await engine.init()
+
+  try {
+    // Build a real block by proposing — that produces a block whose stateRoot
+    // matches what our local engine computes.
+    const block1 = await engine.proposeNextBlock(true)
+    assert.ok(block1)
+
+    // Tamper: re-apply the same block with a deliberately-wrong claimed stateRoot
+    // and NO stateRootSig. Pre-H10 this would silently commit a divergent root;
+    // post-H10 it must throw.
+    const tampered = {
+      ...block1!,
+      stateRoot: ("0x" + "ff".repeat(32)) as Hex,
+      stateRootSig: undefined,
+    }
+    // Need a fresh engine since the original engine already applied block1.
+    // Use a new tmpdir/trie pair so the apply path runs cleanly against the
+    // tampered claim.
+    const tmpDir2 = mkdtempSync(join(tmpdir(), "coc-h10b-"))
+    const db2 = new LevelDatabase(join(tmpDir2, "state"))
+    await db2.open()
+    const trie2 = new PersistentStateTrie(db2)
+    await trie2.init()
+    const sm2 = new PersistentStateManager(trie2)
+    const evm2 = await EvmChain.create(SPEC_CHAIN_ID, sm2)
+    const engine2 = new PersistentChainEngine(
+      {
+        dataDir: tmpDir2,
+        nodeId: wallet.address,
+        chainId: SPEC_CHAIN_ID,
+        validators: [wallet.address],
+        finalityDepth: 3,
+        maxTxPerBlock: 50,
+        minGasPriceWei: 1n,
+        stateTrie: trie2,
+      },
+      evm2,
+    )
+    await engine2.init()
+
+    try {
+      // engine2 hasn't seen block1 yet. Apply tampered with locallyProposed=false
+      // (since engine2 didn't propose it) so it goes through the BFT-finalized
+      // apply path — exactly where the silent-skip bug lived.
+      await assert.rejects(
+        () => engine2.applyBlock(tampered as ChainBlock, false),
+        /stateRoot mismatch/,
+      )
+    } finally {
+      await engine2.close()
+      rmSync(tmpDir2, { recursive: true, force: true })
+    }
+  } finally {
+    await engine.close()
+    rmSync(tmpDir, { recursive: true, force: true })
+  }
+})
+
 test("Phase I2: feeDistribution disabled — proposer balance unchanged, priority fee accumulates at 0x0", async () => {
   // Regression: enableFeeDistribution defaults to false so legacy networks
   // see the pre-I2 behaviour (coinbase=0x0, priority fee credited to 0x0).
