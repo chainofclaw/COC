@@ -25,6 +25,7 @@ import {
   normalizeEquivocationRpcEntry,
   type EquivocationEvidence,
 } from "./lib/bft-equivocation.ts";
+import { EquivocationDetectorClient } from "./lib/equivocation-detector-client.ts";
 
 const log = createLogger("coc-relayer");
 
@@ -60,6 +61,31 @@ const txRetryOptions = {
 
 const provider = new JsonRpcProvider(l1Rpc);
 const signer = slasherPk ? new Wallet(slasherPk, provider) : null;
+
+// Phase I3c: optional on-chain submitEvidence client. Activates when both
+// COC_VALIDATOR_REGISTRY_ADDRESS and COC_EQUIVOCATION_DETECTOR_ADDRESS env
+// vars are set AND we have a slasher signer. The client lazily resolves
+// each offender's nodeId from registry events, then submits the two BFT
+// signatures to the on-chain detector for permissionless slashing.
+const equivocationDetectorAddress = process.env.COC_EQUIVOCATION_DETECTOR_ADDRESS;
+const validatorRegistryAddressForBridge = process.env.COC_VALIDATOR_REGISTRY_ADDRESS;
+const equivocationDetectorClient = (signer && equivocationDetectorAddress && validatorRegistryAddressForBridge)
+  ? new EquivocationDetectorClient({
+      signer,
+      registryAddress: validatorRegistryAddressForBridge,
+      detectorAddress: equivocationDetectorAddress,
+      provider,
+      fromBlock: process.env.COC_VALIDATOR_REGISTRY_FROM_BLOCK
+        ? BigInt(process.env.COC_VALIDATOR_REGISTRY_FROM_BLOCK)
+        : 0n,
+    })
+  : null;
+if (equivocationDetectorClient) {
+  log.info("EquivocationDetector on-chain submission enabled", {
+    detector: equivocationDetectorAddress,
+    registry: validatorRegistryAddressForBridge,
+  });
+}
 
 const poseAbi = [
   "function getEpochBatchIds(uint64 epochId) view returns (bytes32[])",
@@ -614,6 +640,38 @@ export function bridgeBftSlash(evidence: EquivocationEvidence): void {
     validator: evidence.validatorId,
     height: evidence.height.toString(),
   });
+
+  // Phase I3c: also submit to the on-chain EquivocationDetector when
+  // configured. Fire-and-forget — the PoSe pipeline path above is the
+  // primary off-chain audit trail; on-chain slashing via this contract
+  // is the additional permissionless enforcement layer. Errors are
+  // logged but don't block the off-chain pipeline.
+  if (equivocationDetectorClient) {
+    if (!evidence.signature1 || !evidence.signature2) {
+      log.warn("skipping EquivocationDetector submission — evidence missing signatures", {
+        validator: evidence.validatorId,
+        height: evidence.height.toString(),
+      });
+      return;
+    }
+    void equivocationDetectorClient
+      .submitEvidence(evidence)
+      .then((result) => {
+        log.info("EquivocationDetector submitEvidence succeeded", {
+          validator: evidence.validatorId,
+          nodeId: result.nodeId,
+          txHash: result.txHash,
+          height: evidence.height.toString(),
+        });
+      })
+      .catch((err) => {
+        log.warn("EquivocationDetector submitEvidence failed", {
+          validator: evidence.validatorId,
+          height: evidence.height.toString(),
+          error: String(err),
+        });
+      });
+  }
 }
 
 setInterval(() => void tick(), intervalMs);
