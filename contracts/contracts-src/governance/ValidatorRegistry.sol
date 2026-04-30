@@ -44,6 +44,16 @@ contract ValidatorRegistry {
     uint16 public constant SLASH_BPS = 1000; // 10%
     uint16 public constant BPS_DENOM = 10_000;
 
+    // Phase I5: when `insuranceFund` is set, slashed amounts split
+    // 50% burn / 30% reporter (slashRecipient) / 20% insurance — matches
+    // PoSeManagerV2's slash distribution. When `insuranceFund` is the zero
+    // address, falls back to legacy 100%-to-slashRecipient behaviour so
+    // existing deployments are unaffected until an owner opts in via
+    // `setInsuranceFund`.
+    uint16 public constant SLASH_BURN_SHARE_BPS = 5000;     // 50%
+    uint16 public constant SLASH_REPORTER_SHARE_BPS = 3000; // 30%
+    // Insurance share = BPS_DENOM - SLASH_BURN_SHARE_BPS - SLASH_REPORTER_SHARE_BPS = 2000.
+
     // ── Data ─────────────────────────────────────────────────────────────
 
     /**
@@ -84,6 +94,12 @@ contract ValidatorRegistry {
     address public owner;
     address public slasher;
     address public slashRecipient;
+    // Phase I5: optional split-routing addresses. When `insuranceFund == 0`,
+    // legacy 100%-to-slashRecipient applies; when set, 50/30/20 split fires.
+    // `burnSink` defaults to 0x000...dEaD on first setInsuranceFund call so
+    // burn truly leaves circulation; owner can override.
+    address public insuranceFund;
+    address public burnSink;
 
     // ── Events ───────────────────────────────────────────────────────────
 
@@ -97,9 +113,19 @@ contract ValidatorRegistry {
     event ValidatorDeactivated(bytes32 indexed nodeId, uint64 unstakeRequestedAt);
     event ValidatorWithdrew(bytes32 indexed nodeId, address indexed operator, uint256 amount);
     event ValidatorSlashed(bytes32 indexed nodeId, uint256 amount, bytes32 indexed reason);
+    // Phase I5: surfaces the 50/30/20 split when insuranceFund is set so
+    // off-chain accounting can attribute by share.
+    event SlashDistributed(
+        bytes32 indexed nodeId,
+        uint256 burnAmount,
+        uint256 reporterAmount,
+        uint256 insuranceAmount
+    );
 
     event SlasherUpdated(address indexed oldSlasher, address indexed newSlasher);
     event SlashRecipientUpdated(address indexed oldRecipient, address indexed newRecipient);
+    event InsuranceFundUpdated(address indexed oldFund, address indexed newFund);
+    event BurnSinkUpdated(address indexed oldSink, address indexed newSink);
     event OwnerUpdated(address indexed oldOwner, address indexed newOwner);
 
     // ── Errors ───────────────────────────────────────────────────────────
@@ -254,8 +280,33 @@ contract ValidatorRegistry {
         }
 
         if (slashAmount > 0) {
-            (bool ok, ) = payable(slashRecipient).call{ value: slashAmount }("");
-            if (!ok) revert TransferFailed();
+            if (insuranceFund != address(0)) {
+                // Phase I5: 50% burn / 30% reporter / 20% insurance split.
+                uint256 burnShare = (slashAmount * SLASH_BURN_SHARE_BPS) / BPS_DENOM;
+                uint256 reporterShare = (slashAmount * SLASH_REPORTER_SHARE_BPS) / BPS_DENOM;
+                uint256 insuranceShare = slashAmount - burnShare - reporterShare;
+                address effectiveBurnSink = burnSink == address(0)
+                    ? address(0x000000000000000000000000000000000000dEaD)
+                    : burnSink;
+                if (burnShare > 0) {
+                    (bool okB, ) = payable(effectiveBurnSink).call{ value: burnShare }("");
+                    if (!okB) revert TransferFailed();
+                }
+                if (reporterShare > 0) {
+                    (bool okR, ) = payable(slashRecipient).call{ value: reporterShare }("");
+                    if (!okR) revert TransferFailed();
+                }
+                if (insuranceShare > 0) {
+                    (bool okI, ) = payable(insuranceFund).call{ value: insuranceShare }("");
+                    if (!okI) revert TransferFailed();
+                }
+                emit SlashDistributed(nodeId, burnShare, reporterShare, insuranceShare);
+            } else {
+                // Legacy: 100% to slashRecipient. Deployments that haven't
+                // configured insuranceFund retain pre-I5 behaviour.
+                (bool ok, ) = payable(slashRecipient).call{ value: slashAmount }("");
+                if (!ok) revert TransferFailed();
+            }
         }
 
         emit ValidatorSlashed(nodeId, slashAmount, reason);
@@ -291,6 +342,27 @@ contract ValidatorRegistry {
         if (newRecipient == address(0)) revert ZeroAddress();
         emit SlashRecipientUpdated(slashRecipient, newRecipient);
         slashRecipient = newRecipient;
+    }
+
+    /**
+     * @notice Phase I5: Configure the insurance fund sink. Setting a non-zero
+     *         address activates the 50/30/20 burn/reporter/insurance split on
+     *         all subsequent slashes. Setting back to zero falls back to
+     *         legacy 100%-to-slashRecipient behaviour.
+     */
+    function setInsuranceFund(address newFund) external onlyOwner {
+        emit InsuranceFundUpdated(insuranceFund, newFund);
+        insuranceFund = newFund;
+    }
+
+    /**
+     * @notice Phase I5: Override the burn sink (default 0x000...dEaD). Useful
+     *         on testnets that prefer the burn share routed to a treasury
+     *         address rather than a true dead address.
+     */
+    function setBurnSink(address newSink) external onlyOwner {
+        emit BurnSinkUpdated(burnSink, newSink);
+        burnSink = newSink;
     }
 
     function transferOwnership(address newOwner) external onlyOwner {
