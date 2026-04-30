@@ -151,6 +151,7 @@ export class Mempool {
       maxFeePerGas,
       maxPriorityFeePerGas,
       gasLimit,
+      value: tx.value ?? 0n,
       receivedAtMs: Date.now(),
     }
 
@@ -246,6 +247,21 @@ export class Mempool {
     minGasPriceWei: bigint,
     baseFeePerGas: bigint = 1000000000n, // default 1 gwei
     blockGasLimit: bigint = 30_000_000n,
+    /**
+     * Phase H3: optional balance fetcher. When supplied, txs whose sender
+     * cannot afford `effectiveGasPrice * gasLimit + value` at proposal
+     * time are dropped from the picked set (and evicted from mempool when
+     * balance is below the absolute minimum). Without this callback,
+     * mempool falls back to the previous nonce-only filter.
+     *
+     * Surfaced by 2026-04-30 testnet incident: anvil[1] balance attrition
+     * (down to ~0.000170 ETH from agent activity) caused poison txs to
+     * be included in proposer's blocks; applyBlock failed with
+     * "insufficient funds"; chain stalled because BFT-finalized hash X
+     * (clean block) didn't match proposer's local Y (with poison tx)
+     * and the proposer kept retrying its local copy.
+     */
+    getBalance?: (address: Hex) => Promise<bigint>,
   ): Promise<MempoolTx[]> {
     if (maxTx <= 0 || this.txs.size === 0) {
       return []
@@ -298,8 +314,36 @@ export class Mempool {
       expected.set(sender, nonce)
     }
 
+    // Phase H3: pre-fetch balances for affordability check (parallel,
+    // mirrors the nonce-fetch concurrency pattern). Skipped entirely
+    // when no `getBalance` callback was supplied — preserves prior
+    // mempool semantics for callers that don't yet wire balance check.
+    const balances = new Map<Hex, bigint>()
+    if (getBalance !== undefined) {
+      const balanceFetches = [...uniqueSenders].map(async (sender) => {
+        try {
+          return { sender, balance: await getBalance(sender) }
+        } catch {
+          // On error we conservatively treat balance as 0 — the tx will
+          // be skipped (not evicted) so it can retry next block.
+          return { sender, balance: 0n }
+        }
+      })
+      const balanceResults = await Promise.all(balanceFetches)
+      for (const { sender, balance } of balanceResults) {
+        balances.set(sender, balance)
+      }
+    }
+
     const picked: MempoolTx[] = []
     let cumulativeGas = 0n
+    /**
+     * Per-sender running spend across the picked set. When the same
+     * sender has multiple pickable txs, each consumes some of their
+     * balance. We track cumulative spend so the 2nd/3rd tx isn't
+     * picked if the 1st already drained the wallet.
+     */
+    const cumulativeSpend = new Map<Hex, bigint>()
 
     for (const tx of sorted) {
       if (picked.length >= maxTx) break
@@ -312,6 +356,30 @@ export class Mempool {
         continue
       }
       if (tx.nonce !== next) continue
+
+      // Phase H3: affordability check
+      if (getBalance !== undefined) {
+        const balance = balances.get(tx.from) ?? 0n
+        const upfrontCost = effectivePrice(tx) * tx.gasLimit + tx.value
+        const alreadySpent = cumulativeSpend.get(tx.from) ?? 0n
+        if (alreadySpent + upfrontCost > balance) {
+          // Cannot afford this tx given balance + earlier picks from
+          // this sender. Don't pick. Don't evict either — balance might
+          // grow before next block (e.g. inbound transfer), letting
+          // this tx in then. Conservative: only evict when balance is
+          // BELOW even the cheapest possible cost (i.e. at minGasPrice
+          // with empty value). That's a permanently-unfundable tx.
+          const absoluteMin = minGasPriceWei * tx.gasLimit
+          if (balance < absoluteMin) {
+            // Permanently unfundable: evict so it stops blocking the
+            // sender's nonce queue indefinitely.
+            this.removeTx(tx.hash)
+          }
+          continue
+        }
+        cumulativeSpend.set(tx.from, alreadySpent + upfrontCost)
+      }
+
       picked.push(tx)
       cumulativeGas += tx.gasLimit
       expected.set(tx.from, next + 1n)

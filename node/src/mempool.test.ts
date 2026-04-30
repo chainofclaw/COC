@@ -243,6 +243,63 @@ describe("Mempool", () => {
     assert.equal(hist.medianGwei, 0)
   })
 
+  // Phase H3: affordability filter (2026-04-30 mempool poison incident)
+  it("pickForBlock skips txs whose sender can't afford upfront cost", async () => {
+    const pool = new Mempool({ chainId: CHAIN_ID })
+    // 3 txs from PK1 at increasing nonces. Each costs ~21000 gas * 1 gwei +
+    // 1 wei value ≈ 21,000,000,000,000 wei. Funding for exactly 1 tx.
+    signAndAdd(pool, PK1, 0, "0x3b9aca00")  // 1 gwei
+    signAndAdd(pool, PK1, 1, "0x3b9aca00")
+    signAndAdd(pool, PK1, 2, "0x3b9aca00")
+
+    const balance = 21_000n * 1_000_000_000n + 1_000_000_000_000n // ~1 tx + buffer
+    const picked = await pool.pickForBlock(
+      10,
+      async () => 0n,
+      0n,
+      0n,
+      30_000_000n,
+      async () => balance,
+    )
+
+    // Only first tx affordable; subsequent skipped (not evicted — balance
+    // could grow before next block).
+    assert.equal(picked.length, 1)
+    assert.equal(picked[0].nonce, 0n)
+    assert.equal(pool.size(), 3, "skipped txs remain in mempool for later")
+  })
+
+  it("pickForBlock evicts txs that are permanently unfundable", async () => {
+    const pool = new Mempool({ chainId: CHAIN_ID })
+    signAndAdd(pool, PK1, 0, "0x3b9aca00")  // 1 gwei
+
+    // Balance below absolute minimum (gasLimit * minGasPriceWei).
+    // Tx is unfundable forever — evict.
+    const minGasPrice = 1_000_000_000n
+    const picked = await pool.pickForBlock(
+      10,
+      async () => 0n,
+      minGasPrice,
+      0n,
+      30_000_000n,
+      async () => 1n, // 1 wei — below 21000 * 1e9
+    )
+
+    assert.equal(picked.length, 0)
+    assert.equal(pool.size(), 0, "permanently unfundable tx must be evicted")
+  })
+
+  it("pickForBlock without getBalance callback preserves prior nonce-only filtering", async () => {
+    const pool = new Mempool({ chainId: CHAIN_ID })
+    signAndAdd(pool, PK1, 0, "0x3b9aca00")
+    signAndAdd(pool, PK1, 1, "0x3b9aca00")
+
+    // No getBalance callback — should pick both regardless of (unknown) balance.
+    const picked = await pool.pickForBlock(10, async () => 0n, 0n)
+    assert.equal(picked.length, 2)
+    assert.equal(pool.size(), 2)
+  })
+
   it("computes gas price histogram with transactions", () => {
     const pool = new Mempool({ chainId: CHAIN_ID })
     // Add txs with different gas prices (1 gwei = 0x3b9aca00)

@@ -507,6 +507,14 @@ export class PersistentChainEngine {
       (address) => this.evm.getNonce(address),
       this.cfg.minGasPriceWei,
       nextBaseFee,
+      undefined, // blockGasLimit — use mempool default
+      // Phase H3 affordability filter: drops txs whose sender can't pay
+      // upfront cost. Prevents the 2026-04-30 mempool-poison stall where
+      // anvil[1]'s drained balance let a uncovered tx into the proposer's
+      // block, applyBlock failed with "insufficient funds", BFT-finalized
+      // a different (clean) hash, and the proposer kept retrying its
+      // local poisoned copy → chain stuck.
+      (address) => this.evm.getBalance(address),
     )
 
     let block = await this.buildBlock(nextHeight, txs)
