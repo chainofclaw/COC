@@ -935,20 +935,50 @@ export class PersistentChainEngine {
       }
     }
 
+    // Phase H10: unconditional stateRoot equality enforcement.
+    //
+    // The previous gating (`!locallyProposed && block.stateRootSig &&
+    // signatureVerifier`) left a critical hole: if a BFT-finalized block
+    // arrived without a stateRoot signature OR was applied via a code
+    // path that didn't carry the verifier, the equality check was
+    // silently skipped — and the apply would commit a state-tree whose
+    // root didn't match the block's claimed root. Subsequent queries
+    // (eth_getTransactionCount etc.) returned stale state because the
+    // committed root advanced but the underlying trie data didn't reflect
+    // every tx's mutations. The 2026-04-30 testnet stalls all share this
+    // signature: same stateRoot reported on all 3 nodes but `nonce@latest`
+    // differed for accounts whose txs were silently skipped on node-1.
+    //
+    // Fix: when both `block.stateRoot` and our computed `stateRoot` are
+    // present, ALWAYS compare. Throw on mismatch under default
+    // signatureEnforcement="enforce" so the catch reverts EVM + trie
+    // checkpoints atomically; the BFT layer's onFinalized retry / H4
+    // peer-quorum path picks up from there.
+    if (stateRoot && block.stateRoot && block.stateRoot !== stateRoot) {
+      const sigMode = this.cfg.signatureEnforcement ?? "enforce"
+      log.error("Phase H10 stateRoot mismatch — silent-skip detected", {
+        height: block.number.toString(),
+        blockHash: block.hash,
+        claimed: block.stateRoot,
+        computed: stateRoot,
+        locallyProposed,
+        txCount: block.txs.length,
+        enforcement: sigMode,
+      })
+      if (sigMode === "enforce") {
+        throw new Error(`stateRoot mismatch: claimed ${block.stateRoot}, computed ${stateRoot}`)
+      }
+    }
+
     // Post-execution stateRoot signature
     let stateRootSig = block.stateRootSig
     if (locallyProposed && this.nodeSigner && stateRoot) {
       const stateRootMsg = `stateRoot:${block.hash}:${stateRoot}`
       stateRootSig = this.nodeSigner.sign(stateRootMsg) as Hex
     } else if (!locallyProposed && block.stateRootSig && stateRoot && this.signatureVerifier) {
-      // Verify remote stateRoot against locally computed
-      if (block.stateRoot && block.stateRoot !== stateRoot) {
-        const sigMode = this.cfg.signatureEnforcement ?? "enforce"
-        if (sigMode === "enforce") {
-          throw new Error(`stateRoot mismatch: claimed ${block.stateRoot}, computed ${stateRoot}`)
-        }
-        log.warn("stateRoot mismatch", { height: block.number.toString(), claimed: block.stateRoot, computed: stateRoot })
-      }
+      // Signature verification is independent of stateRoot equality (which
+      // is now enforced unconditionally above). This branch only validates
+      // the proposer's signature when one is present.
       const stateRootMsg = `stateRoot:${block.hash}:${stateRoot}`
       const sigMode = this.cfg.signatureEnforcement ?? "enforce"
       const proposerAddr = this.resolveValidatorAddress(block.proposer)
