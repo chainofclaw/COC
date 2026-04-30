@@ -48,6 +48,34 @@ const MAX_CONSECUTIVE_FAILURES = 5
 const RECOVERY_COOLDOWN_MS = 30_000
 const MAX_DEGRADED_MS = 5 * 60 * 1000 // 5 min max in degraded before forced recovery
 
+// Phase H7: timeout for the await on `p2p.fetchSnapshots()` inside trySync /
+// forceSnapSync. Without this a slow/hung peer would never resolve and the
+// `finally` block that releases syncInFlight never fires — observed 2026-04-30.
+const FETCH_SNAPSHOTS_TIMEOUT_MS = 30_000
+
+// Phase H7: hard ceiling on how long `syncInFlight` may stay true before the
+// background watchdog force-releases it. Set above FETCH_SNAPSHOTS_TIMEOUT_MS
+// + a tolerance for trySnapSync's per-peer fan-out so a normal slow sync
+// completes naturally; only genuinely-stuck syncs trip the watchdog.
+const SYNC_INFLIGHT_WATCHDOG_MS = 90_000
+
+/** Race a promise against a timeout. Throws on timeout, otherwise returns the value. */
+async function withSyncTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`${label} timeout after ${FETCH_SNAPSHOTS_TIMEOUT_MS}ms`)),
+      FETCH_SNAPSHOTS_TIMEOUT_MS,
+    )
+    if (typeof timer.unref === "function") timer.unref()
+  })
+  try {
+    return await Promise.race([promise, timeout])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
 export interface ConsensusConfig {
   blockTimeMs: number
   syncIntervalMs: number
@@ -123,6 +151,14 @@ export class ConsensusEngine {
   private syncTimer: ReturnType<typeof setInterval> | null = null
   private degradedCheckTimer: ReturnType<typeof setInterval> | null = null
   private syncInFlight = false
+  // Phase H7: tracks when syncInFlight was last set to true. The watchdog
+  // (started in start()) force-releases the flag if held longer than
+  // SYNC_INFLIGHT_WATCHDOG_MS — mitigates the 2026-04-30 testnet stall
+  // where p2p.fetchSnapshots() hung inside trySync, leaving syncInFlight
+  // permanently true and blocking ALL subsequent sync attempts (periodic
+  // + manual + H4-triggered + H5-triggered).
+  private syncInFlightSinceMs = 0
+  private syncInFlightWatchdogTimer: ReturnType<typeof setInterval> | null = null
   private proposeInFlight = false
   private lastProposedHeight: bigint | undefined = undefined
   private lastProposedBlock: any | undefined = undefined // Cached for retry on BFT timeout
@@ -174,6 +210,12 @@ export class ConsensusEngine {
       this.degradedCheckTimer = setInterval(() => this.checkDegradedTimeout(), 10_000)
       this.syncTimer.unref()
       this.degradedCheckTimer.unref()
+      // Phase H7 watchdog: every 10s, if syncInFlight has been held for
+      // longer than SYNC_INFLIGHT_WATCHDOG_MS, force-release. Without this
+      // a hung await inside trySync (observed 2026-04-30 when fetchSnapshots
+      // never returned) deadlocks all subsequent sync attempts forever.
+      this.syncInFlightWatchdogTimer = setInterval(() => this.checkSyncInFlightWatchdog(), 10_000)
+      this.syncInFlightWatchdogTimer.unref()
       void this.trySync()
     }
   }
@@ -182,7 +224,33 @@ export class ConsensusEngine {
     if (this.proposeTimer) { clearInterval(this.proposeTimer); this.proposeTimer = null }
     if (this.syncTimer) { clearInterval(this.syncTimer); this.syncTimer = null }
     if (this.degradedCheckTimer) { clearInterval(this.degradedCheckTimer); this.degradedCheckTimer = null }
+    if (this.syncInFlightWatchdogTimer) { clearInterval(this.syncInFlightWatchdogTimer); this.syncInFlightWatchdogTimer = null }
     this.bft?.stop()
+  }
+
+  /**
+   * Phase H7 watchdog: force-release `syncInFlight` if held longer than
+   * SYNC_INFLIGHT_WATCHDOG_MS. The flag is normally cleared in trySync's /
+   * forceSnapSync's `finally`, but if the awaited p2p.fetchSnapshots()
+   * hangs (peer slow, network drop), the finally never fires and EVERY
+   * subsequent sync attempt short-circuits on `if (this.syncInFlight) return`.
+   *
+   * Releasing here is safe: the hung promise's eventual resolution will
+   * race the new sync attempt, but both branches re-check `syncInFlight`
+   * and the worst case is one duplicate fetch — preferable to permanent
+   * deadlock.
+   */
+  private checkSyncInFlightWatchdog(): void {
+    if (!this.syncInFlight) return
+    const elapsed = Date.now() - this.syncInFlightSinceMs
+    if (elapsed > SYNC_INFLIGHT_WATCHDOG_MS) {
+      log.error("Phase H7: syncInFlight held too long — force-releasing", {
+        elapsedMs: elapsed,
+        watchdogMs: SYNC_INFLIGHT_WATCHDOG_MS,
+      })
+      this.syncInFlight = false
+      this.syncInFlightSinceMs = 0
+    }
   }
 
   getStatus(): { status: ConsensusStatus; proposeFailures: number; syncFailures: number } {
@@ -434,8 +502,12 @@ export class ConsensusEngine {
       return false
     }
     this.syncInFlight = true
+    this.syncInFlightSinceMs = Date.now()
     try {
-      const snapshots = await this.p2p.fetchSnapshots()
+      // Phase H7: timeout-wrapped fetch so a hung peer doesn't deadlock the
+      // sync flag. The watchdog (checkSyncInFlightWatchdog) is the
+      // belt-and-suspenders if even this throws weird.
+      const snapshots = await withSyncTimeout(this.p2p.fetchSnapshots(), "forceSnapSync.fetchSnapshots")
       // Pick the snapshot with the highest tip — that's the most-advanced
       // peer's view we can trust to import. Empty/equal heights still get
       // a chance via trySnapSync's per-peer voting downstream.
@@ -466,16 +538,19 @@ export class ConsensusEngine {
       return ok
     } finally {
       this.syncInFlight = false
+      this.syncInFlightSinceMs = 0
     }
   }
 
   private async trySync(): Promise<void> {
     if (this.syncInFlight) return
     this.syncInFlight = true
+    this.syncInFlightSinceMs = Date.now()
     const t0 = Date.now()
     this.syncAttempts++
     try {
-      const snapshots = await this.p2p.fetchSnapshots()
+      // Phase H7: timeout-wrapped fetch — see forceSnapSync's note.
+      const snapshots = await withSyncTimeout(this.p2p.fetchSnapshots(), "trySync.fetchSnapshots")
 
       // Build local fork candidate
       let localHeight = await Promise.resolve(this.chain.getHeight())
@@ -693,6 +768,7 @@ export class ConsensusEngine {
       }
     } finally {
       this.syncInFlight = false
+      this.syncInFlightSinceMs = 0
     }
   }
 
