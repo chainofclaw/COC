@@ -9,6 +9,13 @@ export interface MempoolTx {
   maxFeePerGas: bigint
   maxPriorityFeePerGas: bigint
   gasLimit: bigint
+  /**
+   * Tx call value in wei. Phase H3 (2026-04-30) added this for the
+   * mempool affordability check: upfront cost = effectiveGasPrice *
+   * gasLimit + value, and we drop txs whose sender can't cover that
+   * before they get included in a block.
+   */
+  value: bigint
   receivedAtMs: number
 }
 
