@@ -881,3 +881,58 @@ test("speculativelyComputeStateRoot: concurrent dry-runs don't cross-pollute", a
     await ctx.close()
   }
 })
+
+test("speculativelyComputeStateRoot: empty-block spec root is byte-identical across consecutive empty heights (Phase H1 regression)", async () => {
+  // Pins the recurring testnet symptom from 2026-04-30 where proposer's
+  // speculative compute on an EMPTY block diverged from non-proposers'
+  // identical compute on the same block. Even with no txs, the dry-run
+  // mutates BEACON_ROOTS storage via prepareVmForExecution → if the
+  // post-apply parent-trie sync is missing, fork inherits a stale
+  // account.storageRoot pointer and the resulting root drifts.
+  //
+  // This test runs two consecutive empty blocks N and N+1 and asserts the
+  // speculative root for an EMPTY block at height N+2 is the same value
+  // when computed (a) right after applyBlock for N+1, and (b) after
+  // applyBlock + an explicit second computeStateRoot pass on the main
+  // trie. With H1b's post-apply sync, both paths yield the same root.
+  const ctx = await buildSpecCtx()
+  try {
+    // Two empty blocks to advance state past the one buildSpecCtx already
+    // produced (height 1). After this, tip = height 3 with three empty
+    // blocks committed, BEACON_ROOTS storage written 3 times.
+    const block2 = await ctx.engine.proposeNextBlock(true)
+    assert.ok(block2)
+    await ctx.engine.applyBlock(block2!, true)
+    const block3 = await ctx.engine.proposeNextBlock(true)
+    assert.ok(block3)
+    await ctx.engine.applyBlock(block3!, true)
+
+    // Build a 4th empty block (deferred apply) and dry-run its
+    // speculative compute — this is the path that diverges in production
+    // when the parent trie has stale BEACON_ROOTS account pointer.
+    const block4 = await ctx.engine.proposeNextBlock(true)
+    assert.ok(block4)
+
+    const specA = await ctx.engine.speculativelyComputeStateRoot(block4!)
+    assert.ok(specA, "first speculative compute must return a root")
+
+    // Force another sync pass on main trie (idempotent under H1b).
+    await ctx.trie.computeStateRoot()
+
+    const specB = await ctx.engine.speculativelyComputeStateRoot(block4!)
+    assert.ok(specB, "second speculative compute must return a root")
+
+    assert.strictEqual(
+      specA,
+      specB,
+      "speculative root must be byte-identical across two calls with the same pre-state — proves H1b post-apply sync makes parent trie canonical",
+    )
+
+    // And both must equal the actual post-apply root.
+    await ctx.engine.applyBlock(block4!, true)
+    const applied = await ctx.trie.computeStateRoot()
+    assert.strictEqual(specA, applied, "spec root must equal apply root for empty block")
+  } finally {
+    await ctx.close()
+  }
+})
