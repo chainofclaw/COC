@@ -352,6 +352,21 @@ if (bftEnabled) {
   // when BFT finalizes consecutive blocks within milliseconds.
   let onFinalizedQueue = Promise.resolve()
 
+  // Phase H2 Track B: relaxedQuorum dev flag. When set, BFT quorum drops
+  // the strict `+1 wei` requirement so a 3-validator equal-stake cluster
+  // reaches quorum at 2-of-3 instead of 3-of-3. Loses Byzantine safety;
+  // ONLY for testnet/devnet where the cluster has known
+  // divergent-but-non-malicious validators (e.g. 2026-04-30 testnet's
+  // node-1 shadow state corruption). Production deployments must NOT
+  // set this env var.
+  const relaxedQuorum = process.env.COC_DEV_RELAXED_QUORUM === "1"
+  if (relaxedQuorum) {
+    log.warn(
+      "⚠ COC_DEV_RELAXED_QUORUM=1 — BFT quorum threshold relaxed; Byzantine safety LOST",
+      { validators: config.validators.length, chainId: config.chainId },
+    )
+  }
+
   bftCoordinator = new BftCoordinator({
     localId: config.nodeId,
     validators,
@@ -359,6 +374,7 @@ if (bftEnabled) {
     commitTimeoutMs: config.bftCommitTimeoutMs,
     signer: nodeSigner,
     verifier: nodeSigner,
+    relaxedQuorum,
     onEquivocation: (evidence: EquivocationEvidence) => {
       log.warn("BFT equivocation detected", {
         validator: evidence.validatorId,

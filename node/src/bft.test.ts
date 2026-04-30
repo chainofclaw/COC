@@ -81,6 +81,27 @@ describe("hasQuorum", () => {
     // v1+v2 = 400/500 = 80% >= 334 -> true
     assert.equal(hasQuorum(["v1", "v2"], unequalValidators), true)
   })
+
+  // Phase H2 Track B: dev-only relaxedQuorum
+  it("relaxedQuorum allows 2-of-3 in equal-stake cluster", () => {
+    // Strict mode: threshold = 201, 2-of-3 = 200 → not enough
+    assert.equal(hasQuorum(["v1", "v2"], validators), false, "strict requires 3-of-3")
+    // Relaxed mode: threshold = 200, 2-of-3 = 200 → ok
+    assert.equal(hasQuorum(["v1", "v2"], validators, true), true, "relaxed allows 2-of-3")
+    assert.equal(hasQuorum(["v1", "v2", "v3"], validators, true), true, "relaxed still allows 3-of-3")
+  })
+
+  it("relaxedQuorum threshold drops the +1 wei", () => {
+    // total=300 → 2*300/3 = 200
+    assert.equal(quorumThreshold(validators, true), 200n)
+    // unequal: total=500 → 2*500/3 = 333 (BigInt floor)
+    assert.equal(quorumThreshold(unequalValidators, true), 333n)
+  })
+
+  it("relaxedQuorum still rejects single voter in 3-validator cluster", () => {
+    // 1-of-3 = 100, threshold (relaxed) = 200 → not enough
+    assert.equal(hasQuorum(["v1"], validators, true), false)
+  })
 })
 
 describe("BftRound", () => {
