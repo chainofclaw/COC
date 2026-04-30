@@ -26,6 +26,7 @@ import {
   type EquivocationEvidence,
 } from "./lib/bft-equivocation.ts";
 import { EquivocationDetectorClient } from "./lib/equivocation-detector-client.ts";
+import { PoSeSlashTotalScanner } from "./lib/pose-slash-total-scanner.ts";
 
 const log = createLogger("coc-relayer");
 
@@ -86,6 +87,15 @@ if (equivocationDetectorClient) {
     registry: validatorRegistryAddressForBridge,
   });
 }
+
+// Phase I4b: optional auto slashTotal scanner. Activates when
+// COC_RELAYER_AUTO_SLASH=1; provides a chain-derived slashTotal that
+// overrides manifest.slashTotal=0 (the historical default that nobody
+// sets). The scanner reads ChallengeRevealed events + per-node bonds
+// + per-epoch slashed amounts, sums via I4a's pure helper.
+// Initialized lazily after l2Provider is constructed below.
+const autoSlashTotalEnabled = process.env.COC_RELAYER_AUTO_SLASH === "1";
+let slashTotalScanner: PoSeSlashTotalScanner | null = null;
 
 const poseAbi = [
   "function getEpochBatchIds(uint64 epochId) view returns (bytes32[])",
@@ -531,6 +541,29 @@ async function tryFinalizeV2(): Promise<void> {
       totalReward = BigInt(settledManifest.totalReward);
       slashTotal = BigInt(manifest.slashTotal);
       treasuryDelta = BigInt(manifest.treasuryDelta);
+
+      // Phase I4b: when manifest.slashTotal is 0 (today's default) and the
+      // env-gated auto scanner is enabled, replace with the chain-derived
+      // value. The manifest path stays authoritative when populated; this
+      // only fills in for upstream pipelines that haven't been upgraded.
+      if (slashTotalScanner && slashTotal === 0n) {
+        try {
+          const auto = await slashTotalScanner.computeSlashTotalForEpoch(BigInt(candidate));
+          if (auto > 0n) {
+            log.warn("auto slashTotal injection — overriding zero manifest value", {
+              epochId: candidate,
+              autoSlashTotal: auto.toString(),
+            });
+            slashTotal = auto;
+          }
+        } catch (err) {
+          log.warn("auto slashTotal scan failed; falling back to manifest value", {
+            epochId: candidate,
+            error: String(err),
+          });
+        }
+      }
+
       log.info("reward manifest loaded", {
         epochId: candidate,
         rewardRoot,
@@ -606,6 +639,21 @@ function isV2Evidence(evidence: SlashEvidence): boolean {
 const l2Rpc = config.l2RpcUrl ?? l1Rpc;
 const l2Provider = l2Rpc !== l1Rpc ? new JsonRpcProvider(l2Rpc) : provider;
 let lastBftEquivocationPoll = 0;
+
+// Phase I4b: now that l2Provider is constructed, materialize the scanner
+// (initialized to null at top of file).
+if (autoSlashTotalEnabled && config.poseManagerV2Address) {
+  slashTotalScanner = new PoSeSlashTotalScanner({
+    provider: l2Provider,
+    poseManagerV2Address: config.poseManagerV2Address,
+    fromBlock: process.env.COC_POSE_MANAGER_FROM_BLOCK
+      ? BigInt(process.env.COC_POSE_MANAGER_FROM_BLOCK)
+      : 0n,
+  });
+  log.info("Auto slashTotal scanner enabled", {
+    poseAddress: config.poseManagerV2Address,
+  });
+}
 
 /**
  * Poll the L2 node for BFT equivocation events and bridge them into the
