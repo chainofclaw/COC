@@ -335,6 +335,120 @@ describe("BftCoordinator", () => {
     assert.equal(divergenceFiredCount, 0, "no peer divergence to report when local matches quorum")
   })
 
+  it("Phase H5: fires onPersistentDivergence after N consecutive divergences", async () => {
+    // After 3 consecutive prepare-phase timeouts where peers reached 2/3
+    // quorum on a stateRoot we couldn't reproduce, the persistent-
+    // divergence callback fires. This is the testnet "leveldb is
+    // corrupted at-rest, incremental sync loops forever" path — we
+    // escalate to a full state-snapshot import.
+    const ourRoot = ("0x" + "aa".repeat(32)) as Hex
+    const peerRoot = ("0x" + "bb".repeat(32)) as Hex
+
+    const persistentEvents: Array<{ height: bigint; consecutiveCount: number }> = []
+    const coord = new BftCoordinator({
+      localId: "v1",
+      validators,
+      prepareTimeoutMs: 30,
+      commitTimeoutMs: 30,
+      broadcastMessage: async () => {},
+      onFinalized: async () => {},
+      computeLocalStateRoot: async () => ourRoot,
+      persistentDivergenceThreshold: 3,
+      onPersistentDivergence: (info) => persistentEvents.push({
+        height: info.height,
+        consecutiveCount: info.consecutiveCount,
+      }),
+    })
+
+    // Drive 3 divergent rounds back-to-back. Each uses a fresh height
+    // because the coordinator advances height after each round.
+    for (let height = 1n; height <= 3n; height++) {
+      await coord.startRound(makeBlock(height))
+      await coord.handleMessage({ ...bftMsg("prepare", height, makeBlock(height).hash, "v2"), stateRoot: peerRoot })
+      await coord.handleMessage({ ...bftMsg("prepare", height, makeBlock(height).hash, "v3"), stateRoot: peerRoot })
+      await new Promise((r) => setTimeout(r, 100))
+    }
+
+    assert.equal(persistentEvents.length, 1, "fires once when threshold crossed")
+    assert.equal(persistentEvents[0].height, 3n)
+    assert.equal(persistentEvents[0].consecutiveCount, 3)
+  })
+
+  it("Phase H5: does NOT fire below threshold (only 2 consecutive divergences)", async () => {
+    const ourRoot = ("0x" + "aa".repeat(32)) as Hex
+    const peerRoot = ("0x" + "bb".repeat(32)) as Hex
+
+    let persistentFired = 0
+    const coord = new BftCoordinator({
+      localId: "v1",
+      validators,
+      prepareTimeoutMs: 30,
+      commitTimeoutMs: 30,
+      broadcastMessage: async () => {},
+      onFinalized: async () => {},
+      computeLocalStateRoot: async () => ourRoot,
+      persistentDivergenceThreshold: 3,
+      onPersistentDivergence: () => persistentFired++,
+    })
+
+    for (let height = 1n; height <= 2n; height++) {
+      await coord.startRound(makeBlock(height))
+      await coord.handleMessage({ ...bftMsg("prepare", height, makeBlock(height).hash, "v2"), stateRoot: peerRoot })
+      await coord.handleMessage({ ...bftMsg("prepare", height, makeBlock(height).hash, "v3"), stateRoot: peerRoot })
+      await new Promise((r) => setTimeout(r, 100))
+    }
+
+    assert.equal(persistentFired, 0, "below threshold — must not escalate")
+  })
+
+  it("Phase H5: counter resets on successful finalize — transient divergence doesn't escalate", async () => {
+    // Divergence × 2, then a clean finalize, then 2 more divergences.
+    // Counter should reset after the clean finalize so the second pair
+    // doesn't escalate (5 cumulative ≠ 3 consecutive).
+    const ourRoot = ("0x" + "aa".repeat(32)) as Hex
+    const peerRoot = ("0x" + "bb".repeat(32)) as Hex
+
+    let persistentFired = 0
+    const coord = new BftCoordinator({
+      localId: "v1",
+      validators,
+      prepareTimeoutMs: 30,
+      commitTimeoutMs: 30,
+      broadcastMessage: async () => {},
+      onFinalized: async () => {},
+      computeLocalStateRoot: async () => ourRoot,
+      persistentDivergenceThreshold: 3,
+      onPersistentDivergence: () => persistentFired++,
+    })
+
+    // Two divergent rounds.
+    for (let height = 1n; height <= 2n; height++) {
+      await coord.startRound(makeBlock(height))
+      await coord.handleMessage({ ...bftMsg("prepare", height, makeBlock(height).hash, "v2"), stateRoot: peerRoot })
+      await coord.handleMessage({ ...bftMsg("prepare", height, makeBlock(height).hash, "v3"), stateRoot: peerRoot })
+      await new Promise((r) => setTimeout(r, 100))
+    }
+    // Successful finalize — all 3 agree on ourRoot.
+    const block3 = makeBlock(3n)
+    await coord.startRound(block3)
+    await coord.handleMessage({ ...bftMsg("prepare", 3n, block3.hash, "v2"), stateRoot: ourRoot })
+    await coord.handleMessage({ ...bftMsg("prepare", 3n, block3.hash, "v3"), stateRoot: ourRoot })
+    // The early-commits path needs commits too — send them so the finalize
+    // path runs and the counter resets.
+    await coord.handleMessage({ ...bftMsg("commit", 3n, block3.hash, "v2"), stateRoot: ourRoot })
+    await coord.handleMessage({ ...bftMsg("commit", 3n, block3.hash, "v3"), stateRoot: ourRoot })
+
+    // Two more divergent rounds.
+    for (let height = 4n; height <= 5n; height++) {
+      await coord.startRound(makeBlock(height))
+      await coord.handleMessage({ ...bftMsg("prepare", height, makeBlock(height).hash, "v2"), stateRoot: peerRoot })
+      await coord.handleMessage({ ...bftMsg("prepare", height, makeBlock(height).hash, "v3"), stateRoot: peerRoot })
+      await new Promise((r) => setTimeout(r, 100))
+    }
+
+    assert.equal(persistentFired, 0, "reset after finalize — only 2 consecutive divergences post-reset")
+  })
+
   it("Phase H4: does NOT fire when only 1 of 2 other validators votes — peer quorum not reached", async () => {
     // 1/3 stake from v2 with a different root is NOT 2/3 quorum, so peers
     // CAN'T finalize without us. We're not "lagging behind" yet — the
