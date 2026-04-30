@@ -15,7 +15,7 @@ import type { ChainBlock, Hex, MempoolTx } from "./blockchain-types.ts"
 import { Transaction } from "ethers"
 import { hexToBytes } from "@ethereumjs/util"
 import type { NodeSigner, SignatureVerifier } from "./crypto/signer.ts"
-import { calculateBaseFee, calculateExcessBlobGas, genesisBaseFee, BLOCK_GAS_LIMIT } from "./base-fee.ts"
+import { calculateBaseFee, calculateExcessBlobGas, genesisBaseFee, BLOCK_GAS_LIMIT, getBlockReward, DEFAULT_HALVING_INTERVAL_BLOCKS } from "./base-fee.ts"
 import { LevelDatabase } from "./storage/db.ts"
 import type { BatchOp } from "./storage/db.ts"
 import { BlockIndex } from "./storage/block-index.ts"
@@ -44,6 +44,25 @@ export interface PersistentChainEngineConfig {
   enableGovernance?: boolean
   validatorStakes?: Array<{ id: string; address: string; stake: bigint }>
   signatureEnforcement?: "off" | "monitor" | "enforce"
+  /**
+   * Phase I1: when true, applyBlock mints `blockRewardWei` (halved per
+   * `blockRewardHalvingInterval`) into the proposer's balance before
+   * committing state. Default false — rollout is gated so mainnet/testnet
+   * activation is an explicit flip on every node simultaneously (the
+   * reward becomes part of consensus once enabled).
+   */
+  enableBlockReward?: boolean
+  blockRewardWei?: bigint
+  blockRewardHalvingInterval?: bigint
+  /**
+   * Phase I2: when true, set the executionBlock's coinbase to the block
+   * proposer's address so ethereumjs runTx credits priority fee to the
+   * proposer. Default false → coinbase stays at 0x0 (legacy behaviour:
+   * priority fee accumulates at the zero address). Like I1, flipping to
+   * true is consensus-affecting because post-state stateRoot includes
+   * the proposer's credited balance — every node must run the same flag.
+   */
+  enableFeeDistribution?: boolean
 }
 
 export class PersistentChainEngine {
@@ -410,12 +429,23 @@ export class PersistentChainEngine {
       const drySm = new PersistentStateManager(dryTrie)
       const dryEvm = await this.evm.createDryRunChain(drySm)
 
+      // Phase I2: mirror applyBlock's coinbase-as-proposer wiring so the
+      // dry-run's priority-fee credit lands on the same address. Without
+      // this, post-state would diverge once any tx with non-zero priority
+      // fee is included. Env-gated identically to apply path.
+      const proposerCoinbase = (this.cfg.enableFeeDistribution && block.proposer)
+        ? this.resolveValidatorAddress(block.proposer)
+        : undefined
+      const dryCoinbase = proposerCoinbase && /^0x[0-9a-fA-F]{40}$/.test(proposerCoinbase)
+        ? proposerCoinbase
+        : undefined
       const blockContext: import("./evm.ts").ExecutionContext = {
         blockNumber: block.number,
         baseFeePerGas: block.baseFee ?? 0n,
         excessBlobGas: block.excessBlobGas,
         parentBeaconBlockRoot: block.parentBeaconBlockRoot ? hexToBytes(block.parentBeaconBlockRoot) : undefined,
         timestamp: BigInt(Math.floor(block.timestampMs / 1000)),
+        coinbase: dryCoinbase,
       }
       await dryEvm.applyBlockContext(blockContext)
       // Phase H1 diag point 2: state AFTER applyBlockContext (BEACON_ROOTS
@@ -444,6 +474,24 @@ export class PersistentChainEngine {
           undefined,
           true,
         )
+      }
+
+      // Phase I1: Mirror applyBlock's per-block reward credit on the dry-run
+      // fork. Without this, the speculative root computed here would diverge
+      // from the post-apply root that BFT validators verify — every block
+      // would fail the (hash, stateRoot) joint quorum once block rewards
+      // are enabled. Same condition as applyBlock: enabled, has proposer,
+      // not genesis.
+      if (this.cfg.enableBlockReward && block.proposer && block.number > 0n) {
+        const reward = getBlockReward(
+          block.number,
+          this.cfg.blockRewardWei ?? 0n,
+          this.cfg.blockRewardHalvingInterval ?? DEFAULT_HALVING_INTERVAL_BLOCKS,
+        )
+        if (reward > 0n) {
+          const proposerAddr = this.resolveValidatorAddress(block.proposer)
+          await dryEvm.creditBalance(proposerAddr, reward)
+        }
       }
 
       // Read the post-execution root directly from the fork's v6 trie.
@@ -698,12 +746,27 @@ export class PersistentChainEngine {
     const executedTxHashes: Hex[] = []
 
     try {
+    // Phase I2: derive coinbase = proposer address so ethereumjs runTx
+    // credits priority fee (gasUsed * priorityPerGas) to the proposer.
+    // Base fee remains implicitly burned — sender pays full effectivePrice
+    // but runTx only credits the priority component to coinbase.
+    // resolveValidatorAddress is a no-op when block.proposer is already a
+    // 20-byte hex address (the common case in this network). Env-gated:
+    // legacy networks see coinbase=0x0 (priority fee accumulates there)
+    // until enableFeeDistribution flips on cluster-wide.
+    const proposerCoinbase = (this.cfg.enableFeeDistribution && block.proposer)
+      ? this.resolveValidatorAddress(block.proposer)
+      : undefined
+    const coinbase = proposerCoinbase && /^0x[0-9a-fA-F]{40}$/.test(proposerCoinbase)
+      ? proposerCoinbase
+      : undefined
     const blockContext: import("./evm.ts").ExecutionContext = {
       blockNumber: block.number,
       baseFeePerGas: block.baseFee ?? 0n,
       excessBlobGas: block.excessBlobGas,
       parentBeaconBlockRoot: block.parentBeaconBlockRoot ? hexToBytes(block.parentBeaconBlockRoot) : undefined,
       timestamp: executionTimestamp,
+      coinbase,
     }
     phaseLog("applyBlockContext")
     await this.evm.applyBlockContext(blockContext)
@@ -805,6 +868,25 @@ export class PersistentChainEngine {
     // Verify gasUsed matches claimed value (post-execution integrity check)
     if (!locallyProposed && block.gasUsed !== undefined && block.gasUsed !== totalGasUsed) {
       throw new Error(`block gasUsed mismatch: claimed ${block.gasUsed}, computed ${totalGasUsed}`)
+    }
+
+    // Phase I1: Mint per-block reward to the proposer's address inside the
+    // same EVM checkpoint as tx execution, so the credit is committed
+    // atomically with the block (or rolled back together if applyBlock
+    // throws below). The mint happens AFTER tx-loop and BEFORE commitState
+    // / stateTrie.commit, which means the post-commit stateRoot already
+    // reflects the credit and remote validators recompute the same root.
+    if (this.cfg.enableBlockReward && block.proposer && block.number > 0n) {
+      const reward = getBlockReward(
+        block.number,
+        this.cfg.blockRewardWei ?? 0n,
+        this.cfg.blockRewardHalvingInterval ?? DEFAULT_HALVING_INTERVAL_BLOCKS,
+      )
+      if (reward > 0n) {
+        const proposerAddr = this.resolveValidatorAddress(block.proposer)
+        phaseLog("blockReward", { proposer: proposerAddr, reward: reward.toString() })
+        await this.evm.creditBalance(proposerAddr, reward)
+      }
     }
 
     phaseLog("commitState")

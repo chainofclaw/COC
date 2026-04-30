@@ -110,6 +110,10 @@ if (usePersistent) {
       stateTrie: trie,
       enableGovernance: config.enableGovernance,
       validatorStakes: config.validatorStakes.map((v) => ({ ...v, stake: BigInt(v.stake) })),
+      enableBlockReward: config.enableBlockReward,
+      blockRewardWei: BigInt(config.blockRewardWei),
+      blockRewardHalvingInterval: BigInt(config.blockRewardHalvingIntervalBlocks),
+      enableFeeDistribution: config.enableFeeDistribution,
     },
     evm,
   )

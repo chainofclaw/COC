@@ -125,6 +125,32 @@ export interface NodeConfig {
   enableGovernance: boolean
   validatorStakes: Array<{ id: string; address: string; stake: string }>
   /**
+   * Phase I1 — block reward distribution.
+   *
+   * `enableBlockReward`: when true, applyBlock mints `blockRewardWei` (halved
+   * every `blockRewardHalvingIntervalBlocks` blocks) into the block proposer's
+   * balance. Default false. Once enabled the reward becomes part of consensus
+   * — every node must run the same flag + same parameters or stateRoot will
+   * diverge. Roll out as a coordinated upgrade, never a per-node env.
+   *
+   * `blockRewardWei`: stringified wei amount (default 0).
+   * `blockRewardHalvingIntervalBlocks`: blocks between halvings (default
+   * mainnet 4-year curve = 42,048,000 with 3s blocks).
+   */
+  enableBlockReward: boolean
+  blockRewardWei: string
+  blockRewardHalvingIntervalBlocks: string
+  /**
+   * Phase I2 — EIP-1559 fee distribution.
+   *
+   * When true, applyBlock + speculative compute set executionBlock.coinbase
+   * to the proposer's address so ethereumjs runTx credits priority fee to
+   * the proposer. Default false → coinbase stays at 0x0 (priority fee
+   * accumulates at the zero address; legacy behaviour). Flipping is
+   * consensus-affecting; cluster-wide upgrade required.
+   */
+  enableFeeDistribution: boolean
+  /**
    * On-chain ValidatorRegistry contract address (Sprint 4 of Phase F+G).
    *
    * When set, node/src/index.ts spins up a ValidatorRegistryReader that
@@ -367,6 +393,29 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     process.env.COC_ENABLE_GOVERNANCE ?? (user as Record<string, unknown>).enableGovernance,
     false,
   )
+
+  // Phase I1: block reward distribution.
+  const enableBlockReward = parseBooleanFlag(
+    process.env.COC_BLOCK_REWARD_ENABLED ?? (user as Record<string, unknown>).enableBlockReward,
+    false,
+  )
+  const blockRewardWeiRaw = process.env.COC_BLOCK_REWARD_WEI
+    ?? (user as Record<string, unknown>).blockRewardWei
+  const blockRewardWei = typeof blockRewardWeiRaw === "string" && /^[0-9]+$/.test(blockRewardWeiRaw)
+    ? blockRewardWeiRaw
+    : "0"
+  const blockRewardHalvingIntervalRaw = process.env.COC_BLOCK_REWARD_HALVING_INTERVAL_BLOCKS
+    ?? (user as Record<string, unknown>).blockRewardHalvingIntervalBlocks
+  const blockRewardHalvingIntervalBlocks = typeof blockRewardHalvingIntervalRaw === "string"
+    && /^[0-9]+$/.test(blockRewardHalvingIntervalRaw)
+    ? blockRewardHalvingIntervalRaw
+    : "42048000"
+
+  // Phase I2: EIP-1559 fee distribution.
+  const enableFeeDistribution = parseBooleanFlag(
+    process.env.COC_FEE_DISTRIBUTION_ENABLED ?? (user as Record<string, unknown>).enableFeeDistribution,
+    false,
+  )
   const userValidatorStakes = (user as Record<string, unknown>).validatorStakes
   const validatorStakes: Array<{ id: string; address: string; stake: string }> = Array.isArray(userValidatorStakes)
     ? userValidatorStakes.filter(
@@ -485,6 +534,10 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     poseChallengerAuthCacheTtlMs,
     enableGovernance: false,
     validatorStakes: [],
+    enableBlockReward: false,
+    blockRewardWei: "0",
+    blockRewardHalvingIntervalBlocks: "42048000",
+    enableFeeDistribution: false,
     enableBft: false,
     bftPrepareTimeoutMs: 5000,
     bftCommitTimeoutMs: 5000,
@@ -545,6 +598,10 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     nodePrivateKey,
     enableGovernance,
     validatorStakes,
+    enableBlockReward,
+    blockRewardWei,
+    blockRewardHalvingIntervalBlocks,
+    enableFeeDistribution,
     validatorAddresses,
     validatorRegistryAddress,
     validatorRegistryFromBlock,
@@ -1015,6 +1072,23 @@ export function validateConfig(cfg: Partial<NodeConfig>): string[] {
 
   if (cfg.enableGovernance !== undefined && typeof cfg.enableGovernance !== "boolean") {
     errors.push("enableGovernance must be a boolean")
+  }
+
+  if (cfg.enableBlockReward !== undefined && typeof cfg.enableBlockReward !== "boolean") {
+    errors.push("enableBlockReward must be a boolean")
+  }
+  if (cfg.blockRewardWei !== undefined) {
+    if (typeof cfg.blockRewardWei !== "string" || !/^[0-9]+$/.test(cfg.blockRewardWei)) {
+      errors.push("blockRewardWei must be a non-negative integer string")
+    }
+  }
+  if (cfg.blockRewardHalvingIntervalBlocks !== undefined) {
+    if (typeof cfg.blockRewardHalvingIntervalBlocks !== "string" || !/^[0-9]+$/.test(cfg.blockRewardHalvingIntervalBlocks)) {
+      errors.push("blockRewardHalvingIntervalBlocks must be a non-negative integer string")
+    }
+  }
+  if (cfg.enableFeeDistribution !== undefined && typeof cfg.enableFeeDistribution !== "boolean") {
+    errors.push("enableFeeDistribution must be a boolean")
   }
 
   if (cfg.validatorStakes !== undefined) {
