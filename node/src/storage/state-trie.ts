@@ -49,7 +49,7 @@ export interface IStateTrie {
    * through the shared adapter and defeat the dry-run contract). Safe to
    * call during an active checkpoint.
    */
-  computeStateRoot(): string
+  computeStateRoot(): Promise<string>
   setStateRoot(root: string, opts?: { persist?: boolean }): Promise<void>
   hasStateRoot(root: string): Promise<boolean>
   clearStorage(address: string): Promise<void>
@@ -548,7 +548,66 @@ export class PersistentStateTrie implements IStateTrie {
     return this.committedStateRoot
   }
 
-  computeStateRoot(): string {
+  /**
+   * Read the live trie root reflecting all in-memory writes — used by the
+   * BFT speculative-stateRoot path which must NOT call commit() (commit
+   * pops the v6 CheckpointDB frame and flushes writes to LevelDB; the
+   * dry-run contract forbids that).
+   *
+   * Important sync responsibility (2026-04-30 testnet incident):
+   * `trie.root()` returns the account trie's root. When EVM execution
+   * touched contract storage (e.g. block.applyBlockContext writing
+   * BEACON_ROOTS slots on every Cancun block), the storage trie root
+   * changed but the matching account record on the parent trie still
+   * carries the OLD storageRoot pointer. Without re-writing the dirty
+   * account records here, `trie.root()` returns a STALE root that omits
+   * post-block storage changes.
+   *
+   * Symptom of the bug: even an empty block (0 txs) mutates BEACON_ROOTS
+   * storage via prepareVmForExecution → applyParentBeaconBlockRoot.
+   * `computeStateRoot()` returned the stale account-trie root that
+   * omitted the storage sync, while the proposer's lifecycle happened
+   * to flush via a different path producing the synced (correct) root —
+   * causing per-node speculative-compute divergence. With 3-validator
+   * equal-stake BFT (quorum strictly > 2/3 → all 3 must agree), even a
+   * single divergent vote stalls the chain. Diag dump captured at
+   * height 140,392 on 2026-04-30 02:01 confirmed the divergent triple.
+   *
+   * Fix: mirror the storage-trie sync from `commit()` (without popping
+   * the checkpoint frame), so `computeStateRoot()` reflects all
+   * post-execution writes. Idempotent — safe to call multiple times.
+   * Now async because `trie.put()` is async.
+   */
+  async computeStateRoot(): Promise<string> {
+    if (this.dirtyAddresses.size > 0) {
+      const encoder = new TextEncoder()
+      for (const address of this.dirtyAddresses) {
+        const storageTrie = this.storageTries.get(address)
+        if (!storageTrie) continue
+        const cached = this.accountCache.get(address)
+        if (!cached) continue
+        const newRoot = bytesToHex(storageTrie.root())
+        if (cached.storageRoot === newRoot) continue
+        const updatedAccount: AccountState = { ...cached, storageRoot: newRoot }
+        const json = {
+          nonce: updatedAccount.nonce.toString(),
+          balance: updatedAccount.balance.toString(),
+          storageRoot: updatedAccount.storageRoot,
+          codeHash: updatedAccount.codeHash,
+        }
+        // Direct trie.put bypasses our put()'s nullification side effect
+        // (we don't want to mark this as dirty or invalidate
+        // `lastStateRoot` here — this is a read-only view computation).
+        // The fork's CheckpointDB captures all writes in its in-memory
+        // keyValueMap; they reach LevelDB only on commit(), which the
+        // dry-run contract forbids. Callers that DO commit() later
+        // re-sync idempotently in commit()'s own loop.
+        await this.trie.put(hexToBytes(address), encoder.encode(JSON.stringify(json)))
+        // Mirror commit()'s accountCache update so subsequent reads
+        // through this instance see the post-sync storageRoot.
+        this.accountCache.set(address, updatedAccount)
+      }
+    }
     return bytesToHex(this.trie.root())
   }
 
@@ -912,9 +971,10 @@ export class InMemoryStateTrie implements IStateTrie {
     return this.lastRoot
   }
 
-  computeStateRoot(): string {
+  async computeStateRoot(): Promise<string> {
     // Mirror commit()'s hash: sorted addresses joined, then keccak256. No
-    // side effects — doesn't update lastRoot.
+    // side effects — doesn't update lastRoot. Async to match
+    // PersistentStateTrie's signature (which needs await for trie.put).
     const addresses = Array.from(this.accounts.keys()).sort()
     return keccak256(toUtf8Bytes(addresses.join(",")))
   }
