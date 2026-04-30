@@ -53,6 +53,22 @@ export interface BftCoordinatorConfig {
    * MUST be false on any production chain.
    */
   relaxedQuorum?: boolean
+  /**
+   * Phase H4: callback fired when a BFT round times out AND the divergence
+   * diagnostic shows ≥2/3 of OTHER validators converged on a (hash,
+   * stateRoot) pair the local node could not reproduce. This means peers
+   * have advanced past us; the local node is silently behind. The parent
+   * (coc-node) wires this to an immediate snap-sync request so the lagging
+   * node catches up instead of waiting for the next syncIntervalMs tick
+   * (which has been observed to leave nodes permanently stuck when the
+   * proposer round-robin rotates back to a lagging validator).
+   *
+   * Optional — when omitted, the timeout handler simply clears the round
+   * and continues (legacy behaviour).
+   */
+  onPeerQuorumDiverged?: (
+    info: { height: bigint; peerBlockHash: Hex; peerStateRoot: Hex; localStateRoot?: Hex },
+  ) => void
 }
 
 /**
@@ -484,6 +500,66 @@ export class BftCoordinator {
     })
   }
 
+  /**
+   * Phase H4 — peer quorum divergence detection.
+   *
+   * Scan a round's prepare votes for a (blockHash, stateRoot) pair that
+   * ≥2/3 of OTHER validators (not us) agree on but our local vote disagrees
+   * with. Returns the peer-quorum pair when detected, null otherwise.
+   *
+   * The signal we trip on: peers reached relaxedQuorum on a stateRoot we
+   * couldn't reproduce. That means peers will finalize and advance past us
+   * via 2-of-3 voting (the 2026-04-30 testnet stall pattern); we'll be
+   * silently behind unless we trigger an immediate snap-sync.
+   */
+  private detectPeerQuorumDivergence(round: BftRound): {
+    peerBlockHash: Hex
+    peerStateRoot: Hex
+    localStateRoot?: Hex
+  } | null {
+    const localId = this.cfg.localId.toLowerCase()
+    const localVote = round.state.prepareVotes.get(localId)
+    const localStateRoot = localVote?.stateRoot
+
+    // Group OTHER validators' votes by (blockHash, stateRoot) and sum stake.
+    const stakeByPair = new Map<string, { hash: Hex; root: Hex; stake: bigint }>()
+    let totalStake = 0n
+    for (const v of this.cfg.validators) {
+      totalStake += v.stake
+      if (v.id.toLowerCase() === localId) continue
+      const vote = round.state.prepareVotes.get(v.id.toLowerCase())
+      if (!vote || !vote.stateRoot) continue
+      const key = `${vote.blockHash}:${vote.stateRoot}`
+      const e = stakeByPair.get(key)
+      if (e) {
+        e.stake += v.stake
+      } else {
+        stakeByPair.set(key, { hash: vote.blockHash, root: vote.stateRoot, stake: v.stake })
+      }
+    }
+
+    // 2/3 threshold (intentionally use the relaxedQuorum form here — the
+    // signal we want is "peers can advance without us", and that's the
+    // exact threshold node-2/3 use to finalize when we abstain). +1 wei
+    // strictness doesn't matter for divergence detection.
+    const twoThirds = (totalStake * 2n) / 3n
+    let bestPair: { hash: Hex; root: Hex; stake: bigint } | null = null
+    for (const e of stakeByPair.values()) {
+      if (e.stake >= twoThirds && (!bestPair || e.stake > bestPair.stake)) bestPair = e
+    }
+    if (!bestPair) return null
+
+    // Only flag divergence when our local vote differs (or absent). If we
+    // matched, we're fine — round will finalize via early-commits path.
+    if (localStateRoot && localStateRoot === bestPair.root) return null
+
+    return {
+      peerBlockHash: bestPair.hash,
+      peerStateRoot: bestPair.root,
+      localStateRoot,
+    }
+  }
+
   private startTimeout(): void {
     if (!this.activeRound) return
 
@@ -506,6 +582,37 @@ export class BftCoordinator {
         // source. Cheap (a few hundred bytes per timeout); only fires on
         // actual timeouts so log volume stays bounded.
         this.dumpDivergenceDiagnostics(this.activeRound)
+
+        // Phase H4: if ≥2/3 of OTHER validators converged on a
+        // (blockHash, stateRoot) pair our local node couldn't reproduce,
+        // peers WILL finalize via relaxedQuorum and advance past us. Fire
+        // the onPeerQuorumDiverged callback so the parent (coc-node) can
+        // trigger an immediate snap-sync to catch up — without it the
+        // proposer round-robin eventually rotates back to the lagging
+        // node and the chain deadlocks (2026-04-30 testnet stall at
+        // height 146,668).
+        if (this.cfg.onPeerQuorumDiverged) {
+          try {
+            const divergence = this.detectPeerQuorumDivergence(this.activeRound)
+            if (divergence) {
+              log.warn("BFT peer-quorum divergence detected — triggering catch-up", {
+                height: this.activeRound.state.height.toString(),
+                peerBlockHash: divergence.peerBlockHash,
+                peerStateRoot: divergence.peerStateRoot,
+                localStateRoot: divergence.localStateRoot ?? "<unset>",
+              })
+              this.cfg.onPeerQuorumDiverged({
+                height: this.activeRound.state.height,
+                peerBlockHash: divergence.peerBlockHash,
+                peerStateRoot: divergence.peerStateRoot,
+                localStateRoot: divergence.localStateRoot,
+              })
+            }
+          } catch (err) {
+            log.warn("BFT onPeerQuorumDiverged callback threw", { error: String(err) })
+          }
+        }
+
         this.activeRound.fail()
         this.clearRound()
         this.processDeferredBlock().catch((err) => {

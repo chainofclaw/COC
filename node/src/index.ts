@@ -202,6 +202,12 @@ if (config.validatorAddresses) {
 
 // BFT coordinator setup
 let bftCoordinator: BftCoordinator | undefined
+
+// Phase H4: rate-limit immediate snap-sync triggered by BFT peer-quorum
+// divergence so a divergence storm doesn't spawn parallel sync attempts.
+// Module-scope so the cooldown survives across BftCoordinator callbacks.
+let lastPeerDivergenceSyncMs = 0
+const PEER_DIVERGENCE_SYNC_COOLDOWN_MS = 60_000
 const bftEnabled = config.enableBft && config.validators.length >= 3
 
 // State snapshot export cache (30s TTL, keyed by tip hash)
@@ -707,6 +713,36 @@ if (bftEnabled) {
       const current = prior.then(workWithTimeout, workWithTimeout)
       onFinalizedQueue = current
       return current
+    },
+    onPeerQuorumDiverged: (info) => {
+      // Phase H4: peers reached relaxedQuorum on a (blockHash, stateRoot)
+      // pair we couldn't reproduce. They WILL finalize and advance past us;
+      // the proposer round-robin will eventually rotate back to this lagging
+      // node and the chain will deadlock unless we catch up first.
+      // Trigger an immediate snap-sync. Rate-limited to once per minute so
+      // a divergence storm doesn't melt the wire-server with parallel sync
+      // requests; the existing periodic sync (consensus syncIntervalMs) is
+      // the long-period fallback.
+      if (!consensus) return
+      const nowMs = Date.now()
+      const sinceLastMs = nowMs - lastPeerDivergenceSyncMs
+      if (sinceLastMs < PEER_DIVERGENCE_SYNC_COOLDOWN_MS) {
+        log.info("BFT peer-quorum sync skipped (cooldown)", {
+          height: info.height.toString(),
+          remainingMs: PEER_DIVERGENCE_SYNC_COOLDOWN_MS - sinceLastMs,
+        })
+        return
+      }
+      lastPeerDivergenceSyncMs = nowMs
+      log.warn("BFT peer-quorum divergence — triggering immediate snap-sync", {
+        height: info.height.toString(),
+        peerBlockHash: info.peerBlockHash,
+        peerStateRoot: info.peerStateRoot,
+        localStateRoot: info.localStateRoot ?? "<unset>",
+      })
+      consensus.requestSyncNow().catch((err) => {
+        log.warn("BFT peer-quorum requestSyncNow failed", { error: String(err) })
+      })
     },
   })
   log.info("BFT consensus enabled", { validators: config.validators.length })
