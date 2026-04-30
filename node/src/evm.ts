@@ -100,6 +100,19 @@ export interface ExecutionContext {
   excessBlobGas?: bigint
   parentBeaconBlockRoot?: Uint8Array
   timestamp?: bigint
+  /**
+   * Phase I2: When set, the executionBlock's coinbase header field is
+   * populated with this address so ethereumjs runTx credits priority fee
+   * (gasUsed * (effectivePrice - baseFee)) to the proposer instead of
+   * the default 0x0 burn address. Base fee remains implicitly burned —
+   * sender pays gasUsed * effectivePrice, runTx only credits priority
+   * to coinbase, the base fee component leaves the supply.
+   *
+   * Pass the same value on both proposer and non-proposer execution
+   * paths (applyBlock + speculativelyComputeStateRoot) so post-state
+   * roots match. Empty/undefined falls back to legacy 0x0 behaviour.
+   */
+  coinbase?: string
 }
 
 const MAX_RECEIPT_CACHE = 50_000
@@ -183,6 +196,25 @@ export class EvmChain {
 
   setPrefundAccounts(accounts: PrefundAccount[]): void {
     this.prefundAccounts = [...accounts]
+  }
+
+  /**
+   * Phase I1: Mint `amount` wei into `address`'s balance on the live
+   * stateManager. Used by chain-engine to credit the BFT proposer with
+   * the per-block reward inside the same checkpoint that wraps tx
+   * execution, so the reward is committed atomically with the block.
+   *
+   * Caller is responsible for being inside an `applyBlockContext` scope
+   * (an active checkpoint) so a revert can roll back the credit on a
+   * failed block.
+   */
+  async creditBalance(address: string, amount: bigint): Promise<void> {
+    if (amount <= 0n) return
+    const addr = Address.fromString(address)
+    const existing = await this.vm.stateManager.getAccount(addr)
+    const account = existing ?? new Account()
+    account.balance = account.balance + amount
+    await this.vm.stateManager.putAccount(addr, account)
   }
 
   /**
@@ -1150,11 +1182,15 @@ export class EvmChain {
     context: ExecutionContext = {},
   ) {
     const isCancunOrLater = blockCommon.gteHardfork(Hardfork.Cancun)
+    const coinbase = context.coinbase && /^0x[0-9a-fA-F]{40}$/.test(context.coinbase)
+      ? Address.fromString(context.coinbase)
+      : undefined
     return createBlock({
       header: {
         ...(context.blockNumber !== undefined ? { number: context.blockNumber } : {}),
         ...(context.timestamp !== undefined ? { timestamp: context.timestamp } : {}),
         baseFeePerGas: context.baseFeePerGas ?? 0n,
+        ...(coinbase !== undefined ? { coinbase } : {}),
         ...(isCancunOrLater && context.excessBlobGas !== undefined ? { excessBlobGas: context.excessBlobGas } : {}),
         ...(isCancunOrLater ? { parentBeaconBlockRoot: context.parentBeaconBlockRoot ?? ZERO_BEACON_ROOT } : {}),
       },

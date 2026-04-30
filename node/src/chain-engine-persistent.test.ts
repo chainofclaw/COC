@@ -936,3 +936,455 @@ test("speculativelyComputeStateRoot: empty-block spec root is byte-identical acr
     await ctx.close()
   }
 })
+
+test("Phase I1: block reward credits proposer balance after each block", async () => {
+  // Sprint I1 acceptance test. With enableBlockReward=true and a fixed reward
+  // per block, the proposer's balance must equal N * reward after N blocks
+  // (genesis excluded — height 0 mints nothing). Halving doesn't trigger on
+  // these test heights because halvingInterval is set astronomically high.
+  const tmpDir = mkdtempSync(join(tmpdir(), "coc-i1-"))
+  const db = new LevelDatabase(join(tmpDir, "state"))
+  await db.open()
+  const trie = new PersistentStateTrie(db)
+  await trie.init()
+  const sm = new PersistentStateManager(trie)
+  const evm = await EvmChain.create(SPEC_CHAIN_ID, sm)
+  const proposerWallet = Wallet.createRandom()
+  const REWARD = 500_000_000_000_000_000n // 0.5 ETH per block
+
+  const engine = new PersistentChainEngine(
+    {
+      dataDir: tmpDir,
+      nodeId: proposerWallet.address,
+      chainId: SPEC_CHAIN_ID,
+      validators: [proposerWallet.address],
+      finalityDepth: 3,
+      maxTxPerBlock: 50,
+      minGasPriceWei: 1n,
+      stateTrie: trie,
+      enableBlockReward: true,
+      blockRewardWei: REWARD,
+      blockRewardHalvingInterval: 1_000_000_000n,
+    },
+    evm,
+  )
+  await engine.init()
+
+  try {
+    // Read initial balance — should be 0 since no prefund.
+    const balanceBefore = await evm.getBalance(proposerWallet.address)
+    assert.strictEqual(balanceBefore, 0n, "proposer starts with zero balance")
+
+    // Propose 5 empty blocks.
+    const N = 5
+    for (let i = 0; i < N; i++) {
+      const block = await engine.proposeNextBlock()
+      assert.ok(block, `block ${i + 1} should be proposed`)
+    }
+
+    // After N blocks, proposer balance == N * reward.
+    const balanceAfter = await evm.getBalance(proposerWallet.address)
+    assert.strictEqual(
+      balanceAfter,
+      BigInt(N) * REWARD,
+      `proposer balance after ${N} blocks must equal ${N}*reward`,
+    )
+  } finally {
+    await engine.close()
+    rmSync(tmpDir, { recursive: true, force: true })
+  }
+})
+
+test("Phase I1: block reward disabled by default leaves proposer balance unchanged", async () => {
+  // Regression: enableBlockReward defaults to false; flipping to true is the
+  // only path to mint. Confirms a missing-or-undefined flag is a hard no-op.
+  const tmpDir = mkdtempSync(join(tmpdir(), "coc-i1off-"))
+  const db = new LevelDatabase(join(tmpDir, "state"))
+  await db.open()
+  const trie = new PersistentStateTrie(db)
+  await trie.init()
+  const sm = new PersistentStateManager(trie)
+  const evm = await EvmChain.create(SPEC_CHAIN_ID, sm)
+  const proposerWallet = Wallet.createRandom()
+
+  const engine = new PersistentChainEngine(
+    {
+      dataDir: tmpDir,
+      nodeId: proposerWallet.address,
+      chainId: SPEC_CHAIN_ID,
+      validators: [proposerWallet.address],
+      finalityDepth: 3,
+      maxTxPerBlock: 50,
+      minGasPriceWei: 1n,
+      stateTrie: trie,
+      // enableBlockReward not set → falsy → reward path skipped
+      blockRewardWei: 500_000_000_000_000_000n,
+    },
+    evm,
+  )
+  await engine.init()
+
+  try {
+    for (let i = 0; i < 3; i++) {
+      const block = await engine.proposeNextBlock()
+      assert.ok(block)
+    }
+    const balance = await evm.getBalance(proposerWallet.address)
+    assert.strictEqual(balance, 0n, "no reward when flag is false")
+  } finally {
+    await engine.close()
+    rmSync(tmpDir, { recursive: true, force: true })
+  }
+})
+
+test("Phase I1: speculative compute matches post-apply root with rewards enabled", async () => {
+  // Critical consensus invariant: when block rewards are on, the speculative
+  // compute path must mirror the apply path's reward credit. Otherwise the
+  // BFT (hash, stateRoot) joint quorum would always fail because proposer's
+  // declared root (with reward credit) != non-proposer's spec root (without).
+  const tmpDir = mkdtempSync(join(tmpdir(), "coc-i1-spec-"))
+  const db = new LevelDatabase(join(tmpDir, "state"))
+  await db.open()
+  const trie = new PersistentStateTrie(db)
+  await trie.init()
+  const sm = new PersistentStateManager(trie)
+  const evm = await EvmChain.create(SPEC_CHAIN_ID, sm)
+  const proposerWallet = Wallet.createRandom()
+
+  const engine = new PersistentChainEngine(
+    {
+      dataDir: tmpDir,
+      nodeId: proposerWallet.address,
+      chainId: SPEC_CHAIN_ID,
+      validators: [proposerWallet.address],
+      finalityDepth: 3,
+      maxTxPerBlock: 50,
+      minGasPriceWei: 1n,
+      stateTrie: trie,
+      enableBlockReward: true,
+      blockRewardWei: 1_000_000_000_000_000_000n,
+      blockRewardHalvingInterval: 1_000_000_000n,
+    },
+    evm,
+  )
+  await engine.init()
+
+  try {
+    // Build block 1 in deferred-apply mode (proposeNextBlock(true)) so we can
+    // dry-run the spec root before applyBlock commits, then assert equality.
+    const block1 = await engine.proposeNextBlock(true)
+    assert.ok(block1)
+
+    const specRoot = await engine.speculativelyComputeStateRoot(block1!)
+    assert.ok(specRoot, "spec compute must return a root")
+
+    await engine.applyBlock(block1!, true)
+    const appliedRoot = await trie.computeStateRoot()
+
+    assert.strictEqual(
+      specRoot,
+      appliedRoot,
+      "speculative root must equal apply root when both paths credit the proposer reward",
+    )
+  } finally {
+    await engine.close()
+    rmSync(tmpDir, { recursive: true, force: true })
+  }
+})
+
+test("Phase I2: tx priority fee credits proposer, base fee implicitly burned", async () => {
+  // Sprint I2 acceptance: a single tx with non-zero maxPriorityFeePerGas must
+  // credit `gasUsed * priorityFee` to the block proposer. Sender pays full
+  // `gasUsed * effectivePrice + value`. Base fee component disappears from
+  // supply (sender lost it; coinbase only got priority).
+  const tmpDir = mkdtempSync(join(tmpdir(), "coc-i2-"))
+  const db = new LevelDatabase(join(tmpDir, "state"))
+  await db.open()
+  const trie = new PersistentStateTrie(db)
+  await trie.init()
+  const sm = new PersistentStateManager(trie)
+  const evm = await EvmChain.create(SPEC_CHAIN_ID, sm)
+  const proposerWallet = Wallet.createRandom()
+  const senderWallet = new Wallet(SPEC_PK)
+  const recipientWallet = Wallet.createRandom()
+
+  const SENDER_INITIAL = parseEther("100")
+  const TX_VALUE = parseEther("0.5")
+
+  const engine = new PersistentChainEngine(
+    {
+      dataDir: tmpDir,
+      nodeId: proposerWallet.address,
+      chainId: SPEC_CHAIN_ID,
+      validators: [proposerWallet.address],
+      finalityDepth: 3,
+      maxTxPerBlock: 50,
+      minGasPriceWei: 1n,
+      stateTrie: trie,
+      // Block reward off — isolate I2 fee accounting.
+      enableFeeDistribution: true,
+      prefundAccounts: [{ address: senderWallet.address, balanceWei: SENDER_INITIAL.toString() }],
+    },
+    evm,
+  )
+  await engine.init()
+
+  try {
+    // Set baseFee high enough to be observable. After empty block 1, baseFee
+    // decreases per EIP-1559 toward MIN_BASE_FEE = 1 gwei. We send a tx with
+    // explicit maxFeePerGas and maxPriorityFeePerGas.
+    await engine.proposeNextBlock() // block 1 (empty, settles base fee)
+
+    const senderBalanceBefore = await evm.getBalance(senderWallet.address)
+    const proposerBalanceBefore = await evm.getBalance(proposerWallet.address)
+    assert.strictEqual(proposerBalanceBefore, 0n, "proposer starts with zero balance")
+
+    const MAX_FEE = 5_000_000_000n // 5 gwei
+    const MAX_PRIORITY = 2_000_000_000n // 2 gwei
+    const tx = await senderWallet.signTransaction({
+      to: recipientWallet.address,
+      value: TX_VALUE,
+      gasLimit: 21000,
+      maxFeePerGas: MAX_FEE,
+      maxPriorityFeePerGas: MAX_PRIORITY,
+      type: 2,
+      nonce: 0,
+      chainId: SPEC_CHAIN_ID,
+    })
+    await engine.addRawTx(tx as Hex)
+    const block2 = await engine.proposeNextBlock()
+    assert.ok(block2)
+    assert.strictEqual(block2!.txs.length, 1, "block must include the tx")
+
+    // Compute expected priority credit. baseFee in block2 ≈ MIN_BASE_FEE (1 gwei)
+    // because block 1 was empty (gasUsed=0 < target). Priority per gas =
+    // min(MAX_PRIORITY, MAX_FEE - baseFee). With baseFee=1 gwei, that's
+    // min(2 gwei, 4 gwei) = 2 gwei. Total priority = 21000 * 2 gwei.
+    const baseFee = block2!.baseFee ?? 0n
+    const priorityPerGas = MAX_PRIORITY < (MAX_FEE - baseFee) ? MAX_PRIORITY : (MAX_FEE - baseFee)
+    const expectedProposerCredit = 21000n * priorityPerGas
+    const expectedEffectivePrice = baseFee + priorityPerGas
+    const expectedSenderLoss = 21000n * expectedEffectivePrice + TX_VALUE
+
+    const senderBalanceAfter = await evm.getBalance(senderWallet.address)
+    const proposerBalanceAfter = await evm.getBalance(proposerWallet.address)
+    const recipientBalanceAfter = await evm.getBalance(recipientWallet.address)
+
+    assert.strictEqual(
+      proposerBalanceAfter,
+      expectedProposerCredit,
+      `proposer must receive exactly priorityFee*gasUsed = ${expectedProposerCredit}`,
+    )
+    assert.strictEqual(
+      senderBalanceBefore - senderBalanceAfter,
+      expectedSenderLoss,
+      `sender must lose exactly effectivePrice*gasUsed + value`,
+    )
+    assert.strictEqual(
+      recipientBalanceAfter,
+      TX_VALUE,
+      "recipient receives only the value (no fees)",
+    )
+
+    // Wei-precise burn invariant:
+    //   senderLoss == proposerCredit + recipientBalance + burnedBaseFee
+    // where burnedBaseFee = baseFee * gasUsed (vanishes from supply).
+    const burnedBaseFee = baseFee * 21000n
+    assert.strictEqual(
+      senderBalanceBefore - senderBalanceAfter,
+      proposerBalanceAfter + recipientBalanceAfter + burnedBaseFee,
+      "wei-precise: sender_loss == proposer + recipient + burned_base_fee",
+    )
+  } finally {
+    await engine.close()
+    rmSync(tmpDir, { recursive: true, force: true })
+  }
+})
+
+test("Phase I2: zero-priority tx still burns base fee and credits zero priority", async () => {
+  // Edge case: maxPriorityFeePerGas = 0 means proposer gets nothing, all the
+  // gas cost is base fee burn. Sender still pays full baseFee*gasUsed.
+  const tmpDir = mkdtempSync(join(tmpdir(), "coc-i2-zero-"))
+  const db = new LevelDatabase(join(tmpDir, "state"))
+  await db.open()
+  const trie = new PersistentStateTrie(db)
+  await trie.init()
+  const sm = new PersistentStateManager(trie)
+  const evm = await EvmChain.create(SPEC_CHAIN_ID, sm)
+  const proposerWallet = Wallet.createRandom()
+  const senderWallet = new Wallet(SPEC_PK)
+
+  const engine = new PersistentChainEngine(
+    {
+      dataDir: tmpDir,
+      nodeId: proposerWallet.address,
+      chainId: SPEC_CHAIN_ID,
+      validators: [proposerWallet.address],
+      finalityDepth: 3,
+      maxTxPerBlock: 50,
+      minGasPriceWei: 0n, // allow zero-priority tx
+      stateTrie: trie,
+      enableFeeDistribution: true,
+      prefundAccounts: [{ address: senderWallet.address, balanceWei: parseEther("100").toString() }],
+    },
+    evm,
+  )
+  await engine.init()
+
+  try {
+    await engine.proposeNextBlock() // block 1 empty
+
+    const tx = await senderWallet.signTransaction({
+      to: Wallet.createRandom().address,
+      value: 0n,
+      gasLimit: 21000,
+      maxFeePerGas: 5_000_000_000n,
+      maxPriorityFeePerGas: 0n,
+      type: 2,
+      nonce: 0,
+      chainId: SPEC_CHAIN_ID,
+    })
+    await engine.addRawTx(tx as Hex)
+    const block2 = await engine.proposeNextBlock()
+    assert.ok(block2)
+    assert.strictEqual(block2!.txs.length, 1)
+
+    const proposerBalanceAfter = await evm.getBalance(proposerWallet.address)
+    assert.strictEqual(proposerBalanceAfter, 0n, "zero-priority means zero credit")
+  } finally {
+    await engine.close()
+    rmSync(tmpDir, { recursive: true, force: true })
+  }
+})
+
+test("Phase I2: I1 block reward + I2 priority fee both credit proposer in same block", async () => {
+  // Combined acceptance: with both flags on, proposer receives reward +
+  // priority fee in one block. Validates the two paths don't interfere.
+  const tmpDir = mkdtempSync(join(tmpdir(), "coc-i12-"))
+  const db = new LevelDatabase(join(tmpDir, "state"))
+  await db.open()
+  const trie = new PersistentStateTrie(db)
+  await trie.init()
+  const sm = new PersistentStateManager(trie)
+  const evm = await EvmChain.create(SPEC_CHAIN_ID, sm)
+  const proposerWallet = Wallet.createRandom()
+  const senderWallet = new Wallet(SPEC_PK)
+
+  const REWARD = 100_000_000_000_000_000n // 0.1 ETH
+  const engine = new PersistentChainEngine(
+    {
+      dataDir: tmpDir,
+      nodeId: proposerWallet.address,
+      chainId: SPEC_CHAIN_ID,
+      validators: [proposerWallet.address],
+      finalityDepth: 3,
+      maxTxPerBlock: 50,
+      minGasPriceWei: 1n,
+      stateTrie: trie,
+      enableBlockReward: true,
+      blockRewardWei: REWARD,
+      blockRewardHalvingInterval: 1_000_000_000n,
+      enableFeeDistribution: true,
+      prefundAccounts: [{ address: senderWallet.address, balanceWei: parseEther("100").toString() }],
+    },
+    evm,
+  )
+  await engine.init()
+
+  try {
+    await engine.proposeNextBlock() // block 1 empty: only block reward
+    const afterEmpty = await evm.getBalance(proposerWallet.address)
+    assert.strictEqual(afterEmpty, REWARD, "empty block credits only block reward")
+
+    const MAX_FEE = 5_000_000_000n
+    const MAX_PRIORITY = 2_000_000_000n
+    const tx = await senderWallet.signTransaction({
+      to: Wallet.createRandom().address,
+      value: parseEther("0.1"),
+      gasLimit: 21000,
+      maxFeePerGas: MAX_FEE,
+      maxPriorityFeePerGas: MAX_PRIORITY,
+      type: 2,
+      nonce: 0,
+      chainId: SPEC_CHAIN_ID,
+    })
+    await engine.addRawTx(tx as Hex)
+    const block2 = await engine.proposeNextBlock()
+    assert.ok(block2)
+
+    const baseFee = block2!.baseFee ?? 0n
+    const priorityPerGas = MAX_PRIORITY < (MAX_FEE - baseFee) ? MAX_PRIORITY : (MAX_FEE - baseFee)
+    const priorityCredit = 21000n * priorityPerGas
+
+    const finalBalance = await evm.getBalance(proposerWallet.address)
+    assert.strictEqual(
+      finalBalance,
+      REWARD * 2n + priorityCredit,
+      "proposer balance == 2*reward + priorityFee from block 2",
+    )
+  } finally {
+    await engine.close()
+    rmSync(tmpDir, { recursive: true, force: true })
+  }
+})
+
+test("Phase I2: feeDistribution disabled — proposer balance unchanged, priority fee accumulates at 0x0", async () => {
+  // Regression: enableFeeDistribution defaults to false so legacy networks
+  // see the pre-I2 behaviour (coinbase=0x0, priority fee credited to 0x0).
+  const tmpDir = mkdtempSync(join(tmpdir(), "coc-i2off-"))
+  const db = new LevelDatabase(join(tmpDir, "state"))
+  await db.open()
+  const trie = new PersistentStateTrie(db)
+  await trie.init()
+  const sm = new PersistentStateManager(trie)
+  const evm = await EvmChain.create(SPEC_CHAIN_ID, sm)
+  const proposerWallet = Wallet.createRandom()
+  const senderWallet = new Wallet(SPEC_PK)
+
+  const engine = new PersistentChainEngine(
+    {
+      dataDir: tmpDir,
+      nodeId: proposerWallet.address,
+      chainId: SPEC_CHAIN_ID,
+      validators: [proposerWallet.address],
+      finalityDepth: 3,
+      maxTxPerBlock: 50,
+      minGasPriceWei: 1n,
+      stateTrie: trie,
+      // enableFeeDistribution NOT set → legacy 0x0 coinbase
+      prefundAccounts: [{ address: senderWallet.address, balanceWei: parseEther("100").toString() }],
+    },
+    evm,
+  )
+  await engine.init()
+
+  try {
+    await engine.proposeNextBlock() // block 1 empty
+    const tx = await senderWallet.signTransaction({
+      to: Wallet.createRandom().address,
+      value: parseEther("0.1"),
+      gasLimit: 21000,
+      maxFeePerGas: 5_000_000_000n,
+      maxPriorityFeePerGas: 2_000_000_000n,
+      type: 2,
+      nonce: 0,
+      chainId: SPEC_CHAIN_ID,
+    })
+    await engine.addRawTx(tx as Hex)
+    const block2 = await engine.proposeNextBlock()
+    assert.ok(block2)
+
+    // Proposer should NOT receive priority fee — it goes to 0x0 instead.
+    const proposerBalance = await evm.getBalance(proposerWallet.address)
+    assert.strictEqual(
+      proposerBalance,
+      0n,
+      "feeDistribution off — proposer balance must stay zero",
+    )
+    const zeroBalance = await evm.getBalance("0x0000000000000000000000000000000000000000")
+    assert.ok(zeroBalance > 0n, "priority fee accumulates at 0x0 in legacy mode")
+  } finally {
+    await engine.close()
+    rmSync(tmpDir, { recursive: true, force: true })
+  }
+})
