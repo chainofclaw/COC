@@ -405,3 +405,91 @@ describe("ValidatorRegistry: owner ops", () => {
     expect(await registry.slasher()).to.equal(signers[1].address)
   })
 })
+
+describe("ValidatorRegistry: Phase I5 — slash split when insuranceFund set", () => {
+  const SPLIT_BURN_BPS = 5000n
+  const SPLIT_REPORTER_BPS = 3000n
+
+  async function fixtureWithSplit() {
+    const { registry, owner, signers } = await deployRegistry()
+    const reporter = signers[1]
+    const InsuranceFundFactory = await ethers.getContractFactory("InsuranceFund")
+    const insuranceFund = await InsuranceFundFactory.deploy(owner.address)
+    await insuranceFund.waitForDeployment()
+
+    // Wire: slashRecipient = reporter; insuranceFund = the new contract.
+    await registry.connect(owner).setSlashRecipient(reporter.address)
+    await registry.connect(owner).setInsuranceFund(await insuranceFund.getAddress())
+
+    const { wallet, pubkey, nodeId } = await makeOperator(owner)
+    await registry.connect(wallet).stake(nodeId, pubkey, { value: MIN_STAKE })
+
+    return { registry, owner, signers, reporter, insuranceFund, op: wallet, nodeId }
+  }
+
+  it("splits slashed amount 50/30/20 to burnSink/reporter/insuranceFund", async () => {
+    const { registry, owner, reporter, insuranceFund, nodeId } = await fixtureWithSplit()
+    const expectedSlash = (MIN_STAKE * SLASH_BPS) / BPS_DENOM
+    const expectedBurn = (expectedSlash * SPLIT_BURN_BPS) / BPS_DENOM
+    const expectedReporter = (expectedSlash * SPLIT_REPORTER_BPS) / BPS_DENOM
+    const expectedInsurance = expectedSlash - expectedBurn - expectedReporter
+
+    const burnSinkAddr = "0x000000000000000000000000000000000000dEaD"
+    const burnBefore = await ethers.provider.getBalance(burnSinkAddr)
+    const reporterBefore = await ethers.provider.getBalance(reporter.address)
+    const fundBefore = await ethers.provider.getBalance(await insuranceFund.getAddress())
+
+    const tx = await registry.connect(owner).slashValidator(nodeId, ethers.id("evidence-i5"))
+    const receipt = await tx.wait()
+
+    expect((await ethers.provider.getBalance(burnSinkAddr)) - burnBefore).to.equal(expectedBurn)
+    expect((await ethers.provider.getBalance(reporter.address)) - reporterBefore).to.equal(expectedReporter)
+    expect(
+      (await ethers.provider.getBalance(await insuranceFund.getAddress())) - fundBefore,
+    ).to.equal(expectedInsurance)
+
+    expect(expectedBurn + expectedReporter + expectedInsurance).to.equal(expectedSlash)
+
+    const evDistributed = receipt.logs.find((l) => l.fragment?.name === "SlashDistributed")
+    expect(evDistributed, "SlashDistributed must fire").to.exist
+    expect(evDistributed.args[1]).to.equal(expectedBurn)
+    expect(evDistributed.args[2]).to.equal(expectedReporter)
+    expect(evDistributed.args[3]).to.equal(expectedInsurance)
+  })
+
+  it("setBurnSink redirects burn share to override address", async () => {
+    const { registry, owner, signers, reporter, insuranceFund, nodeId } = await fixtureWithSplit()
+    const altBurn = signers[5]
+    await registry.connect(owner).setBurnSink(altBurn.address)
+    const expectedSlash = (MIN_STAKE * SLASH_BPS) / BPS_DENOM
+    const expectedBurn = (expectedSlash * SPLIT_BURN_BPS) / BPS_DENOM
+
+    const altBefore = await ethers.provider.getBalance(altBurn.address)
+    await registry.connect(owner).slashValidator(nodeId, ethers.id("evidence-i5"))
+    const altAfter = await ethers.provider.getBalance(altBurn.address)
+    expect(altAfter - altBefore).to.equal(expectedBurn)
+  })
+
+  it("clearing insuranceFund (setInsuranceFund=0) reverts to legacy 100% behaviour", async () => {
+    const { registry, owner, reporter, insuranceFund, nodeId } = await fixtureWithSplit()
+    const expectedSlash = (MIN_STAKE * SLASH_BPS) / BPS_DENOM
+
+    await registry.connect(owner).setInsuranceFund(ethers.ZeroAddress)
+    const reporterBefore = await ethers.provider.getBalance(reporter.address)
+    const fundBefore = await ethers.provider.getBalance(await insuranceFund.getAddress())
+    await registry.connect(owner).slashValidator(nodeId, ethers.id("evidence-i5"))
+    expect((await ethers.provider.getBalance(reporter.address)) - reporterBefore).to.equal(expectedSlash)
+    // No deposit to insurance — fully reverted to legacy.
+    expect(await ethers.provider.getBalance(await insuranceFund.getAddress())).to.equal(fundBefore)
+  })
+
+  it("non-owner cannot setInsuranceFund / setBurnSink", async () => {
+    const { registry, signers } = await deployRegistry()
+    await expect(
+      registry.connect(signers[1]).setInsuranceFund(signers[2].address),
+    ).to.be.revertedWithCustomError(registry, "OnlyOwner")
+    await expect(
+      registry.connect(signers[1]).setBurnSink(signers[2].address),
+    ).to.be.revertedWithCustomError(registry, "OnlyOwner")
+  })
+})
