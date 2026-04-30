@@ -43,6 +43,16 @@ export interface BftCoordinatorConfig {
    * from voting this round (round will time out and a new proposer will try).
    */
   computeLocalStateRoot?: (block: ChainBlock) => Promise<Hex | undefined>
+  /**
+   * Phase H2 Track B (testnet/dev only): when true, BFT quorum threshold
+   * drops the strict `+1 wei` requirement, allowing exactly-2/3 stake to
+   * reach quorum. Loses Byzantine safety. Plumbed through BftRoundConfig
+   * to BftRound.handlePrepare/handleCommit's hasQuorum() calls.
+   *
+   * Wiring: read from `COC_DEV_RELAXED_QUORUM=1` env in node/src/index.ts.
+   * MUST be false on any production chain.
+   */
+  relaxedQuorum?: boolean
 }
 
 /**
@@ -153,6 +163,7 @@ export class BftCoordinator {
       localId: this.cfg.localId,
       prepareTimeoutMs: this.cfg.prepareTimeoutMs ?? DEFAULT_PREPARE_TIMEOUT_MS,
       commitTimeoutMs: this.cfg.commitTimeoutMs ?? DEFAULT_COMMIT_TIMEOUT_MS,
+      relaxedQuorum: this.cfg.relaxedQuorum,
     }
 
     // Speculatively compute the stateRoot we'd produce if we applied this

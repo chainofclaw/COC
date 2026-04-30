@@ -45,6 +45,15 @@ export interface BftRoundConfig {
   prepareTimeoutMs: number
   /** Timeout for commit phase (ms) */
   commitTimeoutMs: number
+  /**
+   * Phase H2 Track B: drop the `+1 wei` from the quorum threshold so a
+   * 3-validator equal-stake cluster reaches quorum at 2-of-3 instead of
+   * needing all 3. Loses Byzantine safety; ONLY for testnet/devnet where
+   * the cluster has known divergent-but-non-malicious validators (e.g.
+   * 2026-04-30 testnet's node-1 shadow state corruption). Production
+   * deployments MUST leave this false.
+   */
+  relaxedQuorum?: boolean
 }
 
 /** Per-validator vote record: which (blockHash, stateRoot) pair they endorsed. */
@@ -64,14 +73,38 @@ export interface BftRoundState {
 }
 
 /**
- * Calculate quorum threshold: floor(2/3 * totalStake) + 1
+ * Calculate quorum threshold.
+ *
+ * Default mode (Byzantine-safe): `floor(2/3 * totalStake) + 1` — strict
+ * supermajority. With 3 equal-stake validators, this requires all 3 to
+ * agree (2/3 = exactly 2 stake-units, threshold is 2 + 1 wei). Correct
+ * for n=3 BFT (which can tolerate f=0 byzantine faults).
+ *
+ * Relaxed mode (`relaxedQuorum=true`, dev/testnet only):
+ * `floor(2/3 * totalStake)` — drops the `+1`. With 3 equal-stake
+ * validators, this allows 2-of-3 quorum (2 stake-units >= 2 threshold).
+ * Loses Byzantine safety: 2 colluding validators can finalize a fork.
+ * Used when the cluster has known divergent-but-non-malicious validators
+ * (e.g. 2026-04-30 testnet's persistent node-1 shadow state corruption);
+ * the chain advances past the divergent vote rather than stalling.
+ *
+ * The relaxed flag is plumbed through `BftRoundConfig` from
+ * `BftCoordinatorConfig` and ultimately from `COC_DEV_RELAXED_QUORUM=1`
+ * env. Production code paths must NEVER set it true on a non-dev chain.
  */
-export function quorumThreshold(validators: Array<{ id: string; stake: bigint }>): bigint {
+export function quorumThreshold(
+  validators: Array<{ id: string; stake: bigint }>,
+  relaxedQuorum = false,
+): bigint {
   const total = validators.reduce((sum, v) => sum + v.stake, 0n)
   // Guard: if total stake is zero (all validators have stake=0), return MAX_SAFE to
   // prevent quorum from ever being reached. Without this, threshold would be 1n
   // but accumulatedStake always returns 0n, causing infinite timeout loops.
   if (total === 0n) return BigInt(Number.MAX_SAFE_INTEGER)
+  if (relaxedQuorum) {
+    // 2/3 floor — allows exactly-2/3 stake to reach quorum.
+    return (total * 2n) / 3n
+  }
   return (total * 2n) / 3n + 1n
 }
 
@@ -125,8 +158,9 @@ export function accumulatedStake(
 export function hasQuorum(
   voterIds: string[],
   validators: Array<{ id: string; stake: bigint }>,
+  relaxedQuorum = false,
 ): boolean {
-  const threshold = quorumThreshold(validators)
+  const threshold = quorumThreshold(validators, relaxedQuorum)
   const accumulated = accumulatedStake(voterIds, validators)
   return accumulated >= threshold
 }
@@ -242,7 +276,7 @@ export class BftRound {
       this.state.prepareVotes,
       this.config.localId.toLowerCase(),
     )
-    if (hasQuorum(winningVoters.ids, this.config.validators)) {
+    if (hasQuorum(winningVoters.ids, this.config.validators, this.config.relaxedQuorum)) {
       this.state.phase = "commit"
 
       // Send commit vote
@@ -261,7 +295,7 @@ export class BftRound {
           this.state.commitVotes,
           this.config.localId.toLowerCase(),
         )
-        if (hasQuorum(commitWinner.ids, this.config.validators)) {
+        if (hasQuorum(commitWinner.ids, this.config.validators, this.config.relaxedQuorum)) {
           this.state.phase = "finalized"
           return []
         }
@@ -322,7 +356,7 @@ export class BftRound {
         this.state.commitVotes,
         this.config.localId.toLowerCase(),
       )
-      if (hasQuorum(winner.ids, this.config.validators)) {
+      if (hasQuorum(winner.ids, this.config.validators, this.config.relaxedQuorum)) {
         this.state.phase = "finalized"
         return true
       }
