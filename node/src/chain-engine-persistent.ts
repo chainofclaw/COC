@@ -349,6 +349,42 @@ export class PersistentChainEngine {
     // fail-open contract the previous stub promised.
     if (!this.stateTrie) return undefined
 
+    // Phase H1 diagnostic: env-gated detailed logging to identify the
+    // mechanism behind the recurring proposer-vs-non-proposer divergence
+    // observed on testnet 2026-04-30 (heights 140,392 / 141,052 / etc).
+    //
+    // Logs the BEACON_ROOTS account record + storage-trie state from the
+    // FORK at three points: (1) right after fork creation, (2) after
+    // applyBlockContext (BEACON_ROOTS write site), (3) after txs replayed.
+    // Comparing proposer vs non-proposer dumps for the same block tells us
+    // whether divergence appears at fork time (pre-state issue) or only
+    // after a specific dry-run step (compute non-determinism).
+    //
+    // Off by default to avoid log volume in production. Enable with
+    // COC_DIAG_SPEC_ROOT=1 on testnet to capture data; safe to leave in
+    // place permanently.
+    const diagEnabled = process.env.COC_DIAG_SPEC_ROOT === "1"
+    const BEACON_ROOTS_ADDR = "0x000f3df6d732807ef1319fb7b8bb8522d0beac02"
+    const dumpBeaconState = async (trie: IStateTrie, label: string): Promise<void> => {
+      if (!diagEnabled) return
+      try {
+        const acc = await trie.get(BEACON_ROOTS_ADDR)
+        log.info("[diag] speculative-compute BEACON_ROOTS state", {
+          label,
+          height: block.number.toString(),
+          isProposer: block.proposer.toLowerCase() === this.cfg.nodeId.toLowerCase(),
+          accountExists: !!acc,
+          storageRoot: acc?.storageRoot ?? "<no-account>",
+          codeHash: acc?.codeHash ?? "<no-account>",
+          parentBeaconBlockRoot: block.parentBeaconBlockRoot ?? "<undef>",
+          blockTimestamp: BigInt(Math.floor(block.timestampMs / 1000)).toString(),
+          trieRoot: trie.stateRoot() ?? "<null>",
+        })
+      } catch (err) {
+        log.warn("[diag] BEACON_ROOTS dump failed (non-fatal)", { label, error: String(err) })
+      }
+    }
+
     // Adversarial test hook: force a specific "computed" stateRoot so
     // integration tests (scripts/adversarial-stateroot-divergence.sh) can
     // validate the pair-quorum defense end-to-end on a live devnet. The
@@ -368,6 +404,9 @@ export class PersistentChainEngine {
     let dryTrie: IStateTrie | null = null
     try {
       dryTrie = await this.stateTrie.forkForDryRun()
+      // Phase H1 diag point 1: state of fork BEFORE any block context
+      await dumpBeaconState(dryTrie, "post-fork")
+
       const drySm = new PersistentStateManager(dryTrie)
       const dryEvm = await this.evm.createDryRunChain(drySm)
 
@@ -379,6 +418,9 @@ export class PersistentChainEngine {
         timestamp: BigInt(Math.floor(block.timestampMs / 1000)),
       }
       await dryEvm.applyBlockContext(blockContext)
+      // Phase H1 diag point 2: state AFTER applyBlockContext (BEACON_ROOTS
+      // storage writes happen inside applyParentBeaconBlockRoot here).
+      await dumpBeaconState(dryTrie, "post-applyBlockContext")
 
       const blockEnv = dryEvm.prepareBlock(block.number, blockContext)
       const { blockCommon, executionBlock } = blockEnv._internal as { blockCommon: any; executionBlock: any }
@@ -418,7 +460,18 @@ export class PersistentChainEngine {
       // every Cancun block isn't reflected in trie.root(), and three
       // validators dry-running the same empty block produced divergent
       // stateRoots (testnet stall at height 140,392 on 2026-04-30).
-      return (await dryTrie.computeStateRoot()) as Hex
+      const computedRoot = (await dryTrie.computeStateRoot()) as Hex
+      // Phase H1 diag point 3: state at the moment the value is returned.
+      await dumpBeaconState(dryTrie, "post-computeStateRoot")
+      if (diagEnabled) {
+        log.info("[diag] speculative-compute returning", {
+          height: block.number.toString(),
+          isProposer: block.proposer.toLowerCase() === this.cfg.nodeId.toLowerCase(),
+          computedRoot,
+          txCount: block.txs.length,
+        })
+      }
+      return computedRoot
     } catch (err) {
       log.warn("speculative stateRoot compute failed; voting without stateRoot", {
         height: block.number.toString(),
@@ -756,6 +809,40 @@ export class PersistentChainEngine {
       phaseLog("stateTrie.commit")
       const root = await this.stateTrie.commit()
       stateRoot = root as Hex
+
+      // Phase H1b: belt-and-suspenders post-apply parent-trie sync.
+      // commit() already syncs dirty storage tries into account records
+      // and clears dirtyAddresses, so this should be a no-op in the
+      // common case. We still do it once more to defend against the
+      // recurring testnet symptom where proposer-side speculative
+      // compute diverges on empty blocks — the hypothesis is that some
+      // code path leaves the parent trie's BEACON_ROOTS account record
+      // pointing at a stale storageRoot, and forkForDryRun inherits
+      // that staleness. Calling computeStateRoot() here forces another
+      // sync pass and updates lastStateRoot to the verified live root.
+      // Idempotent + cheap: dirtyAddresses is empty post-commit so the
+      // sync loop is a no-op; the trie.root() read is just a hash.
+      await this.stateTrie.computeStateRoot()
+
+      // Phase H1 diag point 4: state of MAIN trie after apply+commit.
+      // Compared with the speculative compute's "post-fork" diag entry
+      // for the SAME height on the next block, this tells us whether
+      // the parent trie's view of BEACON_ROOTS is canonical.
+      if (process.env.COC_DIAG_SPEC_ROOT === "1") {
+        try {
+          const acc = await this.stateTrie.get("0x000f3df6d732807ef1319fb7b8bb8522d0beac02")
+          log.info("[diag] post-apply MAIN trie BEACON_ROOTS state", {
+            height: block.number.toString(),
+            blockProposer: block.proposer,
+            isLocalProposer: block.proposer.toLowerCase() === this.cfg.nodeId.toLowerCase(),
+            accountExists: !!acc,
+            storageRoot: acc?.storageRoot ?? "<no-account>",
+            mainStateRoot: stateRoot,
+          })
+        } catch (err) {
+          log.warn("[diag] post-apply BEACON_ROOTS dump failed", { error: String(err) })
+        }
+      }
     }
 
     // Post-execution stateRoot signature
