@@ -435,6 +435,14 @@ export interface EquivocationEvidence {
   blockHash1: Hex
   blockHash2: Hex
   detectedAtMs: number
+  /**
+   * Phase I3b: the two BFT signatures over the conflicting block hashes.
+   * When present, runtime/coc-relayer can submit the pair to the on-chain
+   * EquivocationDetector contract for permissionless slashing. Optional
+   * because legacy callers / tests record votes without sigs.
+   */
+  signature1?: Hex
+  signature2?: Hex
 }
 
 /**
@@ -444,8 +452,11 @@ export interface EquivocationEvidence {
  * signs conflicting votes (double-voting), which is a slashable offense.
  */
 export class EquivocationDetector {
-  /** height -> phase -> validatorId -> blockHash */
-  private readonly votes = new Map<string, Map<string, Map<string, Hex>>>()
+  /** height -> phase -> validatorId -> { blockHash, signature } */
+  private readonly votes = new Map<
+    string,
+    Map<string, Map<string, { hash: Hex; signature: Hex }>>
+  >()
   private readonly evidence: EquivocationEvidence[] = []
   /** Per-validator evidence count to prevent one validator from flushing another's evidence */
   private readonly evidenceCountByValidator = new Map<string, number>()
@@ -468,6 +479,7 @@ export class EquivocationDetector {
     height: bigint,
     phase: "prepare" | "commit",
     blockHash: Hex,
+    signature?: Hex,
   ): EquivocationEvidence | null {
     const normalizedId = validatorId.toLowerCase()
     const heightKey = height.toString()
@@ -483,7 +495,8 @@ export class EquivocationDetector {
     }
 
     const phaseMap = heightMap.get(phaseKey)!
-    const existingHash = phaseMap.get(normalizedId)
+    const existing = phaseMap.get(normalizedId)
+    const existingHash = existing?.hash
 
     if (existingHash && existingHash !== blockHash) {
       // Equivocation detected!
@@ -495,6 +508,8 @@ export class EquivocationDetector {
         blockHash1: existingHash,
         blockHash2: blockHash,
         detectedAtMs: Date.now(),
+        ...(existing?.signature ? { signature1: existing.signature } : {}),
+        ...(signature ? { signature2: signature } : {}),
       }
       // Per-validator evidence cap: prevent one attacker from flushing another validator's evidence
       const validatorCount = this.evidenceCountByValidator.get(normalizedId) ?? 0
@@ -529,7 +544,7 @@ export class EquivocationDetector {
       return ev
     }
 
-    phaseMap.set(normalizedId, blockHash)
+    phaseMap.set(normalizedId, { hash: blockHash, signature: signature ?? ("" as Hex) })
     this.pruneOldHeights()
     return null
   }
