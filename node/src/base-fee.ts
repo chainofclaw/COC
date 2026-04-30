@@ -97,3 +97,39 @@ function fakeExponential(factor: bigint, numerator: bigint, denominator: bigint)
   }
   return output / denominator
 }
+
+/**
+ * Phase I1 block-reward emission curve.
+ *
+ * Returns the wei reward to mint to the block proposer at a given height.
+ * Geometric halving: reward halves every `halvingInterval` blocks.
+ * height 0 (genesis) always returns 0.
+ *
+ * The TS-side hardcoded curve avoids per-block contract RPC roundtrips.
+ * Governance can swap to an on-chain EmissionSchedule lookup later by
+ * replacing the call site, but the consensus invariant (all nodes agree
+ * on the reward) only holds when every node runs the same curve — so
+ * mainnet rollout requires a coordinated upgrade, never a per-node env.
+ */
+export function getBlockReward(
+  height: bigint,
+  initialRewardWei: bigint,
+  halvingInterval: bigint,
+): bigint {
+  if (height <= 0n) return 0n
+  if (initialRewardWei <= 0n) return 0n
+  if (halvingInterval <= 0n) return initialRewardWei
+
+  const halvings = height / halvingInterval
+  // Cap halvings to prevent emission running away into negative shifts.
+  // After 64 halvings the reward is effectively dust; treat as zero.
+  if (halvings >= 64n) return 0n
+
+  return initialRewardWei >> halvings
+}
+
+/**
+ * Default mainnet halving interval: ~4 years assuming 3s blocks.
+ * 4 * 365.25 * 24 * 3600 / 3 ≈ 42_048_000 blocks.
+ */
+export const DEFAULT_HALVING_INTERVAL_BLOCKS = 42_048_000n
