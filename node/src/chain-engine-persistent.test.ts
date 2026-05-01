@@ -635,7 +635,12 @@ test("PersistentChainEngine: importSnapSyncBlocks recomputes finality and clears
   }
 })
 
-test("PersistentChainEngine: importSnapSyncBlocks rejects overlapping ranges", async () => {
+test("PersistentChainEngine: importSnapSyncBlocks trims overlapping ranges (Phase H14)", async () => {
+  // Pre-H14 this rejected the entire import when the snapshot window
+  // overlapped local chain. That blocked divergence-recovery snap-sync
+  // (where the chain-snapshot RPC always returns ~last 100 blocks
+  // overlapping a healthy local chain). Post-H14 we trim to blocks
+  // strictly above currentHeight and import the remainder.
   const tmpDirA = mkdtempSync(join(tmpdir(), "coc-engine-test-"))
   const tmpDirB = mkdtempSync(join(tmpdir(), "coc-engine-test-"))
 
@@ -683,8 +688,30 @@ test("PersistentChainEngine: importSnapSyncBlocks rejects overlapping ranges", a
       remoteBlocks.push(block)
     }
 
+    // Local height = 3. Snapshot window = [2..5]. Pre-H14 → rejected.
+    // Post-H14 → trimmed to [4..5] and imported.
     const ok = await local.importSnapSyncBlocks(remoteBlocks)
-    assert.strictEqual(ok, false, "overlapping snap-sync range should be rejected")
+    assert.strictEqual(ok, true, "overlapping snap-sync range should be trimmed and imported")
+
+    // Sub-window check: blocks 4 and 5 should now exist on local
+    const block4 = await local.getBlockByNumber(4n)
+    const block5 = await local.getBlockByNumber(5n)
+    assert.ok(block4, "trimmed block 4 should be imported")
+    assert.ok(block5, "trimmed block 5 should be imported")
+    // Their hashes should match remote's
+    assert.strictEqual(block4!.hash, remoteBlocks[2].hash)
+    assert.strictEqual(block5!.hash, remoteBlocks[3].hash)
+
+    // Edge case: snapshot fully behind local rejects (no blocks left
+    // after trim → false return)
+    const fullyBehind: ChainBlock[] = []
+    for (let n = 1n; n <= 2n; n++) {
+      const block = await remote.getBlockByNumber(n)
+      assert.ok(block)
+      fullyBehind.push(block)
+    }
+    const okBehind = await local.importSnapSyncBlocks(fullyBehind)
+    assert.strictEqual(okBehind, false, "snapshot fully behind local should reject")
 
     await local.close()
     await remote.close()
