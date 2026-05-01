@@ -399,8 +399,18 @@ export class P2PNode {
       cfg.inboundRateLimitWindowMs ?? 60_000,
       cfg.inboundRateLimitMaxRequests ?? 240,
     )
-    // Independent rate limiter for expensive state-snapshot endpoint (2 req per 60s per IP)
-    this.stateSnapshotRateLimiter = new RateLimiter(60_000, 2)
+    // Independent rate limiter for expensive state-snapshot endpoint.
+    // Phase H12 raised from 2 → 12 per 60s per IP. 2 was insufficient for
+    // BFT auto-recovery scenarios: when H4/H5/H11 escalations fire across
+    // multiple nodes simultaneously, each requesting recovery snapshots
+    // from peers, the limit was hitting in seconds and blocking the
+    // recovery chain. 12/min = one snapshot per ~5s — leaves headroom for
+    // legitimate recovery cascades while still rejecting actual abusers.
+    // Configurable via `inboundStateSnapshotRateLimitMaxRequests` for
+    // high-frequency recovery scenarios.
+    const snapLimit = (cfg as unknown as { inboundStateSnapshotRateLimitMaxRequests?: number })
+      .inboundStateSnapshotRateLimitMaxRequests ?? 12
+    this.stateSnapshotRateLimiter = new RateLimiter(60_000, snapLimit)
     setInterval(() => this.inboundRateLimiter.cleanup(), 300_000).unref()
     setInterval(() => this.stateSnapshotRateLimiter.cleanup(), 300_000).unref()
     setInterval(() => this.authNonceTracker.cleanup(), 300_000).unref()
