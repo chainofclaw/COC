@@ -950,10 +950,26 @@ if (stateTrie && config.enableSnapSync) {
             headers["x-p2p-auth"] = buildSignedGetAuth("/p2p/state-snapshot", nodeSigner)
           }
           const res = await fetch(`${peerUrl}/p2p/state-snapshot`, { signal: controller.signal, headers })
-          if (!res.ok) return null
+          if (!res.ok) {
+            // Phase H12: log the non-OK status so we can diagnose why snap-sync
+            // can't recover. Pre-H12 this returned null silently and the caller
+            // (forceSnapSync) eventually surfaced "no peer provided valid state
+            // snapshot" with no clue what went wrong (rate limit? auth? 404?).
+            const bodyText = await res.text().catch(() => "<unreadable>")
+            log.warn("snap sync: peer returned non-OK", {
+              peer: peerUrl,
+              status: res.status,
+              statusText: res.statusText,
+              body: bodyText.slice(0, 200),
+            })
+            return null
+          }
           // Read body with size limit
           const reader = res.body?.getReader()
-          if (!reader) return null
+          if (!reader) {
+            log.warn("snap sync: peer response has no body reader", { peer: peerUrl })
+            return null
+          }
           const chunks: Uint8Array[] = []
           let totalBytes = 0
           for (;;) {
@@ -972,7 +988,15 @@ if (stateTrie && config.enableSnapSync) {
         } finally {
           clearTimeout(timer)
         }
-      } catch {
+      } catch (err) {
+        // Phase H12: log catch-path errors instead of silently returning null.
+        // Network errors, abort timeouts, JSON parse failures all land here —
+        // surfacing them is critical for understanding why forceSnapSync's
+        // recovery escalation doesn't actually recover.
+        log.warn("snap sync: fetchStateSnapshot threw", {
+          peer: peerUrl,
+          error: String(err),
+        })
         return null
       }
     },
