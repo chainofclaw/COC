@@ -1095,23 +1095,49 @@ export class PersistentChainEngine {
       return false
     }
     const snapshotStartHeight = BigInt(blocks[0].number)
-    // SnapSync block import is append-only to avoid stale hash-index residue
-    // from overwriting existing heights without full reindex/replay.
+    // Phase H14: previously rejected the entire import when the snapshot
+    // window overlapped local chain. That was correct for cold-start snap-
+    // sync (avoid overwriting hash-index residue) but wrong for divergence
+    // recovery: the chain-snapshot RPC returns last N blocks (e.g., 100),
+    // so the start always overlaps a healthy local chain. After state was
+    // already imported successfully, rejecting block import left the node
+    // with imported state at peer's tip but local chain head still behind
+    // — chain.getHeight() unchanged, so the next block proposal stalls
+    // (observed 2026-05-01 02:59 UTC stall — H4/H11/H13 chain fired
+    // perfectly but adoption returned false here).
+    //
+    // Fix: filter blocks to only those AHEAD of currentHeight and import
+    // the trimmed list. Blocks at or below currentHeight are already in
+    // the chain index (or they're the divergent suffix we'll keep — see
+    // verifyBlockChain below; the new chain history is the imported peer
+    // version going forward).
+    let importBlocks = blocks
     if (snapshotStartHeight <= currentHeight) {
-      log.warn("snap block import rejected: snapshot window overlaps local chain", {
-        snapshotStart: snapshotStartHeight.toString(),
+      importBlocks = blocks.filter((b) => BigInt(b.number) > currentHeight)
+      if (importBlocks.length === 0) {
+        log.warn("snap block import: snapshot window fully behind local chain", {
+          snapshotStart: snapshotStartHeight.toString(),
+          snapshotEnd: String(incomingTip.number),
+          currentHeight: currentHeight.toString(),
+        })
+        return false
+      }
+      log.info("snap block import: trimmed overlapping window", {
+        originalStart: snapshotStartHeight.toString(),
+        trimmedStart: importBlocks[0].number.toString(),
+        snapshotEnd: String(incomingTip.number),
         currentHeight: currentHeight.toString(),
+        trimmedCount: importBlocks.length,
       })
-      return false
     }
 
     // Verify internal chain integrity (hashes, parent links); skip proposer
     // check because historical blocks may reference validators no longer active
-    if (!this.verifyBlockChain(blocks, true)) {
+    if (!this.verifyBlockChain(importBlocks, true)) {
       log.warn("snap block import rejected: verifyBlockChain failed", {
-        snapshotStart: snapshotStartHeight.toString(),
+        snapshotStart: importBlocks[0].number.toString(),
         snapshotEnd: String(incomingTip.number),
-        blockCount: blocks.length,
+        blockCount: importBlocks.length,
       })
       return false
     }
@@ -1120,7 +1146,7 @@ export class PersistentChainEngine {
     // Recompute depth-finality locally; never trust remote finalized/bftFinalized flags.
     const depth = BigInt(Math.max(1, this.cfg.finalityDepth))
     const tipHeight = BigInt(incomingTip.number)
-    for (const block of blocks) {
+    for (const block of importBlocks) {
       const blockNum = BigInt(block.number)
       const normalized: ChainBlock = {
         ...block,
@@ -1136,9 +1162,9 @@ export class PersistentChainEngine {
       await this.blockIndex.putBlock(normalized)
     }
     log.info("snap block import succeeded", {
-      snapshotStart: snapshotStartHeight.toString(),
+      snapshotStart: importBlocks[0].number.toString(),
       snapshotEnd: String(incomingTip.number),
-      blockCount: blocks.length,
+      blockCount: importBlocks.length,
     })
     return true
   }
