@@ -545,10 +545,19 @@ if (bftEnabled) {
                 // observed to leave nodes permanently behind when a single
                 // block's apply failed and no further divergence-widening
                 // events occurred to nudge it.
+                //
+                // Phase H11: escalate to forceSnapSync rather than
+                // requestSyncNow. requestSyncNow respects the gap-based
+                // snap-sync threshold; with the typical post-H10 path of
+                // gap=1-3 blocks, it would fall into block-level adoption
+                // → applyBlock → H10 throws → infinite retry loop
+                // (observed 2026-04-30 22:40 stall). forceSnapSync pulls a
+                // full state snapshot from peers, replacing the divergent
+                // local state in one shot.
                 try {
-                  await consensus.requestSyncNow()
+                  await consensus.forceSnapSync()
                 } catch (syncErr) {
-                  log.warn("BFT onFinalized: requestSyncNow failed", {
+                  log.warn("BFT onFinalized: forceSnapSync failed", {
                     error: String(syncErr),
                   })
                 }
@@ -722,14 +731,27 @@ if (bftEnabled) {
       return current
     },
     onPeerQuorumDiverged: (info) => {
-      // Phase H4: peers reached relaxedQuorum on a (blockHash, stateRoot)
-      // pair we couldn't reproduce. They WILL finalize and advance past us;
-      // the proposer round-robin will eventually rotate back to this lagging
-      // node and the chain will deadlock unless we catch up first.
-      // Trigger an immediate snap-sync. Rate-limited to once per minute so
-      // a divergence storm doesn't melt the wire-server with parallel sync
-      // requests; the existing periodic sync (consensus syncIntervalMs) is
-      // the long-period fallback.
+      // Phase H4 + H11: peers reached relaxedQuorum on a (blockHash,
+      // stateRoot) pair we couldn't reproduce. They WILL finalize and
+      // advance past us; the proposer round-robin will eventually rotate
+      // back to this lagging node and the chain will deadlock unless we
+      // catch up first.
+      //
+      // Original H4 (PR #26) called requestSyncNow, which respects the
+      // gap-based snap-sync threshold (default 100 blocks). With small
+      // gaps (1-3 blocks — the typical relaxedQuorum-diverge case), the
+      // path falls into block-level adoption: tries to applyBlock the
+      // canonical block. After H10's invariant lands, that apply throws
+      // because local computed root != peer claimed root → adoption fails
+      // → no recovery. Chain stalls (observed 2026-04-30 22:40 UTC at
+      // height 154,358 — H4 fired once, then 3+ hours of silence).
+      //
+      // H11 fix: escalate directly to forceSnapSync. forceSnapSync
+      // bypasses the gap threshold and pulls a full state snapshot from
+      // peers — the in-process equivalent of the manual rsync recovery.
+      // Cooldown remains 60s so a divergence storm doesn't spawn parallel
+      // syncs; H5's longer 15-min cooldown is the secondary safety after
+      // 3 consecutive divergences.
       if (!consensus) return
       const nowMs = Date.now()
       const sinceLastMs = nowMs - lastPeerDivergenceSyncMs
@@ -741,14 +763,18 @@ if (bftEnabled) {
         return
       }
       lastPeerDivergenceSyncMs = nowMs
-      log.warn("BFT peer-quorum divergence — triggering immediate snap-sync", {
+      log.warn("BFT peer-quorum divergence — triggering forceSnapSync (H11)", {
         height: info.height.toString(),
         peerBlockHash: info.peerBlockHash,
         peerStateRoot: info.peerStateRoot,
         localStateRoot: info.localStateRoot ?? "<unset>",
       })
-      consensus.requestSyncNow().catch((err) => {
-        log.warn("BFT peer-quorum requestSyncNow failed", { error: String(err) })
+      // forceSnapSync's only known-failure path is when peers haven't
+      // exposed a snapshot endpoint yet (bootstrap window). Catch and log
+      // so a transient peer issue doesn't crash the listener; the next
+      // round timeout will retry under cooldown.
+      consensus.forceSnapSync().catch((err) => {
+        log.warn("BFT peer-quorum forceSnapSync failed", { error: String(err) })
       })
     },
     persistentDivergenceThreshold: process.env.COC_PERSISTENT_DIVERGENCE_THRESHOLD
