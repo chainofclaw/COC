@@ -363,6 +363,13 @@ export class P2PNode {
   private readonly handlers: P2PHandlers
   private readonly inboundRateLimiter: RateLimiter
   private readonly stateSnapshotRateLimiter: RateLimiter
+  // Phase H13: separate limiter for /p2p/chain-snapshot. Chain-snapshot is
+  // cheap (last N block headers) and polled by every peer every syncInterval,
+  // while state-snapshot is expensive and on-demand. Sharing one limiter
+  // meant chain-snapshot polls ate the state-snapshot budget — when
+  // forceSnapSync actually needed to fetch peer state during divergence
+  // recovery, peers responded 429 because the budget was already drained.
+  private readonly chainSnapshotRateLimiter: RateLimiter
   private readonly authNonceTracker: PersistentAuthNonceTracker
   public readonly seenTx = new BoundedSet<Hex>(50_000)
   public readonly seenBlocks = new BoundedSet<Hex>(10_000)
@@ -411,8 +418,18 @@ export class P2PNode {
     const snapLimit = (cfg as unknown as { inboundStateSnapshotRateLimitMaxRequests?: number })
       .inboundStateSnapshotRateLimitMaxRequests ?? 12
     this.stateSnapshotRateLimiter = new RateLimiter(60_000, snapLimit)
+    // Phase H13: separate, higher-capacity limiter for /p2p/chain-snapshot.
+    // Chain snapshots are cheap (latest N block headers) and polled
+    // periodically by every peer's consensus.trySync. With 2 peers each
+    // polling once per syncInterval (~30s default), inbound rate is
+    // ~4/min/IP at idle. 120/60s (1 every 0.5s) gives ample headroom and
+    // keeps the state-snapshot budget reserved for actual recovery.
+    const chainSnapLimit = (cfg as unknown as { inboundChainSnapshotRateLimitMaxRequests?: number })
+      .inboundChainSnapshotRateLimitMaxRequests ?? 120
+    this.chainSnapshotRateLimiter = new RateLimiter(60_000, chainSnapLimit)
     setInterval(() => this.inboundRateLimiter.cleanup(), 300_000).unref()
     setInterval(() => this.stateSnapshotRateLimiter.cleanup(), 300_000).unref()
+    setInterval(() => this.chainSnapshotRateLimiter.cleanup(), 300_000).unref()
     setInterval(() => this.authNonceTracker.cleanup(), 300_000).unref()
     if (cfg.authNonceRegistryPath) {
       setInterval(() => this.authNonceTracker.compact(), 60 * 60 * 1000).unref()
@@ -470,8 +487,11 @@ export class P2PNode {
       }
 
       if (req.method === "GET" && req.url === "/p2p/chain-snapshot") {
-        // Independent rate limit for chain snapshot (shared with state-snapshot limiter)
-        if (!this.stateSnapshotRateLimiter.allow(clientIp)) {
+        // Phase H13: chain-snapshot uses its OWN limiter (120/60s). State-
+        // snapshot's stricter 12/60s budget stays reserved for forceSnapSync
+        // recovery — pre-H13 they shared one limiter, periodic chain
+        // polls drained the budget, and forceSnapSync 429'd.
+        if (!this.chainSnapshotRateLimiter.allow(clientIp)) {
           this.rateLimitedRequests += 1
           res.writeHead(429, { "content-type": "application/json" })
           res.end(serializeJson({ error: "chain snapshot rate limit exceeded" }))
