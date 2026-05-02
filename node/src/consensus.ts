@@ -163,6 +163,15 @@ export class ConsensusEngine {
   private lastProposedHeight: bigint | undefined = undefined
   private lastProposedBlock: any | undefined = undefined // Cached for retry on BFT timeout
 
+  // Phase H15: tracks the last time a BFT block was finalized. If no progress
+  // for NO_PROGRESS_TIMEOUT_MS, the designated proposer is likely offline and
+  // we force-override the round-robin so any node can unblock the chain.
+  private lastBftProgressAtMs = 0
+  private noProgressWatchdogTimer: ReturnType<typeof setInterval> | null = null
+  // Set to true by the watchdog; cleared by tryPropose after it issues the
+  // override proposal. Signals that the normal round-robin should be bypassed.
+  private noProgressProposerOverride = false
+
   // Sync progress tracking
   private highestPeerHeight = 0n
   private syncStartHeight = 0n
@@ -201,6 +210,7 @@ export class ConsensusEngine {
 
   start(): void {
     this.startedAtMs = Date.now()
+    this.lastBftProgressAtMs = Date.now()
     this.proposeTimer = setInterval(() => void this.tryPropose(), this.cfg.blockTimeMs)
     this.proposeTimer.unref()
 
@@ -216,6 +226,25 @@ export class ConsensusEngine {
       // never returned) deadlocks all subsequent sync attempts forever.
       this.syncInFlightWatchdogTimer = setInterval(() => this.checkSyncInFlightWatchdog(), 10_000)
       this.syncInFlightWatchdogTimer.unref()
+      // Phase H15 watchdog: if BFT is enabled but no block has been finalized
+      // for NO_PROGRESS_TIMEOUT_MS, the designated proposer (round-robin) is
+      // likely offline or stuck behind. Override the proposer check so any
+      // node can propose and unblock the chain.
+      if (this.bft) {
+        const NO_PROGRESS_TIMEOUT_MS = 120_000
+        this.noProgressWatchdogTimer = setInterval(() => {
+          if (this.noProgressProposerOverride) return // already armed
+          if (this.syncInFlight) return
+          const elapsed = Date.now() - this.lastBftProgressAtMs
+          if (elapsed > NO_PROGRESS_TIMEOUT_MS && !this.bft!.getRoundState().active) {
+            log.error("Phase H15: no BFT progress for too long — enabling proposer override", {
+              elapsedMs: elapsed,
+            })
+            this.noProgressProposerOverride = true
+          }
+        }, 30_000)
+        this.noProgressWatchdogTimer.unref()
+      }
       void this.trySync()
     }
   }
@@ -225,6 +254,7 @@ export class ConsensusEngine {
     if (this.syncTimer) { clearInterval(this.syncTimer); this.syncTimer = null }
     if (this.degradedCheckTimer) { clearInterval(this.degradedCheckTimer); this.degradedCheckTimer = null }
     if (this.syncInFlightWatchdogTimer) { clearInterval(this.syncInFlightWatchdogTimer); this.syncInFlightWatchdogTimer = null }
+    if (this.noProgressWatchdogTimer) { clearInterval(this.noProgressWatchdogTimer); this.noProgressWatchdogTimer = null }
     this.bft?.stop()
   }
 
@@ -386,7 +416,17 @@ export class ConsensusEngine {
         this.lastProposedBlock = undefined
       }
 
-      const block = await this.chain.proposeNextBlock(deferApply)
+      // Phase H15: if the no-progress watchdog armed the override flag, bypass
+      // the round-robin check so we can propose even if it's not "our turn".
+      // This unblocks the chain when the designated proposer is offline/stuck
+      // (observed 2026-05-02: node-1 stuck at 167,200, chain dead 26h because
+      // node-2/3 are proposer for heights not in their round-robin slot).
+      const forcePropose = this.noProgressProposerOverride && !!this.bft && !this.bft.getRoundState().active
+      if (forcePropose) {
+        this.noProgressProposerOverride = false
+        log.warn("Phase H15: proposer override active — proposing regardless of round-robin", {})
+      }
+      const block = await this.chain.proposeNextBlock(deferApply, forcePropose)
       if (!block) {
         return
       }
@@ -476,6 +516,16 @@ export class ConsensusEngine {
    */
   async requestSyncNow(): Promise<void> {
     await this.trySync()
+  }
+
+  /**
+   * Phase H15: called by the BFT onFinalized handler whenever a block is
+   * successfully applied. Resets the no-progress watchdog so the proposer
+   * override doesn't fire spuriously during normal operation.
+   */
+  notifyBftProgress(): void {
+    this.lastBftProgressAtMs = Date.now()
+    this.noProgressProposerOverride = false
   }
 
   /**
