@@ -355,6 +355,11 @@ export class BftCoordinator {
           this.consecutivePeerDivergenceCount = 0
           this.startLingerBroadcast(msg.height, block.hash)
           this.clearRound()
+          // Phase H16: prune equivocation evidence for heights ≤ H now that H
+          // is finalized — prevents long-running nodes from accumulating stale
+          // evidence that could interfere with vote processing at future heights.
+          const evictedEarly = this.equivocationDetector.clearEvidenceBefore(msg.height + 1n)
+          if (evictedEarly > 0) log.debug("H16: equivocation evidence pruned after finalization", { height: msg.height.toString(), evicted: evictedEarly })
           try {
             await this.cfg.onFinalized(block)
           } catch (err) {
@@ -385,6 +390,9 @@ export class BftCoordinator {
           this.consecutivePeerDivergenceCount = 0
           this.startLingerBroadcast(msg.height, block.hash)
           this.clearRound()
+          // Phase H16: same evidence-pruning as the early-commits path above.
+          const evicted = this.equivocationDetector.clearEvidenceBefore(msg.height + 1n)
+          if (evicted > 0) log.debug("H16: equivocation evidence pruned after finalization", { height: msg.height.toString(), evicted })
           try {
             await this.cfg.onFinalized(block)
           } catch (err) {
