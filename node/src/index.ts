@@ -578,6 +578,8 @@ if (bftEnabled) {
         }
       }
       log.info("BFT finalized block", { height: block.number.toString(), hash: block.hash })
+      // Phase H15: reset the no-progress watchdog baseline on every successful finalize
+      consensus?.notifyBftProgress()
       // Sync BFT validator set with governance after each finalized block
       if (hasGovernance(chain)) {
         const active = chain.governance.getActiveValidators()

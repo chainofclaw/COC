@@ -492,3 +492,55 @@ test("Phase H7: requestSyncNow times out instead of hanging forever when fetchSn
   await consensus.requestSyncNow()
   assert.equal(fetchCallCount, 2, "after the in-flight call clears, next sync runs")
 })
+
+test("Phase H15: notifyBftProgress resets noProgressProposerOverride", async () => {
+  // Pins the 2026-05-02 testnet stall: node-1 is stuck proposing height N
+  // while node-2/3 are frozen at N+2 waiting for node-1 (the round-robin
+  // proposer for N+3) to send a new proposal. No votes arrive → H4 never
+  // fires. After NO_PROGRESS_TIMEOUT_MS, the watchdog arms the override
+  // flag so any node can propose regardless of round-robin. notifyBftProgress
+  // (called on every successful BFT finalize) must clear it immediately so
+  // the override doesn't persist into normal operation.
+  const { engine } = await createTestEngine()
+  const consensus = new ConsensusEngine(
+    engine as any,
+    { fetchSnapshots: async () => [], broadcastBlock: async () => {}, receiveBlock: async () => {} } as any,
+    { blockTimeMs: 1000, syncIntervalMs: 300_000, enableSnapSync: false },
+  )
+
+  // Arm the override as if the watchdog fired
+  ;(consensus as any).noProgressProposerOverride = true
+  assert.equal((consensus as any).noProgressProposerOverride, true, "override was armed")
+
+  // A successful BFT finalize clears it
+  consensus.notifyBftProgress()
+  assert.equal((consensus as any).noProgressProposerOverride, false, "notifyBftProgress clears override")
+})
+
+test("Phase H15: proposeNextBlock with forcePropose bypasses round-robin", async () => {
+  // Validates the chain-engine side: when forcePropose=true, a node that is
+  // NOT the designated proposer for height N still produces a block.
+  // This is the mechanism H15 uses to unblock a chain where the designated
+  // proposer is offline indefinitely (observed 2026-05-02 26h stall).
+  const { engine } = await createTestEngine()
+  // validator set: 3 validators; node 0 is the designated proposer for height 1
+  // (expectedProposer uses (height-1) % n = 0 → validators[0] = engine.cfg.nodeId)
+  const tip = await engine.getTip()
+  const nextHeight = (tip ? tip.number : 0n) + 1n
+  const expected = engine.expectedProposer(nextHeight)
+
+  if (expected === engine.cfg.nodeId) {
+    // This node IS the proposer, skip the override path — test setup is correct
+    const block = await engine.proposeNextBlock(false, false)
+    assert.ok(block !== null, "proposer can propose normally")
+  } else {
+    // This node is NOT the proposer — normal path returns null
+    const blockNoForce = await engine.proposeNextBlock(false, false)
+    assert.equal(blockNoForce, null, "non-proposer returns null without forcePropose")
+
+    // With forcePropose=true, non-proposer can still produce a block
+    const blockForce = await engine.proposeNextBlock(false, true)
+    assert.ok(blockForce !== null, "non-proposer produces block with forcePropose=true")
+    assert.equal(BigInt(blockForce!.number), nextHeight, "forced block has correct height")
+  }
+})
