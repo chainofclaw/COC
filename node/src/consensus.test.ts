@@ -544,3 +544,52 @@ test("Phase H15: proposeNextBlock with forcePropose bypasses round-robin", async
     assert.equal(BigInt(blockForce!.number), nextHeight, "forced block has correct height")
   }
 })
+
+test("Phase H15 stagger: only fallback proposer arms override, not all nodes", async () => {
+  // Regression: original H15 had all 3 nodes fire noProgressProposerOverride
+  // simultaneously → 3-way equivocation storm at height 167,810 (2026-05-02).
+  // Fix: checkNoProgressWatchdog is nodeId-aware and only the node that is
+  // "next in rotation" after the stuck proposer activates within the first window.
+  //
+  // Setup: 3-validator chain [node-1, node-2, node-3]. Height 0 → stuck height 1.
+  // expectedProposer(1) = node-1 (stuck). Fallback = expectedProposer(2) = node-2.
+  // node-2 should fire at elapsed ≥ 120s. node-3 fires at ≥ 150s. node-1 never fires.
+
+  const validators = ["node-1", "node-2", "node-3"]
+  const stuckHeight = 1n // height we're stuck on
+  const stuckProposer = validators[Number((stuckHeight - 1n) % BigInt(validators.length))] // "node-1"
+
+  // Minimal mock chain engine: getHeight returns 0 (stuck before height 1),
+  // expectedProposer uses the same round-robin formula as the real engine.
+  const mockChain: any = {
+    getHeight: async () => 0n,
+    getTip: async () => null,
+    expectedProposer: (h: bigint) => validators[Number((h - 1n) % BigInt(validators.length))],
+    mempool: { getPendingTxs: () => [] },
+    events: { on: () => {}, off: () => {} },
+  }
+  const mockP2p: any = { fetchSnapshots: async () => [], receiveBlock: async () => {} }
+  const mockBft: any = { getRoundState: () => ({ active: false }), stop: () => {} }
+
+  // Helper that runs checkNoProgressWatchdog with a given nodeId and elapsed ms
+  async function watchdogFires(nodeId: string, elapsedMs: number): Promise<boolean> {
+    const c = new ConsensusEngine(mockChain, mockP2p, { blockTimeMs: 1000, syncIntervalMs: 300_000 }, { bft: mockBft, nodeId })
+    ;(c as any).lastBftProgressAtMs = Date.now() - elapsedMs
+    await (c as any).checkNoProgressWatchdog()
+    return (c as any).noProgressProposerOverride === true
+  }
+
+  // Stuck proposer (node-1) never arms override
+  assert.equal(await watchdogFires("node-1", 125_000), false, "stuck proposer never arms override")
+
+  // Primary fallback (node-2, offset=1) arms at elapsed ≥ 120s
+  assert.equal(await watchdogFires("node-2", 115_000), false, "node-2 does NOT fire at 115s (below 120s threshold)")
+  assert.equal(await watchdogFires("node-2", 125_000), true,  "node-2 fires at 125s (above 120s threshold)")
+
+  // Secondary fallback (node-3, offset=2) fires at ≥ 150s
+  assert.equal(await watchdogFires("node-3", 125_000), false, "node-3 does NOT fire at 125s (below 150s threshold)")
+  assert.equal(await watchdogFires("node-3", 155_000), true,  "node-3 fires at 155s (above 150s threshold)")
+
+  // Without nodeId the watchdog is disabled (safe fallback)
+  assert.equal(await watchdogFires("", 300_000), false, "no-nodeId: watchdog disabled")
+})
