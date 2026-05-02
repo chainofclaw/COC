@@ -538,9 +538,9 @@ export class PersistentChainEngine {
     }
   }
 
-  async proposeNextBlock(deferApply = false): Promise<ChainBlock | null> {
+  async proposeNextBlock(deferApply = false, forcePropose = false): Promise<ChainBlock | null> {
     const nextHeight = (await this.getHeight()) + 1n
-    if (this.expectedProposer(nextHeight) !== this.cfg.nodeId) {
+    if (!forcePropose && this.expectedProposer(nextHeight) !== this.cfg.nodeId) {
       return null
     }
 

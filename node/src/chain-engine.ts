@@ -174,9 +174,9 @@ export class ChainEngine {
     return tx
   }
 
-  async proposeNextBlock(): Promise<ChainBlock | null> {
+  async proposeNextBlock(_deferApply = false, forcePropose = false): Promise<ChainBlock | null> {
     const nextHeight = this.getHeight() + 1n
-    if (this.expectedProposer(nextHeight) !== this.cfg.nodeId) {
+    if (!forcePropose && this.expectedProposer(nextHeight) !== this.cfg.nodeId) {
       return null
     }
 

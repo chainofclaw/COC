@@ -34,7 +34,7 @@ export interface IChainEngine {
   addRawTx(rawTx: Hex): Promise<MempoolTx>
 
   // Block production and application
-  proposeNextBlock(): Promise<ChainBlock | null>
+  proposeNextBlock(deferApply?: boolean, forcePropose?: boolean): Promise<ChainBlock | null>
   applyBlock(block: ChainBlock, locallyProposed?: boolean): Promise<void>
 
   // Optional: persistent log and transaction queries
