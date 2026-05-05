@@ -13,6 +13,8 @@ export interface MetricsSource {
   getConsensusState?: () => "healthy" | "degraded" | "recovering"
   getDhtPeers?: () => number
   getP2PAuthRejected?: () => number
+  getEquivocationsTotal?: () => number
+  getForkChoiceMaxDepth?: () => number
 }
 
 interface CounterEntry {
@@ -111,6 +113,18 @@ export class MetricsCollector {
 
     if (this.source.getP2PAuthRejected) {
       this.setGauge("coc_p2p_auth_rejected_total", "Total P2P auth rejected requests", this.source.getP2PAuthRejected())
+    }
+
+    if (this.source.getEquivocationsTotal) {
+      const value = this.source.getEquivocationsTotal()
+      this.counters.set("coc_bft_equivocations_total", {
+        value,
+        help: "Cumulative count of detected BFT equivocations",
+      })
+    }
+
+    if (this.source.getForkChoiceMaxDepth) {
+      this.setGauge("coc_fork_choice_max_depth_blocks", "Maximum observed reorg depth in blocks", this.source.getForkChoiceMaxDepth())
     }
 
     // Block time histogram
