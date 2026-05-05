@@ -1044,6 +1044,7 @@ const consensus = new ConsensusEngine(chain, p2p, {
   bft: bftCoordinator,
   snapSync: snapSyncProvider,
   wireBroadcast: (block) => wireBroadcastFn?.(block),
+  nodeId: config.nodeId,
 })
 consensus.start()
 
