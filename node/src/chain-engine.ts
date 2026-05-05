@@ -43,6 +43,19 @@ export interface ChainEngineConfig {
   signatureEnforcement?: "off" | "monitor" | "enforce"
   enableGovernance?: boolean
   validatorStakes?: Array<{ id: string; address: string; stake: bigint }>
+  /**
+   * Phase J1.2: invoked when a non-locally-proposed block is rejected
+   * because its claimed stateRoot does not match the locally computed one.
+   * Mirrors PersistentChainEngine.cfg.onLocalApplyRejected. The wiring
+   * layer routes this to consensus.requestSyncNow().
+   */
+  onLocalApplyRejected?: (info: {
+    height: bigint
+    blockHash: Hex
+    expectedRoot: Hex
+    actualRoot: Hex
+    reason: string
+  }) => void
 }
 
 export class ChainEngine {
@@ -81,6 +94,15 @@ export class ChainEngine {
   /** Set validator address map for identity alignment (nodeId → address) */
   setValidatorAddressMap(map: Map<string, string>): void {
     this.validatorAddressMap = map
+  }
+
+  /**
+   * Phase J1.3: late-bound rejection callback. Mirrors PersistentChainEngine.
+   */
+  setOnLocalApplyRejected(
+    cb: NonNullable<ChainEngineConfig["onLocalApplyRejected"]>,
+  ): void {
+    ;(this.cfg as { onLocalApplyRejected?: typeof cb }).onLocalApplyRejected = cb
   }
 
   /** Resolve validator nodeId to address for signature verification */
@@ -372,15 +394,30 @@ export class ChainEngine {
       }
 
       // Verify computed stateRoot matches block header (when stateTrie available)
-      if (!locallyProposed && block.stateRoot && this.cfg.stateTrie) {
+      if (!locallyProposed && block.stateRoot && (this.cfg as any).stateTrie) {
         try {
-          const computedRoot = await this.cfg.stateTrie.commit()
+          const computedRoot = await (this.cfg as any).stateTrie.commit()
           if (computedRoot !== block.stateRoot) {
             log.warn("stateRoot mismatch — rejecting block", {
               height: block.number.toString(),
               expected: block.stateRoot,
               computed: computedRoot,
             })
+            // Phase J1.2: report rejection to wiring layer (consensus
+            // requestSyncNow). Memory engine path mirrors persistent engine.
+            if (this.cfg.onLocalApplyRejected) {
+              try {
+                this.cfg.onLocalApplyRejected({
+                  height: block.number,
+                  blockHash: block.hash,
+                  expectedRoot: block.stateRoot,
+                  actualRoot: computedRoot as Hex,
+                  reason: "stateRoot mismatch",
+                })
+              } catch (cbErr) {
+                log.warn("onLocalApplyRejected callback threw", { error: String(cbErr) })
+              }
+            }
             throw new Error(`stateRoot mismatch: expected ${block.stateRoot}, computed ${computedRoot}`)
           }
         } catch (err) {
