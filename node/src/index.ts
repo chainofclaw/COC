@@ -1048,6 +1048,38 @@ const consensus = new ConsensusEngine(chain, p2p, {
 })
 consensus.start()
 
+// Phase J1.3: route chain-engine local apply rejection (stateRoot
+// mismatch on a non-locally-proposed block) into consensus.requestSyncNow.
+// Closes the H4/H5 deadzone where a stateRoot-corrupted node never enters
+// a BFT round (block validation rejects parent-state, prepareVotes stay
+// empty, detectPeerQuorumDivergence returns null) and therefore never
+// triggers the existing peer-quorum-divergence catch-up path.
+const onLocalApplyRejected = (info: {
+  height: bigint
+  blockHash: Hex
+  expectedRoot: Hex
+  actualRoot: Hex
+  reason: string
+}): void => {
+  log.warn("Phase J1.3: chain engine rejected non-local block — requesting sync", {
+    height: info.height.toString(),
+    blockHash: info.blockHash,
+    expectedRoot: info.expectedRoot,
+    actualRoot: info.actualRoot,
+    reason: info.reason,
+  })
+  consensus.requestSyncNow().catch((err) => {
+    log.warn("Phase J1.3: requestSyncNow after local apply rejection failed", {
+      error: String(err),
+    })
+  })
+}
+if (typeof (chain as PersistentChainEngine).setOnLocalApplyRejected === "function") {
+  (chain as PersistentChainEngine).setOnLocalApplyRejected(onLocalApplyRejected)
+} else if (typeof (chain as ChainEngine).setOnLocalApplyRejected === "function") {
+  (chain as ChainEngine).setOnLocalApplyRejected(onLocalApplyRejected)
+}
+
 const pose = new PoSeEngine(BigInt(Math.floor(Date.now() / config.poseEpochMs)), {
   signer: nodeSigner,
   nonceRegistry: new NonceRegistry({

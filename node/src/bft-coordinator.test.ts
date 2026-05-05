@@ -509,4 +509,128 @@ describe("BftCoordinator", () => {
 
     assert.equal(finalized, true, "quorum on matching (blockHash, stateRoot) must finalize")
   })
+
+  // -- Phase J1.1: early divergence detection from buffered prepare messages --
+
+  it("Phase J1.1: fires onPeerQuorumDiverged early when prepares arrive without an active round", async () => {
+    // Today's deadzone (2026-05-05 testnet stall): node-1's chain engine
+    // rejected the parent block, so startRound was never invoked. Peers'
+    // prepare messages still arrive carrying their (blockHash, peerRoot)
+    // and pile up in pendingMessages. Without J1.1, no detect path runs
+    // until startRound + timeout, which never happens. With J1.1, every
+    // buffered prepare triggers tryEarlyDivergenceDetect.
+    const peerRoot = ("0x" + "bb".repeat(32)) as Hex
+    const peerHash = ("0x" + "ab".repeat(32)) as Hex
+
+    let fired: { height: bigint; peerStateRoot: Hex; localStateRoot?: Hex } | null = null
+    const coord = new BftCoordinator({
+      localId: "v1",
+      validators,
+      broadcastMessage: async () => {},
+      onFinalized: async () => {},
+      onPeerQuorumDiverged: (info) => {
+        fired = { height: info.height, peerStateRoot: info.peerStateRoot, localStateRoot: info.localStateRoot }
+      },
+    })
+
+    // Note: we never call startRound — there is no activeRound.
+    await coord.handleMessage({ ...bftMsg("prepare", 1n, peerHash, "v2"), stateRoot: peerRoot })
+    await coord.handleMessage({ ...bftMsg("prepare", 1n, peerHash, "v3"), stateRoot: peerRoot })
+
+    assert.ok(fired, "early divergence should fire from buffered prepares without an active round")
+    assert.equal(fired!.height, 1n)
+    assert.equal(fired!.peerStateRoot, peerRoot)
+    assert.equal(fired!.localStateRoot, undefined, "no local round → no local stateRoot")
+  })
+
+  it("Phase J1.1: dedups by height — fires at most once per height", async () => {
+    const peerRoot = ("0x" + "bb".repeat(32)) as Hex
+    const peerHash = ("0x" + "ab".repeat(32)) as Hex
+    let fireCount = 0
+    const coord = new BftCoordinator({
+      localId: "v1",
+      validators,
+      broadcastMessage: async () => {},
+      onFinalized: async () => {},
+      onPeerQuorumDiverged: () => { fireCount++ },
+    })
+
+    // Three prepare messages from the same peers (one duplicate, two unique)
+    // at the same height — only one fire expected.
+    await coord.handleMessage({ ...bftMsg("prepare", 1n, peerHash, "v2"), stateRoot: peerRoot })
+    await coord.handleMessage({ ...bftMsg("prepare", 1n, peerHash, "v3"), stateRoot: peerRoot })
+    await coord.handleMessage({ ...bftMsg("prepare", 1n, peerHash, "v3"), stateRoot: peerRoot })
+
+    assert.equal(fireCount, 1, "per-height dedup should suppress repeated fires")
+  })
+
+  it("Phase J1.1: does NOT fire when local stateRoot matches peer quorum", async () => {
+    const agreedRoot = ("0x" + "cc".repeat(32)) as Hex
+    const blockHashHex = ("0x" + "ab".repeat(32)) as Hex
+    let fireCount = 0
+    const coord = new BftCoordinator({
+      localId: "v1",
+      validators,
+      prepareTimeoutMs: 1000,
+      commitTimeoutMs: 1000,
+      broadcastMessage: async () => {},
+      onFinalized: async () => {},
+      computeLocalStateRoot: async () => agreedRoot,
+      onPeerQuorumDiverged: () => { fireCount++ },
+    })
+
+    const block = makeBlock(1n)
+    await coord.startRound(block)
+    // Local ourselves voted with agreedRoot via startRound's
+    // computeLocalStateRoot path. Peers vote the same.
+    await coord.handleMessage({ ...bftMsg("prepare", 1n, blockHashHex, "v2"), stateRoot: agreedRoot })
+    await coord.handleMessage({ ...bftMsg("prepare", 1n, blockHashHex, "v3"), stateRoot: agreedRoot })
+
+    assert.equal(fireCount, 0, "matching stateRoot should not trigger early divergence")
+  })
+
+  // -- Phase J2.1: forceClearRound public entrypoint --
+
+  it("Phase J2.1: forceClearRound clears active round and is idempotent", async () => {
+    const coord = new BftCoordinator({
+      localId: "v1",
+      validators,
+      prepareTimeoutMs: 1000,
+      commitTimeoutMs: 1000,
+      broadcastMessage: async () => {},
+      onFinalized: async () => {},
+    })
+
+    const block = makeBlock(1n, "v1")
+    await coord.startRound(block)
+    assert.equal(coord.getRoundState().active, true, "round started")
+
+    coord.forceClearRound("test-self-stuck")
+    assert.equal(coord.getRoundState().active, false, "round cleared")
+
+    // Idempotent — second call must not throw or change state.
+    coord.forceClearRound("test-second-call")
+    assert.equal(coord.getRoundState().active, false, "still cleared (idempotent)")
+  })
+
+  it("Phase J2.1: after forceClearRound, a new startRound at the same height succeeds", async () => {
+    const coord = new BftCoordinator({
+      localId: "v1",
+      validators,
+      prepareTimeoutMs: 1000,
+      commitTimeoutMs: 1000,
+      broadcastMessage: async () => {},
+      onFinalized: async () => {},
+    })
+
+    const block = makeBlock(1n, "v1")
+    await coord.startRound(block)
+    coord.forceClearRound("self-stuck")
+
+    // Restart at same height — must work, not throw.
+    await coord.startRound(block)
+    const state = coord.getRoundState()
+    assert.equal(state.active, true)
+    assert.equal(state.height, 1n)
+  })
 })

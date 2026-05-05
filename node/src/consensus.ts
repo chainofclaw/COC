@@ -180,6 +180,11 @@ export class ConsensusEngine {
   // Set to true by the watchdog; cleared by tryPropose after it issues the
   // override proposal. Signals that the normal round-robin should be bypassed.
   private noProgressProposerOverride = false
+  // Phase J2.2: throttle for self-stuck-proposer forceClearRound. Without
+  // this, every tick of the watchdog (NO_PROGRESS_STAGGER_MS) would clear
+  // the round again, preventing prepareVotes from ever accumulating once
+  // peers send fresh ones. Required spacing: ≥ NO_PROGRESS_TIMEOUT_MS.
+  private lastSelfClearRoundAtMs = 0
 
   // Sync progress tracking
   private highestPeerHeight = 0n
@@ -274,7 +279,7 @@ export class ConsensusEngine {
   private async checkNoProgressWatchdog(): Promise<void> {
     if (this.noProgressProposerOverride) return
     if (this.syncInFlight) return
-    if (!this.bft || this.bft.getRoundState().active) return
+    if (!this.bft) return
     const elapsed = Date.now() - this.lastBftProgressAtMs
     if (elapsed <= NO_PROGRESS_TIMEOUT_MS) return
 
@@ -292,8 +297,42 @@ export class ConsensusEngine {
     const stuckHeight = currentHeight + 1n
     const stuckProposerId = this.chain.expectedProposer(stuckHeight)
 
-    // If we're the stuck proposer ourselves, peers handle the override
-    if (stuckProposerId === this.nodeId) return
+    // Phase J2.2: when we are the stuck proposer AND we hold an active
+    // round whose state is internally deadlocked (no peers responding,
+    // prepareVotes stuck at 1 self-vote — 2026-05-05 testnet pattern),
+    // H15b's rotation-based override does NOT cover us — peers can only
+    // ATTEMPT to override but their proposes are also rejected by the
+    // active round we still hold. Self-clear our round so peers' next
+    // propose has somewhere to land. Throttled ≥ NO_PROGRESS_TIMEOUT_MS
+    // to give peers room to deliver fresh votes between clears.
+    if (stuckProposerId === this.nodeId) {
+      const roundState = this.bft.getRoundState()
+      if (
+        roundState.active
+        && Date.now() - this.lastSelfClearRoundAtMs >= NO_PROGRESS_TIMEOUT_MS
+      ) {
+        log.error("Phase J2.2: self-stuck proposer — force-clearing local BFT round", {
+          elapsedMs: elapsed,
+          stuckHeight: stuckHeight.toString(),
+          activeHeight: roundState.height?.toString() ?? "<null>",
+          activePhase: roundState.phase ?? "<null>",
+          prepareVotes: roundState.prepareVotes,
+          commitVotes: roundState.commitVotes,
+        })
+        this.bft.forceClearRound("h15b-self-stuck-proposer")
+        this.lastSelfClearRoundAtMs = Date.now()
+        // Reset progress baseline so the next tick doesn't immediately
+        // re-fire on the same elapsed window. We do NOT mark progress
+        // (no block was finalized); this is just throttle bookkeeping.
+        this.lastBftProgressAtMs = Date.now()
+      }
+      return
+    }
+
+    // Below this point: someone else is the stuck proposer, original H15b
+    // rotation-based override path applies. Skip if our local BFT round is
+    // still active (we shouldn't propose for a height already in progress).
+    if (this.bft.getRoundState().active) return
 
     // Find how many rotation steps ahead of the stuck proposer we are.
     // Proposer for stuckHeight+1 is primary fallback (rotationOffset=1),
