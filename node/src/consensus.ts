@@ -59,6 +59,15 @@ const FETCH_SNAPSHOTS_TIMEOUT_MS = 30_000
 // completes naturally; only genuinely-stuck syncs trip the watchdog.
 const SYNC_INFLIGHT_WATCHDOG_MS = 90_000
 
+// Phase H15: how long without a BFT-finalized block before the fallback
+// proposer fires the no-progress override. Primary fallback (+1 in rotation)
+// fires at this threshold; secondary fallbacks stagger +30s per step so that
+// at most one node activates per tick interval, preventing equivocation storms
+// (observed 2026-05-02: all 3 nodes fired simultaneously → 3-way block split).
+const NO_PROGRESS_TIMEOUT_MS = 120_000
+const NO_PROGRESS_STAGGER_MS = 30_000
+const NO_PROGRESS_MAX_VALIDATORS = 10
+
 /** Race a promise against a timeout. Throws on timeout, otherwise returns the value. */
 async function withSyncTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -193,12 +202,15 @@ export class ConsensusEngine {
 
   /** Optional callback to broadcast blocks via wire protocol (TCP) */
   private readonly wireBroadcast: ((block: ChainBlock) => void) | null
+  // Phase H15 stagger: local validator ID used to identify which rotation slot
+  // we occupy so only the designated fallback proposer arms the override.
+  private readonly nodeId: string | null
 
   constructor(
     chain: IChainEngine,
     p2p: P2PNode,
     cfg: ConsensusConfig,
-    opts?: { bft?: BftCoordinator; snapSync?: SnapSyncProvider; wireBroadcast?: (block: ChainBlock) => void },
+    opts?: { bft?: BftCoordinator; snapSync?: SnapSyncProvider; wireBroadcast?: (block: ChainBlock) => void; nodeId?: string },
   ) {
     this.chain = chain
     this.p2p = p2p
@@ -206,6 +218,7 @@ export class ConsensusEngine {
     this.bft = opts?.bft ?? null
     this.snapSync = opts?.snapSync ?? null
     this.wireBroadcast = opts?.wireBroadcast ?? null
+    this.nodeId = opts?.nodeId ?? null
   }
 
   start(): void {
@@ -227,22 +240,12 @@ export class ConsensusEngine {
       this.syncInFlightWatchdogTimer = setInterval(() => this.checkSyncInFlightWatchdog(), 10_000)
       this.syncInFlightWatchdogTimer.unref()
       // Phase H15 watchdog: if BFT is enabled but no block has been finalized
-      // for NO_PROGRESS_TIMEOUT_MS, the designated proposer (round-robin) is
-      // likely offline or stuck behind. Override the proposer check so any
-      // node can propose and unblock the chain.
+      // for NO_PROGRESS_TIMEOUT_MS, the designated fallback proposer (next in
+      // rotation after the stuck proposer) arms the override so the chain can
+      // unblock without an equivocation storm. Secondary fallbacks stagger
+      // NO_PROGRESS_STAGGER_MS apart so only one node fires per tick.
       if (this.bft) {
-        const NO_PROGRESS_TIMEOUT_MS = 120_000
-        this.noProgressWatchdogTimer = setInterval(() => {
-          if (this.noProgressProposerOverride) return // already armed
-          if (this.syncInFlight) return
-          const elapsed = Date.now() - this.lastBftProgressAtMs
-          if (elapsed > NO_PROGRESS_TIMEOUT_MS && !this.bft!.getRoundState().active) {
-            log.error("Phase H15: no BFT progress for too long — enabling proposer override", {
-              elapsedMs: elapsed,
-            })
-            this.noProgressProposerOverride = true
-          }
-        }, 30_000)
+        this.noProgressWatchdogTimer = setInterval(() => { void this.checkNoProgressWatchdog() }, NO_PROGRESS_STAGGER_MS)
         this.noProgressWatchdogTimer.unref()
       }
       void this.trySync()
@@ -256,6 +259,68 @@ export class ConsensusEngine {
     if (this.syncInFlightWatchdogTimer) { clearInterval(this.syncInFlightWatchdogTimer); this.syncInFlightWatchdogTimer = null }
     if (this.noProgressWatchdogTimer) { clearInterval(this.noProgressWatchdogTimer); this.noProgressWatchdogTimer = null }
     this.bft?.stop()
+  }
+
+  /**
+   * Phase H15 watchdog: arm noProgressProposerOverride if BFT has been silent
+   * for too long, but ONLY for the designated fallback proposer (next in
+   * rotation after the stuck proposer). Secondary fallbacks stagger
+   * NO_PROGRESS_STAGGER_MS further to prevent multiple nodes from proposing
+   * different blocks for the same height (equivocation storm, 2026-05-02).
+   *
+   * If nodeId is not configured, the watchdog is disabled — without it we
+   * can't identify which node is the fallback and every node would override.
+   */
+  private async checkNoProgressWatchdog(): Promise<void> {
+    if (this.noProgressProposerOverride) return
+    if (this.syncInFlight) return
+    if (!this.bft || this.bft.getRoundState().active) return
+    const elapsed = Date.now() - this.lastBftProgressAtMs
+    if (elapsed <= NO_PROGRESS_TIMEOUT_MS) return
+
+    if (!this.nodeId) {
+      // Cannot determine fallback proposer identity — skip to avoid storm
+      return
+    }
+
+    let currentHeight: bigint
+    try {
+      currentHeight = await Promise.resolve(this.chain.getHeight())
+    } catch {
+      return
+    }
+    const stuckHeight = currentHeight + 1n
+    const stuckProposerId = this.chain.expectedProposer(stuckHeight)
+
+    // If we're the stuck proposer ourselves, peers handle the override
+    if (stuckProposerId === this.nodeId) return
+
+    // Find how many rotation steps ahead of the stuck proposer we are.
+    // Proposer for stuckHeight+1 is primary fallback (rotationOffset=1),
+    // stuckHeight+2 is secondary (rotationOffset=2), etc.
+    let rotationOffset = 0
+    for (let i = 1; i <= NO_PROGRESS_MAX_VALIDATORS; i++) {
+      if (this.chain.expectedProposer(stuckHeight + BigInt(i)) === this.nodeId) {
+        rotationOffset = i
+        break
+      }
+    }
+    if (rotationOffset === 0) return // nodeId not in active validator set
+
+    // Primary fallback fires at base timeout; each subsequent fallback adds
+    // one stagger interval so at most one node fires per tick.
+    const activationThresholdMs = NO_PROGRESS_TIMEOUT_MS + (rotationOffset - 1) * NO_PROGRESS_STAGGER_MS
+    if (elapsed < activationThresholdMs) return
+
+    log.error("Phase H15: no BFT progress — enabling proposer override (fallback proposer)", {
+      elapsedMs: elapsed,
+      activationThresholdMs,
+      rotationOffset,
+      stuckHeight: stuckHeight.toString(),
+      stuckProposerId,
+      localNodeId: this.nodeId,
+    })
+    this.noProgressProposerOverride = true
   }
 
   /**
