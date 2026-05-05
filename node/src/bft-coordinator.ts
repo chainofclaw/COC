@@ -117,6 +117,14 @@ export class BftCoordinator {
   // notified to escalate from incremental sync (H4) to full state-snapshot
   // import (H5).
   private consecutivePeerDivergenceCount = 0
+  // Phase J1.1: dedup early-divergence fires per height so a flood of
+  // prepare messages from the same round doesn't spam onPeerQuorumDiverged.
+  // Reset per height; cleared whenever a round at height >= last-fired
+  // finalizes (lastFinalizedHeight bookkeeping).
+  private lastEarlyDivergenceFireHeight: bigint | null = null
+  // Phase J1.1: throttle to 1 fire per second across all heights to bound
+  // callback rate when many adjacent heights diverge simultaneously.
+  private lastEarlyDivergenceFireAtMs = 0
   readonly equivocationDetector = new EquivocationDetector()
 
   constructor(cfg: BftCoordinatorConfig) {
@@ -281,7 +289,15 @@ export class BftCoordinator {
         const isDup = this.pendingMessages.some(
           (m) => m.senderId === msg.senderId && m.type === msg.type && m.height === msg.height,
         )
-        if (!isDup) this.pendingMessages.push(msg)
+        if (!isDup) {
+          this.pendingMessages.push(msg)
+          // Phase J1.1: try early divergence detect on prepare messages even
+          // when no active round exists. This is the key path for today's
+          // failure mode: chain engine rejected the parent block, so we
+          // never start a round, so the buffered prepares from peers are
+          // our only divergence signal.
+          if (msg.type === "prepare") this.tryEarlyDivergenceDetect(msg.height)
+        }
       }
       return
     }
@@ -293,7 +309,10 @@ export class BftCoordinator {
         const isDup = this.pendingMessages.some(
           (m) => m.senderId === msg.senderId && m.type === msg.type && m.height === msg.height,
         )
-        if (!isDup) this.pendingMessages.push(msg)
+        if (!isDup) {
+          this.pendingMessages.push(msg)
+          if (msg.type === "prepare") this.tryEarlyDivergenceDetect(msg.height)
+        }
       }
       return
     }
@@ -376,6 +395,11 @@ export class BftCoordinator {
         if (this.activeRound?.state.phase === "commit") {
           this.startCommitRetry()
         }
+        // Phase J1.1: every prepare vote into the active round may shift the
+        // OTHER-validator stake aggregate over the 2/3 threshold. Probe early
+        // so we don't have to wait for the round timeout (which is the H4
+        // path) when peers form quorum on a state we cannot reproduce.
+        if (this.activeRound) this.tryEarlyDivergenceDetect(this.activeRound.state.height)
         break
       }
       case "commit": {
@@ -566,27 +590,67 @@ export class BftCoordinator {
     const localVote = round.state.prepareVotes.get(localId)
     const localStateRoot = localVote?.stateRoot
 
-    // Group OTHER validators' votes by (blockHash, stateRoot) and sum stake.
-    const stakeByPair = new Map<string, { hash: Hex; root: Hex; stake: bigint }>()
-    let totalStake = 0n
+    // Build the OTHER-validator vote list from the active round's prepareVotes.
+    const otherVotes: Array<{ id: string; blockHash: Hex; stateRoot?: Hex }> = []
     for (const v of this.cfg.validators) {
-      totalStake += v.stake
       if (v.id.toLowerCase() === localId) continue
       const vote = round.state.prepareVotes.get(v.id.toLowerCase())
       if (!vote || !vote.stateRoot) continue
+      otherVotes.push({ id: v.id, blockHash: vote.blockHash, stateRoot: vote.stateRoot })
+    }
+    return this.computePeerQuorumDivergence(otherVotes, localStateRoot)
+  }
+
+  /**
+   * Phase J1.1 — pure helper. Given a flat list of OTHER validators' prepare
+   * votes (deduped by senderId by the caller) and our locally computed
+   * stateRoot, return divergence info if ≥2/3 OTHER validator stake agrees
+   * on a (blockHash, stateRoot) pair that disagrees with our local stateRoot.
+   *
+   * Reused by:
+   *   - detectPeerQuorumDivergence (timeout-time, J's predecessor H4 path)
+   *   - tryEarlyDivergenceDetect (every-prepare-message, J1.1 early path)
+   *
+   * Threshold semantics: relaxedQuorum 2/3 form because the signal we care
+   * about is "peers CAN advance without us"; the strict +1 wei distinction
+   * is irrelevant for divergence detection.
+   */
+  private computePeerQuorumDivergence(
+    otherVotes: Array<{ id: string; blockHash: Hex; stateRoot?: Hex }>,
+    localStateRoot: Hex | undefined,
+  ): {
+    peerBlockHash: Hex
+    peerStateRoot: Hex
+    localStateRoot?: Hex
+  } | null {
+    const stakeById = new Map(
+      this.cfg.validators.map((v) => [v.id.toLowerCase(), v.stake] as const),
+    )
+    let totalStake = 0n
+    for (const v of this.cfg.validators) totalStake += v.stake
+
+    // Group OTHER validators' votes by (blockHash, stateRoot) and sum stake.
+    // Caller guarantees one vote per senderId; defensive dedup via Set
+    // protects against accidental double-pushes from the buffer + active
+    // round merge in tryEarlyDivergenceDetect.
+    const stakeByPair = new Map<string, { hash: Hex; root: Hex; stake: bigint }>()
+    const counted = new Set<string>()
+    for (const vote of otherVotes) {
+      if (!vote.stateRoot) continue
+      const id = vote.id.toLowerCase()
+      if (counted.has(id)) continue
+      counted.add(id)
+      const stake = stakeById.get(id)
+      if (!stake) continue
       const key = `${vote.blockHash}:${vote.stateRoot}`
       const e = stakeByPair.get(key)
       if (e) {
-        e.stake += v.stake
+        e.stake += stake
       } else {
-        stakeByPair.set(key, { hash: vote.blockHash, root: vote.stateRoot, stake: v.stake })
+        stakeByPair.set(key, { hash: vote.blockHash, root: vote.stateRoot, stake })
       }
     }
 
-    // 2/3 threshold (intentionally use the relaxedQuorum form here — the
-    // signal we want is "peers can advance without us", and that's the
-    // exact threshold node-2/3 use to finalize when we abstain). +1 wei
-    // strictness doesn't matter for divergence detection.
     const twoThirds = (totalStake * 2n) / 3n
     let bestPair: { hash: Hex; root: Hex; stake: bigint } | null = null
     for (const e of stakeByPair.values()) {
@@ -594,14 +658,110 @@ export class BftCoordinator {
     }
     if (!bestPair) return null
 
-    // Only flag divergence when our local vote differs (or absent). If we
-    // matched, we're fine — round will finalize via early-commits path.
     if (localStateRoot && localStateRoot === bestPair.root) return null
 
     return {
       peerBlockHash: bestPair.hash,
       peerStateRoot: bestPair.root,
       localStateRoot,
+    }
+  }
+
+  /**
+   * Phase J1.1 — early divergence detection.
+   *
+   * Called after every successfully-buffered prepare message (whether routed
+   * to the active round or held in pendingMessages because no round is
+   * active). Aggregates OTHER validators' (blockHash, stateRoot) pairs from
+   * BOTH the active round's prepareVotes AND pendingMessages at the same
+   * height. If ≥2/3 OTHER stake converges and we have no matching local
+   * vote, fire onPeerQuorumDiverged immediately.
+   *
+   * Closes the H4/H5 deadzone where our local node never starts a BFT round
+   * (chain-engine rejected the proposal at parent-state validation, so
+   * activeRound stays null and detectPeerQuorumDivergence sees no votes to
+   * scan even at timeout time). Today's testnet stall (block 206803→206804)
+   * was exactly this: node-1's BFT had zero round activity for 7+ hours,
+   * yet node-2/3 prepare votes carrying matching (blockHash, stateRoot)
+   * were arriving at node-1 — those votes alone are enough signal.
+   *
+   * Throttling:
+   *   - per-height dedup (lastEarlyDivergenceFireHeight) — fires at most once
+   *     for a given height
+   *   - 1s global cooldown (lastEarlyDivergenceFireAtMs) — bounds callback
+   *     rate when adjacent heights diverge in lockstep
+   */
+  private tryEarlyDivergenceDetect(height: bigint): void {
+    if (!this.cfg.onPeerQuorumDiverged && !this.cfg.onPersistentDivergence) return
+    if (this.lastEarlyDivergenceFireHeight === height) return
+
+    const nowMs = Date.now()
+    if (nowMs - this.lastEarlyDivergenceFireAtMs < 1000) return
+
+    const localId = this.cfg.localId.toLowerCase()
+    const otherVotes: Array<{ id: string; blockHash: Hex; stateRoot?: Hex }> = []
+    let localStateRoot: Hex | undefined
+
+    // 1) Pull from active round if it matches the height we're checking.
+    if (this.activeRound && this.activeRound.state.height === height) {
+      const localVote = this.activeRound.state.prepareVotes.get(localId)
+      localStateRoot = localVote?.stateRoot
+      for (const v of this.cfg.validators) {
+        const id = v.id.toLowerCase()
+        if (id === localId) continue
+        const vote = this.activeRound.state.prepareVotes.get(id)
+        if (!vote || !vote.stateRoot) continue
+        otherVotes.push({ id, blockHash: vote.blockHash, stateRoot: vote.stateRoot })
+      }
+    }
+
+    // 2) Augment with prepare messages still in the buffer for this height.
+    //    Prefer active-round votes when both have an entry for the same id.
+    const seen = new Set(otherVotes.map((v) => v.id.toLowerCase()))
+    for (const msg of this.pendingMessages) {
+      if (msg.type !== "prepare") continue
+      if (msg.height !== height) continue
+      if (!msg.stateRoot) continue
+      const id = msg.senderId.toLowerCase()
+      if (id === localId) {
+        if (!localStateRoot) localStateRoot = msg.stateRoot
+        continue
+      }
+      if (seen.has(id)) continue
+      seen.add(id)
+      otherVotes.push({ id, blockHash: msg.blockHash, stateRoot: msg.stateRoot })
+    }
+
+    const divergence = this.computePeerQuorumDivergence(otherVotes, localStateRoot)
+    if (!divergence) return
+
+    // Mark fired BEFORE invoking callback to prevent re-entry on synchronous
+    // callbacks that themselves trigger more BFT message handling.
+    this.lastEarlyDivergenceFireHeight = height
+    this.lastEarlyDivergenceFireAtMs = nowMs
+
+    log.warn("Phase J1.1: early peer-quorum divergence detected — triggering catch-up", {
+      height: height.toString(),
+      peerBlockHash: divergence.peerBlockHash,
+      peerStateRoot: divergence.peerStateRoot,
+      localStateRoot: divergence.localStateRoot ?? "<unset>",
+      activeRound: this.activeRound !== null,
+      bufferedCount: this.pendingMessages.filter(
+        (m) => m.type === "prepare" && m.height === height,
+      ).length,
+    })
+
+    if (this.cfg.onPeerQuorumDiverged) {
+      try {
+        this.cfg.onPeerQuorumDiverged({
+          height,
+          peerBlockHash: divergence.peerBlockHash,
+          peerStateRoot: divergence.peerStateRoot,
+          localStateRoot: divergence.localStateRoot,
+        })
+      } catch (err) {
+        log.warn("Phase J1.1: onPeerQuorumDiverged callback threw", { error: String(err) })
+      }
     }
   }
 
@@ -831,6 +991,35 @@ export class BftCoordinator {
       clearTimeout(this.timeoutTimer)
       this.timeoutTimer = null
     }
+  }
+
+  /**
+   * Phase J2.1 — public force-clear entrypoint.
+   *
+   * Resets activeRound + timeout + commit retry state without touching
+   * pendingMessages or linger broadcast. Designed for the H15b
+   * `noProgressWatchdog` self-stuck-proposer path: when this node IS the
+   * stuck proposer (its own BFT round state has internal-deadlocked —
+   * 2026-05-05 testnet had node-2 in this state, prepareVotes pinned to
+   * 1 self-vote, buffered=0, no path to recovery short of `docker restart`).
+   *
+   * After this returns, the next consensus tick can call `tryPropose` and
+   * start a fresh round at the same height. The discarded round's votes
+   * are lost — that's the price of unwedging without restart. Callers must
+   * throttle (≥ NO_PROGRESS_TIMEOUT_MS) to prevent permanent quorum starvation.
+   *
+   * No-op when no active round; idempotent.
+   */
+  forceClearRound(reason: string): void {
+    if (!this.activeRound) return
+    log.warn("Phase J2.1: BFT round force-cleared", {
+      height: this.activeRound.state.height.toString(),
+      phase: this.activeRound.state.phase,
+      prepareVotes: this.activeRound.state.prepareVotes.size,
+      commitVotes: this.activeRound.state.commitVotes.size,
+      reason,
+    })
+    this.clearRound()
   }
 }
 

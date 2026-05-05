@@ -63,6 +63,24 @@ export interface PersistentChainEngineConfig {
    * the proposer's credited balance — every node must run the same flag.
    */
   enableFeeDistribution?: boolean
+  /**
+   * Phase J1.2: invoked when a non-locally-proposed block is rejected
+   * because its claimed stateRoot does not match the locally computed one.
+   * The wiring layer (index.ts) routes this to consensus.requestSyncNow()
+   * so a stateRoot-corrupted local node can catch up via snap-sync without
+   * needing the BFT coordinator to enter a timeout path first — the latter
+   * is the H4/H5 deadzone that stalled testnet at 206803 on 2026-05-05
+   * (BFT round never started because every incoming block 206804 proposal
+   * was rejected at the parent stateRoot check, so prepareVotes stayed
+   * empty and detectPeerQuorumDivergence() had nothing to fire on).
+   */
+  onLocalApplyRejected?: (info: {
+    height: bigint
+    blockHash: Hex
+    expectedRoot: Hex
+    actualRoot: Hex
+    reason: string
+  }) => void
 }
 
 export class PersistentChainEngine {
@@ -131,6 +149,18 @@ export class PersistentChainEngine {
   /** Set validator address map for identity alignment (nodeId → address) */
   setValidatorAddressMap(map: Map<string, string>): void {
     this.validatorAddressMap = map
+  }
+
+  /**
+   * Phase J1.3: late-bound rejection callback. The engine is constructed
+   * before consensus exists, so we register the consensus.requestSyncNow
+   * route via this setter after both are wired. Overrides any callback
+   * passed in cfg at construction time.
+   */
+  setOnLocalApplyRejected(
+    cb: NonNullable<PersistentChainEngineConfig["onLocalApplyRejected"]>,
+  ): void {
+    ;(this.cfg as { onLocalApplyRejected?: typeof cb }).onLocalApplyRejected = cb
   }
 
   /** Resolve validator nodeId to address for signature verification */
@@ -965,6 +995,26 @@ export class PersistentChainEngine {
         txCount: block.txs.length,
         enforcement: sigMode,
       })
+      // Phase J1.2: notify wiring layer so it can trigger snap-sync. We
+      // report on every mismatch (regardless of enforcement mode) because
+      // the throw below short-circuits applyBlock; the BFT round never
+      // accumulates a prepareVote, so the H4 timeout-time detection never
+      // fires. This callback is the in-band signal that "we and peers
+      // disagree on the post-state of THIS block" — the cleanest moment
+      // to escalate to snap-sync.
+      if (!locallyProposed && this.cfg.onLocalApplyRejected) {
+        try {
+          this.cfg.onLocalApplyRejected({
+            height: block.number,
+            blockHash: block.hash,
+            expectedRoot: block.stateRoot,
+            actualRoot: stateRoot,
+            reason: "stateRoot mismatch",
+          })
+        } catch (err) {
+          log.warn("onLocalApplyRejected callback threw", { error: String(err) })
+        }
+      }
       if (sigMode === "enforce") {
         throw new Error(`stateRoot mismatch: claimed ${block.stateRoot}, computed ${stateRoot}`)
       }

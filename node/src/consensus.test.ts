@@ -593,3 +593,86 @@ test("Phase H15 stagger: only fallback proposer arms override, not all nodes", a
   // Without nodeId the watchdog is disabled (safe fallback)
   assert.equal(await watchdogFires("", 300_000), false, "no-nodeId: watchdog disabled")
 })
+
+test("Phase J2.2: self-stuck proposer with active round force-clears its own BFT round", async () => {
+  // Regression: 2026-05-05 testnet stall — node-2 was the proposer of an
+  // active round whose internal state had deadlocked (prepareVotes pinned
+  // at 1 self-vote, buffered=0). H15b stagger does not cover this case
+  // (peers can only attempt override; their proposes are rejected because
+  // node-2 still holds the active round). Fix: when stuckProposerId ===
+  // self AND active round exists AND elapsed > threshold, call
+  // bft.forceClearRound so the next tick can re-propose cleanly.
+
+  const validators = ["node-1", "node-2", "node-3"]
+  const mockChain: any = {
+    getHeight: async () => 0n,
+    getTip: async () => null,
+    expectedProposer: (h: bigint) => validators[Number((h - 1n) % BigInt(validators.length))],
+    mempool: { getPendingTxs: () => [] },
+    events: { on: () => {}, off: () => {} },
+  }
+  const mockP2p: any = { fetchSnapshots: async () => [], receiveBlock: async () => {} }
+
+  // Node-1 is stuck proposer for height 1 (round-robin).
+  // mockBft simulates an active round with stuck votes (1 self prepare, 0 commits).
+  let forceClearCount = 0
+  let lastClearReason = ""
+  const mockBft: any = {
+    getRoundState: () => ({ active: true, height: 1n, phase: "prepare", prepareVotes: 1, commitVotes: 0, equivocations: 0 }),
+    stop: () => {},
+    forceClearRound: (reason: string) => {
+      forceClearCount++
+      lastClearReason = reason
+    },
+  }
+
+  // node-1 is the stuck proposer for height 1
+  const c = new ConsensusEngine(mockChain, mockP2p, { blockTimeMs: 1000, syncIntervalMs: 300_000 }, { bft: mockBft, nodeId: "node-1" })
+
+  // Below threshold — no clear
+  ;(c as any).lastBftProgressAtMs = Date.now() - 115_000
+  await (c as any).checkNoProgressWatchdog()
+  assert.equal(forceClearCount, 0, "below threshold: no force-clear")
+
+  // Above threshold — should clear once
+  ;(c as any).lastBftProgressAtMs = Date.now() - 125_000
+  await (c as any).checkNoProgressWatchdog()
+  assert.equal(forceClearCount, 1, "above threshold: forceClearRound called once")
+  assert.match(lastClearReason, /self-stuck/, "reason mentions self-stuck")
+
+  // Throttle: immediate re-tick must not refire
+  ;(c as any).lastBftProgressAtMs = Date.now() - 125_000
+  await (c as any).checkNoProgressWatchdog()
+  assert.equal(forceClearCount, 1, "throttled: second consecutive call must not refire")
+
+  // override stays unset (we're the proposer, not arming the rotation override)
+  assert.equal((c as any).noProgressProposerOverride, false, "self-stuck path should NOT arm rotation override")
+})
+
+test("Phase J2.2: non-stuck-proposer with active round still skips arming override", async () => {
+  // Sanity: when stuckProposer ≠ self AND we have an active round, we
+  // should NOT arm noProgressProposerOverride (proposing for a height
+  // we're already in a round for would equivocate). The active-round
+  // gate after the self-stuck branch enforces this.
+
+  const validators = ["node-1", "node-2", "node-3"]
+  const mockChain: any = {
+    getHeight: async () => 0n,
+    getTip: async () => null,
+    expectedProposer: (h: bigint) => validators[Number((h - 1n) % BigInt(validators.length))],
+    mempool: { getPendingTxs: () => [] },
+    events: { on: () => {}, off: () => {} },
+  }
+  const mockP2p: any = { fetchSnapshots: async () => [], receiveBlock: async () => {} }
+  const mockBft: any = {
+    getRoundState: () => ({ active: true, height: 1n, phase: "prepare", prepareVotes: 1, commitVotes: 0, equivocations: 0 }),
+    stop: () => {},
+    forceClearRound: () => {},
+  }
+
+  // node-2 is fallback (not stuck proposer for height 1)
+  const c = new ConsensusEngine(mockChain, mockP2p, { blockTimeMs: 1000, syncIntervalMs: 300_000 }, { bft: mockBft, nodeId: "node-2" })
+  ;(c as any).lastBftProgressAtMs = Date.now() - 125_000
+  await (c as any).checkNoProgressWatchdog()
+  assert.equal((c as any).noProgressProposerOverride, false, "active round blocks rotation-override arming")
+})
