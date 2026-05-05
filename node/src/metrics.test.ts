@@ -97,4 +97,34 @@ describe("MetricsCollector", () => {
     const output = collector.serialize()
     assert.ok(output.includes("coc_block_time_seconds"))
   })
+
+  it("Phase M1: should emit equivocation + fork-depth gauges when source provides getters", async () => {
+    collector.setSource({
+      getBlockHeight: () => 200n,
+      getTxPoolPending: () => 0,
+      getTxPoolQueued: () => 0,
+      getPeersConnected: () => 3,
+      getEquivocationsTotal: () => 7,
+      getForkChoiceMaxDepth: () => 2,
+    })
+
+    await collector.collect()
+    const output = collector.serialize()
+    assert.ok(output.includes("coc_bft_equivocations_total 7"), "expected equivocation counter emitted")
+    assert.ok(output.includes("coc_fork_choice_max_depth_blocks 2"), "expected fork-depth gauge emitted")
+  })
+
+  it("Phase M1: should silently skip when equivocation/fork-depth getters are absent (back-compat)", async () => {
+    collector.setSource({
+      getBlockHeight: () => 200n,
+      getTxPoolPending: () => 0,
+      getTxPoolQueued: () => 0,
+      getPeersConnected: () => 3,
+    })
+
+    await collector.collect()
+    const output = collector.serialize()
+    assert.ok(!output.includes("coc_bft_equivocations_total"), "equivocation counter should not be present without getter")
+    assert.ok(!output.includes("coc_fork_choice_max_depth_blocks"), "fork-depth gauge should not be present without getter")
+  })
 })
