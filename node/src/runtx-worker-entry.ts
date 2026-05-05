@@ -69,12 +69,17 @@ async function handle(req: WorkerRunTxRequest): Promise<WorkerRunTxResponse> {
     })
     const vm = await createVM({ common })
 
+    // Defensive BigInt: structured clone can reach the worker with
+    // undefined slots even when the TypeScript types say string, so
+    // coerce to string before BigInt and default to "0" if missing.
+    const toBI = (v: string | undefined | null): bigint => BigInt(v ?? "0")
+
     // Preload accounts into the worker's fresh in-memory state manager.
     for (const a of req.preload) {
       const addr = Address.fromString(a.address)
       const account = Account.fromAccountData({
-        nonce: BigInt(a.nonce),
-        balance: BigInt(a.balance),
+        nonce: toBI(a.nonce),
+        balance: toBI(a.balance),
       })
       await vm.stateManager.putAccount(addr, account)
       if (a.code && a.code !== "0x") {
@@ -86,10 +91,10 @@ async function handle(req: WorkerRunTxRequest): Promise<WorkerRunTxResponse> {
     const block = createBlock(
       {
         header: {
-          number: BigInt(req.blockContext.blockNumber),
-          baseFeePerGas: BigInt(req.blockContext.baseFeePerGas),
-          timestamp: BigInt(req.blockContext.timestampSec),
-          gasLimit: BigInt(req.blockContext.gasLimit),
+          number: toBI(req.blockContext.blockNumber),
+          baseFeePerGas: toBI(req.blockContext.baseFeePerGas),
+          timestamp: toBI(req.blockContext.timestampSec),
+          gasLimit: req.blockContext.gasLimit ? toBI(req.blockContext.gasLimit) : 30_000_000n,
           ...(req.blockContext.coinbase
             ? { coinbase: Address.fromString(req.blockContext.coinbase) }
             : {}),
