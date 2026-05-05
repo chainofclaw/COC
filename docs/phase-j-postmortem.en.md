@@ -108,8 +108,38 @@ deliver fresh votes.
   `extensions/coc-nodeops/skills/pose-status/` ships the canonical
   reference implementation with 3/3 unit tests passing.
 
+## Acceptance — Production J1.1 fingerprint (2026-05-06 W8)
+
+Phase J shipped to clawchain-server as `coc-node:phase-j-local` on
+2026-05-05 17:06 UTC. Within 6 minutes of deploy, node-2 emitted:
+
+```
+"Phase J1.1: early peer-quorum divergence detected — triggering catch-up"
+"BFT peer-quorum divergence — triggering forceSnapSync (H11)"
+"forceSnapSync: starting state-snapshot import from peers"
+"forceSnapSync: complete"
+```
+
+That is the J1.1 → H11 → snap-sync recovery path firing in production
+without an operator restart. It confirms the dead H4 path (waiting for
+OTHER prepareVotes that never arrive when the local engine refuses
+the block) is now bypassed by the buffered-prepare scan from
+`addMessage`. Forty minutes of subsequent `phase-j-local` operation
+finalized blocks 209233 → 209257 with `prepareVotes=3 commitVotes=2/3`
+and zero stalls.
+
+J3 fixture (tests/multinode-integration/) cluster has a config-side
+wire-handshake mismatch: validator addresses declared in
+`configs/<node>.json` do not match the keys the wire layer signs with,
+so the cluster fails BFT bootstrap before J1/J2 paths can be
+exercised. This is a fixture issue, not a J runtime issue, and is
+queued as a Week 9 followup. The production fingerprint above is the
+acceptance signal for J landing on testnet.
+
 ## Recommendations
 
+- Fix J3 fixture wire-handshake key alignment (Week 9). Until then the
+  scenarios cannot regression-guard J1+J2 in CI.
 - Run J3 fixture on a dedicated CI runner weekly (separate lane,
   non-blocking for PRs) before exiting Phase 2 (Week 8 end). The
   scenarios are the only thing currently certifying that J1+J2 stop
