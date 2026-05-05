@@ -126,6 +126,10 @@ export class BftCoordinator {
   // callback rate when many adjacent heights diverge simultaneously.
   private lastEarlyDivergenceFireAtMs = 0
   readonly equivocationDetector = new EquivocationDetector()
+  // Phase M1.2: cumulative count of detected equivocations. Cannot derive from
+  // `equivocationDetector.getEvidence().length` because Phase H16 prunes finalized
+  // heights' evidence; we need a monotonic counter for Prometheus.
+  private equivocationsTotal = 0
 
   constructor(cfg: BftCoordinatorConfig) {
     this.cfg = cfg
@@ -354,6 +358,7 @@ export class BftCoordinator {
         msg.senderId, msg.height, msg.type, msg.blockHash, msg.signature,
       )
       if (evidence) {
+        this.equivocationsTotal++
         this.cfg.onEquivocation?.(evidence)
         log.warn("equivocation detected, dropping vote", { sender: msg.senderId, type: msg.type })
         return
@@ -1020,6 +1025,14 @@ export class BftCoordinator {
       reason,
     })
     this.clearRound()
+  }
+
+  /**
+   * Phase M1.2 — cumulative equivocation count for Prometheus emission.
+   * Monotonic; survives Phase H16 evidence pruning.
+   */
+  getEquivocationsTotal(): number {
+    return this.equivocationsTotal
   }
 }
 

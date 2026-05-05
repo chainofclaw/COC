@@ -204,6 +204,10 @@ export class ConsensusEngine {
   private lastProposeMs = 0
   private lastSyncMs = 0
   private startedAtMs = 0
+  // Phase M1.3: track maximum observed fork-choice reorg depth for Prometheus.
+  // Updated when shouldSwitchFork triggers a switch to a remote chain;
+  // depth = abs(remoteHeight - localHeight) at switch time.
+  private forkChoiceMaxDepth = 0
 
   /** Optional callback to broadcast blocks via wire protocol (TCP) */
   private readonly wireBroadcast: ((block: ChainBlock) => void) | null
@@ -389,6 +393,14 @@ export class ConsensusEngine {
 
   getStatus(): { status: ConsensusStatus; proposeFailures: number; syncFailures: number } {
     return { status: this.status, proposeFailures: this.proposeFailures, syncFailures: this.syncFailures }
+  }
+
+  /**
+   * Phase M1.3 — maximum observed fork-choice reorg depth for Prometheus emission.
+   * Monotonic; reset only on process restart.
+   */
+  getForkChoiceMaxDepth(): number {
+    return this.forkChoiceMaxDepth
   }
 
   getMetrics(): ConsensusMetrics {
@@ -785,6 +797,17 @@ export class ConsensusEngine {
         // Use fork choice rule to decide whether to switch
         const switchResult = shouldSwitchFork(localCandidate, remoteCandidate)
         if (!switchResult) continue
+
+        // Phase M1.3: record max observed reorg depth for Prometheus.
+        // Use absolute height delta at switch time as the depth proxy.
+        const depthDelta = Number(
+          remoteCandidate.height > localHeight
+            ? remoteCandidate.height - localHeight
+            : localHeight - remoteCandidate.height,
+        )
+        if (depthDelta > this.forkChoiceMaxDepth) {
+          this.forkChoiceMaxDepth = depthDelta
+        }
 
         log.info("fork choice: switching to remote chain", {
           reason: switchResult.reason,

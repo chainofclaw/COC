@@ -1442,6 +1442,11 @@ const metricsHandle = startMetricsServer({
   getConsensusState: () => consensus.getStatus().status,
   getDhtPeers: dhtNetwork ? () => dhtNetwork!.getStats().totalPeers : undefined,
   getP2PAuthRejected: () => p2p.getStats().authRejectedRequests,
+  // Phase M1.4: emit equivocation counter + fork-choice depth gauge so the
+  // EquivocationDetected and ForkDetected alert rules in
+  // ops/alerts/prometheus-rules.yml have a real series to evaluate.
+  getEquivocationsTotal: bftCoordinator ? () => bftCoordinator!.getEquivocationsTotal() : undefined,
+  getForkChoiceMaxDepth: () => consensus.getForkChoiceMaxDepth(),
 }, { port: metricsPort })
 
 // Graceful shutdown — shared by SIGINT and SIGTERM
