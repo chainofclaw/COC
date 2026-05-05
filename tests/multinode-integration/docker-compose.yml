@@ -1,0 +1,120 @@
+# Phase J3 multinode integration fixture
+#
+# Spawns 3 validators + 1 observer on an isolated bridge network so we can
+# inject LevelDB / network faults without touching production testnet.
+#
+# Port mappings: HOST 387xx → container 18780/18781/19780/19781 (RPC/WS/P2P/Wire).
+# Chosen to avoid colliding with the production cluster (28780/28782/...).
+#
+# Note: ports section is restricted to RPC/Metrics — P2P/Wire stay
+# container-internal so docker network manipulation is the only way to
+# disrupt them (used by freeze-bft-output.sh).
+
+services:
+  node-1:
+    build:
+      context: ../..
+      dockerfile: docker/Dockerfile.node
+    container_name: coc-mn-node-1
+    hostname: node-1
+    ports:
+      - "38780:18780"   # RPC
+      - "39100:9100"    # Metrics
+    volumes:
+      - ./configs/node-1.json:/data/coc/node-config.json:ro
+      - mn-node1-data:/data/coc
+    environment:
+      - COC_DATA_DIR=/data/coc
+      - COC_BFT_AUTO_RECOVERY=1
+    networks:
+      - coc-multinode
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:18780 -X POST -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"method\":\"eth_blockNumber\",\"params\":[],\"id\":1}' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  node-2:
+    build:
+      context: ../..
+      dockerfile: docker/Dockerfile.node
+    container_name: coc-mn-node-2
+    hostname: node-2
+    ports:
+      - "38782:18780"
+      - "39102:9100"
+    volumes:
+      - ./configs/node-2.json:/data/coc/node-config.json:ro
+      - mn-node2-data:/data/coc
+    environment:
+      - COC_DATA_DIR=/data/coc
+      - COC_BFT_AUTO_RECOVERY=1
+    networks:
+      - coc-multinode
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:18780 -X POST -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"method\":\"eth_blockNumber\",\"params\":[],\"id\":1}' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  node-3:
+    build:
+      context: ../..
+      dockerfile: docker/Dockerfile.node
+    container_name: coc-mn-node-3
+    hostname: node-3
+    ports:
+      - "38784:18780"
+      - "39104:9100"
+    volumes:
+      - ./configs/node-3.json:/data/coc/node-config.json:ro
+      - mn-node3-data:/data/coc
+    environment:
+      - COC_DATA_DIR=/data/coc
+      - COC_BFT_AUTO_RECOVERY=1
+    networks:
+      - coc-multinode
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:18780 -X POST -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"method\":\"eth_blockNumber\",\"params\":[],\"id\":1}' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  sync-node:
+    build:
+      context: ../..
+      dockerfile: docker/Dockerfile.node
+    container_name: coc-mn-sync
+    hostname: sync-node
+    ports:
+      - "38786:18780"
+      - "39106:9100"
+    volumes:
+      - ./configs/sync-node.json:/data/coc/node-config.json:ro
+      - mn-sync-data:/data/coc
+    environment:
+      - COC_DATA_DIR=/data/coc
+    networks:
+      - coc-multinode
+    restart: unless-stopped
+    depends_on:
+      node-1:
+        condition: service_healthy
+      node-2:
+        condition: service_healthy
+      node-3:
+        condition: service_healthy
+
+volumes:
+  mn-node1-data:
+  mn-node2-data:
+  mn-node3-data:
+  mn-sync-data:
+
+networks:
+  coc-multinode:
+    driver: bridge
+    name: coc-multinode
