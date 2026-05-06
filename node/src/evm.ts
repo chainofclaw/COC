@@ -754,7 +754,33 @@ export class EvmChain {
       opts.stateManager = this.externalStateManager
     }
     this.vm = await createVM(opts as Parameters<typeof createVM>[0])
-    if (this.prefundAccounts.length > 0) {
+    // Only prefund when the chain truly has no state — same invariant
+    // ChainEngine.init follows. On the BFT recovery path (index.ts:537),
+    // resetExecution runs against a populated trie; re-prefunding overwrites
+    // the deployer/validator accounts (nonce reset 229 → 0, balance back to
+    // genesis), invalidates the trie's lastStateRoot, and leaves orphaned
+    // intermediate nodes in LevelDB. Different validators' orphan sets
+    // diverge based on write timing, producing stateRoot mismatch on the
+    // very next applyBlock — the EVM-determinism failure that wedged the
+    // 2026-05-06 X2 recovery.
+    let trieIsEmpty = true
+    if (this.externalStateManager) {
+      try {
+        const sm = this.externalStateManager as { getStateRoot?: () => Promise<Uint8Array> }
+        if (sm.getStateRoot) {
+          const root = await sm.getStateRoot()
+          // Empty trie root = keccak256(rlp([])); any non-empty trie has
+          // a different 32-byte digest. Compare against the well-known
+          // empty-trie root to distinguish a fresh chain from a populated one.
+          const EMPTY_TRIE_ROOT = "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421"
+          const rootHex = "0x" + Buffer.from(root).toString("hex")
+          trieIsEmpty = rootHex === EMPTY_TRIE_ROOT
+        }
+      } catch {
+        // best effort — fall through to prefund if we can't read root
+      }
+    }
+    if (trieIsEmpty && this.prefundAccounts.length > 0) {
       await this.prefund(this.prefundAccounts)
     }
     this.receipts.clear()
