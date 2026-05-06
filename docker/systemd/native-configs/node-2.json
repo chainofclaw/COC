@@ -1,5 +1,5 @@
 {
-  "_phase": "N1 — native systemd validator instance 2. Deployed to /etc/coc/node-2.json.",
+  "_phase": "N1 \u2014 native systemd validator instance 2. Deployed to /etc/coc/node-2.json.",
   "_note": "Ports preserved from docker host-side mapping (28782/28783/29782/29783).",
   "nodeId": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
   "chainId": 18780,
@@ -10,7 +10,6 @@
   "wsBind": "0.0.0.0",
   "wsPort": 28783,
   "ipfsBind": "127.0.0.1",
-  "ipfsPort": 5002,
   "wireBind": "0.0.0.0",
   "wirePort": 29783,
   "validators": [
@@ -19,8 +18,14 @@
     "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc"
   ],
   "peers": [
-    {"id": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266", "url": "http://127.0.0.1:29780"},
-    {"id": "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc", "url": "http://127.0.0.1:29784"}
+    {
+      "id": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+      "url": "http://127.0.0.1:29780"
+    },
+    {
+      "id": "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",
+      "url": "http://127.0.0.1:29784"
+    }
   ],
   "enableBft": true,
   "enableWireProtocol": true,
@@ -31,16 +36,33 @@
   "finalityDepth": 3,
   "maxTxPerBlock": 100,
   "dhtBootstrapPeers": [
-    {"id": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266", "address": "127.0.0.1", "port": 29781},
-    {"id": "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc", "address": "127.0.0.1", "port": 29785}
+    {
+      "id": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+      "address": "127.0.0.1",
+      "port": 29781
+    },
+    {
+      "id": "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",
+      "address": "127.0.0.1",
+      "port": 29785
+    }
   ],
   "prefund": [
-    {"address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", "balanceEth": "10000"},
-    {"address": "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65", "balanceEth": "10000"}
+    {
+      "address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      "balanceEth": "10000"
+    },
+    {
+      "address": "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65",
+      "balanceEth": "10000"
+    }
   ],
   "p2pInboundAuthMode": "enforce",
   "poseInboundAuthMode": "enforce",
   "dhtRequireAuthenticatedVerify": true,
   "poseUseGovernanceChallengerAuth": true,
-  "poseUseOnchainChallengerAuth": false
+  "poseUseOnchainChallengerAuth": false,
+  "ipfsPort": 5002,
+  "bftPrepareTimeoutMs": 1500,
+  "bftCommitTimeoutMs": 1500
 }
