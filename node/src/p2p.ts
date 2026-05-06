@@ -473,7 +473,14 @@ export class P2PNode {
       const clientIp = rawClientIp.startsWith("::ffff:") ? rawClientIp.slice(7) : rawClientIp
       const inboundIpPeerId = this.inboundIpPeerId(clientIp)
       this.scoring.addPeer(inboundIpPeerId, `inbound://${clientIp}`)
-      if ((req.url ?? "").startsWith("/p2p/") && this.scoring.isBanned(inboundIpPeerId)) {
+      // BFT messages are signature-authenticated at the message layer; an
+      // IP-level ban (127.0.0.1 in single-host multi-validator setups
+      // collapses every peer to one inbound IP) takes the whole cluster
+      // off the consensus path. Allow /p2p/bft-message through and let
+      // the signed-payload verifier upstream reject malformed/forged
+      // messages. Other /p2p/ routes still respect the ban.
+      const url = req.url ?? ""
+      if (url.startsWith("/p2p/") && url !== "/p2p/bft-message" && this.scoring.isBanned(inboundIpPeerId)) {
         res.writeHead(429, { "content-type": "application/json" })
         res.end(serializeJson({ error: "peer temporarily banned" }))
         return
@@ -644,9 +651,15 @@ export class P2PNode {
           const parsedBody = JSON.parse(body || "{}") as Record<string, unknown>
           const declaredSenderId = extractAuthSenderId(parsedBody)
           const inboundSenderPeerId = declaredSenderId ? this.inboundSenderPeerId(declaredSenderId) : undefined
+          const isBftMessage = req.url === "/p2p/bft-message"
           if (inboundSenderPeerId) {
             this.scoring.addPeer(inboundSenderPeerId, `sender://${declaredSenderId}`)
-            if (this.scoring.isBanned(inboundSenderPeerId)) {
+            // BFT messages bypass sender-ban: signature-authenticated, and a
+            // banned validator dropping out of consensus is exactly the
+            // failure mode we hit during the 2026-05-06 recovery (cluster
+            // wedges as bans accumulate from transient gossip failures).
+            // Other /p2p/ POST routes still respect the sender ban.
+            if (!isBftMessage && this.scoring.isBanned(inboundSenderPeerId)) {
               res.writeHead(429)
               res.end(serializeJson({ error: "peer temporarily banned" }))
               return
