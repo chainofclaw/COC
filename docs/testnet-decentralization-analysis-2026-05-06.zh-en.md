@@ -79,6 +79,8 @@ validatorRegistryAddress?: string  // ValidatorRegistry contract address
 - **达成"停掉 3 core 后剩 4 external 仍能 quorum"**
 - 工作量：2-3 周（招募 + onboarding 文档 + 第一次实测）
 
+> **2026-05-06 实测结果**：基础设施部分（compose、JSON 配置、`stakeOverride` 代码 wiring）已落地并通过 wire-handshake + snap-sync 验收（详见 `docs/phase-x1-drill-2026-05-06.zh-en.md`）。但首次"停核心"演练失败：4 个 external validator 在它们的 round-robin 槽位上没有自主 propose 块，链在 212635 停滞。已 rollback 到 3-validator 配置维持 testnet 存活。propose-loop 集成 bug 是下一会话工作。在 bug 修复前，本节"6-8 周"的总工作量预估保持不变。
+
 #### Phase X2 — 部署 ValidatorRegistry 合约
 
 - 实现 `contracts/governance/ValidatorRegistry.sol`：
