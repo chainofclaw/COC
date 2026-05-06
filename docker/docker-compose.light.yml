@@ -39,13 +39,18 @@ services:
       - "39780:19780"   # P2P
       - "39781:19781"   # Wire
       - "9111:9100"     # Metrics
+    # tmpfs caps the IPFS blockstore at 200MB hard limit. LevelDB lives on
+    # the named volume below (~50MB chain + ~50MB state in light mode).
+    # mode=01777 because the in-container `coc` user (uid 999) needs to
+    # own writes; tmpfs default root:root:0755 yields EACCES.
     volumes:
       - light1-data:/data/coc
       - ./testnet-configs/light-1.json:/data/coc/node-config.json:ro
-    # tmpfs caps the IPFS blockstore at 200MB hard limit. LevelDB lives on
-    # the volume above (~50MB chain + ~50MB state in light mode).
-    tmpfs:
-      - /data/coc/blocks:size=200m
+      - type: tmpfs
+        target: /data/coc/storage/blocks
+        tmpfs:
+          size: 209715200
+          mode: 0o1777
     environment:
       - COC_DATA_DIR=/data/coc
       - COC_NODE_CONFIG=/data/coc/node-config.json
@@ -67,8 +72,11 @@ services:
     volumes:
       - light2-data:/data/coc
       - ./testnet-configs/light-2.json:/data/coc/node-config.json:ro
-    tmpfs:
-      - /data/coc/blocks:size=200m
+      - type: tmpfs
+        target: /data/coc/storage/blocks
+        tmpfs:
+          size: 209715200
+          mode: 0o1777
     environment:
       - COC_DATA_DIR=/data/coc
       - COC_NODE_CONFIG=/data/coc/node-config.json
