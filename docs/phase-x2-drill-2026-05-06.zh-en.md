@@ -183,8 +183,47 @@ differs → post-execution stateRoot differs.
    stateRoot fallback path in `state-trie.ts` (committedStateRoot vs
    lastStateRoot semantics).
 
-This is a deeper investigation than fits in this session — preserved
-here as the next blocker.
+### Update: snap-equalization attempted, the problem is BFT message delivery
+
+After committing the four source fixes, attempted path 1 above:
+
+- Verified all 7 RPCs return identical `stateRoot=0xc45b3a4d…` at the
+  same finalized block (212564). Persistent state IS equal.
+- Synchronized full-cluster restart cleared in-memory BFT round state.
+- Chain advanced 212555 → 212564 (+9 empty blocks), then stalled
+  permanently.
+
+The deploy tx (`0xcb7d3d9e…`, nonce 229) and a follow-up self-transfer
+(nonce 230) propagate to all 7 mempools (verified via `txpool_content`).
+But proposer for height 212565 (node-3 = `0x3c44cd…`) produces empty
+blocks (`proposedTxCount: 0`) AND only its self-vote registers
+(`prepareVotes: 1`). The 6 follower nodes receive nothing, even though
+wire connections are healthy (23 connection events in last 200 lines of
+node-1.log post-restart).
+
+This is **not** the EVM determinism issue I initially suspected — the
+problem is at the BFT message-delivery layer. Restarting node-3 did not
+help. So the actual blocker is one or more of:
+
+- BFT message frame routing fails for proposals that were originally
+  scheduled while the cluster was in mid-transition
+- A persisted BFT round state on followers that won't accept new
+  proposals at the current height
+- An interaction between the H15 timeout bump (now 600s) and the
+  3s round timeout that prevents commit-quorum formation
+
+### Result
+
+Chain frozen at 212564 across all 7 in lockstep. All 7 mempools have the
+deploy tx. Steps 3/4/5 of Phase X2 cannot proceed without the chain
+advancing. Source-level investigation of BFT round-formation (likely
+targets: `bft-coordinator.ts:handleMessage`, `wire-server.ts` BFT frame
+dispatch, `consensus.ts:handleReceivedBlock`) is the next blocker for
+the recovery.
+
+Source fixes from `c16c28d` remain valid and necessary — they unblocked
+the cluster from total death to stable empty-block production. The
+final hurdle is downstream of those fixes.
 
 ---
 
