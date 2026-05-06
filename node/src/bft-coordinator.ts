@@ -148,6 +148,11 @@ export class BftCoordinator {
   // when the corresponding height is finalized (cleanLocalVoteLedger).
   private localPreparedAt = new Map<bigint, Hex>()
   private localCommittedAt = new Map<bigint, Hex>()
+  // Phase R3 (2026-05-06): retain the full block we prepared so the
+  // consensus.ts re-broadcast path can replay OUR vote rather than swap
+  // to a freshly-built block (which Phase R correctly refuses, but then
+  // the chain stalls because no one re-sends the original).
+  private localPreparedBlock = new Map<bigint, ChainBlock>()
 
   constructor(cfg: BftCoordinatorConfig) {
     this.cfg = cfg
@@ -289,6 +294,8 @@ export class BftCoordinator {
     // the same height with a different block can refuse self-equivocation.
     if (outgoing.length > 0) {
       this.localPreparedAt.set(block.number, block.hash)
+      // Phase R3: stash the full block too so re-broadcast can replay it.
+      this.localPreparedBlock.set(block.number, block)
     }
 
     // Set timeout
@@ -1128,6 +1135,19 @@ export class BftCoordinator {
     for (const h of this.localCommittedAt.keys()) {
       if (h <= finalizedHeight) this.localCommittedAt.delete(h)
     }
+    for (const h of this.localPreparedBlock.keys()) {
+      if (h <= finalizedHeight) this.localPreparedBlock.delete(h)
+    }
+  }
+
+  /**
+   * Phase R3 — return the block we previously prepared at the given height,
+   * if any. Used by consensus.ts's re-broadcast path so it can replay our
+   * actual prepared block instead of a freshly-built one (which would be
+   * refused by the no-double-vote guard, leaving the chain stalled).
+   */
+  getLocalPreparedBlock(height: bigint): ChainBlock | undefined {
+    return this.localPreparedBlock.get(height)
   }
 }
 
