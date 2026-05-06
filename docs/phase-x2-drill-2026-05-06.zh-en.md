@@ -114,14 +114,77 @@ Each is single-purpose, single-file, and tested against the live recovery (chain
 
 ## Outstanding work
 
-| Item | Status | Owner |
-|---|---|---|
-| ext-4 catch up to 212470 | ❓ in progress, may self-resolve | — |
-| light-1 wipe + reconfigure with 7 validators | ⏳ low priority | — |
-| Land 4 source fixes as a single PR | ✅ ready | this session committed |
-| Push deployer nonce to 229 + redeploy ValidatorRegistry | ⏳ gated on chain advance | next session |
-| Restake 3 cores | ⏳ gated above | next session |
-| E2E add 4th validator | ⏳ gated above | next session |
+| Item | Status |
+|---|---|
+| ext-4 catch up | ✅ resolved by wipe+resync |
+| ext-3 + ext-4 stateRoot divergence at 212517 | ✅ resolved by wipe+resync of both |
+| Cluster post-recovery tip | 7/7 lockstep at 212555 (was dead at 212457; +98 blocks recovered) |
+| Verify deploy nonce preserved | ✅ deployer at nonce 229 on restored chain (matches brute-forced original); deploy tx hash 0xcd46d729… reproduces verbatim |
+| Land deploy ValidatorRegistry | ⚠ tx in 7/7 mempools, NOT mining — see § "Remaining: EVM stateRoot divergence on non-empty blocks" |
+| Restake 3 cores | ⛔ gated on deploy landing |
+| Wire validatorRegistryAddress + restart | ⛔ gated above |
+| E2E add 4th validator | ⛔ gated above |
+
+---
+
+## Remaining: EVM stateRoot divergence on non-empty blocks
+
+After 4 fixes, stable lockstep at 212555, and deploy tx broadcast to all 7
+mempools at gasPrice 5 gwei (tx hash `0xcb7d3d9eb6…`, predicted address
+`0x162700d1613DfEC978032A909DE02643bC55df1A`), the chain refuses to mine
+the tx.
+
+Heights stayed at 212555 for 5+ minutes. BFT logs show the proposer for
+each height (212556+) producing a block hash, but follower stateRoots
+diverge per validator:
+
+```
+height 212556 proposer=node-1 (0xf39f) blockHash=0x735df1ec…
+prepareVotes on the same blockHash but different stateRoots:
+  ext-2 (0x976e):  0xc45b3a4d…
+  ext-1 (0x9965):  0xc45b3a4d…
+  ext-4 (0xa0ee):  0xc45b3a4d…
+  ext-3 (0x2361):  0xd316d3f1…   ← divergent
+some commit votes report stateRoot "<unset>"
+```
+
+`proposedTxCount: 0` — the deploy tx isn't even in the proposed block.
+This means each proposer's `mempool.pickForBlock` is filtering it out
+(possibly due to balance/fee precheck against a divergent local view of
+the deployer's nonce/balance), and the empty blocks themselves still
+trip stateRoot disagreement. Consensus can't form quorum.
+
+The divergence is between validators' local EVM state trees at the
+**same** blockHash. That's an EVM-determinism bug, not a Phase X2 issue —
+likely the same class as repository issue #3 referenced in CLAUDE.md.
+Reproduction: any tx-bearing block, any post-recovery cluster.
+
+### Hypothesis
+
+When the cluster was wiped + resynced multiple times during recovery,
+each node ended up with subtly different state tries (some snap-synced,
+some replayed, some restored from docker volume backup). For empty
+blocks the state-trie root after applying is identical (no writes), so
+quorum forms. For tx-bearing blocks each node's pre-execution state
+differs → post-execution stateRoot differs.
+
+### Next steps for full recovery
+
+1. Force a single-source canonical state across all 7 validators —
+   e.g. one core exports a state-snapshot, every other node imports it
+   verbatim, and only after that import returns the same stateRoot
+   across all 7 do we send any non-empty tx.
+2. OR: full nuclear reset (wipe everything, fresh genesis). Loses 212k
+   blocks of history but gives a clean baseline. Original contract
+   address recoverable via redeploy at deployer nonce 229 on the new
+   chain.
+3. OR: dig into the EVM determinism bug at code level. Likely targets
+   `evm.ts:177` (prefund), `evm.ts:758` (resetExecution), and the
+   stateRoot fallback path in `state-trie.ts` (committedStateRoot vs
+   lastStateRoot semantics).
+
+This is a deeper investigation than fits in this session — preserved
+here as the next blocker.
 
 ---
 
