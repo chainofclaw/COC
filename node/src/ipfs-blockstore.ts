@@ -1,9 +1,13 @@
-import { mkdir, readFile, writeFile, access, readdir, stat as statFile, rename } from "node:fs/promises"
+import { mkdir, readFile, writeFile, access, readdir, stat as statFile, rename, unlink } from "node:fs/promises"
 import { join } from "node:path"
 import type { IpfsBlock, CidString } from "./ipfs-types.ts"
 
 const BLOCKS_DIR = "blocks"
 const PINS_FILE = "pins.json"
+// Phase S1: when an LRU evict pass runs, drop oldest non-pinned entries until
+// total bytes is at most this fraction of maxBytes. Hysteresis vs. evicting
+// exactly to maxBytes keeps us from re-evicting on every subsequent put.
+const EVICT_TARGET_FRACTION = 0.9
 
 /**
  * Optional hook contract for integrating the blockstore with P2P routing
@@ -38,13 +42,47 @@ export interface OnPutOptions {
   source?: "local" | "remote-cache"
 }
 
+/**
+ * Phase S1 — optional storage cap.
+ *
+ * `maxBytes` (default undefined): if set, the blockstore enforces a soft
+ * cap by LRU-evicting non-pinned blocks once the on-disk total exceeds it.
+ * Evictions trim back to {@link EVICT_TARGET_FRACTION} of the cap to avoid
+ * thrashing on each subsequent put. Pinned CIDs (`pins.json`) are immune.
+ *
+ * Light-mode peers (`COC_NODE_MODE=light`) supply `maxBytes` to keep the
+ * blockstore inside a tmpfs/quota envelope; archive nodes leave it
+ * unbounded.
+ */
+export interface IpfsBlockstoreOpts {
+  maxBytes?: number
+}
+
+interface BlockMeta {
+  size: number
+  accessSeq: number
+}
+
 export class IpfsBlockstore {
   private readonly root: string
   private hooks: IpfsBlockstoreHooks = {}
+  private readonly maxBytes: number | undefined
+  // Tracks per-CID size and last-access ordinal. Populated lazily on first
+  // init() when maxBytes is set; left empty otherwise so unbounded-mode adds
+  // zero memory overhead beyond the existing path.
+  //
+  // accessSeq is a monotonic counter, not a wall-clock time, because two
+  // operations within the same millisecond can otherwise tie and be evicted
+  // in arbitrary order.
+  private readonly meta = new Map<CidString, BlockMeta>()
+  private currentBytes = 0
+  private accessSeqCounter = 0
+  private metaLoaded = false
 
-  constructor(root: string, hooks?: IpfsBlockstoreHooks) {
+  constructor(root: string, hooks?: IpfsBlockstoreHooks, opts?: IpfsBlockstoreOpts) {
     this.root = root
     if (hooks) this.hooks = hooks
+    this.maxBytes = opts?.maxBytes
   }
 
   /**
@@ -59,6 +97,51 @@ export class IpfsBlockstore {
 
   async init(): Promise<void> {
     await mkdir(this.blocksDir(), { recursive: true })
+    if (this.maxBytes !== undefined && !this.metaLoaded) {
+      await this.loadMetaFromDisk()
+      this.metaLoaded = true
+    }
+  }
+
+  /**
+   * Phase S1 — populate the in-memory access map by walking the blocks
+   * directory once at startup. Sets accessMs to "now" for everything we
+   * find so that on-disk inventory inherited from a previous run will
+   * sort by put order from this point forward (close enough for the
+   * first eviction round; subsequent gets/puts refine the order).
+   *
+   * Skipped entirely when maxBytes is unset to keep the unbounded path
+   * zero-cost.
+   */
+  private async loadMetaFromDisk(): Promise<void> {
+    const dir = this.blocksDir()
+    let entries: string[] = []
+    try {
+      entries = await readdir(dir)
+    } catch {
+      return
+    }
+    const BATCH_SIZE = 64
+    for (let i = 0; i < entries.length; i += BATCH_SIZE) {
+      const batch = entries.slice(i, i + BATCH_SIZE)
+      const results = await Promise.all(batch.map(async (entry) => {
+        try {
+          const s = await statFile(join(dir, entry))
+          return { cid: entry as CidString, size: s.size }
+        } catch {
+          return null
+        }
+      }))
+      for (const r of results) {
+        if (!r) continue
+        // Inherited blocks all share the same baseline ordinal. They're
+        // older than anything written by this process, so the relative
+        // ordering between them doesn't matter — fresh puts will outrank.
+        this.meta.set(r.cid, { size: r.size, accessSeq: this.accessSeqCounter })
+        this.currentBytes += r.size
+      }
+    }
+    this.accessSeqCounter++
   }
 
   async put(block: IpfsBlock): Promise<void> {
@@ -89,6 +172,23 @@ export class IpfsBlockstore {
     await this.init()
     const path = this.blockPath(block.cid)
     await writeFile(path, block.bytes)
+
+    // Phase S1: track size + access time for LRU when maxBytes is set.
+    // The unbounded path leaves meta empty so the existing zero-overhead
+    // behaviour is preserved.
+    if (this.maxBytes !== undefined) {
+      const newSize = block.bytes.length
+      const prev = this.meta.get(block.cid)
+      if (prev) {
+        // Replacing an existing block: adjust currentBytes by the size delta.
+        this.currentBytes += newSize - prev.size
+      } else {
+        this.currentBytes += newSize
+      }
+      this.meta.set(block.cid, { size: newSize, accessSeq: ++this.accessSeqCounter })
+      await this.evictIfNeeded()
+    }
+
     // Fire the onPut hook (C1.4 wires it to DHT announce + pushToK). Guard
     // against handler throws — a post-write side effect failure must not
     // surface to callers who just saw their put succeed to disk.
@@ -101,10 +201,52 @@ export class IpfsBlockstore {
     }
   }
 
+  /**
+   * Phase S1 — drop oldest non-pinned entries until total size is at most
+   * EVICT_TARGET_FRACTION × maxBytes. No-op when under the cap or when the
+   * blockstore is in unbounded mode.
+   *
+   * Caller must already hold the maxBytes guard; we re-check here so we
+   * stay safe if the method is invoked from a future code path that
+   * doesn't.
+   */
+  private async evictIfNeeded(): Promise<void> {
+    if (this.maxBytes === undefined) return
+    if (this.currentBytes <= this.maxBytes) return
+
+    const pins = await this.readPins()
+    const target = this.maxBytes * EVICT_TARGET_FRACTION
+    // Sort by access time ascending (oldest first). One-shot snapshot —
+    // we don't expect concurrent mutation during the await chain.
+    const candidates = [...this.meta.entries()].sort((a, b) => a[1].accessSeq - b[1].accessSeq)
+
+    for (const [cid, info] of candidates) {
+      if (this.currentBytes <= target) break
+      if (pins.has(cid)) continue
+      try {
+        await unlink(this.blockPath(cid))
+      } catch {
+        // File already gone or unlink raced — drop from in-memory state
+        // either way so we don't keep retrying it.
+      }
+      this.meta.delete(cid)
+      this.currentBytes -= info.size
+    }
+  }
+
   async get(cid: CidString): Promise<IpfsBlock> {
     const path = this.blockPath(cid)
     try {
       const bytes = await readFile(path)
+      // Phase S1: refresh LRU access time on local hit so subsequent
+      // eviction passes treat this block as recently-used. Skipped in
+      // unbounded mode to keep zero overhead.
+      if (this.maxBytes !== undefined) {
+        const prev = this.meta.get(cid)
+        if (prev) {
+          this.meta.set(cid, { ...prev, accessSeq: ++this.accessSeqCounter })
+        }
+      }
       return { cid, bytes }
     } catch (err) {
       // Only treat ENOENT as a cue for remote fetch. Other errors
