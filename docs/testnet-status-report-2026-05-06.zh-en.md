@@ -137,10 +137,13 @@ The path to **mainnet** is much longer (a conservative estimate is 6-12 months):
 
 ### 4.1 P0（阻断 Day-90 测试网上线 / Blocks Day-90 testnet launch）
 
-1. **~~Mempool-drift 引发的 equivocation 累积~~** — Phase R partially resolved (commit `47d8102`)
-   - **修复内容**：BftCoordinator 加入 `localPreparedAt` / `localCommittedAt` 账本，强制 BFT no-double-vote 不变量。同 height 不同 blockHash 的 startRound 直接拒绝；同 hash 允许（liveness retry）。
-   - **生产实测**：Phase R fingerprint 在 15 分钟内 fire 9 次（node-1:8 node-3:1），equivocation 计数器保持 0（之前同时间段会涨到 100+）。
-   - **遗留**：底层 stateRoot 漂移（不同 validator 在空块上算出不同 state）仍存在，链每 ~14 min 出 1 块（不 stuck，但慢）。需要：(a) 把 Phase H10 从 monitor 升到 enforce 模式；(b) 找出空块 stateRoot 漂移根因（怀疑 validator-set / fee-distribution 计算路径）。新建独立 ticket 追踪。
+1. **~~Mempool-drift + stateRoot drift 引发的链停~~** — 三连击修复 (commit `47d8102`, `9c253de`, `f4fe324` + node-2/3 Plan B convergence)
+   - **Phase R** (`47d8102`)：BFT no-double-vote 不变量。同 height 不同 blockHash 的 startRound 拒绝。生产 fired 290+ 次。
+   - **Phase R2** (`9c253de`)：speculativelyComputeStateRoot 加 parent-hash guard + 在 fork 前强制父 trie sync，防 stale BEACON_ROOTS storageRoot 污染计算。
+   - **Plan B convergence**：node-2 + node-3 mv leveldb-{chain,state} → 从 node-1 snap-sync，三 validator state 收敛到 `0xc45b3a4d`。
+   - **Phase R3** (`f4fe324`)：consensus re-broadcast 路径优先用 BFT 已 prepare 的 block 而不是 lastProposedBlock，闭合 H15 forcePropose 与 Phase R 的次生死锁。
+   - **生产实测**：链 stable advance 10s/块（之前 14 min/块），equivocation 计数器持续 0，无需人工干预。
+   - **未达 3s/块目标**：仍有偶发 round retry，是 liveness 问题不是 safety 问题；后续工程优化。
 
 2. **24h 稳定性证据缺失**
    - 既有 soak 报告（phase-j-local-w8c）verdict = FAIL（720s stall + 105 equivocations）。
