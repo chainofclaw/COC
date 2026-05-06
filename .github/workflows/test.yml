@@ -21,7 +21,7 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: node/package-lock.json
+          cache-dependency-path: package-lock.json
       - run: cd node && npm ci
       - name: Run node tests
         run: |
@@ -47,7 +47,7 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: node/package-lock.json
+          cache-dependency-path: package-lock.json
       - run: cd node && npm ci
       - run: cd runtime && npm install --omit=dev
       - name: Run runtime tests
@@ -68,7 +68,7 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: node/package-lock.json
+          cache-dependency-path: package-lock.json
       - run: cd node && npm ci
       - run: npm install --no-save ethers
       - name: Run service tests
@@ -97,7 +97,7 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: contracts/package-lock.json
+          cache-dependency-path: package-lock.json
       - run: cd contracts && npm ci
       - run: cd contracts && npm test
       - run: |
@@ -114,7 +114,7 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: node/package-lock.json
+          cache-dependency-path: package-lock.json
       - run: cd wallet && npm install --omit=dev
       - name: Run wallet tests
         run: |
@@ -133,7 +133,7 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: explorer/package-lock.json
+          cache-dependency-path: package-lock.json
       - run: cd explorer && npm ci
       - name: Run explorer lib tests
         run: |
@@ -156,7 +156,7 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: faucet/package-lock.json
+          cache-dependency-path: package-lock.json
       - run: cd faucet && npm ci
       - name: Run faucet tests
         run: |
