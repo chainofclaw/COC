@@ -732,7 +732,7 @@ if (bftEnabled) {
       onFinalizedQueue = current
       return current
     },
-    onPeerQuorumDiverged: (info) => {
+    onPeerQuorumDiverged: (info): boolean => {
       // Phase H4 + H11: peers reached relaxedQuorum on a (blockHash,
       // stateRoot) pair we couldn't reproduce. They WILL finalize and
       // advance past us; the proposer round-robin will eventually rotate
@@ -754,7 +754,14 @@ if (bftEnabled) {
       // Cooldown remains 60s so a divergence storm doesn't spawn parallel
       // syncs; H5's longer 15-min cooldown is the secondary safety after
       // 3 consecutive divergences.
-      if (!consensus) return
+      //
+      // Phase J1.1 corner-case fix (2026-05-06): the boolean return value
+      // signals to the BftCoordinator's per-height dedup whether this
+      // fire was actually accepted. Returning false lets J1.1 roll back
+      // its dedup so the next prepare at the same height re-fires the
+      // gate — closing the stall pattern observed in
+      // docs/phase-j-stall-2026-05-06-corner-case.md.
+      if (!consensus) return false
       const nowMs = Date.now()
       const sinceLastMs = nowMs - lastPeerDivergenceSyncMs
       if (sinceLastMs < PEER_DIVERGENCE_SYNC_COOLDOWN_MS) {
@@ -762,7 +769,13 @@ if (bftEnabled) {
           height: info.height.toString(),
           remainingMs: PEER_DIVERGENCE_SYNC_COOLDOWN_MS - sinceLastMs,
         })
-        return
+        return false
+      }
+      if (consensus.isSnapSyncInFlight()) {
+        log.info("BFT peer-quorum sync skipped — sync already in flight", {
+          height: info.height.toString(),
+        })
+        return false
       }
       lastPeerDivergenceSyncMs = nowMs
       log.warn("BFT peer-quorum divergence — triggering forceSnapSync (H11)", {
@@ -778,6 +791,7 @@ if (bftEnabled) {
       consensus.forceSnapSync().catch((err) => {
         log.warn("BFT peer-quorum forceSnapSync failed", { error: String(err) })
       })
+      return true
     },
     persistentDivergenceThreshold: process.env.COC_PERSISTENT_DIVERGENCE_THRESHOLD
       ? Number(process.env.COC_PERSISTENT_DIVERGENCE_THRESHOLD)

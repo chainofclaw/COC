@@ -564,6 +564,58 @@ describe("BftCoordinator", () => {
     assert.equal(fireCount, 1, "per-height dedup should suppress repeated fires")
   })
 
+  it("Phase J1.1 corner-case fix: rolls back per-height dedup when callback returns false", async () => {
+    // Scenario captured in docs/phase-j-stall-2026-05-06-corner-case.md:
+    // when the parent's downstream recovery (forceSnapSync) is rejected
+    // because of cooldown OR sync-already-in-flight, the J1.1 dedup must
+    // NOT advance, so the next prepare arriving at the same height re-fires
+    // the gate. Without this, J1.1 fires once, the parent rejects the
+    // attempt for a transient reason, and the dedup permanently silences
+    // J1.1 for that height — leaving the chain stuck.
+    const peerRoot = ("0x" + "bb".repeat(32)) as Hex
+    const peerHash = ("0x" + "ab".repeat(32)) as Hex
+    let fireCount = 0
+    let acceptThisFire = false
+    const coord = new BftCoordinator({
+      localId: "v1",
+      validators,
+      broadcastMessage: async () => {},
+      onFinalized: async () => {},
+      onPeerQuorumDiverged: () => {
+        fireCount++
+        // First fire: parent says "rejected" (e.g. forceSnapSync skipped
+        // because already in flight). Subsequent fires: accept.
+        return acceptThisFire
+      },
+    })
+
+    // Drive the gate with two distinct peer prepares — enough OTHER votes
+    // to clear the 2/3 quorum threshold inside computePeerQuorumDivergence.
+    await coord.handleMessage({ ...bftMsg("prepare", 1n, peerHash, "v2"), stateRoot: peerRoot })
+    await coord.handleMessage({ ...bftMsg("prepare", 1n, peerHash, "v3"), stateRoot: peerRoot })
+    assert.equal(fireCount, 1, "first quorum of peer prepares fires the gate exactly once")
+
+    // Wait past the 1s coordinator-internal throttle so the next prepare
+    // is allowed to re-evaluate. Also clears any height dedup the fix
+    // chose to keep — except the rejected first fire should have rolled it
+    // back, so the next prepare must re-fire.
+    await new Promise((resolve) => setTimeout(resolve, 1100))
+
+    // A subsequent prepare arrives (e.g. retransmit) at the same height.
+    // Without the fix, dedup-by-height would suppress this fire entirely.
+    // With the fix, the rejected first fire rolled back the dedup, so
+    // this fires again.
+    acceptThisFire = true
+    await coord.handleMessage({ ...bftMsg("prepare", 1n, peerHash, "v2"), stateRoot: peerRoot })
+    assert.equal(fireCount, 2, "rejected fire must roll back dedup so the next prepare re-fires")
+
+    // Another duplicate prepare — accepted fire holds the dedup, so this
+    // should NOT fire (the throttle window has passed but per-height dedup
+    // is now committed).
+    await coord.handleMessage({ ...bftMsg("prepare", 1n, peerHash, "v3"), stateRoot: peerRoot })
+    assert.equal(fireCount, 2, "accepted fire must hold the dedup against further re-fires")
+  })
+
   it("Phase J1.1: does NOT fire when local stateRoot matches peer quorum", async () => {
     const agreedRoot = ("0x" + "cc".repeat(32)) as Hex
     const blockHashHex = ("0x" + "ab".repeat(32)) as Hex
