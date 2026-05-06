@@ -903,7 +903,13 @@ if (bftEnabled) {
   }
 }
 
-const ipfsStore = new IpfsBlockstore(config.storageDir)
+const ipfsStore = new IpfsBlockstore(
+  config.storageDir,
+  undefined,
+  // Phase S1/S2: light-mode peers cap their blockstore via
+  // `ipfsMaxStorageBytes`; archive nodes leave it undefined for unlimited.
+  config.ipfsMaxStorageBytes !== undefined ? { maxBytes: config.ipfsMaxStorageBytes } : undefined,
+)
 await ipfsStore.init()
 const unixfs = new UnixFsBuilder(ipfsStore)
 const ipfs = new IpfsHttpServer(

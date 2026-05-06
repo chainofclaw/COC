@@ -108,6 +108,12 @@ export interface NodeConfig {
   // an `X-COC-Replicas-Warning` header. Default 2, matching K=3 with
   // 1 slack. Single-peer deployments should set 1 to silence the warning.
   ipfsMinReplicas: number
+  // Phase S1: optional IPFS blockstore size cap in bytes. When set, the
+  // blockstore LRU-evicts non-pinned blocks once on-disk usage exceeds
+  // this value. Light-mode peers should cap to fit a tmpfs/quota
+  // envelope (e.g. 100MB); archive nodes leave it unset to retain all
+  // history. Env override: `COC_IPFS_MAX_BYTES`.
+  ipfsMaxStorageBytes?: number
   // Node identity key (hex private key for signing)
   nodePrivateKey?: string
   // RPC authentication (optional Bearer token)
@@ -374,6 +380,25 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
   // Node running mode
   const nodeModeRaw = process.env.COC_NODE_MODE ?? (user as Record<string, unknown>).nodeMode
   const nodeMode = normalizeNodeMode(nodeModeRaw)
+
+  // Phase S2: IPFS blockstore size cap. Resolution order:
+  //   1. `COC_IPFS_MAX_BYTES` env (truthy non-zero number)
+  //   2. user config `ipfsMaxStorageBytes` (number)
+  //   3. nodeMode default: light → 100 MB, others → unlimited
+  // Setting the env to "0" or "unlimited" forces unbounded for explicit
+  // overrides (e.g. running a light node on a host with abundant disk).
+  const ipfsMaxStorageBytes = ((): number | undefined => {
+    const envRaw = process.env.COC_IPFS_MAX_BYTES
+    if (envRaw !== undefined) {
+      if (envRaw === "0" || envRaw.toLowerCase() === "unlimited") return undefined
+      const parsed = Number(envRaw)
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
+    }
+    const userRaw = (user as Record<string, unknown>).ipfsMaxStorageBytes
+    if (typeof userRaw === "number" && userRaw > 0) return userRaw
+    if (nodeMode === "light") return 100 * 1024 * 1024
+    return undefined
+  })()
   const hardfork = normalizeHardfork(
     process.env.COC_EVM_HARDFORK ?? (user as Record<string, unknown>).hardfork,
     Hardfork.Shanghai,
@@ -551,6 +576,7 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     snapSyncThreshold: 100,
     ipfsReplicationFactor: 3,
     ipfsMinReplicas: 2,
+    ipfsMaxStorageBytes,
     nodePrivateKey,
     rpcAuthToken,
     enableAdminRpc,

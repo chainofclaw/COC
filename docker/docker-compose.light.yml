@@ -1,0 +1,85 @@
+# COC light peer profile (Phase D1).
+#
+# Brings up 1-2 docker light peers that join the Prowl testnet as observers
+# (no BFT participation). Each container caps its IPFS blockstore at 200MB
+# via `COC_IPFS_MAX_BYTES` and runs in `nodeMode=light` to keep the LevelDB
+# chain history at ~128 blocks.
+#
+# Targets:
+#   - Native validators on the host (node-1/2/3 via systemd, ports
+#     18780/18782/18784 etc.) reachable through `host.docker.internal`.
+#   - Independent of `docker-compose.testnet.yml`; can be brought up while
+#     the existing sync-node + relayer + agent stack is still running.
+#
+# Usage:
+#   docker compose -f docker/docker-compose.light.yml up -d light-1
+#   docker compose -f docker/docker-compose.light.yml up -d light-1 light-2
+#   docker compose -f docker/docker-compose.light.yml down
+
+x-light-base: &light-base
+  image: ${COC_NODE_IMAGE:-coc-node}:${IMAGE_TAG:-phase-j-local-m1}
+  build:
+    context: ..
+    dockerfile: docker/Dockerfile.node
+  restart: unless-stopped
+  stop_grace_period: 30s
+  # Linux: docker daemon does not auto-resolve host.docker.internal. The
+  # extra_hosts entry maps it to the host gateway IP so light peers can
+  # reach the native validators on the host network.
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+
+services:
+  light-1:
+    <<: *light-base
+    container_name: coc-light-1
+    ports:
+      - "38780:18780"   # RPC
+      - "38781:18781"   # WS
+      - "39780:19780"   # P2P
+      - "39781:19781"   # Wire
+      - "9111:9100"     # Metrics
+    volumes:
+      - light1-data:/data/coc
+      - ./testnet-configs/light-1.json:/data/coc/node-config.json:ro
+    # tmpfs caps the IPFS blockstore at 200MB hard limit. LevelDB lives on
+    # the volume above (~50MB chain + ~50MB state in light mode).
+    tmpfs:
+      - /data/coc/blocks:size=200m
+    environment:
+      - COC_DATA_DIR=/data/coc
+      - COC_NODE_CONFIG=/data/coc/node-config.json
+      - COC_NODE_KEY=0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6
+      - COC_NODE_MODE=light
+      - COC_IPFS_MAX_BYTES=200000000
+      - COC_DEV_RELAXED_QUORUM=0
+      - COC_BFT_AUTO_RECOVERY=0
+
+  light-2:
+    <<: *light-base
+    container_name: coc-light-2
+    ports:
+      - "38782:18780"
+      - "38783:18781"
+      - "39782:19780"
+      - "39783:19781"
+      - "9112:9100"
+    volumes:
+      - light2-data:/data/coc
+      - ./testnet-configs/light-2.json:/data/coc/node-config.json:ro
+    tmpfs:
+      - /data/coc/blocks:size=200m
+    environment:
+      - COC_DATA_DIR=/data/coc
+      - COC_NODE_CONFIG=/data/coc/node-config.json
+      - COC_NODE_KEY=0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a
+      - COC_NODE_MODE=light
+      - COC_IPFS_MAX_BYTES=200000000
+      - COC_DEV_RELAXED_QUORUM=0
+      - COC_BFT_AUTO_RECOVERY=0
+
+volumes:
+  light1-data:
+    name: coc-light1-data
+  light2-data:
+    name: coc-light2-data
