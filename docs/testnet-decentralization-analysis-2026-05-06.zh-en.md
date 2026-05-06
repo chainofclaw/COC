@@ -79,7 +79,7 @@ validatorRegistryAddress?: string  // ValidatorRegistry contract address
 - **达成"停掉 3 core 后剩 4 external 仍能 quorum"**
 - 工作量：2-3 周（招募 + onboarding 文档 + 第一次实测）
 
-> **2026-05-06 实测结果**：基础设施部分（compose、JSON 配置、`stakeOverride` 代码 wiring）已落地并通过 wire-handshake + snap-sync 验收（详见 `docs/phase-x1-drill-2026-05-06.zh-en.md`）。但首次"停核心"演练失败：4 个 external validator 在它们的 round-robin 槽位上没有自主 propose 块，链在 212635 停滞。已 rollback 到 3-validator 配置维持 testnet 存活。propose-loop 集成 bug 是下一会话工作。在 bug 修复前，本节"6-8 周"的总工作量预估保持不变。
+> **2026-05-06 实测结果**：✅ Phase X1 完成。基础设施 + 代码修复 + 实战演练全部通过（详见 `docs/phase-x1-drill-2026-05-06.zh-en.md`）。Drill v4 在 04:42 UTC 演示了"停掉 3 cores 后链继续"——ext-1 在 H15 watchdog 超时（180 s）后接管 proposer 角色，于 04:42:26 finalize 了 height 212668，期间 3 个 native validator 全部 inactive。修复关键：commit `ad89a2f` 把 `expectedProposer` 的比较从 strict `!==` 改为 `.toLowerCase() !== .toLowerCase()`，因为外部 validator 的 nodeId 是 EIP-55 checksumed (mixed-case) 但 `validators` 数组是 lowercase。Phase X2 (ValidatorRegistry 合约) 可以无阻塞启动。
 
 #### Phase X2 — 部署 ValidatorRegistry 合约
 
