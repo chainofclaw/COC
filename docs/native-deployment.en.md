@@ -15,21 +15,32 @@ data.
 
 ```
 Host: 199.192.16.79 (clawchain-server)
-├── systemd
-│   ├── coc-node@1.service       → /var/lib/coc/node-1   ports 18780/19780/19781/9101
-│   ├── coc-node@2.service       → /var/lib/coc/node-2   ports 18782/19782/19783/9102
-│   └── coc-node@3.service       → /var/lib/coc/node-3   ports 18784/19784/19785/9103
+├── systemd (Phase N1) — native validators on host network
+│   ├── coc-node@1.service  → /var/lib/coc/node-1
+│   │   RPC 28780 · WS 28781 · P2P 29780 · Wire 29781 · IPFS 28786 · /metrics 9101
+│   ├── coc-node@2.service  → /var/lib/coc/node-2
+│   │   RPC 28782 · WS 28783 · P2P 29782 · Wire 29783 · /metrics 9102
+│   └── coc-node@3.service  → /var/lib/coc/node-3
+│       RPC 28784 · WS 28785 · P2P 29784 · Wire 29785 · /metrics 9103
 └── docker
-    ├── coc-sync-node            ports :18780→18780 (host)
-    ├── coc-relayer / coc-agent  → host.docker.internal:18780 (validator-1 RPC)
+    ├── coc-sync-node       host RPC 18780 · WS 18781 · P2P 19880 · Wire 19881 · /metrics 9104
+    ├── coc-relayer / coc-agent  → host.docker.internal:28780 (validator-1 RPC)
     ├── coc-faucet / coc-explorer
-    ├── coc-light-1 (D1)         tmpfs /data/coc/blocks=200m, NODE_MODE=light
+    ├── coc-light-1 (D1)    tmpfs /data/coc/blocks=200m, NODE_MODE=light
     └── coc-light-2 (D1, optional)
 ```
 
+**External port preservation guarantee**: every external (host-side) port
+listed above is identical to the current `docker-compose.testnet.yml`
+mapping. Operators, monitoring scrape config (`docker/prometheus/
+prometheus.yml`), explorer URLs, faucet endpoints, and DNS records can
+stay untouched. The native validators simply bind these ports directly
+on `0.0.0.0` instead of going through the docker NAT.
+
 The native validators bind `0.0.0.0` so docker peers reach them via
-`host.docker.internal:<port>`. Each docker container needs an
-`extra_hosts: ["host.docker.internal:host-gateway"]` entry.
+`host.docker.internal:<port>`. Each docker container that needs
+host-network reach has an `extra_hosts: ["host.docker.internal:host-gateway"]`
+entry (added at deploy time).
 
 ## Pre-flight checklist
 
@@ -97,14 +108,16 @@ sudo -u coc ls /var/lib/coc/node-${N}/leveldb-chain/ | wc -l   # >0
 sudo systemctl enable --now coc-node@${N}.service
 sudo systemctl status coc-node@${N}.service                    # active (running)
 
-# 5) Verify chain progression for ~30s
+# 5) Verify chain progression for ~30s on the canonical external port
+#    (28780 for N=1, 28782 for N=2, 28784 for N=3)
+PORT=$(( 28780 + (N - 1) * 2 ))
 for i in 1 2 3; do
   curl -sS -d '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber","params":[]}' \
-       -H 'Content-Type: application/json' http://localhost:1878${N}/
+       -H 'Content-Type: application/json' http://localhost:${PORT}/
   sleep 10
 done
 
-# 6) Verify Prometheus metrics endpoint
+# 6) Verify Prometheus metrics endpoint (9101/9102/9103 unchanged)
 curl -s http://localhost:910${N}/metrics | grep -E '^coc_block_height '
 ```
 
@@ -121,8 +134,8 @@ service:
 extra_hosts:
   - "host.docker.internal:host-gateway"
 environment:
-  - COC_BOOTSTRAP_PEERS=http://host.docker.internal:19780,http://host.docker.internal:19782,http://host.docker.internal:19784
-  - COC_RELAYER_RPC_URL=http://host.docker.internal:18780
+  - COC_BOOTSTRAP_PEERS=http://host.docker.internal:29780,http://host.docker.internal:29782,http://host.docker.internal:29784
+  - COC_RELAYER_RPC_URL=http://host.docker.internal:28780
 ```
 
 The exact env var names depend on each service's config; the
@@ -146,8 +159,8 @@ docker exec coc-light-1 du -sh /data/coc/blocks   # ≤200M
 ### 5. Final verification
 
 ```bash
-# Heights match across native + docker
-for p in 18780 18782 18784 38780; do
+# Heights match across native + sync-node (docker) + light-1 (docker)
+for p in 28780 28782 28784 18780 38780; do
   curl -sS -d '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber","params":[]}' \
        -H 'Content-Type: application/json' http://localhost:$p/ | jq -r .result
 done

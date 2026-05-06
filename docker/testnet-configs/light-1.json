@@ -17,9 +17,9 @@
     "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc"
   ],
   "peers": [
-    {"id": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266", "url": "http://host.docker.internal:19780"},
-    {"id": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8", "url": "http://host.docker.internal:19782"},
-    {"id": "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc", "url": "http://host.docker.internal:19784"}
+    {"id": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266", "url": "http://host.docker.internal:29780"},
+    {"id": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8", "url": "http://host.docker.internal:29782"},
+    {"id": "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc", "url": "http://host.docker.internal:29784"}
   ],
   "enableBft": false,
   "enableWireProtocol": true,
@@ -30,9 +30,9 @@
   "finalityDepth": 3,
   "maxTxPerBlock": 100,
   "dhtBootstrapPeers": [
-    {"id": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266", "address": "host.docker.internal", "port": 19781},
-    {"id": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8", "address": "host.docker.internal", "port": 19783},
-    {"id": "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc", "address": "host.docker.internal", "port": 19785}
+    {"id": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266", "address": "host.docker.internal", "port": 29781},
+    {"id": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8", "address": "host.docker.internal", "port": 29783},
+    {"id": "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc", "address": "host.docker.internal", "port": 29785}
   ],
   "p2pInboundAuthMode": "enforce",
   "poseInboundAuthMode": "monitor",
