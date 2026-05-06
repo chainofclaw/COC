@@ -227,6 +227,81 @@ final hurdle is downstream of those fixes.
 
 ---
 
+## Update: EVM determinism root cause found and fixed
+
+After tracing the recurring `lastStateRoot is null` warning's
+`nullifyStack` (state-trie.ts:354 → put → putAccount → evm.prefund →
+evm.resetExecution → BFT recovery path), the actual root cause:
+
+**`EvmChain.resetExecution()` unconditionally re-prefunded all genesis
+accounts on every invocation**, including from the BFT recovery path
+(`index.ts:537`). `prefund` calls `putAccount` to overwrite each
+prefunded address with `{balance: genesis_balance, nonce: 0}` — wiping
+out the deployer's actual nonce 229 / current balance and leaving
+orphan trie nodes in LevelDB at intermediate paths.
+
+`ChainEngine.init()` already had the right invariant (line 178-181:
+"writing genesis balances over a persisted trie corrupts internal trie
+nodes — only prefund when the chain is empty"), but the recovery path
+ignored it.
+
+Each validator's BFT recovery cycle hit this code path at slightly
+different points relative to others, generating divergent orphan-node
+sets. The next applyBlock then computed mismatched stateRoots, BFT
+pair-quorum failed, the chain stalled, and the next recovery cycle
+wrote more divergent orphans on top — the spiral that wedged the X2
+cluster after every snap-sync attempt.
+
+### Fix landed (`b50e0d7`)
+
+`EvmChain.resetExecution` now reads `getStateRoot()` and skips prefund
+unless the trie root matches the well-known empty-trie root
+(`0x56e81f17…b421`). On a populated chain the prefund step is now a
+no-op; on a true fresh-genesis chain it still runs.
+
+### Verified post-fix
+
+Cluster restart immediately drove **+56 blocks in 12s** (212617 →
+212673), then continued producing for another 12-block burst before
+stalling at 212688. Prior recovery cycles couldn't get past 10 blocks
+per attempt. Empty-block consensus is now stable.
+
+### Remaining: tx-bearing block production
+
+Chain produces empty blocks fine but won't include the deploy tx from
+mempool. Proposers consistently emit `proposedTxCount: 0` even when
+all 7 mempools verifiably hold the tx at correct nonce, valid balance
+and gas price. After the deploy tx reaches the mempools, BFT rounds
+still fail at prepare quorum even though the proposed block itself is
+empty.
+
+Hypothesis: the proposer's `mempool.pickForBlock` filters out the tx
+during the affordability check, possibly because the in-memory EVM
+state at proposal time has divergent nonce/balance for the deployer
+(left over from yet-undocumented persistent-state-manager checkpoint
+semantics during the restart cascade). Or the tx is picked but the
+post-execution stateRoot differs across validators because of a
+similar pre-state divergence specific to tx-bearing execution.
+
+Next investigation targets:
+- `mempool.ts:pickForBlock` — log which sorted tx made it past each
+  filter (canPayBaseFee, nonce check, affordability) on every proposer
+  to see exactly where the deploy tx is dropped.
+- `chain-engine-persistent.ts:proposeNextBlock` line 628 onward —
+  trace the flow from mempool.pickForBlock to the proposed block
+  carrying the picked txs.
+- `evm.ts:executeRawTx` — log the sender's pre/post nonce + balance
+  per tx to see if validators agree on tx outcome.
+
+### Step 5 status
+
+Phase X2 step 5 (E2E 4th validator add) still gated. The path forward
+is no longer "fix the cluster" — it's "find why proposers won't
+include the tx after we've already fixed the consensus stalls". A
+deeper code dive than fits this drill session.
+
+---
+
 ## Summary of fixes vs. session goals
 
 - ✅ Preserved historical chain data (restored 212k blocks from docker volume rather than wiping)
