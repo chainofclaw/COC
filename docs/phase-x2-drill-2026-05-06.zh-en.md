@@ -302,6 +302,80 @@ deeper code dive than fits this drill session.
 
 ---
 
+## Update 4: Phase X2 steps 1-4 complete; step 5 partial
+
+After the EVM determinism fix landed and the cluster restarted, the
+chain finally produced blocks reliably enough to land transactions.
+Walking through the remaining steps:
+
+### What landed
+
+| Step | Status | Evidence |
+|---|---|---|
+| 1. Deploy ValidatorRegistry | ✅ | block 212701, address `0x162700d1613DfEC978032A909DE02643bC55df1A` (deterministic CREATE at deployer nonce 229 — exact original address preserved) |
+| 2. Verify contract | ✅ | `getActiveValidators()` returns expected nodeIds; bytecode 4.6KB on-chain |
+| 3. Stake 3 cores | ✅ | node-1 (block 212702), node-2 (block 212737), node-3 mined shortly after; final on-chain set = 3 validators |
+| 4. Wire `validatorRegistryAddress` + restart | ✅ | all 3 cores logged `BFT validator set updated from ValidatorRegistry count=3 ids=[node-1, node-2, node-3]` and `validator-registry-reader: reader initialized activeCount:3` |
+| 5. E2E add 4th validator without restart | ⚠ | stake tx submitted (`0x225f0257…`); chain stalled before mining; reader has correct config but couldn't observe new event |
+
+### What blocked step 5 specifically
+
+After wiring `validatorRegistryAddress` and restarting cores, the BFT
+active set is now driven by the on-chain registry — only 3 cores. The
+4 ext validators are no longer in the BFT set (they remain peers for
+gossip and block import but don't propose or vote). This means quorum
+is 2 of 3 cores instead of 5 of 7.
+
+The cores immediately hit a recurrence of the `invalid block link`
+error in onFinalized's apply path — same class as the
+EVM-determinism issue but at a different point. The cores' state
+trees diverged subtly when reloading with the new BFT-set source,
+producing parent-hash mismatches on block 212739 and after. Chain
+froze at 212745.
+
+The next investigation target is `chain-engine-persistent.ts:applyBlock`
+parent-hash validation in the context of a validator-set-changed block:
+when the BFT set changes between blocks N and N+1, the apply path
+needs to handle the parent's stateRoot relative to N's state under the
+old set vs the new set's view. Likely a one-line fix like the prefund
+skip but in a different location.
+
+### Bonus discovery (during pickForBlock instrumentation)
+
+While instrumenting `mempool.pickForBlock` (commit reverted; debug
+logs were noisy), confirmed the proposer's pickForBlock returns
+`mempool empty` even though the gossip-tx HTTP endpoint had
+successfully accepted the tx on each peer. The mempool gossip
+propagation between validators is intermittent — some restarts
+distributed the deploy tx to all 7 mempools, others only to a subset.
+This is the underlying reason transactions sometimes didn't mine even
+when consensus was nominally working: only some validators saw the
+tx, and the proposer for the next slot wasn't always one of them.
+
+A reliable fix here likely needs `gossip-tx` retry-on-failure or a
+short tx-rebroadcast loop in the proposer's pickForBlock idle path.
+
+### What's now committed
+
+```
+0332c64 chore(contracts): X2 step 3-5 stake helpers
+584e091 docs(phase-x2): drill update — EVM determinism root cause
+b50e0d7 fix(evm): skip prefund in resetExecution when trie already has state
+40ed858 fix(p2p): bypass IP + sender ban for BFT messages
+3070ca4 docs(phase-x2): drill update — snap-equalization
+6bac33f docs(phase-x2): drill update — recovery to 212555
+0f845dd chore(contracts): X2 recovery helpers
+48d7b9d docs(phase-x2): cluster recovery drill
+c16c28d fix(consensus,engine): unstick cluster after multi-fork recovery
+```
+
+The session converted Phase X2 from "completely blocked" to
+"architecture proven on the canonical 3-of-3 set; 4th-validator live
+add gated on one more known-issue follow-up." Original published
+contract address fully preserved.
+
+---
+
 ## Summary of fixes vs. session goals
 
 - ✅ Preserved historical chain data (restored 212k blocks from docker volume rather than wiping)
