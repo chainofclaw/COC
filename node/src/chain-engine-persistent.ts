@@ -398,6 +398,46 @@ export class PersistentChainEngine {
     // fail-open contract the previous stub promised.
     if (!this.stateTrie) return undefined
 
+    // Phase R2 (2026-05-06): refuse speculative compute when our chain tip
+    // doesn't match the proposed block's parent. Two failure modes this
+    // closes:
+    //   (a) we're mid-applyBlock for the parent height — trie's committed
+    //       root is still N-1, but the block claims parent=N. Computing
+    //       against N-1's state would produce a wrong stateRoot and our
+    //       prepare vote would poison BFT quorum.
+    //   (b) we have an off-by-one / fork-choice gap — same outcome.
+    // Returning undefined falls through to hash-only quorum (BftCoordinator
+    // contract), which is safe for liveness; we just skip stating a stateRoot
+    // we couldn't produce honestly.
+    const localTip = await this.getTip()
+    const expectedParentHash = block.parentHash?.toLowerCase()
+    const localTipHash = localTip?.hash?.toLowerCase()
+    if (expectedParentHash && localTipHash && expectedParentHash !== localTipHash) {
+      log.warn("Phase R2: speculative compute aborted — parent mismatch", {
+        height: block.number.toString(),
+        blockParent: expectedParentHash,
+        localTip: localTipHash,
+      })
+      return undefined
+    }
+
+    // Phase R2: force a sync pass on the parent trie so any dirty storage
+    // sub-tries (e.g. BEACON_ROOTS write from the previous applyBlock that
+    // hasn't yet propagated its storageRoot into the account record) are
+    // flushed into the trie before we shallowCopy. Without this, the fork
+    // inherits a stale account record whose storageRoot points at the
+    // pre-write state, and computeStateRoot returns a non-canonical root.
+    // computeStateRoot is idempotent + cheap when dirtyAddresses is empty;
+    // it's a defensive flush, not a fast path.
+    try {
+      await this.stateTrie.computeStateRoot()
+    } catch (err) {
+      log.warn("Phase R2: parent-trie sync threw — continuing with potentially stale fork", {
+        height: block.number.toString(),
+        error: String(err),
+      })
+    }
+
     // Phase H1 diagnostic: env-gated detailed logging to identify the
     // mechanism behind the recurring proposer-vs-non-proposer divergence
     // observed on testnet 2026-04-30 (heights 140,392 / 141,052 / etc).
