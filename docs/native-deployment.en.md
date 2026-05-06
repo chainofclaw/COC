@@ -195,6 +195,32 @@ The migration is reversible per-validator; native artifacts in
 `/var/lib/coc/node-N/` can be deleted (or kept for forensics) once the
 docker container is healthy again.
 
+## Lessons learned (2026-05-06 first-run deploy)
+
+The first production run of this runbook surfaced three issues worth
+calling out before the next operator follows it:
+
+1. **`COC_IPFS_PORT` env is NOT honored by the loader**. The IPFS HTTP
+   port is read from `ipfsPort` in the JSON config, not from the env
+   variable. The bundled `native-configs/node-{1,2,3}.json` now sets
+   `ipfsPort` (and `ipfsBind`) explicitly. If you rebuild configs from
+   scratch, do not assume env-only overrides — set the JSON field.
+2. **Gradual one-at-a-time migration is not viable** while the docker
+   peers reference each other through docker DNS (`http://node-1:19780`
+   etc). The first native validator can bind canonical ports on the
+   host, but the surviving docker peers cannot reach it without a
+   compose-side `extra_hosts` patch for every service. Practical
+   advice: stop docker auxiliaries' tx flow (`docker stop coc-relayer
+   coc-agent`), migrate all three validators in a single cluster-wide
+   move, then patch + recreate the docker auxiliaries.
+3. **A synchronous restart is part of the migration**, not optional.
+   Each per-validator restart during migration creates an opportunity
+   for divergent-mempool round attempts that the EquivocationDetector
+   logs and which then prevent quorum until evidence ages out. Do one
+   final `systemctl restart coc-node@1 coc-node@2 coc-node@3` after
+   tx flow is halted; resume tx flow only after `coc_block_height`
+   advances on all three.
+
 ## Long-term ops
 
 - **Logs**: `journalctl -u coc-node@1.service -f` (also written to
