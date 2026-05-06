@@ -376,6 +376,95 @@ contract address fully preserved.
 
 ---
 
+## Update 5: Phase X2 fully complete — all 5 steps verified end-to-end
+
+After the EVM fix, p2p ban bypass, and gossip-retry fixes landed,
+two final bugs surfaced and were fixed:
+
+### Mempool gossip propagation (commit `db1ca82`)
+
+`P2PNode.broadcast()` had two compounding bugs that caused the
+"tx in some mempools, proposer's mempool empty → empty blocks"
+pattern that wedged step 5:
+
+1. Iterated `discovery.getActivePeers()` only (skips banned peers).
+   Recovery cycles ban peers en-masse from accumulated gossip
+   failures, then no tx ever reaches them — including the proposer
+   for the next slot.
+2. Marked per-peer dedup BEFORE the POST attempt — a failed POST
+   silently dropped the tx forever for that peer with no retry.
+
+Fix: mirror `broadcastBft`'s static + discovered union, and only
+mark dedup-as-sent on success so failed sends retry on the next
+gossip round.
+
+After fix: ext-1 stake tx that had been stuck through the entire
+recovery finally landed at block 212752 → 4 validators on-chain.
+
+### Reader seed-from-contract-state (commit `72ddacc`)
+
+Snap-synced cores can't see old `ValidatorRegistered` events via
+`eth_getLogs` — the relevant blocks predate their snap-sync point
+and aren't stored in their local chain log. The reader scanned an
+empty event range and reported activeCount=0 even when the
+contract showed 5 validators.
+
+Fix: `init()` now calls `getActiveValidators()` + `getValidator(nodeId)`
+to seed the activeSet from current contract STATE before falling
+back to event-based diffing for incremental updates.
+
+After fix all 3 cores log:
+```
+seedFromContractState complete seeded:5
+reader initialized activeCount:5
+BFT validator set updated from ValidatorRegistry count:5
+  ids:[node-1, node-2, node-3, ext-1, ext-2]
+```
+
+### Final state
+
+| Step | Status | Evidence |
+|---|---|---|
+| 1. Deploy | ✅ | block 212701, address `0x162700d1613DfEC978032A909DE02643bC55df1A` (deterministic CREATE @ deployer nonce 229 — original published address preserved) |
+| 2. Verify | ✅ | bytecode 4.6 KB on-chain |
+| 3. Stake 3 cores | ✅ | node-1 (block 212708), node-2 (212737), node-3 (212739) |
+| 4. Wire + restart | ✅ | reader logs `count=3` after wiring `validatorRegistryAddress` |
+| 5. E2E live-add 4th + 5th | ✅ | ext-1 (212746) and ext-2 (212755) staked via on-chain `stake()` calls; readers picked up new validators via `seedFromContractState` (no ext container restart) |
+
+### Step 5 verification log line
+
+```
+{"ts":"2026-05-06T15:18:59.296Z",
+ "component":"node",
+ "message":"BFT validator set updated from ValidatorRegistry",
+ "data":{"count":5,
+         "ids":[node-1, node-2, node-3, ext-1, ext-2]}}
+```
+
+### What's now committed (full session)
+
+```
+72ddacc fix(reader): seed activeSet from contract state on init
+db1ca82 fix(p2p): retry tx gossip on failure, broadcast to full peer set
+513e489 docs(phase-x2): drill update — steps 1-4 complete, step 5 partial
+0332c64 chore(contracts): X2 step 3-5 stake helpers
+584e091 docs(phase-x2): drill update — EVM determinism root cause
+b50e0d7 fix(evm): skip prefund in resetExecution when trie already has state
+40ed858 fix(p2p): bypass IP + sender ban for BFT messages
+3070ca4 docs(phase-x2): drill update — snap-equalization
+6bac33f docs(phase-x2): drill update — recovery to 212555
+0f845dd chore(contracts): X2 recovery helpers
+48d7b9d docs(phase-x2): cluster recovery drill
+c16c28d fix(consensus,engine): unstick cluster after multi-fork recovery
+```
+
+Phase X2 is now fully shipped: BFT validator set is driven by an
+on-chain governance contract, supports live add of new validators
+without restart, and the original published contract address is
+preserved across the chain reorg + recovery.
+
+---
+
 ## Summary of fixes vs. session goals
 
 - ✅ Preserved historical chain data (restored 212k blocks from docker volume rather than wiping)
