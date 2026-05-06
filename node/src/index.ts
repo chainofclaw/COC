@@ -360,9 +360,20 @@ if (bftEnabled) {
   // validatorRegistryAddress is set (Sprint 4 of Phase F+G), the
   // ValidatorRegistryReader below replaces this initial set with the
   // contract's active set and keeps it in sync via add/remove events.
+  // Phase X1 (2026-05-06): when `validatorStakes` is configured, use it to
+  // give per-validator stake weights to BftCoordinator. Without this, all
+  // validators have an equal 1 ETH default and a 4-external + 3-core cluster
+  // can't quorum without the cores. Per-validator stakes let us weight the
+  // 4 externals at 200 ETH and the 3 cores at 100 ETH so that 4/4 externals
+  // = 800 ETH > quorum threshold (1100 × 2 / 3 = 733) — the chain can
+  // continue if all cores are stopped.
+  const stakeOverride = new Map<string, bigint>()
+  for (const v of config.validatorStakes) {
+    if (v.address) stakeOverride.set(v.address.toLowerCase(), BigInt(v.stake))
+  }
   const validators = config.validators.map((id) => ({
     id,
-    stake: 1_000_000_000_000_000_000n, // 1 ETH default stake
+    stake: stakeOverride.get(id.toLowerCase()) ?? 1_000_000_000_000_000_000n,
   }))
 
   // Serialization queue for onFinalized — prevents re-entrant applyBlock

@@ -1,0 +1,126 @@
+# Phase X1 — external validators (4 docker containers, weighted 200 ETH stake each)
+#
+# Joins the 3 native systemd validators (3×100 ETH stake) on the host as the
+# 4 additional voters in a 7-validator BFT cluster. Total stake 1100 ETH;
+# relaxed quorum threshold 733.33 ETH; the 4 external validators alone carry
+# 800 ETH so they can finalize blocks even when all 3 cores are stopped.
+#
+# Brought up by:
+#   docker compose -f docker/docker-compose.external.yml up -d
+#
+# Brought down by:
+#   docker compose -f docker/docker-compose.external.yml down
+#
+# Stop-core drill (after this stack is healthy):
+#   sudo systemctl stop coc-node@1 coc-node@2 coc-node@3
+#   # observe ext-1..4 keep producing blocks
+#   sudo systemctl start coc-node@1 coc-node@2 coc-node@3
+#
+# Validators in this file are docker peers on the `coc-ext-net` bridge.
+# They reach the native cores via host.docker.internal: -> 29780/82/84 (P2P)
+# and 29781/83/85 (Wire). Native cores reach these containers through the
+# host port mappings on 127.0.0.1.
+
+x-ext-base: &ext-base
+  image: ${COC_NODE_IMAGE:-coc-node}:${IMAGE_TAG:-phase-2-native-m2}
+  build:
+    context: ..
+    dockerfile: docker/Dockerfile.node
+  restart: unless-stopped
+  stop_grace_period: 30s
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  networks:
+    - coc-ext-net
+
+services:
+  ext-1:
+    <<: *ext-base
+    container_name: coc-ext-1
+    ports:
+      - "38790:18780"   # RPC
+      - "38791:18781"   # WS
+      - "39790:19780"   # P2P
+      - "39791:19781"   # Wire
+      - "9121:9100"     # Metrics
+    volumes:
+      - ext1-data:/data/coc
+      - ./testnet-configs/ext-1.json:/data/coc/node-config.json:ro
+    environment:
+      - COC_DATA_DIR=/data/coc
+      - COC_NODE_CONFIG=/data/coc/node-config.json
+      - COC_NODE_KEY=0x8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba
+      - COC_DEV_RELAXED_QUORUM=1
+      - COC_BFT_AUTO_RECOVERY=1
+
+  ext-2:
+    <<: *ext-base
+    container_name: coc-ext-2
+    ports:
+      - "38792:18780"
+      - "38793:18781"
+      - "39792:19780"
+      - "39793:19781"
+      - "9122:9100"
+    volumes:
+      - ext2-data:/data/coc
+      - ./testnet-configs/ext-2.json:/data/coc/node-config.json:ro
+    environment:
+      - COC_DATA_DIR=/data/coc
+      - COC_NODE_CONFIG=/data/coc/node-config.json
+      - COC_NODE_KEY=0x92db14e403b83dfe3df233f83dfa3a0d7096f21ca9b0d6d6b8d88b2b4ec1564e
+      - COC_DEV_RELAXED_QUORUM=1
+      - COC_BFT_AUTO_RECOVERY=1
+
+  ext-3:
+    <<: *ext-base
+    container_name: coc-ext-3
+    ports:
+      - "38794:18780"
+      - "38795:18781"
+      - "39794:19780"
+      - "39795:19781"
+      - "9123:9100"
+    volumes:
+      - ext3-data:/data/coc
+      - ./testnet-configs/ext-3.json:/data/coc/node-config.json:ro
+    environment:
+      - COC_DATA_DIR=/data/coc
+      - COC_NODE_CONFIG=/data/coc/node-config.json
+      - COC_NODE_KEY=0xdbda1821b80551c9d65939329250298aa3472ba22feea921c0cf5d620ea67b97
+      - COC_DEV_RELAXED_QUORUM=1
+      - COC_BFT_AUTO_RECOVERY=1
+
+  ext-4:
+    <<: *ext-base
+    container_name: coc-ext-4
+    ports:
+      - "38796:18780"
+      - "38797:18781"
+      - "39796:19780"
+      - "39797:19781"
+      - "9124:9100"
+    volumes:
+      - ext4-data:/data/coc
+      - ./testnet-configs/ext-4.json:/data/coc/node-config.json:ro
+    environment:
+      - COC_DATA_DIR=/data/coc
+      - COC_NODE_CONFIG=/data/coc/node-config.json
+      - COC_NODE_KEY=0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6
+      - COC_DEV_RELAXED_QUORUM=1
+      - COC_BFT_AUTO_RECOVERY=1
+
+networks:
+  coc-ext-net:
+    name: coc-ext-net
+    driver: bridge
+
+volumes:
+  ext1-data:
+    name: coc-ext1-data
+  ext2-data:
+    name: coc-ext2-data
+  ext3-data:
+    name: coc-ext3-data
+  ext4-data:
+    name: coc-ext4-data
