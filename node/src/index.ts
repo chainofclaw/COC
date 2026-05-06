@@ -1339,8 +1339,17 @@ if (config.enableWireProtocol) {
   for (const peer of config.peers) {
     try {
       const url = new URL(peer.url)
-      // Use per-peer wire port from DHT bootstrap config, fallback to local wirePort
-      const peerWirePort = peerWirePortMap.get(peer.id) ?? config.wirePort
+      // peer.url carries the P2P/HTTP gossip port (e.g. 29782) — the wire
+      // port lives in dhtBootstrapPeers (29783). When a peer is absent
+      // from dhtBootstrapPeers (e.g. ext validators added post-bootstrap),
+      // skip it instead of falling back to `config.wirePort`, which would
+      // dial the local node's own wire port and trigger a self-connection
+      // storm (observed 2026-05-06 X2 recovery).
+      const peerWirePort = peerWirePortMap.get(peer.id)
+      if (peerWirePort === undefined) {
+        log.warn("skipping wire client: peer not in dhtBootstrapPeers", { peer: peer.id })
+        continue
+      }
       const client = new WireClient({
         host: url.hostname,
         port: peerWirePort,

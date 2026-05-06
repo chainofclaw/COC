@@ -741,7 +741,14 @@ export class PersistentChainEngine {
     if (!validateBlockLink(prev ?? null, block)) {
       throw new Error("invalid block link")
     }
-    if (this.expectedProposer(block.number).toLowerCase() !== block.proposer.toLowerCase()) {
+    // BFT-finalized blocks have already passed quorum on proposer correctness,
+    // including the H15 watchdog override path that elects a fallback proposer
+    // when the round-robin slot is offline. Reject mismatched proposer only
+    // for non-BFT (gossip-only) blocks.
+    if (
+      !block.bftFinalized &&
+      this.expectedProposer(block.number).toLowerCase() !== block.proposer.toLowerCase()
+    ) {
       throw new Error("invalid block proposer")
     }
 
@@ -1455,9 +1462,20 @@ export class PersistentChainEngine {
   }
 
   private async rebuildFromPersisted(latestBlockNum: bigint): Promise<void> {
+    // Snap-synced nodes have committed state trie root but blocks
+    // 1..(snap_height - 1) are not stored locally. Capture the persisted
+    // root before resetExecution so we can restore the trie pointer
+    // afterwards without replaying from genesis.
+    const persistedRoot = this.stateTrie?.stateRoot() ?? null
+
     await this.evm.resetExecution()
 
-    // Replay all blocks to restore EVM state
+    if (persistedRoot && this.stateTrie) {
+      await this.stateTrie.setStateRoot(persistedRoot, { persist: false })
+      return
+    }
+
+    // Replay all blocks to restore EVM state (full-history path)
     for (let i = 1n; i <= latestBlockNum; i++) {
       const block = await this.getBlockByNumber(i)
       if (!block) {
