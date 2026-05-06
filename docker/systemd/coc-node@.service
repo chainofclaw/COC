@@ -1,0 +1,39 @@
+[Unit]
+Description=COC Validator (Prowl Testnet, instance %i)
+After=network.target
+Documentation=https://github.com/chainofclaw/coc
+
+[Service]
+Type=simple
+User=coc
+Group=coc
+WorkingDirectory=/opt/coc
+ExecStart=/usr/bin/node --experimental-strip-types node/src/index.ts
+
+# Phase N1: per-instance environment file. Each %i (1, 2, 3) supplies its
+# own COC_DATA_DIR, COC_NODE_CONFIG, port bundle, and key. We deliberately
+# DO NOT set COC_DATA_DIR here so any typo in the env file fails fast
+# rather than silently sharing /var/lib/coc across instances.
+EnvironmentFile=/etc/coc/node-%i.env
+
+Restart=always
+RestartSec=10
+LimitNOFILE=65535
+
+# Prevent restart-storm: 5 starts in 5 minutes is a real problem, not a
+# self-healing scenario. Operator must inspect logs.
+StartLimitBurst=5
+StartLimitIntervalSec=300
+
+# Security hardening — same set as the original single-instance unit.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/coc /var/log/coc
+PrivateTmp=true
+
+StandardOutput=append:/var/log/coc/node-%i.log
+StandardError=append:/var/log/coc/node-%i-error.log
+
+[Install]
+WantedBy=multi-user.target

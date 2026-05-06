@@ -231,4 +231,67 @@ describe("IpfsBlockstore", () => {
     assert.equal(received.length, 1)
     assert.equal(received[0].source, "remote-cache")
   })
+
+  // --- Phase S1: maxBytes + LRU eviction.
+  // Light-mode peers cap their blockstore so tmpfs / volume size limits aren't
+  // hit by unbounded growth. Pinned CIDs are never evicted.
+
+  it("Phase S1: unbounded by default — no eviction even when many puts", async () => {
+    // payload 100 bytes × 5 → 500 bytes total; no cap should keep all.
+    for (let i = 0; i < 5; i++) {
+      await store.put(makeBlock(`QmU${i}`, "x".repeat(100)))
+    }
+    const list = await store.listBlocks()
+    assert.equal(list.length, 5, "no maxBytes ⇒ no eviction")
+  })
+
+  it("Phase S1: maxBytes=N evicts oldest LRU entry on overflow", async () => {
+    const cappedStore = new IpfsBlockstore(tmpDir, undefined, { maxBytes: 250 })
+    // each block is 100 bytes; cap=250 ⇒ at most 2 stored (90% of 250 = 225, target after evict).
+    await cappedStore.put(makeBlock("QmL1", "x".repeat(100))) // total=100
+    await cappedStore.put(makeBlock("QmL2", "x".repeat(100))) // total=200
+    await cappedStore.put(makeBlock("QmL3", "x".repeat(100))) // total=300 → evict to ≤225 ⇒ drop QmL1
+    const has1 = await cappedStore.has("QmL1" as CidString)
+    const has2 = await cappedStore.has("QmL2" as CidString)
+    const has3 = await cappedStore.has("QmL3" as CidString)
+    assert.equal(has1, false, "oldest should be evicted")
+    assert.equal(has2, true)
+    assert.equal(has3, true)
+  })
+
+  it("Phase S1: pinned CIDs are never evicted", async () => {
+    const cappedStore = new IpfsBlockstore(tmpDir, undefined, { maxBytes: 250 })
+    await cappedStore.put(makeBlock("QmPinMe", "x".repeat(100)))
+    await cappedStore.pin("QmPinMe" as CidString)
+    await cappedStore.put(makeBlock("QmFiller1", "x".repeat(100)))
+    await cappedStore.put(makeBlock("QmFiller2", "x".repeat(100))) // would otherwise evict QmPinMe
+    await cappedStore.put(makeBlock("QmFiller3", "x".repeat(100))) // pushes more pressure
+    const hasPin = await cappedStore.has("QmPinMe" as CidString)
+    assert.equal(hasPin, true, "pinned must survive any number of evictions")
+  })
+
+  it("Phase S1: get() updates LRU recency — recently-accessed entries survive", async () => {
+    const cappedStore = new IpfsBlockstore(tmpDir, undefined, { maxBytes: 250 })
+    await cappedStore.put(makeBlock("QmOld", "x".repeat(100)))
+    await cappedStore.put(makeBlock("QmMid", "x".repeat(100)))
+    // Touch QmOld so it becomes most-recently-used.
+    await cappedStore.get("QmOld" as CidString)
+    // Now QmMid is the LRU victim.
+    await cappedStore.put(makeBlock("QmNew", "x".repeat(100)))
+    assert.equal(await cappedStore.has("QmOld" as CidString), true, "touched entry survives")
+    assert.equal(await cappedStore.has("QmMid" as CidString), false, "untouched entry evicted")
+    assert.equal(await cappedStore.has("QmNew" as CidString), true)
+  })
+
+  it("Phase S1: maxBytes survives restart — re-init reads existing blocks into LRU", async () => {
+    const s1 = new IpfsBlockstore(tmpDir, undefined, { maxBytes: 300 })
+    await s1.put(makeBlock("QmPersistA", "x".repeat(100)))
+    await s1.put(makeBlock("QmPersistB", "x".repeat(100)))
+    // Fresh instance pointing at same dir picks up existing on-disk blocks.
+    const s2 = new IpfsBlockstore(tmpDir, undefined, { maxBytes: 300 })
+    await s2.put(makeBlock("QmPersistC", "x".repeat(100))) // total=300, fits exactly
+    await s2.put(makeBlock("QmPersistD", "x".repeat(100))) // overflow → must evict from on-disk inventory
+    const list = await s2.listBlocks()
+    assert.ok(list.length <= 3, `expected eviction after restart-aware overflow; got ${list.length}`)
+  })
 })

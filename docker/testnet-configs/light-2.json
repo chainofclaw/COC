@@ -1,0 +1,41 @@
+{
+  "_phase": "D1 — light docker peer 2.",
+  "nodeId": "0x15d34aaf54267db7d7c367839aaf71a00a2c6a65",
+  "chainId": 18780,
+  "rpcBind": "0.0.0.0",
+  "rpcPort": 18780,
+  "p2pBind": "0.0.0.0",
+  "p2pPort": 19780,
+  "wsBind": "0.0.0.0",
+  "wsPort": 18781,
+  "ipfsBind": "0.0.0.0",
+  "wireBind": "0.0.0.0",
+  "wirePort": 19781,
+  "validators": [
+    "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+    "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
+    "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc"
+  ],
+  "peers": [
+    {"id": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266", "url": "http://host.docker.internal:19780"},
+    {"id": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8", "url": "http://host.docker.internal:19782"},
+    {"id": "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc", "url": "http://host.docker.internal:19784"}
+  ],
+  "enableBft": false,
+  "enableWireProtocol": true,
+  "enableDht": true,
+  "enableSnapSync": true,
+  "enableAdminRpc": false,
+  "blockTimeMs": 3000,
+  "finalityDepth": 3,
+  "maxTxPerBlock": 100,
+  "dhtBootstrapPeers": [
+    {"id": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266", "address": "host.docker.internal", "port": 19781},
+    {"id": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8", "address": "host.docker.internal", "port": 19783},
+    {"id": "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc", "address": "host.docker.internal", "port": 19785}
+  ],
+  "p2pInboundAuthMode": "enforce",
+  "poseInboundAuthMode": "monitor",
+  "dhtRequireAuthenticatedVerify": true,
+  "signatureEnforcement": "monitor"
+}
