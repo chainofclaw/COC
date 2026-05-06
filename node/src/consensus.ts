@@ -527,14 +527,30 @@ export class ConsensusEngine {
           if (bftState.active) {
             return // BFT round in progress
           }
-          // BFT round timed out — re-broadcast cached block + restart BFT
-          if (this.lastProposedBlock) {
-            log.info("re-broadcasting timed-out proposal", { height: this.lastProposedHeight.toString() })
+          // BFT round timed out — re-broadcast cached block + restart BFT.
+          // Phase R3 (2026-05-06): if the BFT layer already prepared a
+          // different block at this height (typically because the
+          // round-robin proposer's block won our prepare vote first, then
+          // we generated our own under H15 forcePropose), the BftCoordinator
+          // owns the canonical block we voted on. Re-broadcast THAT one so
+          // peers can re-collect quorum on the original. Falling through
+          // to lastProposedBlock when BFT has no record (we were always the
+          // proposer for this height) preserves the existing behaviour.
+          let blockToRebroadcast: ChainBlock | undefined = this.lastProposedBlock
+          if (this.bft) {
+            const bftPrepared = this.bft.getLocalPreparedBlock(this.lastProposedHeight)
+            if (bftPrepared) blockToRebroadcast = bftPrepared
+          }
+          if (blockToRebroadcast) {
+            log.info("re-broadcasting timed-out proposal", {
+              height: this.lastProposedHeight.toString(),
+              source: blockToRebroadcast === this.lastProposedBlock ? "lastProposed" : "bftPrepared",
+            })
             // Clear seenBlocks cache for this block so receiveBlock accepts it again.
             // Without this, the gossip dedup cache blocks the re-broadcast.
-            this.p2p.seenBlocks?.delete?.(this.lastProposedBlock.hash)
-            await this.broadcastBlock(this.lastProposedBlock)
-            try { await this.bft!.startRound(this.lastProposedBlock) } catch { /* ignore */ }
+            this.p2p.seenBlocks?.delete?.(blockToRebroadcast.hash)
+            await this.broadcastBlock(blockToRebroadcast)
+            try { await this.bft!.startRound(blockToRebroadcast) } catch { /* ignore */ }
           }
           return
         }
