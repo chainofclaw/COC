@@ -1004,9 +1004,24 @@ export class P2PNode {
   }
 
   private async broadcast(path: string, payload: unknown, dedupeHash?: string): Promise<void> {
-    const peers = this.cfg.enableDiscovery !== false
+    // Always reach the full configured peer set, not just active (non-banned)
+    // peers. Recovery cycles ban peers en-masse via accumulated gossip
+    // failures, and a banned peer that's actually healthy still needs the
+    // tx — without this we get "tx lands in 1 mempool but proposer's mempool
+    // is empty" on the next slot. Mirror broadcastBft's static+discovered
+    // union for the same reason.
+    const staticPeers = this.cfg.peers
+    const discoveredPeers = this.cfg.enableDiscovery !== false
       ? this.discovery.getActivePeers()
-      : this.cfg.peers
+      : []
+    const seenIds = new Set<string>()
+    const peers: NodePeer[] = []
+    for (const p of [...staticPeers, ...discoveredPeers]) {
+      if (!seenIds.has(p.id)) {
+        seenIds.add(p.id)
+        peers.push(p)
+      }
+    }
 
     const payloadRecord = ensurePayloadObject(payload)
     const signedPayload = this.cfg.signer
@@ -1017,15 +1032,21 @@ export class P2PNode {
     for (let i = 0; i < peers.length; i += BROADCAST_CONCURRENCY) {
       const batch = peers.slice(i, i + BROADCAST_CONCURRENCY)
       await Promise.all(batch.map(async (peer) => {
-        // Skip if we already sent this hash to this peer
+        // Per-peer dedup: skip if we've already DELIVERED this hash to
+        // this peer. The previous logic marked sent before attempting,
+        // so any failed POST silently dropped the tx forever for that
+        // peer (observed during 2026-05-06 X2 recovery: tx in some
+        // mempools, proposer's mempool empty, chain produced empty
+        // blocks). Move the mark to the success path so failed sends
+        // get retried on the next gossip round.
         if (dedupeHash) {
           const peerSent = this.getPeerSentSet(peer.id)
           if (peerSent.has(dedupeHash)) return
-          peerSent.add(dedupeHash)
         }
 
         try {
           await requestJson(`${peer.url}${path}`, "POST", signedPayload)
+          if (dedupeHash) this.getPeerSentSet(peer.id).add(dedupeHash)
           this.scoring.recordSuccess(peer.id)
           this.bytesSent += payloadSize
           if (path.includes("tx")) this.txBroadcast++
