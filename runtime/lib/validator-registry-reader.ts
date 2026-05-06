@@ -57,6 +57,7 @@ const REGISTRY_ABI = [
   "event ValidatorSlashed(bytes32 indexed nodeId, uint256 amount, bytes32 indexed reason)",
   "function getActiveValidators() view returns (bytes32[])",
   "function activeValidatorCount() view returns (uint256)",
+  "function getValidator(bytes32 nodeId) view returns (tuple(bytes32 nodeId, address operator, uint256 stake, uint64 registeredAt, uint64 unstakeRequestedAt, bool active))",
 ] as const
 
 export interface ValidatorEntry {
@@ -140,6 +141,14 @@ export class ValidatorRegistryReader {
       this.lastScannedBlock = this.cfg.fromBlock
     }
 
+    // Snap-synced nodes don't have block history before the snap point, so
+    // ValidatorRegistered events from earlier blocks aren't queryable via
+    // eth_getLogs. Seed activeSet from the contract's current state via
+    // getActiveValidators() + getValidator() before falling back to
+    // event-based diffing for incremental updates. Without this, snap-synced
+    // cores miss every validator registered before the snap-sync point and
+    // BFT runs with the wrong (empty or partial) active set.
+    await this.seedFromContractState()
     await this.scanToTip()
     this.initialized = true
     log.info("reader initialized", {
@@ -179,6 +188,51 @@ export class ValidatorRegistryReader {
       clearInterval(this.pollTimer)
       this.pollTimer = null
     }
+  }
+
+  /**
+   * Seed activeSet from the contract's CURRENT on-chain state. Run on init
+   * before event-based scanning so snap-synced nodes (whose block history
+   * may not include the early ValidatorRegistered events) still see the
+   * full active set. Idempotent — safe to call multiple times.
+   */
+  private async seedFromContractState(): Promise<void> {
+    let nodeIds: Hex[] = []
+    try {
+      nodeIds = (await this.contract.getActiveValidators()) as Hex[]
+    } catch (err) {
+      log.warn("seedFromContractState: getActiveValidators failed", { error: String(err) })
+      return
+    }
+    for (const nodeId of nodeIds) {
+      try {
+        const v = await this.contract.getValidator(nodeId) as {
+          nodeId: Hex
+          operator: Hex
+          stake: bigint
+          registeredAt: bigint
+          unstakeRequestedAt: bigint
+          active: boolean
+        }
+        if (!v.active) continue
+        // pubkey is only emitted by ValidatorRegistered events, not retrievable
+        // from contract state. Seed with empty pubkey; subsequent event replay
+        // populates the full pubkey if a re-Register occurs. BFT consumes
+        // operator + stake, not pubkey, so this is safe for consensus use.
+        const entry: ValidatorEntry = {
+          nodeId,
+          operator: v.operator,
+          pubkey: "0x" as Hex,
+          stake: BigInt(v.stake),
+          registeredAtBlock: BigInt(v.registeredAt),
+        }
+        this.activeSet.set(nodeId, entry)
+        this.allKnown.set(nodeId, entry)
+      } catch (err) {
+        log.warn("seedFromContractState: getValidator failed", { nodeId, error: String(err) })
+      }
+    }
+    log.info("seedFromContractState complete", { seeded: this.activeSet.size })
   }
 
   /**
