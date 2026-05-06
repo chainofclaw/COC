@@ -286,7 +286,12 @@ export class ChainEngine {
     if (!validateBlockLink(prev, block)) {
       throw new Error("invalid block link")
     }
-    if (this.expectedProposer(block.number).toLowerCase() !== block.proposer.toLowerCase()) {
+    // BFT-finalized blocks have already passed quorum on proposer correctness,
+    // including the H15 watchdog override path. Skip strict round-robin check.
+    if (
+      !block.bftFinalized &&
+      this.expectedProposer(block.number).toLowerCase() !== block.proposer.toLowerCase()
+    ) {
       throw new Error("invalid block proposer")
     }
 

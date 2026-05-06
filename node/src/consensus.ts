@@ -64,7 +64,7 @@ const SYNC_INFLIGHT_WATCHDOG_MS = 90_000
 // fires at this threshold; secondary fallbacks stagger +30s per step so that
 // at most one node activates per tick interval, preventing equivocation storms
 // (observed 2026-05-02: all 3 nodes fired simultaneously → 3-way block split).
-const NO_PROGRESS_TIMEOUT_MS = 120_000
+const NO_PROGRESS_TIMEOUT_MS = 600_000
 const NO_PROGRESS_STAGGER_MS = 30_000
 const NO_PROGRESS_MAX_VALIDATORS = 10
 
