@@ -83,7 +83,18 @@ the J1.1 height dedup leave no second chance** when both rejections
 hit on the same height. None of those code sites are J's introduction;
 all predate Phase J.
 
-## Required Week 9 fix (not in scope this week)
+## Resolution (2026-05-06, commit `6cfa622`)
+
+Landed in the same week, not Week 9. The fix follows option 2 from the
+list below: callback signature changed to return `boolean | void`,
+J1.1 snapshots the prior dedup state before the callback and rolls
+back on `false`, and `handleMessage` no longer skips the gate on
+buffer-deduped retransmits. Production deploy to 3 native validators
++ light-1 + sync-node verified the chain still advances post-restart;
+a follow-up corner-case test would need to inject the cooldown +
+in-flight collision deliberately to confirm runtime recovery.
+
+## Required Week 9 fix (originally proposed, retained for context)
 
 `node/src/consensus.ts` `peerQuorumSyncCooldown` + J1.1 dedup must
 co-operate: when J1.1 detects divergence and forceSnapSync is rejected
