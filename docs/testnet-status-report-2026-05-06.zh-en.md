@@ -137,11 +137,10 @@ The path to **mainnet** is much longer (a conservative estimate is 6-12 months):
 
 ### 4.1 P0（阻断 Day-90 测试网上线 / Blocks Day-90 testnet launch）
 
-1. **Mempool-drift 引发的 equivocation 累积**（未命名 phase）
-   - **现象**：validator restart 或 relayer/agent 重连后，多个 validator 同时构造 height N 的不同提议块（不同 tx 集），EquivocationDetector 把各自的 prepare 票判为等价签名累计 evidence；evidence 在 finalize 之前不清；下一轮 round 仍被 reject；链卡。
-   - **本次会话出现 5 次**，每次 5-15 min stall。
-   - **解决方向**：(a) proposer 决定块时使用全网共识的 mempool 子集（hash-ordered determinism）；(b) 或允许 validator 在 round 内"换票"而不是判 equivocation；(c) 或 H16 prune 改为按 round-id 而非按 finalize。
-   - **不属于 Phase J 已修范围**。
+1. **~~Mempool-drift 引发的 equivocation 累积~~** — Phase R partially resolved (commit `47d8102`)
+   - **修复内容**：BftCoordinator 加入 `localPreparedAt` / `localCommittedAt` 账本，强制 BFT no-double-vote 不变量。同 height 不同 blockHash 的 startRound 直接拒绝；同 hash 允许（liveness retry）。
+   - **生产实测**：Phase R fingerprint 在 15 分钟内 fire 9 次（node-1:8 node-3:1），equivocation 计数器保持 0（之前同时间段会涨到 100+）。
+   - **遗留**：底层 stateRoot 漂移（不同 validator 在空块上算出不同 state）仍存在，链每 ~14 min 出 1 块（不 stuck，但慢）。需要：(a) 把 Phase H10 从 monitor 升到 enforce 模式；(b) 找出空块 stateRoot 漂移根因（怀疑 validator-set / fee-distribution 计算路径）。新建独立 ticket 追踪。
 
 2. **24h 稳定性证据缺失**
    - 既有 soak 报告（phase-j-local-w8c）verdict = FAIL（720s stall + 105 equivocations）。
