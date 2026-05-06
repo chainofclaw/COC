@@ -9,7 +9,8 @@
   "p2pPort": 29784,
   "wsBind": "0.0.0.0",
   "wsPort": 28785,
-  "ipfsBind": "0.0.0.0",
+  "ipfsBind": "127.0.0.1",
+  "ipfsPort": 5003,
   "wireBind": "0.0.0.0",
   "wirePort": 29785,
   "validators": [
