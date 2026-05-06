@@ -15,7 +15,11 @@
   "validators": [
     "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
     "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
-    "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc"
+    "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",
+    "0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc",
+    "0x976ea74026e726554db657fa54763abd0c3a0aa9",
+    "0x23618e81e3f5cdf7f54c3d65f7fbc0abf5b21e8f",
+    "0xa0ee7a142d267c1f36714e4a8f75612f20a79720"
   ],
   "peers": [
     {
@@ -25,6 +29,22 @@
     {
       "id": "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",
       "url": "http://127.0.0.1:29784"
+    },
+    {
+      "id": "0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc",
+      "url": "http://127.0.0.1:39790"
+    },
+    {
+      "id": "0x976ea74026e726554db657fa54763abd0c3a0aa9",
+      "url": "http://127.0.0.1:39792"
+    },
+    {
+      "id": "0x23618e81e3f5cdf7f54c3d65f7fbc0abf5b21e8f",
+      "url": "http://127.0.0.1:39794"
+    },
+    {
+      "id": "0xa0ee7a142d267c1f36714e4a8f75612f20a79720",
+      "url": "http://127.0.0.1:39796"
     }
   ],
   "enableBft": true,
@@ -45,6 +65,26 @@
       "id": "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",
       "address": "127.0.0.1",
       "port": 29785
+    },
+    {
+      "id": "0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc",
+      "address": "127.0.0.1",
+      "port": 39791
+    },
+    {
+      "id": "0x976ea74026e726554db657fa54763abd0c3a0aa9",
+      "address": "127.0.0.1",
+      "port": 39793
+    },
+    {
+      "id": "0x23618e81e3f5cdf7f54c3d65f7fbc0abf5b21e8f",
+      "address": "127.0.0.1",
+      "port": 39795
+    },
+    {
+      "id": "0xa0ee7a142d267c1f36714e4a8f75612f20a79720",
+      "address": "127.0.0.1",
+      "port": 39797
     }
   ],
   "prefund": [
@@ -64,5 +104,42 @@
   "poseUseOnchainChallengerAuth": false,
   "ipfsPort": 5002,
   "bftPrepareTimeoutMs": 1500,
-  "bftCommitTimeoutMs": 1500
+  "bftCommitTimeoutMs": 1500,
+  "validatorStakes": [
+    {
+      "id": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+      "address": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+      "stake": "100000000000000000000"
+    },
+    {
+      "id": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
+      "address": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
+      "stake": "100000000000000000000"
+    },
+    {
+      "id": "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",
+      "address": "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",
+      "stake": "100000000000000000000"
+    },
+    {
+      "id": "0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc",
+      "address": "0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc",
+      "stake": "200000000000000000000"
+    },
+    {
+      "id": "0x976ea74026e726554db657fa54763abd0c3a0aa9",
+      "address": "0x976ea74026e726554db657fa54763abd0c3a0aa9",
+      "stake": "200000000000000000000"
+    },
+    {
+      "id": "0x23618e81e3f5cdf7f54c3d65f7fbc0abf5b21e8f",
+      "address": "0x23618e81e3f5cdf7f54c3d65f7fbc0abf5b21e8f",
+      "stake": "200000000000000000000"
+    },
+    {
+      "id": "0xa0ee7a142d267c1f36714e4a8f75612f20a79720",
+      "address": "0xa0ee7a142d267c1f36714e4a8f75612f20a79720",
+      "stake": "200000000000000000000"
+    }
+  ]
 }
