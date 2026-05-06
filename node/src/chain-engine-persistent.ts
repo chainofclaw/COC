@@ -610,7 +610,12 @@ export class PersistentChainEngine {
 
   async proposeNextBlock(deferApply = false, forcePropose = false): Promise<ChainBlock | null> {
     const nextHeight = (await this.getHeight()) + 1n
-    if (!forcePropose && this.expectedProposer(nextHeight) !== this.cfg.nodeId) {
+    // Phase X1.6 (2026-05-06): case-insensitive proposer check. The validators
+    // array is canonicalized to lowercase but a node's `cfg.nodeId` may be
+    // EIP-55 checksummed (mixed case). A strict `!==` returned "not my turn"
+    // forever for any validator whose nodeId differed from the lowercase set,
+    // breaking proposer rotation. Normalize both sides.
+    if (!forcePropose && this.expectedProposer(nextHeight).toLowerCase() !== this.cfg.nodeId.toLowerCase()) {
       return null
     }
 
@@ -736,7 +741,7 @@ export class PersistentChainEngine {
     if (!validateBlockLink(prev ?? null, block)) {
       throw new Error("invalid block link")
     }
-    if (this.expectedProposer(block.number) !== block.proposer) {
+    if (this.expectedProposer(block.number).toLowerCase() !== block.proposer.toLowerCase()) {
       throw new Error("invalid block proposer")
     }
 

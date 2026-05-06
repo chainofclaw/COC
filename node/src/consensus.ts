@@ -299,7 +299,10 @@ export class ConsensusEngine {
       return
     }
     const stuckHeight = currentHeight + 1n
-    const stuckProposerId = this.chain.expectedProposer(stuckHeight)
+    // Phase X1.6: case-insensitive comparison (validators array is lowercase
+    // but a node's nodeId may be EIP-55 checksummed).
+    const stuckProposerId = this.chain.expectedProposer(stuckHeight).toLowerCase()
+    const localNodeId = this.nodeId?.toLowerCase()
 
     // Phase J2.2: when we are the stuck proposer AND we hold an active
     // round whose state is internally deadlocked (no peers responding,
@@ -309,7 +312,7 @@ export class ConsensusEngine {
     // active round we still hold. Self-clear our round so peers' next
     // propose has somewhere to land. Throttled ≥ NO_PROGRESS_TIMEOUT_MS
     // to give peers room to deliver fresh votes between clears.
-    if (stuckProposerId === this.nodeId) {
+    if (stuckProposerId === localNodeId) {
       const roundState = this.bft.getRoundState()
       if (
         roundState.active
@@ -343,7 +346,7 @@ export class ConsensusEngine {
     // stuckHeight+2 is secondary (rotationOffset=2), etc.
     let rotationOffset = 0
     for (let i = 1; i <= NO_PROGRESS_MAX_VALIDATORS; i++) {
-      if (this.chain.expectedProposer(stuckHeight + BigInt(i)) === this.nodeId) {
+      if (this.chain.expectedProposer(stuckHeight + BigInt(i)).toLowerCase() === localNodeId) {
         rotationOffset = i
         break
       }
