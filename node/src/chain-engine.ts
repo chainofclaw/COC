@@ -198,7 +198,8 @@ export class ChainEngine {
 
   async proposeNextBlock(_deferApply = false, forcePropose = false): Promise<ChainBlock | null> {
     const nextHeight = this.getHeight() + 1n
-    if (!forcePropose && this.expectedProposer(nextHeight) !== this.cfg.nodeId) {
+    // Phase X1.6: case-insensitive proposer check (see chain-engine-persistent.ts).
+    if (!forcePropose && this.expectedProposer(nextHeight).toLowerCase() !== this.cfg.nodeId.toLowerCase()) {
       return null
     }
 
@@ -285,7 +286,7 @@ export class ChainEngine {
     if (!validateBlockLink(prev, block)) {
       throw new Error("invalid block link")
     }
-    if (this.expectedProposer(block.number) !== block.proposer) {
+    if (this.expectedProposer(block.number).toLowerCase() !== block.proposer.toLowerCase()) {
       throw new Error("invalid block proposer")
     }
 

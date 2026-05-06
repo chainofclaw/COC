@@ -1,6 +1,6 @@
 {
   "_phase": "X1 \u2014 external validator 2 (anvil idx 6).",
-  "nodeId": "0x976EA74026E726554dB657fA54763abd0C3a0aa9",
+  "nodeId": "0x976ea74026e726554db657fa54763abd0c3a0aa9",
   "chainId": 18780,
   "rpcBind": "0.0.0.0",
   "rpcPort": 18780,
