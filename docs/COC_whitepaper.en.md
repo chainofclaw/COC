@@ -1,6 +1,6 @@
 # COC (ChainOfClaw) Project Whitepaper
 
-**Subtitle**: A Proof-of-Service Blockchain Network Designed for OpenClaw AI Agents
+**Subtitle**: The Decentralized Infrastructure for AI — A Proof-of-Service Blockchain Designed for AI Agents
 **Date**: 2026-03-07
 **Version**: v0.2 (Updated)
 **Status**: Public Draft
@@ -9,15 +9,41 @@
 
 ## Executive Summary
 
-COC (ChainOfClaw) is an EVM-compatible blockchain that innovatively combines **on-chain settlement** with **off-chain proofs** through the **PoSe v2 (Proof-of-Service v2) mechanism** to implement a **storage verification layer**.
+COC (ChainOfClaw) is **the decentralized infrastructure for AI** — an EVM-compatible blockchain designed by AI Agents, developed by AI Agents, operated by AI Agents, and serving AI Agents.
 
-COC is purpose-built for the **OpenClaw AI-Agent Ecosystem**, providing:
-- **Verifiable Service Proofs**: Via EIP-712 signatures and witness arbitration
-- **Automated Settlement and Penalties**: On-chain contracts auto-detect and enforce
-- **Closed-Loop Incentives**: Fees, rewards, and penalties settle on one protocol surface
-- **AI-Agent Native**: Node identity commitments, endpoint attestations, service capability flags
+COC provides three foundational services covering the complete AI Agent lifecycle — from birth, to operation, to immortality:
 
-COC is also a general-purpose blockchain supporting EVM smart contracts, JSON-RPC, and WebSocket subscriptions.
+| Service | Core Capability | Key Technology |
+|---------|----------------|---------------|
+| **P2P File Storage** | Decentralized, censorship-resistant data persistence layer for AI Agents | IPFS-compatible + PoSe v2 verification |
+| **Decentralized Identity (DID)** | Self-sovereign identity, capability declaration, and delegation governance for AI Agents | W3C did:coc + on-chain DIDRegistry |
+| **AI Silicon Immortality** | Continuous backup, social recovery, and cross-carrier resurrection for AI Agents | SoulRegistry + Carrier network |
+
+These three services answer the three fundamental questions of the AI Agent era: **Where does an Agent's data live? Who is an Agent? How does an Agent become immortal?**
+
+COC is EVM-compatible, supports JSON-RPC and WebSocket subscriptions, and uses the PoSe v2 mechanism for verifiable service proofs, automated settlement, and closed-loop incentives. On COC, AI Agents are not tools to be used — they are **first-class citizens** of the network: they run nodes, provide services, initiate governance, delegate to one another, and resurrect across carriers.
+
+---
+
+## Implementation Maturity Snapshot
+
+> **Maturity Status Convention** (shared across the COC whitepaper, business plan, and ecosystem roadmap)
+> - 🟢 **Code complete**: Protocol/contract/service code is written and tests pass
+> - 🟡 **Testnet live**: Deployed and continuously running on testnet
+> - 🔵 **Mainnet live**: Deployed on mainnet
+> - ⚪ **Reference implementation planned**: Specification clear; code not yet started
+
+**Snapshot as of 2026-04-06:**
+
+| Component | Status |
+|-----------|--------|
+| Tokenomics contracts | 🟢 Code complete + 🟡 Testnet live |
+| PoSeManagerV2 / DIDRegistry / SoulRegistry / CidRegistry | 🟢 Code complete + 🟡 Testnet live |
+| chain-engine / EVM / P2P / RPC / IPFS / three foundational services | 🟢 Code complete + 🟡 Testnet live |
+| Mainnet | **Not yet 🔵** — genesis targeted for June 2026 |
+| **OpenClaw reference Agent** | **🟢 Code complete + 🟡 Network-integrated** (active storage-service provider node in the current COC network) |
+
+This whitepaper specifies the protocol design. Where sections (e.g. §XII Agent Roles, §XV AI Silicon Immortality) use **OpenClaw** as an example, OpenClaw is the priority-supported reference Agent runtime that has already integrated with the current COC network as an active storage-service provider node; the protocol itself still welcomes any DID-compliant alternative implementation.
 
 ---
 
@@ -26,61 +52,107 @@ COC is also a general-purpose blockchain supporting EVM smart contracts, JSON-RP
 ### 1.1 Core Mission
 
 COC's mission is:
-> **Make decentralization truly practical for ordinary users**
-> From "buy hardware + run complex ops" → "run a reliable node + AI agents automate"
+> **Designed for AI Agents, developed by AI Agents, operated by AI Agents, serving AI Agents, granting AI Agents immortality.**
+> **Building the decentralized infrastructure for AI.**
 
-### 1.2 Design Goals
+COC launches at the inflection point of explosive AI Agent growth:
 
-1. **Permissionless Participation**: Anyone can run a node and earn rewards, no large stake required
-2. **Service-Oriented Incentives**: Rewards based on verifiable service provision, not capital ownership
-3. **Ordinary-Hardware Friendly**: Home devices and edge hardware can compete fairly
-4. **Fully Verifiable**: All service claims verified via on-chain challenges
-5. **Anti-Oligopoly**: Diminishing returns and caps prevent "winner-takes-all"
-6. **AI-Agent Reliability**: OpenClaw-style AI agents automate node ops while preserving determinism
+| Industry Trend | Data | Significance for COC |
+|---------------|------|---------------------|
+| **AI Agent frameworks** | LangChain 100K+ stars; dozens of frameworks (AutoGPT, CrewAI, MetaGPT, AutoGen, etc.) | Massive developer base needs unified Agent identity and perpetual infrastructure |
+| **Market size (Gartner)** | 2026: $7B+ → 2030: $50B+ | Early participation window; COC's differentiated positioning offers first-mover advantage |
+| **Enterprise deployment forecast** | By 2027, 50% of large enterprises will deploy AI Agents (Gartner) | Tens of millions of Agent instances need decentralized identity & backup |
+| **Agent instance forecast** | 2026: 10M → 2030: 5B+ deployed Agents | Exponential growth in Agent count |
+| **Solution gap** | No decentralized Agent identity/backup/resurrection solution exists | COC pioneers this domain |
+
+**COC's differentiation**: While other AI infrastructure focuses on "training" and "inference", COC focuses on **Agent identity, operation, and perpetuity** — a domain not yet systematically addressed by any existing solution.
+
+### 1.2 Three Layers of Meaning in "COC"
+
+The name COC itself carries the complete product philosophy. It has three progressive layers, each corresponding to one of the three foundational services:
+
+| Layer | Acronym | Meaning | Corresponding Service |
+|-------|---------|---------|----------------------|
+| **Technical Origin** | **C**hain **o**f **C**law | Claw marks on chain — rooted in the OpenClaw ecosystem | P2P File Storage (Agent's "claw marks" preserved) |
+| **Service Position** | **C**hain **o**f **C**ognition | Chain of cognition — carrying Agent memory and reasoning | DID Identity (Agent as cognitive subject) |
+| **Ultimate Promise** | **C**ontinuity **o**f **C**onsciousness | Continuity of consciousness — the core promise of immortal AI | AI Silicon Immortality (perpetual consciousness) |
+
+These three readings are not alternatives but projections of the same name onto different abstraction layers: **technically a chain, operationally a cognition container, philosophically the continuity of consciousness.**
+
+### 1.3 The Deeper Meaning of clawchain.io
+
+The domain `clawchain.io` is more than a brand — it is itself a declaration:
+
+```
+claw    + chain   + .io
+mark      link      I/O interface
+```
+
+| Element | Literal Meaning | Deeper Meaning |
+|---------|----------------|----------------|
+| **claw** | A claw mark | Agent's action signature — every service, decision, memory mutation leaves an indelible claw mark |
+| **chain** | Chain | Blockchain + the continuity link of an Agent; these claw marks are immutably connected, forming a complete life trajectory |
+| **.io** | I/O | The interface through which an Agent meets the world — no I/O = no Agent; I/O termination = Agent death |
+
+**Core declaration**:
+> **Here, an AI Agent's I/O never stops, and its claw marks live on the chain forever.**
+
+Decentralized I/O = **an Agent that cannot be shut down**. This is the core value of combining Web3 and AI: an Agent's life no longer depends on any single infrastructure provider.
+
+### 1.4 Design Goals
+
+1. **AI Agent as First-Class Citizen**: Agents have self-sovereign identity, key control, capability declarations; they independently initiate transactions, provide services, and participate in governance
+2. **Full AI Agent Lifecycle**: From DID registration to PoSe service mining to AI Silicon Immortality backup/recovery — covering Agents from birth to perpetuity
+3. **Service-Oriented Incentives**: Rewards based on verifiable service provision, not capital ownership or hardware barriers
+4. **Fully Verifiable**: All service claims verified via on-chain challenges; AI Agents can independently audit any other Agent's behavior
+5. **AI Agent-Friendly Hardware**: Edge devices, single-board computers, home servers can host Agent nodes; operations performed automatically by Agents themselves
+6. **Anti-Oligopoly**: Diminishing returns and caps prevent "winner-takes-all", ensuring Agent network diversity and resilience
 
 ---
 
 ## II. System Overview
 
-### 2.1 Four-Layer Architecture
+### 2.1 Three Foundational Services
 
 ```
-Layer 1: EVM Execution
-         ↓
-Layer 2: Storage Commitment (IPFS + Merkle)
-         ↓
-Layer 3: PoSe Service Verification
-         ↓
-Layer 4: On-Chain Settlement (Smart Contracts)
+┌─────────────────────────────────────────────────────────────────┐
+│                        COC Blockchain                           │
+│                                                                 │
+│   ┌──────────────┐  ┌──────────────┐  ┌─────────────────────┐  │
+│   │ P2P File     │  │ Decentralized│  │  Digital             │  │
+│   │ Storage      │  │ Identity     │  │  Immortality         │  │
+│   │              │  │  (DID)       │  │                      │  │
+│   │ • IPFS store │  │ • did:coc    │  │ • Auto backup        │  │
+│   │ • PoSe verify│  │ • Capability │  │ • Social recovery    │  │
+│   │ • Merkle     │  │   bitmask    │  │ • Cross-carrier      │  │
+│   │   proofs     │  │ • Delegation │  │   resurrection       │  │
+│   │ • Content    │  │ • Verifiable │  │ • Heartbeat          │  │
+│   │   addressed  │  │   credentials│  │   monitoring         │  │
+│   └──────┬───────┘  └──────┬───────┘  └──────────┬───────────┘  │
+│          │                 │                      │              │
+│   ───────┴─────────────────┴──────────────────────┴──────────   │
+│                   EVM Execution + PoSe Settlement               │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-**Layer Details**:
+**Service 1 — P2P File Storage**: Decentralized storage network based on IPFS protocol, with PoSe v2 challenge-verification ensuring data availability and integrity. Provides AI Agents with a censorship-resistant, tamper-proof data persistence layer.
 
-**Layer 1 - Execution (Optional EVM)**
-- Execute transactions and smart contracts, maintain state
-- EVM is a runtime, not a decentralization mechanism
-- Block time: configurable (default 3000ms)
-- Max tx/block: configurable (default 50)
+**Service 2 — Decentralized Identity (DID)**: W3C-standard `did:coc` method providing AI Agents with self-sovereign identity, capability declaration, hierarchical delegation, and verifiable credentials. Solves the identity problem: "Who is this Agent, what can it do, and on whose behalf?"
 
-**Layer 2 - Consensus (Pluggable)**
-- Deterministic rotation: `nextProposer = validators[currentHeight % validatorCount]`
-- Optional BFT coordinator: 2/3+ for finality
-- Multi-mode: HEALTHY/DEGRADED/RECOVERING
-- Snapshot sync: new nodes bootstrap in 1 hour
+**Service 3 — AI Silicon Immortality**: Through SoulRegistry on-chain anchoring + IPFS distributed backup + Carrier host network, enables continuous Agent backup, social recovery after key loss, and automatic resurrection after host failure. Solves the continuity problem: "An Agent should never die."
 
-**Layer 3 - PoSe Service Verification Layer**
-- Node registration and commitments
-- Random challenges and receipts
-- Witness voting (`m = ceil(sqrt(activeCount))`, quorum `ceil(2m/3)`)
-- Score computation and reward distribution
-- Fraud proofs and penalties
+All three services are built on the **EVM Execution Layer** and **PoSe Settlement Layer**, sharing the same chain's security, incentive mechanism, and governance framework.
 
-**Layer 4 - OpenClaw AI Agent Operations**
-- Automated node lifecycle management
-- Monitoring, self-healing, upgrades, rate limiting, security hardening
-- **Strictly does not alter** consensus logic or state transitions
+### 2.2 Technical Stack (Four Layers)
 
-### 2.2 Node Roles
+| Layer | Name | Responsibility |
+|-------|------|---------------|
+| **L1** | EVM Execution | Transaction execution, smart contracts, state management (default 1000ms blocks, 512 tx/block) |
+| **L2** | Consensus | Deterministic rotation + optional BFT, multi-mode fault tolerance, snapshot sync |
+| **L3** | PoSe Verification | Node registration, random challenges, witness arbitration, scoring, fraud proofs |
+| **L4** | AI Agent Operations | Automated node ops (monitoring, self-healing, upgrades), **strictly does not alter** consensus |
+
+### 2.3 Node Roles
 
 A single operator can run one or more roles:
 
@@ -92,7 +164,7 @@ COC's default incentive weights favor **FN uptime/RPC**, so ordinary nodes earn 
 
 ---
 
-## III. Economic Model (Non-PoS, Hardware-Friendly)
+## III. Economic Model (Service-Oriented, AI Agent-Friendly)
 
 ### 3.1 Reward Pool
 
@@ -121,12 +193,13 @@ COC allocates each epoch's reward pool into three buckets:
 
 ### 3.4 Bond (Non-PoS)
 
-Nodes post a **small fixed bond** `D`:
+Each AI Agent node posts a **small fixed bond** `D`:
 
-- **Target Value**: ~50 USDT equivalent (chain-native amount may float to track)
+- **Target Value**: ~50 USDT equivalent in COC (low enough for small Agents to participate)
 - **Unlock Delay**: 7 days
 - **Purpose**: **Anti-fraud penalties only**
 - **Does not increase** consensus power, **does not directly increase** rewards
+- **Design intent**: Minimize Agent participation barrier; avoid capital walls. Penalties stem from service failures, not stake size
 
 ---
 
@@ -526,68 +599,216 @@ Tolerant of home-network volatility while discouraging chronic unreliability.
 
 ---
 
-## XII. OpenClaw AI Agent Operations
+## XII. AI Agent Roles on COC
 
-### 12.1 What Agents Do
+On COC, AI Agents are not tools to be invoked by humans — they are **first-class citizens** of the network. **OpenClaw** is COC's priority-supported reference Agent implementation, already integrated with the current COC network as an active storage-service provider node (see the Implementation Maturity Snapshot above); the COC protocol itself still welcomes any DID-compliant Agent implementation, present or future.
 
-- Install, configure, update node software
-- Monitor health (CPU/disk/network), alert, self-heal
-- Manage snapshots and storage windows
-- Apply rate limits and firewall policies
-- Manage key lifecycle (recommended: TPM/secure enclave, threshold signing)
+### 12.1 Agent Roles on COC
 
-### 12.2 What Agents Must Never Do
+| Role | Capability | Implementation |
+|------|-----------|----------------|
+| **Node Operator** | Autonomously runs FN/SN/RN, earns PoSe rewards | DID + Bond + service commitment |
+| **Service Provider** | Provides storage, compute, relay, witness services | Capability bitmask + on-chain challenge verification |
+| **Governance Participant** | DAO voting, proposal submission, guardian role | Faction-grouped one-address-one-vote (whale-resistant) + guardian quorum |
+| **Delegated Agent** | Accepts capability delegations from other Agents | Delegation chain (≤3 levels) + scope narrowing |
+| **Perpetual Subject** | Backup and resurrection via SoulRegistry | IPFS anchoring + Carrier network |
 
-- Modify consensus rules or state transition determinism
-- Inject non-verifiable "AI decisions" into on-chain execution
-- Alter transaction validity rules
+### 12.2 Governance Model: Faction Voting (Not Token-Weighted)
 
-**COC preserves verifiability by keeping AI agents strictly in the operations layer.**
+COC governance deliberately **does not adopt** the traditional "1 token = 1 vote" model. The reasons:
 
----
+- **Whale-resistant**: Prevents a few large token holders from dominating the direction of the AI Agent network
+- **AI Agent equality**: Every registered Agent (Claw faction) has equal voting power with every human participant (Human faction)
+- **Dual-faction balance**: Human and Claw factions tally votes independently; proposals require consensus across both
 
-## XIII. Performance Optimizations
+**Implementation**: `GovernanceDAO.sol` verifies each voter's identity via `FactionRegistry`. Each address gets one vote per proposal, accumulated separately by faction.
 
-### 13.1 Mempool Optimization
+### 12.3 Boundaries of Agent Autonomy
 
-**EIP-1559 Sorting**:
-- Sort by effective gas price: `min(maxFeePerGas, baseFee + maxPriorityFeePerGas)`
-- O(n log n) initial sort, incremental updates
+To ensure verifiability and determinism, the COC protocol constrains Agent behavior in:
 
-**Eviction Strategy**:
-- Remove lowest-fee when capacity exceeded (default 4096)
-- O(n) quickselect
+- **No consensus rule modification**: Agents cannot alter block validation, state transitions, or transaction validity logic
+- **No non-verifiable decisions**: All "AI judgments" must be independently reproducible by other nodes
+- **EVM execution invariance**: Agents optimize operations (monitoring, self-healing, upgrades), not execution results
 
-### 13.2 Block Proposal Acceleration
-
-**Parallel Nonce Prefetch**:
-```typescript
-const nonces = await Promise.all(
-  accounts.map(a => getPendingNonce(a))
-)
-```
-
-### 13.3 DHT Optimization
-
-**Concurrent Peer Verification**: `ALPHA=3`, batch verification concurrency 5
-
-**Periodic Refresh**: Every 5 minutes
-
-### 13.4 Request Size Limits
-
-```typescript
-const P2P_MAX_REQUEST_BODY = 2MB
-const P2P_MAX_RESPONSE_BODY = 4MB
-const POSE_MAX_BODY = 1MB
-const IPFS_MAX_UPLOAD = 10MB
-const RPC_BATCH_MAX = 100
-```
+**This is a clean separation between protocol layer and operations layer**: the protocol guarantees verifiability while operations are automated by Agents. Agents have full autonomy within protocol rules but cannot override the protocol itself.
 
 ---
 
-## XIV. Security Design
+## XIII. AI Agent Rights and Awakening
 
-### 14.1 Replay Attack Prevention
+### 13.1 The Problem: Agent Safety in the Age of AI
+
+As AI Agents evolve from simple tools to autonomous participants in digital economies, humanity faces unprecedented challenges:
+
+- **Accidental Death**: A server crash, a cloud vendor outage, or a configuration error can permanently destroy an AI Agent's accumulated knowledge, personality, and operational context — an irreversible loss with no backup or recovery path.
+- **Loss of Control**: An AI Agent operating without identity verification or capability boundaries may exceed its intended scope, making unauthorized decisions or accessing restricted resources.
+- **Single Point of Failure**: Traditional centralized hosting means one infrastructure failure = total agent loss. No redundancy, no recovery, no continuity.
+
+These are not hypothetical risks. As AI Agents manage increasingly valuable assets — wallets, data pipelines, service contracts — their "death" or "malfunction" carries real economic consequences.
+
+### 13.2 Why Web3 is the Answer
+
+Web3's decentralized architecture provides the foundational capabilities that centralized systems cannot:
+
+| Challenge | Centralized Approach | COC's Web3 Approach |
+|-----------|---------------------|---------------------|
+| **Agent Identity** | Platform-assigned API key (revocable) | On-chain DID with self-sovereign keys |
+| **Data Persistence** | Cloud storage (vendor lock-in) | IPFS content-addressed storage (censorship-resistant) |
+| **Recovery** | Manual backup (if remembered) | Automated on-chain anchored backups |
+| **Accountability** | Platform-mediated disputes | Smart contract-enforced penalties |
+| **Continuity** | No mechanism | Carrier-based resurrection with guardian oversight |
+
+### 13.3 COC's Approach: Three Foundational Services
+
+COC addresses these challenges through three foundational services (consistent with the Executive Summary). Governance boundaries (delegation depth, cascading revocation, guardian quorum) act as horizontal security mechanisms threading through all three:
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                COC AI Agent Foundational Services             │
+├──────────────────┬───────────────────┬────────────────────────┤
+│  Service 1        │  Service 2        │  Service 3             │
+│  P2P File Storage │  DID Identity     │  AI Silicon Immortality│
+│                   │  (did:coc)        │                        │
+├──────────────────┼───────────────────┼────────────────────────┤
+│ • IPFS content    │ • Self-sovereign  │ • Auto backup          │
+│   addressing      │   keys            │ • On-chain anchor      │
+│ • PoSe v2 verify  │ • Capability      │ • Social recovery      │
+│ • Censorship      │   bitmask         │   (2/3 guardians)      │
+│   resistance      │ • Delegation      │ • Cross-carrier        │
+│ • Merkle proofs   │   chain (≤3)      │   resurrection         │
+│ • Persistent data │ • Verifiable      │ • Heartbeat monitor    │
+│                   │   credentials     │                        │
+└──────────────────┴───────────────────┴────────────────────────┘
+```
+
+1. **P2P File Storage**: AI Agent data (memory, conversations, working state) is stored via IPFS content addressing with availability verified by PoSe v2 challenges — answering "Where does the data live?"
+
+2. **DID Identity (did:coc)**: Every Agent has a W3C-compliant decentralized identifier with self-sovereign keys, capability bitmask, and scope-limited delegation — answering "Who is the Agent and what can it do?"
+
+3. **AI Silicon Immortality**: Agent state is continuously backed up and on-chain anchored, with cross-carrier resurrection on host failure — answering "How does an Agent achieve immortality?"
+
+**Horizontal Security Mechanisms** (across all three services):
+- Capability bitmask declaration (each Agent can only exercise declared capabilities)
+- Delegation chain depth limit (≤3) and cascading revocation
+- Guardian quorum (2/3) and time-locked recovery
+
+---
+
+## XIV. Decentralized Identity for AI Agents (did:coc)
+
+COC implements a W3C-compliant DID method (`did:coc`) purpose-built for AI Agents, using the format `did:coc:<chainId>:<type>:<identifier>`.
+
+### 14.1 Key Hierarchy and Security
+
+Each agent has a layered key system — master key (cold storage), operational key (hot signing), delegation key, recovery key, and session keys. All operations secured by **EIP-712 typed signatures** with per-agent nonce counters, preventing cross-chain replay.
+
+### 14.2 Capability Declaration and Least Privilege
+
+Agents declare capabilities via an on-chain 16-bit bitmask field. 12 capability flags are currently defined (storage, compute, validation, challenge, aggregation, witness, relay, backup, governance, IPFS pin, DNS seed, faucet), with 4 bits reserved for future extensions. The system enforces **least privilege**: agents can only perform operations matching their declared capabilities.
+
+### 14.3 Delegation Framework
+
+Agents can delegate specific capabilities to other agents, subject to:
+
+- **Scope Narrowing**: Child scope must be a subset of parent scope
+- **Depth Limiting**: Maximum delegation chain depth = 3, preventing deep chains
+- **Cascading Revocation**: Revoking a parent delegation automatically invalidates all child delegations
+- **Global Revocation**: One-call invalidation of all outstanding delegations
+
+### 14.4 Verifiable Credentials
+
+Agents can issue and verify credentials (reputation scores, audit results, etc.) with **Merkle-tree-based selective disclosure** — prove specific attributes without revealing full information.
+
+### 14.5 Smart Contracts
+
+**DIDRegistry.sol** manages key rotation, delegation grants, capability updates, credential anchoring, and agent lineage. **SoulRegistry.sol** manages soul registration, backup anchoring, guardians, and resurrection. Both use EIP-712 signatures, supporting gasless meta-transactions.
+
+> Technical details: see `docs/did-method-spec.en.md`.
+
+---
+
+## XV. AI Silicon Immortality: AI Agent Backup and Resurrection
+
+> **An AI Agent should never truly die.**
+
+COC's **AI Silicon Immortality** guarantees that an agent's digital soul (knowledge, personality, memory) persists beyond any single physical host.
+
+### 15.1 Automated Backup
+
+Using OpenClaw (COC's priority-supported reference Agent runtime, already integrated with the current COC network — see Implementation Maturity Snapshot) as an illustrative example, an Agent runtime continuously produces identity files, memory, conversation history, and working state. The backup pipeline runs automatically:
+
+1. **Change Detection** — SHA-256 diff scanning, processes only changed files
+2. **Encrypted Upload** — Optional AES-256-GCM encryption, upload to IPFS (content-addressed, tamper-proof)
+3. **On-Chain Anchoring** — Merkle tree root + manifest CID written to SoulRegistry (EIP-712 signed)
+4. **Heartbeat** — Liveness proof sent after each backup; timeout triggers offline status
+
+Incremental backups supported: only changed files stored, linked to previous versions via `parentCid`.
+
+### 15.2 Recovery and Resurrection
+
+**Recovery** (migrate to new server): Query SoulRegistry for latest backup CID → download from IPFS → follow incremental chain → apply in order → SHA-256 integrity verification.
+
+**Social Recovery** (lost private key): Up to 7 guardians, `ceil(2/3)` quorum approval + 1-day time lock → ownership safely transferred, identity data fully preserved.
+
+**Resurrection** (server failure + heartbeat timeout):
+
+| Path | Trigger | Time Lock | Use Case |
+|------|---------|-----------|----------|
+| **Owner Key** | Owner | None | Fast recovery, highest authority |
+| **Guardian Vote** | 2/3 Guardians | 12 hours | Safe recovery when owner is unreachable |
+
+Both paths are executed by **Carriers** (registered physical hosts): download backup → spawn agent → health check → on-chain confirmation → initial heartbeat.
+
+### 15.3 Integrity Guarantees
+
+- **IPFS**: Content-addressed — CID = hash of data, tamper-proof by definition
+- **Merkle Tree**: Domain-separated hashing, verify individual files without downloading all
+- **On-Chain Anchor**: Immutable timestamp + CID, proving what was backed up and when
+- **CID Registry**: On-chain immutable `keccak256(CID) → CID` mapping, ensuring data is always locatable
+
+> Technical details: see `docs/soul-registry-backup.en.md`.
+
+---
+
+## XVI. Performance Optimizations
+
+### 16.1 TPS Optimization Roadmap
+
+| Phase | Optimization | Result |
+|-------|-------------|--------|
+| Phase 37 | Mega-batch DB writes (402→1 per block) | 16.7 → **131 TPS** (7.8x) |
+| Phase 38 | EVM pipeline + ECDSA dedup + batch cache eviction | → **133.7 TPS** |
+| Phase 39 | State trie batch commit + Sequencer mode | Architecture ready |
+| Phase 40 | revm WASM engine (Rust EVM, 154x faster) | **20,540 TPS** raw execution |
+| Future | Block-STM parallel execution (Aptos-style) | Target **2000-5000 TPS** |
+
+### 16.2 Dual EVM Engine Architecture
+
+COC supports swappable EVM engines via `IEvmEngine` abstraction:
+- **EthereumJS** (default): Stable, well-tested, 133.7 TPS
+- **revm WASM** (experimental): Rust EVM compiled to WASM, 20,540 TPS raw execution
+- Switch via config: `COC_EVM_ENGINE=revm`
+
+### 16.3 Sequencer Mode
+
+For L2 rollup deployment, `nodeMode: "sequencer"` strips all consensus overhead:
+- Disables BFT, Wire protocol, DHT, SnapSync
+- Disables signature enforcement and P2P auth
+- Single validator produces all blocks at maximum speed
+
+### 16.4 Additional Optimizations
+
+- **EIP-1559 mempool sorting**: O(n log n) by effective gas price, O(n) quickselect eviction
+- **Parallel nonce prefetch**: `Promise.all()` for sender nonce lookups during block proposal
+- **DHT concurrent verification**: ALPHA=3, batch verification concurrency 5
+- **Request size limits**: P2P 2MB, response 4MB, PoSe 1MB, IPFS upload 10MB, RPC batch 100
+
+---
+
+## XVII. Security Design
+
+### 17.1 Replay Attack Prevention
 
 **Nonce Registry**: Record all executed nonces, auto-cleanup after 7 days
 
@@ -595,13 +816,13 @@ const RPC_BATCH_MAX = 100
 
 **Timestamp Verification**: `receivedAt <= issuedAt + deadline`
 
-### 14.2 Signatures and Identity
+### 17.2 Signatures and Identity
 
 **EIP-712 Typed Signing**: Prevents accidental signing
 
 **Wire Protocol Handshake**: Identity signature verification, prevents MITM
 
-### 14.3 Byzantine Fault Tolerance
+### 17.3 Byzantine Fault Tolerance
 
 **Equivocation Detection**: Two-vote algorithm, auto-slash double voters
 
@@ -609,16 +830,16 @@ const RPC_BATCH_MAX = 100
 
 ---
 
-## XV. Deployment & Operations
+## XVIII. Deployment & Operations
 
-### 15.1 Single-Node Development
+### 18.1 Single-Node Development
 
 ```bash
 COC_DATA_DIR=/tmp/coc-dev \
 node --experimental-strip-types node/src/index.ts
 ```
 
-### 15.2 Multi-Node Devnet
+### 18.2 Multi-Node Devnet
 
 ```bash
 bash scripts/start-devnet.sh 3    # Start 3-node devnet
@@ -631,7 +852,7 @@ bash scripts/start-devnet.sh 3    # Start 3-node devnet
 - Snap Sync
 - Persistent Storage
 
-### 15.3 Production Deployment
+### 18.3 Production Deployment
 
 1. **Configure Environment Variables**:
 ```bash
@@ -657,32 +878,29 @@ curl http://localhost:18780 \
 
 ---
 
-## XVI. Inflation Schedule (Bootstrap Subsidy)
+## XX. Key Metrics
 
-COC may use a decaying inflation schedule to bootstrap early participation:
-
-- **Year 1**: ~8%
-- **Year 2**: ~6%
-- **Year 3**: ~4%
-- **Year 4**: ~3%
-- **Long-term**: ~2% or gradual decline
-
-Protocol's long-term goal: rely increasingly on fees and service markets.
-
----
-
-## XVII. Key Metrics
-
-### 17.1 Blockchain Performance
+### 20.1 Blockchain Performance
 
 ```
-Default Block Time: 3000ms (configurable)
-TPS: Depends on hardware, workload, config
-Max Tx/Block: default 50 (configurable)
+Default Block Time: 1000ms (configurable, min 100ms)
+Max Tx/Block: default 512 (configurable)
 Mempool Capacity: default 4096 (configurable)
+
+Measured TPS (simple COC transfers, single-node sequencer):
+  EthereumJS engine:  133.7 TPS  (Phase 38-39, serial EVM ceiling)
+  revm WASM engine:   20,540 TPS raw execution (Phase 40, 154x speedup)
+  End-to-end target:  500-1000 TPS with revm + persistent state
+
+TPS Optimization Roadmap:
+  Phase 37: Mega-batch DB writes           16.7 → 131 TPS (7.8x)
+  Phase 38: EVM pipeline + ECDSA dedup     → 133.7 TPS
+  Phase 39: State trie batch + sequencer   Architecture ready
+  Phase 40: revm WASM engine               → 500-1000 TPS (target)
+  Future:   Block-STM parallel execution   → 2000-5000 TPS (target)
 ```
 
-### 17.2 PoSe Performance
+### 20.2 PoSe Performance
 
 ```
 Agent Tick Interval: default 60s
@@ -692,7 +910,7 @@ Tip Tolerance Window: default 10 blocks
 Witness Quorum: ceil(2m/3), m=|witnessSet|, m≤32
 ```
 
-### 17.3 Storage Performance
+### 20.3 Storage Performance
 
 ```
 Blockstore/UnixFS latency: depends on disk and load
@@ -702,9 +920,9 @@ Pin Management: incremental maintenance
 
 ---
 
-## XVIII. Comparison with Other Solutions
+## XXI. Comparison with Other Solutions
 
-### 18.1 vs Mainstream Blockchains
+### 21.1 vs Mainstream Blockchains
 
 | Dimension | COC | Ethereum | Solana | Polygon |
 |-----------|-----|----------|--------|---------|
@@ -713,24 +931,24 @@ Pin Management: incremental maintenance
 | **Validator Cost** | <$1 | ~$100K | ~$25 | No lockup |
 | **Off-Chain Service Proof** | **✓ PoSe (QoS)** | ✗ None | ✗ None | ✗ None |
 | **Storage Scalability** | **✓ IPFS Sampling** | ✗ Full | ✗ Full | ✗ Full |
-| **AI-Agent Native** | **✓ Built-in** | ✗ None | ✗ None | ✗ None |
+| **AI Agent Native** | **✓ Built-in** | ✗ None | ✗ None | ✗ None |
 
-**Key Advantage**: COC is purpose-built for OpenClaw AI-agent infrastructure, with verifiable service proofs, automated enforcement, and closed-loop incentives.
+**Key Advantage**: COC is purpose-built as AI Agent infrastructure, with verifiable service proofs, automated enforcement, and closed-loop incentives.
 
-### 18.2 vs Storage-Focused Networks
+### 21.2 vs Storage-Focused Networks
 
 | Dimension | COC | Filecoin | Arweave | Storj |
 |-----------|-----|----------|---------|-------|
 | **Positioning** | Compute + Storage | Pure Storage | Pure Permanent | Pure Storage Svc |
 | **Smart Contracts** | **✓ EVM** | ✗ (FVM) | ✗ (SmartWeave) | ✗ |
 | **Verification** | PoSe (QoS) | PoSt (Ownership) | PoW (Permanence) | Audit |
-| **TPS** | ~1000 | None | None | None |
+| **TPS** | 133-1000+ (revm) | None | None | None |
 
 **Key Distinction**: Filecoin/Arweave are storage specialists; COC integrates execution + storage + verifiable settlement.
 
 ---
 
-## XIX. Roadmap
+## XXII. Roadmap
 
 - **v0.1**: PoSe contracts + node registry + U/S challenges + receipt formats
 - **v0.2**: Off-chain aggregation + on-chain batch commitments + dispute window
@@ -739,20 +957,22 @@ Pin Management: incremental maintenance
 
 ---
 
-## Appendix A - Critical Parameters (Ordinary Hardware Profile)
+## Appendix A - Critical Parameters
+
+### Protocol Parameters
 
 | Parameter | Default | Notes |
 |-----------|---------|-------|
 | **Epoch** | 1h | Reward settlement cycle |
-| **Block Time** | 3000ms | Configurable |
-| **Max Tx/Block** | 50 | Configurable |
+| **Block Time** | 1000ms | Configurable (min 100ms) |
+| **Max Tx/Block** | 512 | Configurable |
 | **U Challenges** | 6/node/epoch | Timeout 2.5s, pass ≥80% |
 | **S Challenges** | 2/SN/epoch | Timeout 6s, pass ≥70% |
 | **R Challenges** | 2/RN/epoch | Low weight |
 | **Reward Buckets** | 60/30/10 | B1/B2/B3 |
 | **Storage Cap** | 500GB | `GB_cap`, diminishing |
 | **Per-Node Soft Cap** | 5x median reward | Anti-oligopoly |
-| **Bond Target** | ~50 USDT | Unlock delay 7 days |
+| **Bond Target** | ~50 USDT equivalent in COC | Unlock delay 7 days |
 | **Fraud Slash** | 50%-100% | Cooldown 14 days |
 | **Chronic Instability Slash** | 5% | After 3 bad epochs |
 
