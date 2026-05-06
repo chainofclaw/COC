@@ -93,6 +93,8 @@ validatorRegistryAddress?: string  // ValidatorRegistry contract address
 - 后续 onboard 走链上 tx，不再修 JSON，**不需要全 cluster 重启**
 - 工作量：1-2 周（合约 + 测试 + 文档）
 
+> **2026-05-06 实测结果**：⚠ 部分完成。合约 + reader + tests 全部 Phase F+G Sprint 3-4 已 land；本会话部署到 testnet (`0x162700d1613DfEC978032A909DE02643bC55df1A`，block 212676)，详见 `docs/phase-x2-deploy-2026-05-06.zh-en.md`。1 个 core (node-1) 成功 staked；reader 端到端验证通过——日志 `BFT validator set updated from ValidatorRegistry count=1`。其余 2 个 core 的 stake tx 因 mempool stuck-nonce 残留未确认，是运维问题不是架构问题。下次 session 清完 stuck txs 后即可完成 X2.4-X2.5。
+
 #### Phase X3 — Stake 分布与权重调整
 
 - 减小 core validator 的相对 stake（例如 core 各 100 → 各 50；4 个 external 各 75）
