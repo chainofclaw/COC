@@ -150,10 +150,12 @@ The path to **mainnet** is much longer (a conservative estimate is 6-12 months):
    - 新 soak `phase-2-j-fix-w8e` 刚启动，未完成。
    - Day-60 Gate 要求"24h 无崩溃、无长时间停块、无未解释重组"——目前不满足。
 
-3. **外部 validator 接入流程未跑**
+3. **外部 validator 接入流程未跑** （详见 `docs/testnet-decentralization-analysis-2026-05-06.zh-en.md`）
    - configs/prowl-testnet/validators.json 全部为内部 Hardhat 测试账户。
    - 没有任何独立运营方走过完整的 join / 签名 onboarding / runbook 流程。
    - Day-60 Gate 要求"≥3 个独立运营方"——0/3。
+   - **关键澄清**：自建 self-built 节点默认是 observer，**不能投票**；停掉 3 个 core 后，无论网络上有多少 self-built peer 都救不了链——liveness 由 validator 集合决定，不由节点数量决定。
+   - 解决方案 = Phase X1-X5（manual onboard 4 external validator → ValidatorRegistry 合约 → stake 分布 → slashing/auto-rotation → 真实"停核心"演练）；6-8 周，与 Day-90 窗口对齐。
 
 4. **J3 fixture wire-handshake 配置 bug**
    - `tests/multinode-integration/configs/*.json` 中 validator 公钥与 wire 签名 key 不匹配，cluster 起不来 BFT。
