@@ -641,6 +641,75 @@ describe("BftCoordinator", () => {
     assert.equal(fireCount, 0, "matching stateRoot should not trigger early divergence")
   })
 
+  // -- Phase R (2026-05-06): BFT no-double-vote invariant --
+  // After a round timeout where mempool drift produces a new candidate
+  // block at the same height, BftCoordinator must NOT broadcast a second
+  // prepare — self-equivocation would have peers drop both our votes via
+  // EquivocationDetector and the chain stalls. The validator must replay
+  // its original prepare, not invent a new one.
+
+  it("Phase R: refuses to broadcast a second prepare for a different block at the same height", async () => {
+    const broadcasted: BftMessage[] = []
+    const coord = new BftCoordinator({
+      localId: "v1",
+      validators,
+      prepareTimeoutMs: 100,
+      commitTimeoutMs: 100,
+      broadcastMessage: async (msg) => { broadcasted.push(msg) },
+      onFinalized: async () => {},
+    })
+
+    // First propose at height 1 with block X.
+    const blockX = makeBlock(1n, "v1")
+    blockX.hash = ("0x" + "aa".repeat(32)) as Hex
+    await coord.startRound(blockX)
+    const initialPrepares = broadcasted.filter((m) => m.type === "prepare").length
+    assert.equal(initialPrepares, 1, "first startRound broadcasts our prepare")
+
+    // Force-clear to simulate the round timing out and being recycled.
+    coord.forceClearRound("test-timeout")
+
+    // Mempool drifted; new candidate block Y for the same height.
+    const blockY = makeBlock(1n, "v1")
+    blockY.hash = ("0x" + "bb".repeat(32)) as Hex
+    await coord.startRound(blockY)
+
+    const totalPrepares = broadcasted.filter((m) => m.type === "prepare").length
+    assert.equal(
+      totalPrepares,
+      1,
+      "second startRound at same height with different blockHash must NOT broadcast",
+    )
+  })
+
+  it("Phase R: idempotent — second startRound with the SAME block at the same height is allowed", async () => {
+    const broadcasted: BftMessage[] = []
+    const coord = new BftCoordinator({
+      localId: "v1",
+      validators,
+      prepareTimeoutMs: 100,
+      commitTimeoutMs: 100,
+      broadcastMessage: async (msg) => { broadcasted.push(msg) },
+      onFinalized: async () => {},
+    })
+
+    const block = makeBlock(1n, "v1")
+    block.hash = ("0x" + "cc".repeat(32)) as Hex
+    await coord.startRound(block)
+    coord.forceClearRound("test-timeout")
+    // Re-broadcast path in consensus.ts uses the SAME cached block — must
+    // succeed (idempotent retry, not a new vote).
+    await coord.startRound(block)
+
+    const prepares = broadcasted.filter((m) => m.type === "prepare")
+    // Both startRound invocations broadcast the same block hash, which is
+    // idempotent from the BFT-safety standpoint (no second distinct vote).
+    // We allow re-broadcast for liveness so peers can collect quorum.
+    assert.ok(prepares.length >= 1, "at least one prepare broadcast")
+    const distinct = new Set(prepares.map((p) => p.blockHash))
+    assert.equal(distinct.size, 1, "all broadcast prepares must be for the same blockHash")
+  })
+
   // -- Phase J2.1: forceClearRound public entrypoint --
 
   it("Phase J2.1: forceClearRound clears active round and is idempotent", async () => {

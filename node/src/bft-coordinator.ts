@@ -139,6 +139,15 @@ export class BftCoordinator {
   // `equivocationDetector.getEvidence().length` because Phase H16 prunes finalized
   // heights' evidence; we need a monotonic counter for Prometheus.
   private equivocationsTotal = 0
+  // Phase R (2026-05-06): BFT no-double-vote invariant. Records what we
+  // ourselves prepared/committed at each height. If a later startRound call
+  // arrives with a different blockHash at an already-prepared height (e.g.
+  // mempool drift produced a new candidate after timeout), we refuse to
+  // broadcast a second prepare — that would be self-equivocation and peers
+  // would correctly drop both our votes via EquivocationDetector. Cleared
+  // when the corresponding height is finalized (cleanLocalVoteLedger).
+  private localPreparedAt = new Map<bigint, Hex>()
+  private localCommittedAt = new Map<bigint, Hex>()
 
   constructor(cfg: BftCoordinatorConfig) {
     this.cfg = cfg
@@ -220,6 +229,25 @@ export class BftCoordinator {
       }
     }
 
+    // Phase R (2026-05-06): BFT no-double-vote invariant. If we have already
+    // broadcast a prepare for this height with a DIFFERENT blockHash (e.g.
+    // mempool drift produced a new candidate after the previous round timed
+    // out), refuse to broadcast a second prepare. Self-equivocation would
+    // have peers' EquivocationDetector drop both our votes and the chain
+    // would stall.
+    //
+    // Idempotent retry (same hash) is allowed: liveness needs us to
+    // re-broadcast our cached prepare so peers can collect quorum.
+    const previouslyPreparedHash = this.localPreparedAt.get(block.number)
+    if (previouslyPreparedHash !== undefined && previouslyPreparedHash !== block.hash) {
+      log.warn("Phase R: refusing self-equivocation — already prepared a different block at this height", {
+        height: block.number.toString(),
+        previousHash: previouslyPreparedHash,
+        newBlockHash: block.hash,
+      })
+      return
+    }
+
     // Clean up any existing round (pendingMessages preserved across rounds)
     this.clearRound()
     this.deferredBlock = null
@@ -255,6 +283,12 @@ export class BftCoordinator {
     for (const msg of outgoing) {
       this.signMessage(msg)
       await this.cfg.broadcastMessage(msg)
+    }
+
+    // Phase R: record what we voted prepare on so a future startRound at
+    // the same height with a different block can refuse self-equivocation.
+    if (outgoing.length > 0) {
+      this.localPreparedAt.set(block.number, block.hash)
     }
 
     // Set timeout
@@ -392,6 +426,9 @@ export class BftCoordinator {
           // evidence that could interfere with vote processing at future heights.
           const evictedEarly = this.equivocationDetector.clearEvidenceBefore(msg.height + 1n)
           if (evictedEarly > 0) log.debug("H16: equivocation evidence pruned after finalization", { height: msg.height.toString(), evicted: evictedEarly })
+          // Phase R: prune local-vote ledger entries at and below finalized
+          // height so the maps stay bounded.
+          this.pruneLocalVoteLedger(msg.height)
           try {
             await this.cfg.onFinalized(block)
           } catch (err) {
@@ -401,8 +438,25 @@ export class BftCoordinator {
           return
         }
         for (const out of outgoing) {
+          // Phase R no-double-vote on commits: refuse to broadcast a commit
+          // for a blockHash differing from a previously-broadcast commit at
+          // the same height. Idempotent retransmits (same hash) allowed.
+          if (out.type === "commit") {
+            const prevCommitHash = this.localCommittedAt.get(out.height)
+            if (prevCommitHash !== undefined && prevCommitHash !== out.blockHash) {
+              log.warn("Phase R: refusing self-equivocation on commit — already committed a different block at this height", {
+                height: out.height.toString(),
+                previousHash: prevCommitHash,
+                newBlockHash: out.blockHash,
+              })
+              continue
+            }
+          }
           this.signMessage(out)
           await this.cfg.broadcastMessage(out)
+          if (out.type === "commit") {
+            this.localCommittedAt.set(out.height, out.blockHash)
+          }
         }
         // Start commit retry when transitioning to commit phase
         if (this.activeRound?.state.phase === "commit") {
@@ -429,6 +483,7 @@ export class BftCoordinator {
           this.clearRound()
           // Phase H16: same evidence-pruning as the early-commits path above.
           const evicted = this.equivocationDetector.clearEvidenceBefore(msg.height + 1n)
+          this.pruneLocalVoteLedger(msg.height)
           if (evicted > 0) log.debug("H16: equivocation evidence pruned after finalization", { height: msg.height.toString(), evicted })
           try {
             await this.cfg.onFinalized(block)
@@ -1058,6 +1113,21 @@ export class BftCoordinator {
    */
   getEquivocationsTotal(): number {
     return this.equivocationsTotal
+  }
+
+  /**
+   * Phase R — drop local-vote ledger entries at and below the finalized
+   * height. Once the chain has finalized height H, no honest validator
+   * needs to retain its vote at H ≤ H' for double-vote prevention; safe
+   * to free.
+   */
+  private pruneLocalVoteLedger(finalizedHeight: bigint): void {
+    for (const h of this.localPreparedAt.keys()) {
+      if (h <= finalizedHeight) this.localPreparedAt.delete(h)
+    }
+    for (const h of this.localCommittedAt.keys()) {
+      if (h <= finalizedHeight) this.localCommittedAt.delete(h)
+    }
   }
 }
 
