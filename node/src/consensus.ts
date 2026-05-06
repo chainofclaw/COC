@@ -403,6 +403,16 @@ export class ConsensusEngine {
     return this.forkChoiceMaxDepth
   }
 
+  /**
+   * Phase J1.1 corner-case fix (2026-05-06) — synchronous read of the
+   * sync-in-flight gate so the BFT peer-quorum-diverged callback can
+   * report a definitive `false` to the coordinator's dedup logic when
+   * `forceSnapSync` would no-op.
+   */
+  isSnapSyncInFlight(): boolean {
+    return this.syncInFlight
+  }
+
   getMetrics(): ConsensusMetrics {
     const now = Date.now()
     const proposeCount = this.blocksProposed + this.proposeFailed

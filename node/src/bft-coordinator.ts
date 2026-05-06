@@ -65,10 +65,19 @@ export interface BftCoordinatorConfig {
    *
    * Optional — when omitted, the timeout handler simply clears the round
    * and continues (legacy behaviour).
+   *
+   * Return value (Phase J1.1 corner-case fix, 2026-05-06):
+   *   - `false` ⇒ caller declined to act on this divergence (typically
+   *     because forceSnapSync is on cooldown or sync-already-in-flight).
+   *     The coordinator rolls back its per-height J1.1 dedup so the next
+   *     prepare arriving at this height re-fires the gate.
+   *   - `true` or `undefined` (back-compat) ⇒ caller accepted; coordinator
+   *     keeps the dedup engaged, suppressing further fires for this height
+   *     until a successful round finalize naturally advances past it.
    */
   onPeerQuorumDiverged?: (
     info: { height: bigint; peerBlockHash: Hex; peerStateRoot: Hex; localStateRoot?: Hex },
-  ) => void
+  ) => boolean | void
   /**
    * Phase H5: callback fired when peer-quorum divergence persists across
    * `persistentDivergenceThreshold` consecutive BFT rounds. The H4 snap-
@@ -293,15 +302,14 @@ export class BftCoordinator {
         const isDup = this.pendingMessages.some(
           (m) => m.senderId === msg.senderId && m.type === msg.type && m.height === msg.height,
         )
-        if (!isDup) {
-          this.pendingMessages.push(msg)
-          // Phase J1.1: try early divergence detect on prepare messages even
-          // when no active round exists. This is the key path for today's
-          // failure mode: chain engine rejected the parent block, so we
-          // never start a round, so the buffered prepares from peers are
-          // our only divergence signal.
-          if (msg.type === "prepare") this.tryEarlyDivergenceDetect(msg.height)
-        }
+        if (!isDup) this.pendingMessages.push(msg)
+        // Phase J1.1: try early divergence detect on every prepare message,
+        // even retransmitted duplicates. The buffer dedup above only
+        // prevents buffer bloat; the divergence gate itself must re-fire on
+        // retransmits because Phase J1.1's per-height dedup may have been
+        // rolled back by a previous rejected-callback path (see
+        // docs/phase-j-stall-2026-05-06-corner-case.md).
+        if (msg.type === "prepare") this.tryEarlyDivergenceDetect(msg.height)
       }
       return
     }
@@ -741,7 +749,11 @@ export class BftCoordinator {
     if (!divergence) return
 
     // Mark fired BEFORE invoking callback to prevent re-entry on synchronous
-    // callbacks that themselves trigger more BFT message handling.
+    // callbacks that themselves trigger more BFT message handling. We may
+    // roll this back below if the callback explicitly returns false to
+    // signal "I rejected this fire" (cooldown / sync-in-flight).
+    const priorFireHeight = this.lastEarlyDivergenceFireHeight
+    const priorFireAtMs = this.lastEarlyDivergenceFireAtMs
     this.lastEarlyDivergenceFireHeight = height
     this.lastEarlyDivergenceFireAtMs = nowMs
 
@@ -757,8 +769,9 @@ export class BftCoordinator {
     })
 
     if (this.cfg.onPeerQuorumDiverged) {
+      let accepted: boolean | void
       try {
-        this.cfg.onPeerQuorumDiverged({
+        accepted = this.cfg.onPeerQuorumDiverged({
           height,
           peerBlockHash: divergence.peerBlockHash,
           peerStateRoot: divergence.peerStateRoot,
@@ -766,6 +779,18 @@ export class BftCoordinator {
         })
       } catch (err) {
         log.warn("Phase J1.1: onPeerQuorumDiverged callback threw", { error: String(err) })
+        accepted = false
+      }
+      if (accepted === false) {
+        // Callback declined (cooldown / sync-in-flight). Roll back the dedup
+        // so the next prepare at this height re-evaluates. See
+        // docs/phase-j-stall-2026-05-06-corner-case.md for the failure mode
+        // this guards against.
+        this.lastEarlyDivergenceFireHeight = priorFireHeight
+        this.lastEarlyDivergenceFireAtMs = priorFireAtMs
+        log.warn("Phase J1.1 corner-case: callback declined — clearing dedup for re-fire", {
+          height: height.toString(),
+        })
       }
     }
   }
