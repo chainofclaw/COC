@@ -205,10 +205,135 @@ systemctl start coc-node@1 coc-node@2 coc-node@3
 
 ### 优先级 3（用户体验）
 - [ ] 写 `docs/run-user-node.zh-en.md` light/sync 节点接入文档
-- [ ] 部署 explorer 指向新 testnet endpoints
-- [ ] 部署 faucet 在新 chain 上
+- [x] **部署 explorer 指向新 testnet endpoints** —— 见 §8
+- [x] **部署 faucet 在新 chain 上** —— 见 §8
 
 ### 优先级 4（容量 / 弹性测试）
 - [ ] 添加 4th validator（验证 governance-driven 加节点）
 - [ ] 节点 region 跨大陆扩展（当前 3 servers 都在亚洲？需要确认地理）
 - [ ] 故意 partition 测试（一段时间网络分区然后恢复）
+
+---
+
+## 8. Explorer + Faucet 部署到新 testnet (2026-05-07)
+
+### 8.1 现状
+
+`159.198.44.136` (clawchain.io) 上 PM2 已经管着 `coc-explorer`, `coc-faucet`, `coc-website`, `coc-ipfs` 4 个服务，原本指向老 chain 的 `:18780`。新 testnet 在同台机器上的 validator-2 监听 `:28780`。最务实的做法：复用既有 PM2 + nginx infra，把 RPC backend 切到新 chain，不重新部署。
+
+### 8.2 切换步骤
+
+#### Step 1 — Nginx 公网 RPC 路由
+
+`/etc/nginx/sites-available/clawchain.io` 中 `location /api/testnet/rpc` 的 proxy_pass 改到 `127.0.0.1:28780`：
+
+```bash
+ssh root@<host>
+cp /etc/nginx/sites-available/clawchain.io /etc/nginx/sites-available/clawchain.io.bak-pre-multiserver-20260507
+sed -i 's|proxy_pass http://199.192.16.79:28780|proxy_pass http://127.0.0.1:28780|g' /etc/nginx/sites-available/clawchain.io
+nginx -t && nginx -s reload
+```
+
+WS 路径 `/api/testnet/ws` 同位置。
+
+#### Step 2 — Explorer 配置
+
+`/root/clawd/COC/explorer/.env.local`:
+
+```
+NEXT_PUBLIC_RPC_URL=https://clawchain.io/api/testnet/rpc
+NEXT_PUBLIC_WS_URL=wss://clawchain.io/api/testnet/ws
+COC_RPC_URL=http://127.0.0.1:28780
+```
+
+`NEXT_PUBLIC_RPC_URL` 是浏览器侧 build-time injected — 因为公网 URL 不变（依赖 nginx 后端切换），不需要重新 build。`COC_RPC_URL` 是 server-side runtime env，next start 启动时读取。
+
+#### Step 3 — Faucet 配置
+
+新建 `/root/clawd/COC/faucet/.env.local`（chmod 600，**不入仓库**）：
+
+```
+COC_FAUCET_RPC_URL=http://127.0.0.1:28780
+COC_FAUCET_PORT=3003
+COC_FAUCET_PRIVATE_KEY=<faucet 私钥，参见本机 secrets 笔记>
+COC_FAUCET_DRIP_AMOUNT=10
+COC_FAUCET_COOLDOWN_MS=86400000
+```
+
+由于新 chain 是 fresh genesis，faucet 地址在新链上没余额，需要从 anvil-0 deployer 转账。1000 ETH 一次足够运行很久（drip 量 10 ETH × 100 次/天 ≈ 1000 / 月）：
+
+```bash
+# 在 operator 工作站
+node -e '
+import { JsonRpcProvider, Wallet, Transaction } from "ethers"
+const provider = new JsonRpcProvider("https://clawchain.io/api/testnet/rpc")
+const w = new Wallet(process.env.ANVIL_0_KEY, provider)  // anvil-0 deployer
+const nonce = await provider.getTransactionCount(w.address, "latest")
+const tx = await w.populateTransaction({
+  to: process.env.FAUCET_ADDR,
+  value: 1000n * 10n ** 18n,
+  nonce, gasLimit: 21000n, gasPrice: 5_000_000_000n,
+  type: 0, chainId: 18780n,
+})
+await provider.broadcastTransaction(await w.signTransaction(tx))
+'
+```
+
+#### Step 4 — PM2 重启
+
+```bash
+# Explorer: env 改了直接 restart 即可（next start 重新读 .env.local）
+pm2 restart coc-explorer
+
+# Faucet: PM2 entry env 缓存难以更新，删掉重建
+pm2 delete coc-faucet
+cd /root/clawd/COC/faucet
+set -a; source /root/clawd/COC/faucet/.env.local; set +a
+pm2 start npm --name coc-faucet --update-env -- start
+pm2 save  # 持久化，重启服务器自动恢复
+```
+
+### 8.3 验证
+
+```bash
+# 1. nginx RPC proxy
+curl -s -X POST -H 'Content-Type: application/json' \
+  --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' \
+  https://clawchain.io/api/testnet/rpc
+# 期望：返回当前 height
+
+# 2. Explorer
+curl -sI https://explorer.clawchain.io/   # HTTP 200
+
+# 3. Faucet status
+curl -s https://faucet.clawchain.io/faucet/status
+# 期望：{"balance":"1000.0","totalDrips":0,"dailyDrips":0,"dailyLimit":"10000.0","dripAmount":"10.0"}
+
+# 4. Faucet drip (注意 address 必须正确 EIP-55 校验和或全小写)
+curl -s -X POST -H 'Content-Type: application/json' \
+  --data '{"address":"0x<lowercase_addr>"}' \
+  https://faucet.clawchain.io/faucet/request
+# 期望：{"txHash":"0x...","amount":"10.0","unit":"COC"}
+
+# 5. drip 后受益地址有余额
+curl -s -X POST -H 'Content-Type: application/json' \
+  --data '{"jsonrpc":"2.0","method":"eth_getBalance","params":["0x<addr>","latest"],"id":1}' \
+  https://clawchain.io/api/testnet/rpc
+# 期望：返回 0x8ac7230489e80000 (= 10 ETH)
+```
+
+### 8.4 端点摘要
+
+| Service | URL | Backend | 说明 |
+|---|---|---|---|
+| Explorer | https://explorer.clawchain.io | PM2 `coc-explorer` (Next.js port 3000) | server-side RPC = `127.0.0.1:28780` |
+| Faucet UI | https://faucet.clawchain.io | PM2 `coc-faucet` (port 3003) | drip 10 ETH/请求，24h 冷却 |
+| Faucet API | /faucet/{status,request} | 同上 | POST request，`{"address":"0x..."}` |
+| Public RPC | https://clawchain.io/api/testnet/rpc | nginx → `127.0.0.1:28780` | 浏览器用 |
+| Public WS | wss://clawchain.io/api/testnet/ws | nginx → `127.0.0.1:28780` (WS upgrade) | newHeads 等 subscribe |
+
+### 8.5 已知 caveat
+
+- **faucet drip 校验严格**：`0x...Dead` 大小写混合不通过 EIP-55 校验 → 500 internal error。Web UI 应 lowercase normalize 输入；API 调用方需保证 address 是有效校验和或全小写。
+- **Faucet RPC 选择 server-2 (159.198.44.136:28780) 而非 server-1/3**：因为 PM2 + faucet 在同台机器，loopback 最快；任一 server 宕机不影响另两个，但 faucet 跟 server-2 共命运。生产化可改成轮询所有 3 个 RPC。
+- **explorer NEXT_PUBLIC_RPC_URL 仍指 https://clawchain.io/api/testnet/rpc**（域名不变）：依赖 nginx 后端切换。如果未来 RPC backend 从同台机器搬走，要么改 nginx upstream，要么 rebuild explorer 改 NEXT_PUBLIC_RPC_URL。
