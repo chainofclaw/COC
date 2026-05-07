@@ -94,6 +94,11 @@ export interface NodeConfig {
   enableDht: boolean
   dhtBootstrapPeers: Array<{ id: string; address: string; port: number }>
   dhtRequireAuthenticatedVerify: boolean
+  // Persistent storage for DHT provider records (CID → peers-who-have-it).
+  // Without this, restart wipes all advertise records and old CIDs become
+  // unreachable via `coc_dhtFindProviders` until re-PUT triggers a fresh
+  // self-announce. Path lives under `dataDir`.
+  dhtProviderStorePath: string
   // State snapshot sync
   enableSnapSync: boolean
   snapSyncThreshold: number
@@ -525,6 +530,7 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     poseNonceRegistryMaxEntries,
     dnsSeeds: [],
     peerStorePath: join(dataDir, "peers.json"),
+    dhtProviderStorePath: join(dataDir, "dht-providers.json"),
     peerMaxAgeMs: 7 * 24 * 60 * 60 * 1000,
     p2pMaxPeers: 50,
     p2pMaxDiscoveredPerBatch: 200,

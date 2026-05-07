@@ -1392,6 +1392,7 @@ if (config.enableDht) {
     signer: nodeSigner,
     verifier: nodeSigner,
     requireAuthenticatedVerify: config.dhtRequireAuthenticatedVerify,
+    providerStorePath: config.dhtProviderStorePath,
     wireClientByPeerId,
     onPeerDiscovered: (peer) => {
       const httpUrl = peerIdToHttpUrl.get(peer.id)

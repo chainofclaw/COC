@@ -3,6 +3,9 @@ import assert from "node:assert/strict"
 import fs from "node:fs"
 import path from "node:path"
 import os from "node:os"
+import { mkdtemp, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { DhtNetwork } from "./dht-network.ts"
 import type { DhtPeer } from "./dht.ts"
 import type { WireClient } from "./wire-client.ts"
@@ -597,6 +600,109 @@ describe("DhtNetwork provider records", () => {
     net.putProvider(cidA, peer1, 0)
     net.putProvider(cidA, peer2, -1)
     assert.deepEqual(net.findProviders(cidA), [])
+  })
+})
+
+describe("DhtNetwork provider persistence", () => {
+  function newNetwork(providerStorePath?: string): DhtNetwork {
+    return new DhtNetwork({
+      localId: "0xaa",
+      bootstrapPeers: [],
+      wireClients: [],
+      onPeerDiscovered: () => {},
+      providerStorePath,
+    })
+  }
+
+  const cidA = "bafyreic0ffee" + "a".repeat(40)
+  const cidB = "bafyreic0ffee" + "b".repeat(40)
+  const peer1 = "0x1111111111111111111111111111111111111111"
+  const peer2 = "0x2222222222222222222222222222222222222222"
+
+  it("save then load round-trips provider entries", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "dht-provider-test-"))
+    const filePath = join(dir, "providers.json")
+    try {
+      const net1 = newNetwork(filePath)
+      net1.putProvider(cidA, peer1, 60_000)
+      net1.putProvider(cidA, peer2, 60_000)
+      net1.putProvider(cidB, peer1, 60_000)
+      const written = net1.saveProviders()
+      assert.equal(written, 3)
+
+      const net2 = newNetwork(filePath)
+      const loaded = net2.loadProviders()
+      assert.equal(loaded, 3)
+      assert.deepEqual(net2.findProviders(cidA, 10).sort(), [peer1, peer2].map((p) => p.toLowerCase()).sort())
+      assert.deepEqual(net2.findProviders(cidB, 10), [peer1.toLowerCase()])
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("loadProviders drops entries whose expiry has already passed", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "dht-provider-test-"))
+    const filePath = join(dir, "providers.json")
+    try {
+      // Write a stale entry directly to bypass put-time validation.
+      const stale = [{ cid: cidA.toLowerCase(), peerId: peer1.toLowerCase(), expiresAt: Date.now() - 1000 }]
+      const fresh = { cid: cidA.toLowerCase(), peerId: peer2.toLowerCase(), expiresAt: Date.now() + 60_000 }
+      const fs = await import("node:fs/promises")
+      await fs.writeFile(filePath, JSON.stringify([...stale, fresh]))
+
+      const net = newNetwork(filePath)
+      const loaded = net.loadProviders()
+      assert.equal(loaded, 1, "only the fresh entry survives")
+      assert.deepEqual(net.findProviders(cidA), [peer2.toLowerCase()])
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("save/load are no-ops when no path is configured", () => {
+    const net = newNetwork() // undefined path
+    net.putProvider(cidA, peer1, 60_000)
+    assert.equal(net.saveProviders(), 0)
+    assert.equal(net.loadProviders(), 0)
+    // Map remains intact.
+    assert.deepEqual(net.findProviders(cidA), [peer1.toLowerCase()])
+  })
+
+  it("loadProviders ignores corrupt or non-array files", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "dht-provider-test-"))
+    const filePath = join(dir, "providers.json")
+    try {
+      const fs = await import("node:fs/promises")
+      await fs.writeFile(filePath, "{not valid json")
+      const net = newNetwork(filePath)
+      assert.equal(net.loadProviders(), 0)
+
+      await fs.writeFile(filePath, '"a string, not an array"')
+      assert.equal(net.loadProviders(), 0)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("saveProviders skips entries past their expiry to keep the file bounded", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "dht-provider-test-"))
+    const filePath = join(dir, "providers.json")
+    try {
+      const net = newNetwork(filePath)
+      net.putProvider(cidA, peer1, 5) // very short
+      net.putProvider(cidA, peer2, 60_000)
+      await new Promise((r) => setTimeout(r, 30))
+      const written = net.saveProviders()
+      assert.equal(written, 1, "expired peer1 dropped at save time")
+
+      // Reload to confirm only the fresh entry was written.
+      const net2 = newNetwork(filePath)
+      const loaded = net2.loadProviders()
+      assert.equal(loaded, 1)
+      assert.deepEqual(net2.findProviders(cidA), [peer2.toLowerCase()])
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
   })
 })
 
