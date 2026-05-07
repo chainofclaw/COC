@@ -2,11 +2,43 @@
 
 | | |
 |---|---|
-| Status | Drafted (proposal) |
-| Owner | Pending assignment |
+| Status | **Shipped** (Q.1–Q.8 all landed; tracking issue closed 2026-05-07) |
 | Created | 2026-05-07 |
 | Depends on | Phase C (push-to-K replication, repair loop) — already shipped |
 | Tracking issue | [chainofclaw/COC#68](https://github.com/chainofclaw/COC/issues/68) |
+| Operator runbook | [`docs/runbooks/phase-q-erasure-coding.md`](runbooks/phase-q-erasure-coding.md) |
+| Validation results | [`docs/phase-q-validation-2026-05-07.md`](phase-q-validation-2026-05-07.md) |
+| Benchmark replay | [`scripts/phase-q-benchmark/`](../scripts/phase-q-benchmark/) |
+
+## 0. Shipping summary (2026-05-07)
+
+| Milestone | Commit | Outcome |
+|---|---|---|
+| Q.1 — Library benchmark | `3f78a4a` | `@ronomon/reed-solomon@6.0.0` adopted; RS(4+2) 10 MB encode = 3.2 ms (4-core constrained), 1.4 ms on validator hw — under 300 ms target by ~94×–214× |
+| Q.2 — `ipfs-erasure.ts` + 46 unit tests | `77519d4` | Pure encode/decode/manifest helpers; 46 tests, sizes 1 KB → 11 MB across RS(4+2)/(6+3)/(8+4) |
+| Q.3 + Q.4 — Manifest reader + HTTP API | `c12c79b` | `?erasure=N+M` PUT, manifest-detecting cat/get, `/api/v0/erasure/status` |
+| Q.5 — Repair loop + parity reconstruction | `05925d2` + `d7dcd07` | Manifest tick reconstructs missing shards from parity; live-validated on testnet |
+| Q.6 — Stripe-aware push spread | `26ef431` | Per-stripe peer-spread bias; `X-COC-Erasure-Stripe-Spread` header |
+| Q.7 — Multi-server validation + perf | `1a21ca9` + `b62045a` | Matrix all PASS; surfaced + fixed pre-existing `findByNodeId` case bug |
+| Q.8 — Runbook + acceptance | (this commit) | Operator runbook published; design doc marked shipped |
+
+### Acceptance criteria check (per §11)
+
+- [x] All Q.1–Q.8 milestones landed in `chainofclaw/COC main`.
+- [x] Multi-server validation matrix all PASS (T1–T5 in `phase-q-validation-2026-05-07.md`).
+- [x] Encode/decode benchmarks documented (validation doc + benchmark script).
+- [x] Tracking issue closed; runbook entry shipped.
+- [x] Operator-facing ops runbook explains: when to enable RS, storage savings, recovery procedure for M+1 failures.
+
+### Out-of-scope follow-ups (Q+1 candidates)
+
+- Proactive pull-from-peers during repair tick (currently local-only)
+- 6+ validator cluster to exercise true peer-distinct spread
+- Streaming encode/decode for files > 100 MB
+- Encrypted shards (Phase R)
+- Manual `erasure/repair` admin RPC trigger
+- Manifest-walk recursive pin (currently per-shard pinning)
+- Prometheus exposure for erasure repair counters
 
 ## 1. Problem statement
 
