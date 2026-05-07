@@ -445,15 +445,26 @@ ssh root@209.74.64.88 'systemctl start coc-node@1'
   - 外层 catch 根据 `HttpError.status` 返回正确状态码
 - **验证**：未知 CID → `HTTP 404 {"error":"block not found"}` 三台 server 一致。
 
-#### Fix 3: pin/ls 不能按 arg 过滤
-- 现状：`?arg=<cid>` 被忽略，返回全部 pinned 集。
-- 影响：测试需自己 jq filter；非 critical。
-- 状态：未修，留作 follow-up。
+#### Fix 3 (✅ 已修): pin/ls 不能按 arg 过滤
+- **根因**：`handlePinLs` 完全忽略 `?arg=<cid>`，无条件返回全部 pinned 集。
+- **修复 commit `e66b157`**：
+  - `?arg=<cid>` + 已 pin → 200，仅返回该 CID 一条
+  - `?arg=<cid>` + 未 pin → **404 "not pinned"**
+  - `?arg=<malformed>` → 400 "invalid cid"
+  - 无 `arg` → 与之前相同，返全部 pinned 集（kubo 兼容语义）
+- **验证**：3 台 server 在线 200/404/全集三态 OK。
 
-#### Fix 4: DHT 发现 URL 用 wire port 验证 peer identity
-- 现状：`node/src/index.ts:1384` 拿 wire port 当 HTTP 验证地址。
-- 临时绕过：3 台 server 配置 `dhtRequireAuthenticatedVerify=false` + `p2pInboundAuthMode=observe`。
-- 状态：未修，留作 follow-up。修后可恢复严格 peer auth。
+#### Fix 4 (✅ 已修): DHT 发现 URL 用 wire port 验证 peer identity
+- **根因**：`node/src/index.ts:1384` 把 DHT 返回的 wire-port 地址直接构造成 `http://${host}:${wirePort}` 并交给 PeerDiscovery，导致 HTTP 上的 identity-proof / state-snapshot / bft-message gossip 全部 404。
+- **修复 commit `e66b157`**：
+  - 启动时从 `config.peers` 构建 `peerId → HTTP P2P URL` 映射表（用 `advertisedUrl ?? url`）
+  - `onPeerDiscovered` 只把映射表里有的 peer 加进 HTTP discovery；wire-only peer 仅打 debug 日志（wire 握手已经签名认证，无需 HTTP 二次验证）
+- **配置回切**：3 台 server 的 `/etc/coc/node-N.json` 已改回严格模式：
+  ```json
+  "p2pInboundAuthMode": "strict",
+  "dhtRequireAuthenticatedVerify": true,
+  ```
+- **验证**：3 台 server 滚动重启后链稳定出块（block 3438→3450 in 8s），fresh PUT 的 CID 在 3 server 各自的 `coc_dhtFindProviders` 全返回 3 validator，无 verify/reject/auth fail 日志。
 
 ### 9.5 结论
 
@@ -466,6 +477,6 @@ ssh root@209.74.64.88 'systemctl start coc-node@1'
 - ✅ 50G cap 已配置 + LRU 驱逐策略生效（cap 测试推荐看 `node/src/ipfs-blockstore.test.ts` 单测，端到端把 45G 数据 PUT 进去过于昂贵）
 
 下一步建议（非本次范围）：
-- 修 pin/ls arg filter
-- 把 DHT discovery URL 改用 P2P port 而非 wire port，恢复严格 peer auth
 - Reed-Solomon 纠删码 (Phase Q) 在 K=3 之上加冗余
+- DHT provider records 改持久化（目前重启丢；旧 CID 需要 PUT 来重新 announce）
+- 把 `dhtBootstrapPeers` 也写进 `node-multiserver.env.template`，避免每次部署手填
