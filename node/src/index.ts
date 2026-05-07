@@ -1362,7 +1362,10 @@ if (config.enableWireProtocol) {
       })
       client.connect()
       wireClients.push(client)
-      wireClientByPeerId.set(peer.id, client)
+      // Issue #70: normalise the key to lowercase so DHT-sourced lookups
+      // (routing-table peer IDs are lowercase) and config-sourced lookups
+      // (config.peers id is EIP-55 mixed-case) hit the same entry.
+      wireClientByPeerId.set(peer.id.toLowerCase(), client)
     } catch {
       log.warn("failed to create wire client for peer", { peer: peer.id })
     }
@@ -1424,12 +1427,30 @@ if (wireServer && dhtNetwork) {
   // requestBlockFromAny (pull side). index.ts keeps its own
   // wireClients array + wireClientByPeerId Map rather than owning a
   // WireConnectionManager, so we bridge without changing construction.
+  // Issue #70: every comparison here must be case-insensitive. The wire
+  // handshake stores `getRemoteNodeId()` in EIP-55 mixed-case (taken from
+  // the peer's `config.nodeId`), and `wireClientByPeerId` is keyed by the
+  // mixed-case `peer.id` from `config.peers`. Meanwhile `DhtNetwork`'s
+  // routing table normalises every peer ID to lowercase on insert, so
+  // `findProviders` returns lowercase. A strict `Map.get` or `===`
+  // comparison silently misses every cross-node fetchRemote — the
+  // exact symptom of #70 (and the root cause of Q+1's live-verification
+  // failure). Lowercasing both sides matches the convention DHT already
+  // uses internally.
   const connMgrAdapter = {
     findByNodeId(nodeId: string) {
-      const client = wireClientByPeerId.get(nodeId)
-      if (client && client.isConnected()) return client
+      const want = nodeId.toLowerCase()
+      // Map keys are always lowercased (set in `wireClientByPeerId.set`
+      // above), so this hits regardless of the caller's input case.
+      const direct = wireClientByPeerId.get(want)
+      if (direct && direct.isConnected()) return direct
+      // Defence-in-depth scan: in case a wire client was registered via
+      // a non-config-driven path (none today, but keeps the adapter
+      // robust if that changes) — match by the wire-handshake's reported
+      // remote ID, also lowercased.
       for (const c of wireClients) {
-        if (c.isConnected() && c.getRemoteNodeId() === nodeId) return c
+        const remote = c.getRemoteNodeId()
+        if (c.isConnected() && remote && remote.toLowerCase() === want) return c
       }
       return undefined
     },
