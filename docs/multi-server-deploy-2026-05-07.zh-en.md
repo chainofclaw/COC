@@ -477,7 +477,7 @@ ssh root@209.74.64.88 'systemctl start coc-node@1'
 - ✅ 50G cap 已配置 + LRU 驱逐策略生效（cap 测试推荐看 `node/src/ipfs-blockstore.test.ts` 单测，端到端把 45G 数据 PUT 进去过于昂贵）
 
 下一步建议（非本次范围）：
-- Reed-Solomon 纠删码 (Phase Q) 在 K=3 之上加冗余 — 这是真正的 feature dev，需要单独 design + multi-day 实现，**不属于"follow-up bug fix"范畴**：要选 RS 库、设计 parity 块如何嵌入 UnixFS DAG、决定 N+M 与 K=3 push-to-K 的层次关系、加 encode/decode/repair 流水线，全套加完整单元 + 集成测试。建议拆成独立 PR / phase 立项。
+- Reed-Solomon 纠删码 (Phase Q) 已立项 ✅ — 设计文档 [`docs/phase-q-erasure-coding.md`](./phase-q-erasure-coding.md)，tracking issue [chainofclaw/COC#68](https://github.com/chainofclaw/COC/issues/68)。预估 8.5 dev-days，分 Q.1—Q.8 八个里程碑。
 
 #### Fix 5 (✅ 已修): DHT provider records 持久化
 - **根因**：provider 表（CID → 持有该 CID 的 peer 集）只在内存中，restart 全清。`coc_dhtFindProviders` 对老 CID 返 `[]` 直到对应 peer 在 ≤TTL/2 (=12h) 内重新 announce。本次 testnet 重启就观察到这一现象。

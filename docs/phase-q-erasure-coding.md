@@ -6,7 +6,7 @@
 | Owner | Pending assignment |
 | Created | 2026-05-07 |
 | Depends on | Phase C (push-to-K replication, repair loop) — already shipped |
-| Tracking issue | TBD (chainofclaw/COC) |
+| Tracking issue | [chainofclaw/COC#68](https://github.com/chainofclaw/COC/issues/68) |
 
 ## 1. Problem statement
 
