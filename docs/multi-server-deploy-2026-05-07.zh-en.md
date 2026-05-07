@@ -394,7 +394,7 @@ LRU 排序基于 `accessSeq` 计数；pinned CIDs 不会被驱逐。50G × 3 节
 | B1a | 256KB PUT to s1 + GET from 3 servers (byte-cmp) | **PASS** 3/3 | tar=263680, body=262144 byte-identical |
 | B1b | 1MB PUT + GET 3 servers | **PASS** 3/3 | tar=1050112 byte-identical |
 | B1c | 5MB PUT + GET 3 servers | **PASS** 3/3 | tar=5244416 byte-identical |
-| B1d | 10MB PUT | **FAIL** | `{"error":"internal error"}` HTTP 500 — 已知问题，需排查 |
+| B1d | 10MB PUT | **PASS** 3/3 (commit `0512ccb`) | 修复后 tar=10487296 byte-identical；详见 §9.4 fix 1 |
 | B2 | filesystem replication audit (block files in `/var/lib/coc/.../storage/blocks/`) | **PASS** | 三服务器各 40 blocks / 8.5M，所有测试 CID 都能在 3 台 server 找到对应 block 文件 |
 | B3 | DHT findProviders RPC (`coc_dhtFindProviders`) | **PASS** 3/3 | 三服务器各自的 DHT view 都返回全 3 validator 地址作为 provider |
 | B4 | origin-death resilience (stop s1, GET from s2/s3) | **PASS** 2/2 | 512KB CID PUT 到 s1，s1 stop 后 s2 + s3 都能完整 GET；s1 重启后追上链头并保留 pin |
@@ -429,12 +429,31 @@ curl -sS -X POST http://159.198.44.136:28786/api/v0/get?arg=<cid> | tar -xO > /t
 ssh root@209.74.64.88 'systemctl start coc-node@1'
 ```
 
-### 9.4 已知问题
+### 9.4 已知问题与修复
 
-1. **10MB PUT 失败 (HTTP 500 "internal error")** — 5MB 通过，10MB 失败；推测为 HTTP body 限流或单块 chunking 上限。临时建议：> 5MB 文件分多次 add 或预切片。需读 `node/src/ipfs-http.ts` 找具体限流。
-2. **`/api/v0/cat` 返回 404** — 已知 endpoint bug，所有 GET 测试改用 `/api/v0/get`（tar archive）。`scripts/verify-multi-server-ipfs.sh:44` 仍用 `cat`，需修。
-3. **pin/ls 不能按 arg 过滤** — `?arg=<cid>` 被忽略，返回全部 pinned 集；必须自己 jq filter。
-4. **DHT 发现 URL 用 wire port 验证 peer identity** — `node/src/index.ts:1384` bug；本部署里通过把所有 server 的 `dhtRequireAuthenticatedVerify=false` + `p2pInboundAuthMode=observe` 绕过。等 fix 上 main 后再启严验证。
+#### Fix 1 (✅ 已修): 10MB PUT 失败
+- **根因**：`DEFAULT_MAX_UPLOAD_SIZE = 10 * 1024 * 1024`（精确 10MB）。10MB 文件加 multipart 头就超限，错误传到外层 catch 返回通用 `500 "internal error"`。
+- **修复 commit `0512ccb`**：
+  - 上限提至 `50 MB + 64 KB headroom`（与 `UnixFsBuilder.MAX_READ_SIZE=50MB` 对齐）
+  - 引入 `HttpError` 类，超限改返 **413 "payload too large"** 而非 500
+- **部署**：3 台 server 已滚动重启验证 10MB roundtrip 跨 server byte-identical。
+
+#### Fix 2 (✅ 已修): `cat`/`get` 未知 CID 返通用 500
+- **根因**：之前误判为 "/api/v0/cat 返回 404"。**实际路由工作正常**（256K/5M 都成功）；真正的 bug 是请求**未存在的 CID** 时 `store.get` 抛 ENOENT 被外层 catch 捕获，返回通用 `500 "internal error"`，调用方无法区分"路由错"和"块缺失"。
+- **修复 commit `0512ccb`**：
+  - `handleCat` / `handleGet` 显式捕获 not-found 抛 `HttpError(404, "block not found")`
+  - 外层 catch 根据 `HttpError.status` 返回正确状态码
+- **验证**：未知 CID → `HTTP 404 {"error":"block not found"}` 三台 server 一致。
+
+#### Fix 3: pin/ls 不能按 arg 过滤
+- 现状：`?arg=<cid>` 被忽略，返回全部 pinned 集。
+- 影响：测试需自己 jq filter；非 critical。
+- 状态：未修，留作 follow-up。
+
+#### Fix 4: DHT 发现 URL 用 wire port 验证 peer identity
+- 现状：`node/src/index.ts:1384` 拿 wire port 当 HTTP 验证地址。
+- 临时绕过：3 台 server 配置 `dhtRequireAuthenticatedVerify=false` + `p2pInboundAuthMode=observe`。
+- 状态：未修，留作 follow-up。修后可恢复严格 peer auth。
 
 ### 9.5 结论
 
@@ -447,8 +466,6 @@ ssh root@209.74.64.88 'systemctl start coc-node@1'
 - ✅ 50G cap 已配置 + LRU 驱逐策略生效（cap 测试推荐看 `node/src/ipfs-blockstore.test.ts` 单测，端到端把 45G 数据 PUT 进去过于昂贵）
 
 下一步建议（非本次范围）：
-- 修 10MB PUT failure
-- 修 `/api/v0/cat` endpoint
 - 修 pin/ls arg filter
 - 把 DHT discovery URL 改用 P2P port 而非 wire port，恢复严格 peer auth
 - Reed-Solomon 纠删码 (Phase Q) 在 K=3 之上加冗余
