@@ -277,3 +277,200 @@ describe("IpfsRepairLoop", () => {
     assert.equal(metrics.repairsFailed, 1, "missing CID counted as failed")
   })
 })
+
+// ---------------------------------------------------------------------------
+// Phase Q.5 — erasure manifest repair tick
+// ---------------------------------------------------------------------------
+import { encodeFile, decodeFile } from "./ipfs-erasure.ts"
+import { randomBytes } from "node:crypto"
+
+function mkErasureBlockstore(blocks: BlockstoreMap, pins: Set<string>) {
+  return {
+    listPins: async () => [...pins] as CidString[],
+    get: async (cid: CidString) => {
+      const bytes = blocks.get(cid)
+      if (!bytes) throw new Error(`missing block ${cid}`)
+      return { cid, bytes }
+    },
+    has: async (cid: CidString) => blocks.has(cid),
+    put: async (block: { cid: CidString; bytes: Uint8Array }) => {
+      blocks.set(block.cid, block.bytes)
+    },
+    pin: async (cid: CidString) => {
+      pins.add(cid)
+    },
+  }
+}
+
+describe("IpfsRepairLoop Phase Q.5 — erasure repair tick", () => {
+  it("reconstructs a missing data shard from parity and re-pins it", async () => {
+    // Need distinct shard content so dropping one CID doesn't take out
+    // multiple logical shards (see Q.2 dedup note).
+    const file = randomBytes(4 * 256 * 1024 + 17)
+    const enc = await encodeFile(file, { n: 4, m: 2 })
+    const blocks: BlockstoreMap = new Map()
+    const pins = new Set<string>()
+    for (const block of enc.shardBlocks) {
+      blocks.set(block.cid, block.bytes)
+      pins.add(block.cid)
+    }
+    blocks.set(enc.manifestCid, enc.manifestBlock.bytes)
+    pins.add(enc.manifestCid)
+
+    // Lose one data shard (simulates disk corruption / unpin race).
+    const lostCid = enc.manifest.stripes[0].data[1]
+    blocks.delete(lostCid)
+    pins.delete(lostCid)
+
+    const { pushToK } = mkPushToK()
+    const loop = new IpfsRepairLoop({
+      blockstore: mkErasureBlockstore(blocks, pins),
+      dht: mkDht(new Map()),
+      pushToK,
+    })
+    const metrics = await loop.runOnce()
+
+    assert.equal(metrics.erasureManifestsScanned, 1)
+    assert.equal(metrics.erasureStripesRepaired, 1)
+    assert.equal(metrics.erasureShardsReconstructed, 1)
+    assert.ok(blocks.has(lostCid), "lost shard restored locally")
+    assert.ok(pins.has(lostCid), "lost shard re-pinned")
+
+    // Sanity: full file decodes back successfully.
+    const back = await decodeFile(enc.manifest, async (c) => blocks.get(c) ?? null)
+    assert.equal(back.byteLength, file.byteLength)
+    assert.ok(Buffer.from(back).equals(Buffer.from(file)))
+  })
+
+  it("regenerates a missing parity shard when all data is intact", async () => {
+    const file = randomBytes(4 * 256 * 1024 + 7)
+    const enc = await encodeFile(file, { n: 4, m: 2 })
+    const blocks: BlockstoreMap = new Map()
+    const pins = new Set<string>()
+    for (const block of enc.shardBlocks) {
+      blocks.set(block.cid, block.bytes)
+      pins.add(block.cid)
+    }
+    blocks.set(enc.manifestCid, enc.manifestBlock.bytes)
+    pins.add(enc.manifestCid)
+
+    const lostParity = enc.manifest.stripes[0].parity[0]
+    blocks.delete(lostParity)
+    pins.delete(lostParity)
+
+    const { pushToK } = mkPushToK()
+    const loop = new IpfsRepairLoop({
+      blockstore: mkErasureBlockstore(blocks, pins),
+      dht: mkDht(new Map()),
+      pushToK,
+    })
+    const metrics = await loop.runOnce()
+
+    assert.equal(metrics.erasureStripesRepaired, 1)
+    assert.equal(metrics.erasureShardsReconstructed, 1)
+    assert.ok(blocks.has(lostParity), "parity shard regenerated")
+    assert.ok(pins.has(lostParity), "parity shard re-pinned")
+  })
+
+  it("skips a stripe with M+1 missing shards and bumps the insufficient counter", async () => {
+    const file = randomBytes(4 * 256 * 1024 + 21)
+    const enc = await encodeFile(file, { n: 4, m: 2 })
+    const blocks: BlockstoreMap = new Map()
+    const pins = new Set<string>()
+    for (const block of enc.shardBlocks) {
+      blocks.set(block.cid, block.bytes)
+      pins.add(block.cid)
+    }
+    blocks.set(enc.manifestCid, enc.manifestBlock.bytes)
+    pins.add(enc.manifestCid)
+
+    // Drop 3 distinct shards in one stripe — can't recover (need ≥4 of 6).
+    blocks.delete(enc.manifest.stripes[0].data[0])
+    blocks.delete(enc.manifest.stripes[0].data[1])
+    blocks.delete(enc.manifest.stripes[0].data[2])
+
+    const { pushToK } = mkPushToK()
+    const loop = new IpfsRepairLoop({
+      blockstore: mkErasureBlockstore(blocks, pins),
+      dht: mkDht(new Map()),
+      pushToK,
+    })
+    const metrics = await loop.runOnce()
+
+    assert.equal(metrics.erasureStripesSkippedInsufficient, 1)
+    assert.equal(metrics.erasureStripesRepaired, 0)
+    assert.ok(!blocks.has(enc.manifest.stripes[0].data[0]), "lost shard not restored")
+  })
+
+  it("intact manifest is a no-op", async () => {
+    const file = randomBytes(2 * 256 * 1024)
+    const enc = await encodeFile(file, { n: 4, m: 2 })
+    const blocks: BlockstoreMap = new Map()
+    const pins = new Set<string>()
+    for (const block of enc.shardBlocks) { blocks.set(block.cid, block.bytes); pins.add(block.cid) }
+    blocks.set(enc.manifestCid, enc.manifestBlock.bytes); pins.add(enc.manifestCid)
+
+    const loop = new IpfsRepairLoop({
+      blockstore: mkErasureBlockstore(blocks, pins),
+      dht: mkDht(new Map()),
+      pushToK: mkPushToK().pushToK,
+    })
+    const metrics = await loop.runOnce()
+    assert.equal(metrics.erasureManifestsScanned, 1)
+    assert.equal(metrics.erasureStripesRepaired, 0)
+    assert.equal(metrics.erasureShardsReconstructed, 0)
+  })
+
+  it("reconstructs across multiple stripes per tick", async () => {
+    const file = randomBytes(3 * 4 * 256 * 1024 + 11) // 3 stripes
+    const enc = await encodeFile(file, { n: 4, m: 2 })
+    assert.equal(enc.manifest.stripes.length, 4) // padding bumps to 4
+    const blocks: BlockstoreMap = new Map()
+    const pins = new Set<string>()
+    for (const block of enc.shardBlocks) { blocks.set(block.cid, block.bytes); pins.add(block.cid) }
+    blocks.set(enc.manifestCid, enc.manifestBlock.bytes); pins.add(enc.manifestCid)
+
+    // Lose one data shard from each of two different stripes.
+    const lost1 = enc.manifest.stripes[1].data[2]
+    const lost2 = enc.manifest.stripes[2].parity[0]
+    blocks.delete(lost1)
+    blocks.delete(lost2)
+
+    const loop = new IpfsRepairLoop({
+      blockstore: mkErasureBlockstore(blocks, pins),
+      dht: mkDht(new Map()),
+      pushToK: mkPushToK().pushToK,
+    })
+    const metrics = await loop.runOnce()
+    assert.equal(metrics.erasureStripesRepaired, 2)
+    assert.equal(metrics.erasureShardsReconstructed, 2)
+    assert.ok(blocks.has(lost1))
+    assert.ok(blocks.has(lost2))
+  })
+
+  it("respects erasureManifestBatchSize cap", async () => {
+    // Build 5 manifests but only allow 2 per tick.
+    const blocks: BlockstoreMap = new Map()
+    const pins = new Set<string>()
+    const manifestCids: string[] = []
+    for (let i = 0; i < 5; i++) {
+      const file = randomBytes(4 * 256 * 1024 + i)
+      const enc = await encodeFile(file, { n: 4, m: 2 })
+      for (const block of enc.shardBlocks) { blocks.set(block.cid, block.bytes); pins.add(block.cid) }
+      blocks.set(enc.manifestCid, enc.manifestBlock.bytes); pins.add(enc.manifestCid)
+      manifestCids.push(enc.manifestCid)
+      // Lose one data shard so each manifest needs repair.
+      blocks.delete(enc.manifest.stripes[0].data[1])
+    }
+
+    const loop = new IpfsRepairLoop({
+      blockstore: mkErasureBlockstore(blocks, pins),
+      dht: mkDht(new Map()),
+      pushToK: mkPushToK().pushToK,
+      erasureManifestBatchSize: 2,
+    })
+    const metrics = await loop.runOnce()
+    assert.equal(metrics.erasureManifestsScanned, 2, "batch cap enforced")
+    assert.equal(metrics.erasureStripesRepaired, 2)
+  })
+})

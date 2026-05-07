@@ -21,11 +21,35 @@
  * its own.
  */
 
+import { createRequire } from "node:module"
+import { CID } from "multiformats/cid"
 import type { IpfsBlockstore } from "./ipfs-blockstore.ts"
 import type { DhtNetwork } from "./dht-network.ts"
 import type { PushToKResult } from "./coc-ipfs-wiring.ts"
 import type { CidString } from "./ipfs-types.ts"
+import { decodeManifest, ErasureError, type ErasureManifest } from "./ipfs-erasure.ts"
 import { createLogger } from "./logger.ts"
+
+// Native binding required for parity reconstruction. Loaded the same way
+// as in ipfs-erasure.ts.
+const require = createRequire(import.meta.url)
+const ReedSolomon = require("@ronomon/reed-solomon") as {
+  create(k: number, m: number): unknown
+  encode(
+    context: unknown,
+    sources: number,
+    targets: number,
+    buffer: Buffer,
+    bufferOffset: number,
+    bufferSize: number,
+    parity: Buffer,
+    parityOffset: number,
+    paritySize: number,
+    callback: (err: Error | null) => void,
+  ): void
+}
+
+const CODEC_DAG_CBOR = 0x71
 
 const log = createLogger("coc-ipfs-repair")
 
@@ -44,10 +68,16 @@ const DEFAULT_MIN_REPLICAS = 2
 // the cap limits the outgoing burst. Remainder gets picked up on the
 // next tick — repair converges in ceil(total / batch) ticks.
 const DEFAULT_REPAIR_BATCH_SIZE = 50
+// Phase Q.5: per-tick manifest batch. Manifest repair is much heavier than
+// raw CID push (parse + walk + RS reconstruction per stripe), so we cap
+// it lower than the plain repair batch. 20 manifests/tick × 4 stripes ×
+// ~30 ms RS reconstruction = ~2.4 s of wall time, comfortably inside the
+// 10-min tick window. Adjusts up cleanly as encoding speed improves.
+const DEFAULT_ERASURE_MANIFEST_BATCH_SIZE = 20
 
 export interface IpfsRepairDeps {
   /** Source of pinned CIDs to inspect. */
-  blockstore: Pick<IpfsBlockstore, "listPins" | "get">
+  blockstore: Pick<IpfsBlockstore, "listPins" | "get" | "has" | "put" | "pin">
   /** DHT we query for current replica counts (via findProviders). */
   dht: Pick<DhtNetwork, "findProviders">
   /** Push helper supplied by coc-ipfs-wiring. Repair calls this for each under-replicated CID. */
@@ -58,6 +88,12 @@ export interface IpfsRepairDeps {
   minReplicas?: number
   /** Max CIDs repaired per tick. Default 50. */
   repairBatchSize?: number
+  /**
+   * Phase Q.5: max erasure manifests inspected per tick. Manifests have
+   * higher per-item cost than plain CIDs (parse + walk every stripe + RS
+   * reconstruction), so we throttle them separately. Default 20.
+   */
+  erasureManifestBatchSize?: number
 }
 
 export interface IpfsRepairMetrics {
@@ -73,6 +109,16 @@ export interface IpfsRepairMetrics {
   repairsSucceeded: number
   /** pushToK calls where every target peer failed. */
   repairsFailed: number
+  /** Phase Q.5: erasure manifests inspected (across all ticks). */
+  erasureManifestsScanned: number
+  /** Stripes that had at least one missing shard reconstructed. */
+  erasureStripesRepaired: number
+  /** Individual data + parity shards regenerated via RS arithmetic. */
+  erasureShardsReconstructed: number
+  /** Stripes skipped because too many shards were missing to recover. */
+  erasureStripesSkippedInsufficient: number
+  /** Manifest fetches/parses that failed (counted as warnings, not aborts). */
+  erasureManifestParseFailed: number
 }
 
 /**
@@ -88,6 +134,7 @@ export class IpfsRepairLoop {
     tickIntervalMs: number
     minReplicas: number
     repairBatchSize: number
+    erasureManifestBatchSize: number
   }
   private timer: ReturnType<typeof setInterval> | null = null
   private stopped = false
@@ -99,6 +146,11 @@ export class IpfsRepairLoop {
     repairsAttempted: 0,
     repairsSucceeded: 0,
     repairsFailed: 0,
+    erasureManifestsScanned: 0,
+    erasureStripesRepaired: 0,
+    erasureShardsReconstructed: 0,
+    erasureStripesSkippedInsufficient: 0,
+    erasureManifestParseFailed: 0,
   }
 
   constructor(deps: IpfsRepairDeps) {
@@ -109,6 +161,7 @@ export class IpfsRepairLoop {
       tickIntervalMs: deps.tickIntervalMs ?? DEFAULT_TICK_INTERVAL_MS,
       minReplicas: deps.minReplicas ?? DEFAULT_MIN_REPLICAS,
       repairBatchSize: deps.repairBatchSize ?? DEFAULT_REPAIR_BATCH_SIZE,
+      erasureManifestBatchSize: deps.erasureManifestBatchSize ?? DEFAULT_ERASURE_MANIFEST_BATCH_SIZE,
     }
   }
 
@@ -211,9 +264,197 @@ export class IpfsRepairLoop {
           this.metrics.repairsFailed++
         }
       }
+
+      // Step 3 (Phase Q.5): walk pinned erasure manifests and try to
+      // restore any missing shards. We re-scan `pins` rather than the
+      // deduped batch above because the under-replicated raw-shard repair
+      // is independent of stripe-level erasure repair.
+      await this.runErasureTick(pins)
+
       return this.getMetrics()
     } finally {
       this.running = false
+    }
+  }
+
+  /**
+   * Phase Q.5: scan the pin set for erasure manifest CIDs (dag-cbor
+   * codec) and reconstruct any missing shards via RS arithmetic.
+   *
+   * For each manifest:
+   *  1. Fetch + parse the manifest. Non-manifest dag-cbor blocks are
+   *     skipped silently (not every dag-cbor pin is ours; safe default).
+   *  2. For every stripe, count missing data + missing parity shards
+   *     locally (`store.has`).
+   *  3. If `missingData + missingParity > 0` and the count of available
+   *     shards is ≥ N, regenerate the missing slots via the RS encoder
+   *     and re-pin them locally + push-to-K so peers see the repair.
+   *  4. If fewer than N shards survive, the stripe is unrecoverable —
+   *     skip + bump the `erasureStripesSkippedInsufficient` counter.
+   *
+   * Network fetches are intentionally NOT used here for v1 — `store.has`
+   * is local-only. If a peer holds a shard we don't, the regular
+   * `store.get` pulls it on demand via the existing fetchRemote hook,
+   * so we're focused on the harder case where the shard is genuinely
+   * lost from the swarm and must be reconstructed from parity.
+   */
+  private async runErasureTick(pins: string[]): Promise<void> {
+    // Filter pin set to dag-cbor CIDs (cheap codec inspection — no I/O).
+    const candidateManifests: string[] = []
+    for (const cid of pins) {
+      try {
+        if (CID.parse(cid).code === CODEC_DAG_CBOR) candidateManifests.push(cid)
+      } catch {
+        // Malformed pin — already logged elsewhere; skip silently here.
+      }
+    }
+    if (candidateManifests.length === 0) return
+
+    const batch = candidateManifests.slice(0, this.deps.erasureManifestBatchSize)
+    for (const manifestCid of batch) {
+      let manifest: ErasureManifest
+      try {
+        const block = await this.deps.blockstore.get(manifestCid as CidString)
+        manifest = decodeManifest(block.bytes)
+      } catch (err) {
+        if (err instanceof ErasureError && err.code === "unsupported_manifest") {
+          // Not one of ours (e.g. a future v2 manifest, or an arbitrary
+          // dag-cbor block). Don't count as a parse failure.
+          continue
+        }
+        log.debug("manifest parse skipped", { cid: manifestCid, error: String(err) })
+        this.metrics.erasureManifestParseFailed++
+        continue
+      }
+      this.metrics.erasureManifestsScanned++
+      await this.repairManifest(manifest)
+    }
+  }
+
+  private async repairManifest(manifest: ErasureManifest): Promise<void> {
+    const { n, m, shardSize, stripes } = manifest
+    const ctx = ReedSolomon.create(n, m)
+
+    for (let s = 0; s < stripes.length; s++) {
+      const stripe = stripes[s]
+
+      // Probe local availability for every shard in this stripe.
+      const dataPresent = await Promise.all(stripe.data.map((cid) => this.deps.blockstore.has(cid as CidString)))
+      const parityPresent = await Promise.all(stripe.parity.map((cid) => this.deps.blockstore.has(cid as CidString)))
+
+      const missingDataIdx: number[] = []
+      const missingParityIdx: number[] = []
+      for (let i = 0; i < n; i++) if (!dataPresent[i]) missingDataIdx.push(i)
+      for (let j = 0; j < m; j++) if (!parityPresent[j]) missingParityIdx.push(j)
+
+      if (missingDataIdx.length === 0 && missingParityIdx.length === 0) continue
+      const presentCount = dataPresent.filter(Boolean).length + parityPresent.filter(Boolean).length
+      if (presentCount < n) {
+        log.warn("erasure stripe unrecoverable", {
+          manifestStripe: s,
+          present: presentCount,
+          n,
+          missingData: missingDataIdx.length,
+          missingParity: missingParityIdx.length,
+        })
+        this.metrics.erasureStripesSkippedInsufficient++
+        continue
+      }
+
+      // Build the working buffers: load every present shard into the
+      // right slot, leave missing slots zero-filled. The RS encoder
+      // fills targets in-place from the sources we mark.
+      const stripeBuffer = Buffer.alloc(n * shardSize)
+      const stripeParity = Buffer.alloc(m * shardSize)
+      let sources = 0
+      let dataTargets = 0
+      let parityTargets = 0
+      try {
+        for (let i = 0; i < n; i++) {
+          if (dataPresent[i]) {
+            const block = await this.deps.blockstore.get(stripe.data[i] as CidString)
+            if (block.bytes.byteLength !== shardSize) throw new Error(`data shard ${i} wrong size`)
+            stripeBuffer.set(block.bytes, i * shardSize)
+            sources |= 1 << i
+          } else {
+            dataTargets |= 1 << i
+          }
+        }
+        for (let j = 0; j < m; j++) {
+          if (parityPresent[j]) {
+            const block = await this.deps.blockstore.get(stripe.parity[j] as CidString)
+            if (block.bytes.byteLength !== shardSize) throw new Error(`parity shard ${j} wrong size`)
+            stripeParity.set(block.bytes, j * shardSize)
+            sources |= 1 << (n + j)
+          } else {
+            parityTargets |= 1 << (n + j)
+          }
+        }
+      } catch (err) {
+        log.warn("erasure repair shard load failed", { manifestStripe: s, error: String(err) })
+        continue
+      }
+
+      const targets = dataTargets | parityTargets
+      if (targets === 0) continue
+
+      try {
+        await new Promise<void>((resolve, reject) => {
+          ReedSolomon.encode(
+            ctx,
+            sources,
+            targets,
+            stripeBuffer,
+            0,
+            n * shardSize,
+            stripeParity,
+            0,
+            m * shardSize,
+            (err) => err ? reject(err) : resolve(),
+          )
+        })
+      } catch (err) {
+        log.warn("erasure RS reconstruct failed", { manifestStripe: s, error: String(err) })
+        continue
+      }
+
+      // Persist + republish the regenerated shards. Each block goes
+      // through the standard put path so onPut fires push-to-K + DHT
+      // self-announce — peers learn we're holding the shard again.
+      let reconstructedThisStripe = 0
+      for (const i of missingDataIdx) {
+        const cid = stripe.data[i] as CidString
+        const bytes = Uint8Array.prototype.slice.call(stripeBuffer.subarray(i * shardSize, (i + 1) * shardSize))
+        try {
+          await this.deps.blockstore.put({ cid, bytes })
+          await this.deps.blockstore.pin(cid)
+          reconstructedThisStripe++
+        } catch (err) {
+          log.warn("erasure shard write-back failed", { cid, error: String(err) })
+        }
+      }
+      for (const j of missingParityIdx) {
+        const cid = stripe.parity[j] as CidString
+        const bytes = Uint8Array.prototype.slice.call(stripeParity.subarray(j * shardSize, (j + 1) * shardSize))
+        try {
+          await this.deps.blockstore.put({ cid, bytes })
+          await this.deps.blockstore.pin(cid)
+          reconstructedThisStripe++
+        } catch (err) {
+          log.warn("erasure shard write-back failed", { cid, error: String(err) })
+        }
+      }
+
+      if (reconstructedThisStripe > 0) {
+        this.metrics.erasureStripesRepaired++
+        this.metrics.erasureShardsReconstructed += reconstructedThisStripe
+        log.info("erasure stripe repaired", {
+          stripe: s,
+          reconstructed: reconstructedThisStripe,
+          missingData: missingDataIdx.length,
+          missingParity: missingParityIdx.length,
+        })
+      }
     }
   }
 }
