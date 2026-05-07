@@ -62,9 +62,9 @@ else
   cd "$INSTALL_DIR" && git fetch --depth 1 origin "$REPO_REF" && git reset --hard "origin/$REPO_REF"
 fi
 
-echo "==> [5/9] npm install (root workspace)"
+echo "==> [5/9] npm install (root workspace, no lockfile in repo)"
 cd "$INSTALL_DIR"
-npm ci --omit=dev --no-audit --no-fund 2>&1 | tail -3
+npm install --omit=dev --no-audit --no-fund 2>&1 | tail -5
 chown -R coc:coc "$INSTALL_DIR"
 
 echo "==> [6/9] /etc/coc and /var/lib/coc"
