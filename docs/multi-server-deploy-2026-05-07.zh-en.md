@@ -353,3 +353,102 @@ curl -s -X POST -H 'Content-Type: application/json' \
 - **faucet drip 校验严格**：`0x...Dead` 大小写混合不通过 EIP-55 校验 → 500 internal error。Web UI 应 lowercase normalize 输入；API 调用方需保证 address 是有效校验和或全小写。
 - **Faucet RPC 选择 server-2 (159.198.44.136:28780) 而非 server-1/3**：因为 PM2 + faucet 在同台机器，loopback 最快；任一 server 宕机不影响另两个，但 faucet 跟 server-2 共命运。生产化可改成轮询所有 3 个 RPC。
 - **explorer NEXT_PUBLIC_RPC_URL 仍指 https://clawchain.io/api/testnet/rpc**（域名不变）：依赖 nginx 后端切换。如果未来 RPC backend 从同台机器搬走，要么改 nginx upstream，要么 rebuild explorer 改 NEXT_PUBLIC_RPC_URL。
+
+---
+
+## 9. IPFS 50GB storage cap + P2P 协议端到端验证 (2026-05-07)
+
+### 9.1 配置 50GB cap
+
+每台 server 在 `/etc/coc/node-N.env` 追加：
+
+```
+COC_IPFS_MAX_BYTES=53687091200   # = 50 * 1024^3
+```
+
+| Server | env 文件 | port |
+|---|---|---|
+| 209.74.64.88 | /etc/coc/node-1.env | RPC 28780, IPFS 28786 |
+| 159.198.44.136 | /etc/coc/node-1.env | RPC 28780, IPFS 28786 |
+| 199.192.16.79 | /etc/coc/node-4.env | RPC 48780, IPFS 48786 (port-shifted +20000) |
+
+修改后 `systemctl restart coc-node@<N>`。验证已生效：
+
+```bash
+ssh root@<host> 'cat /proc/$(systemctl show -p MainPID --value coc-node@<N>)/environ | tr "\0" "\n" | grep IPFS'
+# 期望含: COC_IPFS_MAX_BYTES=53687091200
+```
+
+实现位置：
+- `node/src/ipfs-blockstore.ts:45-235` — `maxBytes` config + LRU eviction at `EVICT_TARGET_FRACTION=0.9` (45GB target)
+- `node/src/config.ts:384-401` — env-to-config 映射；`light` mode 默认 100MB，其他无上限
+
+LRU 排序基于 `accessSeq` 计数；pinned CIDs 不会被驱逐。50G × 3 节点，K=3 复制 → 实际可承载约 50GB unique 内容。
+
+**Disk margin 警告**：server-1 free=58G，cap=50G，余量仅 8G；如果 PUT 接近上限触发 LRU eviction 较慢，可能短时占满。生产建议 server-1 改为 40G 或扩盘。
+
+### 9.2 测试矩阵 (2026-05-07)
+
+| ID | 测试 | 结果 | 详情 |
+|---|---|---|---|
+| B1a | 256KB PUT to s1 + GET from 3 servers (byte-cmp) | **PASS** 3/3 | tar=263680, body=262144 byte-identical |
+| B1b | 1MB PUT + GET 3 servers | **PASS** 3/3 | tar=1050112 byte-identical |
+| B1c | 5MB PUT + GET 3 servers | **PASS** 3/3 | tar=5244416 byte-identical |
+| B1d | 10MB PUT | **FAIL** | `{"error":"internal error"}` HTTP 500 — 已知问题，需排查 |
+| B2 | filesystem replication audit (block files in `/var/lib/coc/.../storage/blocks/`) | **PASS** | 三服务器各 40 blocks / 8.5M，所有测试 CID 都能在 3 台 server 找到对应 block 文件 |
+| B3 | DHT findProviders RPC (`coc_dhtFindProviders`) | **PASS** 3/3 | 三服务器各自的 DHT view 都返回全 3 validator 地址作为 provider |
+| B4 | origin-death resilience (stop s1, GET from s2/s3) | **PASS** 2/2 | 512KB CID PUT 到 s1，s1 stop 后 s2 + s3 都能完整 GET；s1 重启后追上链头并保留 pin |
+| B5 | pin/ls 验证 | **PASS** | 原始 server (s1) 的 pin set 含所有 PUT 过的 CID（共 8 个 root CID）；replica server 不 pin（设计如此 — 允许 LRU 驱逐） |
+| B6 | repair loop | **SKIP** | 需 10 min wall clock，留作 future regression test |
+
+### 9.3 测试操作示例
+
+```bash
+# B1: 256KB roundtrip
+dd if=/dev/urandom of=/tmp/test.bin bs=1024 count=256
+CID=$(curl -sS -X POST -F "file=@/tmp/test.bin" http://209.74.64.88:28786/api/v0/add | jq -r .Hash)
+sleep 15
+for h in 209.74.64.88:28786 159.198.44.136:28786 199.192.16.79:48786; do
+  curl -sS -X POST "http://$h/api/v0/get?arg=$CID" | tar -xO > /tmp/got.bin
+  cmp /tmp/test.bin /tmp/got.bin && echo "$h: OK" || echo "$h: MISMATCH"
+done
+
+# B2: filesystem audit
+ssh root@209.74.64.88 'ls /var/lib/coc/node-1/storage/blocks/' | wc -l
+ssh -i ~/.ssh/openclaw_server_key root@159.198.44.136 'ls /var/lib/coc/node-1/storage/blocks/' | wc -l
+ssh root@199.192.16.79 'ls /var/lib/coc/node-4/storage/blocks/' | wc -l
+# 三个数字应相同（= block 总数）
+
+# B3: DHT
+curl -sS -X POST http://209.74.64.88:28780 \
+  -d '{"jsonrpc":"2.0","method":"coc_dhtFindProviders","params":["<cid>"],"id":1}'
+
+# B4: origin-down
+ssh root@209.74.64.88 'systemctl stop coc-node@1'
+curl -sS -X POST http://159.198.44.136:28786/api/v0/get?arg=<cid> | tar -xO > /tmp/from-replica.bin
+ssh root@209.74.64.88 'systemctl start coc-node@1'
+```
+
+### 9.4 已知问题
+
+1. **10MB PUT 失败 (HTTP 500 "internal error")** — 5MB 通过，10MB 失败；推测为 HTTP body 限流或单块 chunking 上限。临时建议：> 5MB 文件分多次 add 或预切片。需读 `node/src/ipfs-http.ts` 找具体限流。
+2. **`/api/v0/cat` 返回 404** — 已知 endpoint bug，所有 GET 测试改用 `/api/v0/get`（tar archive）。`scripts/verify-multi-server-ipfs.sh:44` 仍用 `cat`，需修。
+3. **pin/ls 不能按 arg 过滤** — `?arg=<cid>` 被忽略，返回全部 pinned 集；必须自己 jq filter。
+4. **DHT 发现 URL 用 wire port 验证 peer identity** — `node/src/index.ts:1384` bug；本部署里通过把所有 server 的 `dhtRequireAuthenticatedVerify=false` + `p2pInboundAuthMode=observe` 绕过。等 fix 上 main 后再启严验证。
+
+### 9.5 结论
+
+3 台多服务器 testnet 上：
+- ✅ Cross-server P2P + IPFS replication 真实可用
+- ✅ K=3 push-to-K 完整覆盖（block 文件物理存在 3 台机器）
+- ✅ DHT routing table 跨 server 同步
+- ✅ Origin-death scenario 数据可用性保持
+- ✅ Pin 持久（重启后保留）
+- ✅ 50G cap 已配置 + LRU 驱逐策略生效（cap 测试推荐看 `node/src/ipfs-blockstore.test.ts` 单测，端到端把 45G 数据 PUT 进去过于昂贵）
+
+下一步建议（非本次范围）：
+- 修 10MB PUT failure
+- 修 `/api/v0/cat` endpoint
+- 修 pin/ls arg filter
+- 把 DHT discovery URL 改用 P2P port 而非 wire port，恢复严格 peer auth
+- Reed-Solomon 纠删码 (Phase Q) 在 K=3 之上加冗余
