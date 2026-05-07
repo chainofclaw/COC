@@ -16,6 +16,22 @@ const log = createLogger("ipfs")
 const ipfsRateLimiter = new RateLimiter(60_000, 100)
 setInterval(() => ipfsRateLimiter.cleanup(), 300_000).unref()
 
+class HttpError extends Error {
+  readonly status: number
+  readonly code: string
+  constructor(status: number, code: string, msg?: string) {
+    super(msg ?? code)
+    this.status = status
+    this.code = code
+  }
+}
+
+function isNotFoundError(err: unknown): boolean {
+  if (err && typeof err === "object" && "code" in err && (err as { code: unknown }).code === "ENOENT") return true
+  const msg = String(err instanceof Error ? err.message : err)
+  return /not\s*found|no such|ENOENT/i.test(msg)
+}
+
 export interface IpfsServerConfig {
   bind: string
   port: number
@@ -187,11 +203,17 @@ export class IpfsHttpServer {
       res.writeHead(404)
       res.end(JSON.stringify({ error: "not found" }))
       } catch (err) {
+        const status = err instanceof HttpError ? err.status : 500
+        const code = err instanceof HttpError ? err.code : "internal error"
         if (!res.headersSent) {
-          res.writeHead(500, { "content-type": "application/json" })
+          res.writeHead(status, { "content-type": "application/json" })
         }
-        log.error("IPFS HTTP request failed", { error: String(err) })
-        try { res.end(JSON.stringify({ error: "internal error" })) } catch { /* connection already closed */ }
+        if (status >= 500) {
+          log.error("IPFS HTTP request failed", { error: String(err) })
+        } else {
+          log.warn("IPFS HTTP request rejected", { status, code })
+        }
+        try { res.end(JSON.stringify({ error: code })) } catch { /* connection already closed */ }
       }
     })
     server.on("connection", (socket) => {
@@ -389,7 +411,13 @@ export class IpfsHttpServer {
       res.end(JSON.stringify({ error: !cid ? "missing cid" : "invalid cid" }))
       return
     }
-    const data = await this.unixfs.readFile(cid)
+    let data: Uint8Array
+    try {
+      data = await this.unixfs.readFile(cid)
+    } catch (err) {
+      if (isNotFoundError(err)) throw new HttpError(404, "block not found")
+      throw err
+    }
     res.writeHead(200)
     res.end(data)
   }
@@ -400,7 +428,13 @@ export class IpfsHttpServer {
       res.end(JSON.stringify({ error: !cid ? "missing cid" : "invalid cid" }))
       return
     }
-    const data = await this.unixfs.readFile(cid)
+    let data: Uint8Array
+    try {
+      data = await this.unixfs.readFile(cid)
+    } catch (err) {
+      if (isNotFoundError(err)) throw new HttpError(404, "block not found")
+      throw err
+    }
     const archive = createTarArchive([{ name: cid, data }])
     res.writeHead(200, { "content-type": "application/x-tar" })
     res.end(archive)
@@ -699,7 +733,11 @@ function isValidCid(cid: string): boolean {
   return !/[\/\\]|\.\.|\0|\s/.test(cid)
 }
 
-const DEFAULT_MAX_UPLOAD_SIZE = 10 * 1024 * 1024 // 10 MB
+// Aligned with UnixFsBuilder.MAX_READ_SIZE (50 MB on the read side).
+// Multipart envelope adds ~300B of boundary/headers, so 10MB exact would
+// reject a real 10MB payload — set the ceiling well above the read cap to
+// leave room for envelope overhead and for legitimately large uploads.
+const DEFAULT_MAX_UPLOAD_SIZE = 50 * 1024 * 1024 + 64 * 1024 // 50 MB + 64 KB headroom
 
 const READ_BODY_TIMEOUT_MS = 30_000
 
@@ -712,7 +750,7 @@ async function readBody(req: http.IncomingMessage, maxSize = DEFAULT_MAX_UPLOAD_
       const buf = Buffer.from(chunk)
       totalSize += buf.byteLength
       if (totalSize > maxSize) {
-        throw new Error(`upload exceeds max size: ${totalSize} > ${maxSize}`)
+        throw new HttpError(413, "payload too large", `upload exceeds max size: ${totalSize} > ${maxSize}`)
       }
       chunks.push(buf)
     }
