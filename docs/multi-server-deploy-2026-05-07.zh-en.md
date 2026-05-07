@@ -223,18 +223,33 @@ systemctl start coc-node@1 coc-node@2 coc-node@3
 
 ### 8.2 切换步骤
 
-#### Step 1 — Nginx 公网 RPC 路由
+#### Step 1 — Nginx 公网 RPC + WebSocket 路由
 
-`/etc/nginx/sites-available/clawchain.io` 中 `location /api/testnet/rpc` 的 proxy_pass 改到 `127.0.0.1:28780`：
+`/etc/nginx/sites-available/clawchain.io` 中 `location /api/testnet/rpc` 和 `location /api/testnet/ws` 两个 block 的 proxy_pass 都要改。**RPC 和 WS 是两个不同端口（28780 vs 28781），两条 sed 都要执行**——本会话首次部署只改了 RPC 漏了 WS，导致 explorer 显示 "Offline" 因为 WSS upgrade 失败：
 
 ```bash
 ssh root@<host>
 cp /etc/nginx/sites-available/clawchain.io /etc/nginx/sites-available/clawchain.io.bak-pre-multiserver-20260507
+
+# RPC: 28780
 sed -i 's|proxy_pass http://199.192.16.79:28780|proxy_pass http://127.0.0.1:28780|g' /etc/nginx/sites-available/clawchain.io
+# WebSocket: 28781
+sed -i 's|proxy_pass http://199.192.16.79:28781|proxy_pass http://127.0.0.1:28781|g' /etc/nginx/sites-available/clawchain.io
+
+# 验证两个 location 都更新成功
+grep -A 1 'location /api/testnet/' /etc/nginx/sites-available/clawchain.io | grep proxy_pass
+# 期望：两行 proxy_pass http://127.0.0.1:2878{0,1}
+
 nginx -t && nginx -s reload
 ```
 
-WS 路径 `/api/testnet/ws` 同位置。
+WSS 升级测试（确认配置生效）：
+
+```bash
+echo -e 'GET /api/testnet/ws HTTP/1.1\r\nHost: clawchain.io\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n' | \
+  openssl s_client -connect clawchain.io:443 -quiet -servername clawchain.io 2>/dev/null | head -3
+# 期望：HTTP/1.1 101 Switching Protocols
+```
 
 #### Step 2 — Explorer 配置
 
@@ -334,6 +349,7 @@ curl -s -X POST -H 'Content-Type: application/json' \
 
 ### 8.5 已知 caveat
 
+- **nginx RPC 和 WS 是两个不同 location，必须都改**：本次部署首次操作时只 sed RPC（28780）漏了 WS（28781），结果 explorer 页面显示 "Offline"（block 数停在 RPC 单次拉取后的值，不再更新）。WSS handshake 在 nginx 层 400 因为后端 199.192.16.79:28781 已不再监听。修复后 `HTTP/1.1 101 Switching Protocols`。**Step 1 已加双 sed**。
 - **faucet drip 校验严格**：`0x...Dead` 大小写混合不通过 EIP-55 校验 → 500 internal error。Web UI 应 lowercase normalize 输入；API 调用方需保证 address 是有效校验和或全小写。
 - **Faucet RPC 选择 server-2 (159.198.44.136:28780) 而非 server-1/3**：因为 PM2 + faucet 在同台机器，loopback 最快；任一 server 宕机不影响另两个，但 faucet 跟 server-2 共命运。生产化可改成轮询所有 3 个 RPC。
 - **explorer NEXT_PUBLIC_RPC_URL 仍指 https://clawchain.io/api/testnet/rpc**（域名不变）：依赖 nginx 后端切换。如果未来 RPC backend 从同台机器搬走，要么改 nginx upstream，要么 rebuild explorer 改 NEXT_PUBLIC_RPC_URL。
