@@ -238,37 +238,36 @@ export class IpfsRepairLoop {
 
       if (underReplicated.length === 0) {
         log.debug("repair tick clean", { pinsChecked: pins.length })
-        return this.getMetrics()
-      }
+      } else {
+        const batch = underReplicated.slice(0, this.deps.repairBatchSize)
+        log.info("repair tick repairing", {
+          pinsChecked: pins.length,
+          underReplicated: underReplicated.length,
+          repairing: batch.length,
+        })
 
-      const batch = underReplicated.slice(0, this.deps.repairBatchSize)
-      log.info("repair tick repairing", {
-        pinsChecked: pins.length,
-        underReplicated: underReplicated.length,
-        repairing: batch.length,
-      })
-
-      // Step 2: top up each under-replicated CID via pushToK.
-      for (const cid of batch) {
-        this.metrics.repairsAttempted++
-        try {
-          const block = await this.deps.blockstore.get(cid as CidString)
-          const result = await this.deps.pushToK(cid, block.bytes)
-          if (result.succeeded.length > 0) {
-            this.metrics.repairsSucceeded++
-          } else {
+        // Step 2: top up each under-replicated CID via pushToK.
+        for (const cid of batch) {
+          this.metrics.repairsAttempted++
+          try {
+            const block = await this.deps.blockstore.get(cid as CidString)
+            const result = await this.deps.pushToK(cid, block.bytes)
+            if (result.succeeded.length > 0) {
+              this.metrics.repairsSucceeded++
+            } else {
+              this.metrics.repairsFailed++
+            }
+          } catch (err) {
+            log.warn("repair push failed for cid", { cid, error: String(err) })
             this.metrics.repairsFailed++
           }
-        } catch (err) {
-          log.warn("repair push failed for cid", { cid, error: String(err) })
-          this.metrics.repairsFailed++
         }
       }
 
       // Step 3 (Phase Q.5): walk pinned erasure manifests and try to
-      // restore any missing shards. We re-scan `pins` rather than the
-      // deduped batch above because the under-replicated raw-shard repair
-      // is independent of stripe-level erasure repair.
+      // restore any missing shards. Runs unconditionally — local shard
+      // loss (the trigger for parity reconstruction) is independent of
+      // peer replica counts, so we can't gate this on under-replication.
       await this.runErasureTick(pins)
 
       return this.getMetrics()
