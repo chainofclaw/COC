@@ -119,6 +119,12 @@ export interface IpfsRepairMetrics {
   erasureStripesSkippedInsufficient: number
   /** Manifest fetches/parses that failed (counted as warnings, not aborts). */
   erasureManifestParseFailed: number
+  /** Phase Q+1: shard fetch attempts triggered by repair tick (per-shard). */
+  erasurePeerPullsAttempted: number
+  /** Phase Q+1: shard fetches that returned bytes from a peer. */
+  erasurePeerPullsSucceeded: number
+  /** Phase Q+1: stripes fully restored via peer-pull alone (no parity reconstruction needed). */
+  erasureStripesPeerHealed: number
 }
 
 /**
@@ -151,6 +157,9 @@ export class IpfsRepairLoop {
     erasureShardsReconstructed: 0,
     erasureStripesSkippedInsufficient: 0,
     erasureManifestParseFailed: 0,
+    erasurePeerPullsAttempted: 0,
+    erasurePeerPullsSucceeded: 0,
+    erasureStripesPeerHealed: 0,
   }
 
   constructor(deps: IpfsRepairDeps) {
@@ -277,25 +286,23 @@ export class IpfsRepairLoop {
   }
 
   /**
-   * Phase Q.5: scan the pin set for erasure manifest CIDs (dag-cbor
-   * codec) and reconstruct any missing shards via RS arithmetic.
+   * Phase Q.5 + Q+1: scan the pin set for erasure manifest CIDs and
+   * restore missing shards via peer-pull and/or RS reconstruction.
    *
    * For each manifest:
-   *  1. Fetch + parse the manifest. Non-manifest dag-cbor blocks are
-   *     skipped silently (not every dag-cbor pin is ours; safe default).
-   *  2. For every stripe, count missing data + missing parity shards
-   *     locally (`store.has`).
-   *  3. If `missingData + missingParity > 0` and the count of available
-   *     shards is ≥ N, regenerate the missing slots via the RS encoder
-   *     and re-pin them locally + push-to-K so peers see the repair.
-   *  4. If fewer than N shards survive, the stripe is unrecoverable —
-   *     skip + bump the `erasureStripesSkippedInsufficient` counter.
-   *
-   * Network fetches are intentionally NOT used here for v1 — `store.has`
-   * is local-only. If a peer holds a shard we don't, the regular
-   * `store.get` pulls it on demand via the existing fetchRemote hook,
-   * so we're focused on the harder case where the shard is genuinely
-   * lost from the swarm and must be reconstructed from parity.
+   *  1. Fetch + parse. Non-manifest dag-cbor blocks skipped silently.
+   *  2. For every stripe, probe local availability (`store.has`).
+   *  3. **Phase Q+1**: for any locally-missing shard, attempt a peer-
+   *     pull via `store.get` — which transparently uses the wiring's
+   *     `fetchRemote` hook (DHT findProviders → wire BlockRequest).
+   *     The shard is cached locally on success, so the next probe sees
+   *     it. Re-probes after the pull batch to pick up the new state.
+   *  4. If now < N shards survive, the stripe is genuinely unrecoverable
+   *     (lost from the swarm); skip + bump `erasureStripesSkippedInsufficient`.
+   *  5. If still missing some slots but ≥ N present, regenerate the
+   *     missing slots via the RS encoder and re-pin them.
+   *  6. If pulls restored everything (no missing slots after step 3),
+   *     bump `erasureStripesPeerHealed` and skip RS (cheaper).
    */
   private async runErasureTick(pins: string[]): Promise<void> {
     // Filter pin set to dag-cbor CIDs (cheap codec inspection — no I/O).
@@ -338,15 +345,63 @@ export class IpfsRepairLoop {
       const stripe = stripes[s]
 
       // Probe local availability for every shard in this stripe.
-      const dataPresent = await Promise.all(stripe.data.map((cid) => this.deps.blockstore.has(cid as CidString)))
-      const parityPresent = await Promise.all(stripe.parity.map((cid) => this.deps.blockstore.has(cid as CidString)))
+      let dataPresent = await Promise.all(stripe.data.map((cid) => this.deps.blockstore.has(cid as CidString)))
+      let parityPresent = await Promise.all(stripe.parity.map((cid) => this.deps.blockstore.has(cid as CidString)))
 
-      const missingDataIdx: number[] = []
-      const missingParityIdx: number[] = []
+      let missingDataIdx: number[] = []
+      let missingParityIdx: number[] = []
       for (let i = 0; i < n; i++) if (!dataPresent[i]) missingDataIdx.push(i)
       for (let j = 0; j < m; j++) if (!parityPresent[j]) missingParityIdx.push(j)
 
       if (missingDataIdx.length === 0 && missingParityIdx.length === 0) continue
+
+      // Phase Q+1: attempt peer-pull for every locally-missing shard.
+      // `store.get` triggers `fetchRemote` on local miss, which queries
+      // the DHT for providers and pulls bytes via the wire layer.
+      // Successful pulls cache the bytes locally, so the re-probe below
+      // picks them up. Failures are silent — they just leave the shard
+      // missing, and the parity-reconstruction path below decides
+      // whether the stripe is salvageable.
+      const pullCandidates: CidString[] = [
+        ...missingDataIdx.map((i) => stripe.data[i] as CidString),
+        ...missingParityIdx.map((j) => stripe.parity[j] as CidString),
+      ]
+      if (pullCandidates.length > 0) {
+        await Promise.all(pullCandidates.map(async (cid) => {
+          this.metrics.erasurePeerPullsAttempted++
+          try {
+            await this.deps.blockstore.get(cid)
+            this.metrics.erasurePeerPullsSucceeded++
+          } catch {
+            // Shard not available from peers either; parity reconstruction
+            // is the next line of defence (and may still cover us).
+          }
+        }))
+
+        // Re-probe local availability after the pull batch.
+        dataPresent = await Promise.all(stripe.data.map((cid) => this.deps.blockstore.has(cid as CidString)))
+        parityPresent = await Promise.all(stripe.parity.map((cid) => this.deps.blockstore.has(cid as CidString)))
+        missingDataIdx = []
+        missingParityIdx = []
+        for (let i = 0; i < n; i++) if (!dataPresent[i]) missingDataIdx.push(i)
+        for (let j = 0; j < m; j++) if (!parityPresent[j]) missingParityIdx.push(j)
+
+        // Peer-pull alone restored every slot — no parity reconstruction
+        // needed. Cheaper path: skip RS entirely and move on. We still
+        // count this as a stripe repair so the metric stays meaningful
+        // for ops dashboards.
+        if (missingDataIdx.length === 0 && missingParityIdx.length === 0) {
+          this.metrics.erasureStripesPeerHealed++
+          this.metrics.erasureStripesRepaired++
+          this.metrics.erasureShardsReconstructed += pullCandidates.length
+          log.info("erasure stripe peer-healed", {
+            stripe: s,
+            shardsRestored: pullCandidates.length,
+          })
+          continue
+        }
+      }
+
       const presentCount = dataPresent.filter(Boolean).length + parityPresent.filter(Boolean).length
       if (presentCount < n) {
         log.warn("erasure stripe unrecoverable", {
