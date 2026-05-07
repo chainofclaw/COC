@@ -184,7 +184,7 @@ export class IpfsHttpServer {
         return
       }
       if (url.pathname === "/api/v0/pin/ls") {
-        await this.handlePinLs(res)
+        await this.handlePinLs(res, url.query.arg as string | undefined)
         return
       }
 
@@ -480,11 +480,23 @@ export class IpfsHttpServer {
     res.end(JSON.stringify({ Pins: [cid] }))
   }
 
-  private async handlePinLs(res: http.ServerResponse): Promise<void> {
+  private async handlePinLs(res: http.ServerResponse, cid?: string): Promise<void> {
     const pins = await this.store.listPins()
+    if (cid !== undefined) {
+      // Match the kubo `/api/v0/pin/ls?arg=<cid>` semantics: 404 when the
+      // CID is not pinned, otherwise return only that CID. Without the
+      // filter we returned the entire pin set regardless of arg, which
+      // confused callers that relied on the absence of a CID to mean
+      // "not pinned".
+      if (!isValidCid(cid)) throw new HttpError(400, "invalid cid")
+      if (!pins.includes(cid)) throw new HttpError(404, "not pinned")
+      res.writeHead(200, { "content-type": "application/json" })
+      res.end(JSON.stringify({ Keys: { [cid]: { Type: "recursive" } } }))
+      return
+    }
     res.writeHead(200, { "content-type": "application/json" })
-    res.end(JSON.stringify({ Keys: pins.reduce((acc, cid) => {
-      acc[cid] = { Type: "recursive" }
+    res.end(JSON.stringify({ Keys: pins.reduce((acc, c) => {
+      acc[c] = { Type: "recursive" }
       return acc
     }, {} as Record<string, { Type: string }>) }))
   }

@@ -1370,6 +1370,19 @@ if (config.enableWireProtocol) {
 }
 
 if (config.enableDht) {
+  // Map peerId → HTTP P2P URL so DHT-discovered peers can be added to
+  // the HTTP discovery layer with the correct port. DhtPeer.address is
+  // `host:wirePort` (TCP wire protocol), but PeerDiscovery's identity
+  // verification + state-snapshot + bft-message gossip all speak HTTP
+  // on `p2pPort` (≠ wirePort). The previous behavior built
+  // `http://${peer.address}` which pointed HTTP requests at the wire
+  // port and 404'd, forcing operators to disable
+  // `dhtRequireAuthenticatedVerify` to avoid spurious reject-loops.
+  const peerIdToHttpUrl = new Map<string, string>()
+  for (const p of config.peers) {
+    peerIdToHttpUrl.set(p.id, p.advertisedUrl ?? p.url)
+  }
+
   dhtNetwork = new DhtNetwork({
     localId: config.nodeId,
     localAddress: `${config.p2pBind}:${config.wirePort}`,
@@ -1381,7 +1394,17 @@ if (config.enableDht) {
     requireAuthenticatedVerify: config.dhtRequireAuthenticatedVerify,
     wireClientByPeerId,
     onPeerDiscovered: (peer) => {
-      p2p.discovery.addDiscoveredPeers([{ id: peer.id, url: `http://${peer.address}` }])
+      const httpUrl = peerIdToHttpUrl.get(peer.id)
+      if (!httpUrl) {
+        // Wire-only peer: identity is already verified by the signed
+        // wire handshake, but we have no HTTP endpoint for it. Skipping
+        // is strictly safer than the old `http://${peer.address}` build
+        // which would 404 every HTTP gossip attempt and drop the peer's
+        // discovery score.
+        log.debug("DHT peer has no configured HTTP URL — skipping HTTP discovery add", { peer: peer.id })
+        return
+      }
+      p2p.discovery.addDiscoveredPeers([{ id: peer.id, url: httpUrl }])
     },
   })
   dhtNetwork.start()
