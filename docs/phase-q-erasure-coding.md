@@ -143,15 +143,21 @@ CIDv1 + dag-cbor codec; manifest itself is a normal IPFS block under push-to-K.
 
 ### 4.5 Library choice
 
-Evaluate (in order of preference):
+**Q.1 finding (corrected from initial draft)**: `@ronomon/reed-solomon` is a **native addon** (`binding.c` + `binding.node`), not pure JS. License MIT. Build dependency: `gcc` + `node-gyp` + `python3`.
 
-| Library | License | Pure JS? | Notes |
+A brief evaluation of the pure-JS npm `reedsolomon` package found it to be a QR-code-style codeword RS (Aztec/Zxing port), not Backblaze-style block-level erasure coding — different semantics, not a candidate. Storage-grade pure-JS RS at GB-scale is intrinsically slow (Galois Field arithmetic relies on SIMD acceleration), and no maintained pure-JS Backblaze-style library was found.
+
+**Decision (confirmed by Q.1 benchmark)**: adopt `@ronomon/reed-solomon` despite native binding. Benchmark showed:
+
+| Scheme | 10 MB encode (4-core) | Throughput | Target (300 ms) |
 |---|---|---|---|
-| `@ronomon/reed-solomon` | MIT | yes | Production-ready, CRC tables, well-benchmarked |
-| `reed-solomon-erasure` (Rust binding via napi) | MIT | no — needs prebuilds | Fastest; complicates deploy |
-| `tetracarbonate/reedsolomon` | MIT | yes | Smaller, fewer features |
+| RS(4+2) | 3.2 ms median | 3168 MB/s | ✅ ~94× headroom |
+| RS(8+4) | 2.9 ms | 3508 MB/s | ✅ |
+| RS(10+4) | 3.6 ms | 2778 MB/s | ✅ |
 
-**Decision criterion**: pure JS preferred for portability across native + container deploys. Switch to native binding only if benchmarks show pure-JS encoding > 200 ms/MB on validator hardware.
+100 MB encode at all schemes finishes in ≤ 31 ms. Decode similar (RS encode is the slow op).
+
+**Deploy implication**: `scripts/deploy-validator-server.sh` must add `build-essential` + `python3` (currently installs only `curl git ufw chrony ca-certificates`). Adds ~200 MB + ~2 min cold-install per server. Alternative: ship prebuild artifacts via a `coc-rs-prebuild` package or Docker image — defer to Q.4 deploy work.
 
 ## 5. Integration points
 
@@ -273,11 +279,13 @@ Current push-to-K picks K-closest peers per CID via DHT. For shards of the same 
 
 ## 10. Decision points to resolve before Q.2 starts
 
-1. Library: confirm `@ronomon/reed-solomon` is acceptable license-wise (MIT — should be fine).
-2. Default N+M for testnet ops: proposed `4+2` (matches 6-node single-region testnet target).
-3. Manifest codec: dag-cbor (proposed) vs JSON (simpler, larger). Vote: dag-cbor — already a dependency via dag-pb.
-4. Should RS opt-in flag persist with the file (`/api/v0/get` always re-encodes when re-PUT) or be one-shot? Proposed: one-shot — re-PUT defaults to plain UnixFS unless flag is repeated.
-5. Repair tick budget: proposed 5 manifests per tick (vs current 50 raw CIDs) — encoding cost is per-manifest, not per-CID.
+| # | Original proposal | Q.1 finding | Final |
+|---|---|---|---|
+| 1 | `@ronomon/reed-solomon` (assumed pure JS) | Actually a native addon. Pure-JS storage-grade RS doesn't exist in maintained form. | **Adopt `@ronomon/reed-solomon`**; deploy script gains `build-essential` + `python3` |
+| 2 | Default RS scheme = 4+2 | All schemes far under 300 ms target | **RS(4+2)** confirmed (1.5× overhead, tolerates 2 of 6) |
+| 3 | Manifest dag-cbor | n/a | dag-cbor (already a dep via dag-pb) |
+| 4 | One-shot `?erasure=N+M` flag | n/a | One-shot — re-PUT defaults to plain UnixFS unless flag repeated |
+| 5 | 5 manifests/repair tick | 100 MB encodes in 30 ms; budget very generous | **Bump to 20 manifests/tick** (still < 1 s of CPU per tick) |
 
 ## 11. Acceptance criteria
 
