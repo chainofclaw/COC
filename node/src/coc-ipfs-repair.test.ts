@@ -514,3 +514,232 @@ describe("IpfsRepairLoop Phase Q.5 — erasure repair tick", () => {
     assert.equal(metrics.erasureStripesRepaired, 2)
   })
 })
+
+// ---------------------------------------------------------------------------
+// Phase Q+1 — proactive peer-pull during repair tick (issue #69)
+// ---------------------------------------------------------------------------
+
+/**
+ * Blockstore mock that simulates `fetchRemote` recovery: when a CID is
+ * requested via `get()` and is missing locally, the mock checks a
+ * "peer pool" for the bytes. If present, it caches them locally
+ * (mirroring real `IpfsBlockstore.get`'s behaviour after a successful
+ * fetchRemote) and returns them. Otherwise throws ENOENT.
+ */
+function mkPeerPullBlockstore(
+  blocks: BlockstoreMap,
+  pins: Set<string>,
+  peerPool: BlockstoreMap,
+) {
+  return {
+    listPins: async () => [...pins] as CidString[],
+    get: async (cid: CidString) => {
+      let bytes = blocks.get(cid)
+      if (!bytes) {
+        // Simulate fetchRemote: try the peer pool. On hit, cache locally.
+        const peerBytes = peerPool.get(cid)
+        if (peerBytes) {
+          blocks.set(cid, peerBytes)
+          bytes = peerBytes
+        }
+      }
+      if (!bytes) throw new Error(`missing block ${cid}`)
+      return { cid, bytes }
+    },
+    has: async (cid: CidString) => blocks.has(cid),
+    put: async (block: { cid: CidString; bytes: Uint8Array }) => {
+      blocks.set(block.cid, block.bytes)
+    },
+    pin: async (cid: CidString) => {
+      pins.add(cid)
+    },
+  }
+}
+
+describe("IpfsRepairLoop Phase Q+1 — proactive peer-pull", () => {
+  // The C3.3 under-replicated push step in `runOnce()` calls
+  // `store.get(cid)` for every CID with provider count < minReplicas.
+  // In our peer-pull mock that triggers the simulated fetchRemote,
+  // caching the shard locally before the Q.5 erasure tick gets a chance
+  // to look. To test Q+1's specific contribution, populate the DHT
+  // providers map so C3.3 considers every shard well-replicated and
+  // skips it — leaving the Q+1 path as the only thing that pulls.
+  function fullyReplicatedProviders(cids: string[]): ProviderMap {
+    const m: ProviderMap = new Map()
+    for (const cid of cids) m.set(cid, ["peer-x", "peer-y", "peer-z"])
+    return m
+  }
+
+  it("peer-pull restores all missing shards without parity reconstruction", async () => {
+    // Local node has 1 of 4 data shards + 0 parity. Peers hold the other 5.
+    // Repair tick should peer-pull every missing shard and skip RS entirely.
+    // Exactly one stripe — N*shardSize so there's no half-stripe edge case.
+    const file = randomBytes(4 * 256 * 1024)
+    const enc = await encodeFile(file, { n: 4, m: 2 })
+    assert.equal(enc.manifest.stripes.length, 1)
+    const blocks: BlockstoreMap = new Map()
+    const peerPool: BlockstoreMap = new Map()
+    const pins = new Set<string>()
+
+    blocks.set(enc.shardBlocks[0].cid, enc.shardBlocks[0].bytes) // keep data[0] locally
+    for (const block of enc.shardBlocks) pins.add(block.cid)
+    blocks.set(enc.manifestCid, enc.manifestBlock.bytes)
+    pins.add(enc.manifestCid)
+    // The other 5 shards live only on peers.
+    for (let i = 1; i < enc.shardBlocks.length; i++) {
+      peerPool.set(enc.shardBlocks[i].cid, enc.shardBlocks[i].bytes)
+    }
+
+    const allCids = [...enc.shardBlocks.map((b) => b.cid), enc.manifestCid]
+    const loop = new IpfsRepairLoop({
+      blockstore: mkPeerPullBlockstore(blocks, pins, peerPool),
+      dht: mkDht(fullyReplicatedProviders(allCids)),
+      pushToK: mkPushToK().pushToK,
+    })
+    const metrics = await loop.runOnce()
+
+    assert.equal(metrics.erasureManifestsScanned, 1)
+    assert.equal(metrics.erasurePeerPullsAttempted, 5, "5 missing shards probed")
+    assert.equal(metrics.erasurePeerPullsSucceeded, 5, "all pulled from peers")
+    assert.equal(metrics.erasureStripesPeerHealed, 1, "stripe healed via peer-pull alone")
+    assert.equal(metrics.erasureStripesSkippedInsufficient, 0, "never declared unrecoverable")
+    // RS encoder NOT invoked since pulls covered everything.
+    assert.equal(metrics.erasureShardsReconstructed, 5, "shards counted as reconstructed for ops dashboards")
+
+    for (const block of enc.shardBlocks) {
+      assert.ok(blocks.has(block.cid), `shard ${block.cid} now local`)
+    }
+  })
+
+  it("peer-pull + parity reconstruction hybrid: peer-pull restores some, RS fills the rest", async () => {
+    // Local has 2 data shards. Peers have 1 data + 1 parity → 4 total
+    // available after pull = N. RS reconstructs the remaining 1 data
+    // and 1 parity from those 4 sources.
+    const file = randomBytes(4 * 256 * 1024)
+    const enc = await encodeFile(file, { n: 4, m: 2 })
+    assert.equal(enc.manifest.stripes.length, 1)
+    const blocks: BlockstoreMap = new Map()
+    const peerPool: BlockstoreMap = new Map()
+    const pins = new Set<string>()
+
+    // Local: data[0], data[2]
+    blocks.set(enc.manifest.stripes[0].data[0], enc.shardBlocks[0].bytes)
+    blocks.set(enc.manifest.stripes[0].data[2], enc.shardBlocks[2].bytes)
+    blocks.set(enc.manifestCid, enc.manifestBlock.bytes)
+    for (const block of enc.shardBlocks) pins.add(block.cid)
+    pins.add(enc.manifestCid)
+    // Peers: data[1], parity[0]
+    peerPool.set(enc.manifest.stripes[0].data[1], enc.shardBlocks[1].bytes)
+    peerPool.set(enc.manifest.stripes[0].parity[0], enc.shardBlocks[4].bytes)
+    // No source: data[3], parity[1]
+
+    const allCids = [...enc.shardBlocks.map((b) => b.cid), enc.manifestCid]
+    const loop = new IpfsRepairLoop({
+      blockstore: mkPeerPullBlockstore(blocks, pins, peerPool),
+      dht: mkDht(fullyReplicatedProviders(allCids)),
+      pushToK: mkPushToK().pushToK,
+    })
+    const metrics = await loop.runOnce()
+
+    assert.equal(metrics.erasurePeerPullsAttempted, 4, "4 missing shards probed")
+    assert.equal(metrics.erasurePeerPullsSucceeded, 2, "2 found on peers")
+    assert.equal(metrics.erasureStripesPeerHealed, 0, "stripe NOT fully peer-healed (peers missing some)")
+    assert.equal(metrics.erasureStripesRepaired, 1, "stripe still gets RS reconstruction")
+    assert.equal(metrics.erasureStripesSkippedInsufficient, 0, "not unrecoverable — 4 sources after pull = N")
+
+    // Every shard now exists locally (peer pulls + RS regen).
+    for (const block of enc.shardBlocks) {
+      assert.ok(blocks.has(block.cid), `shard ${block.cid} now local`)
+    }
+  })
+
+  it("peer-pull cannot help when shards are gone everywhere → unrecoverable", async () => {
+    // Local has 2 data shards. Peers have nothing. Total 2 < N=4 → genuinely lost.
+    const file = randomBytes(4 * 256 * 1024)
+    const enc = await encodeFile(file, { n: 4, m: 2 })
+    assert.equal(enc.manifest.stripes.length, 1)
+    const blocks: BlockstoreMap = new Map()
+    const peerPool: BlockstoreMap = new Map() // empty — no peer holds anything
+    const pins = new Set<string>()
+
+    blocks.set(enc.manifest.stripes[0].data[0], enc.shardBlocks[0].bytes)
+    blocks.set(enc.manifest.stripes[0].data[1], enc.shardBlocks[1].bytes)
+    blocks.set(enc.manifestCid, enc.manifestBlock.bytes)
+    for (const block of enc.shardBlocks) pins.add(block.cid)
+    pins.add(enc.manifestCid)
+
+    const allCids = [...enc.shardBlocks.map((b) => b.cid), enc.manifestCid]
+    const loop = new IpfsRepairLoop({
+      blockstore: mkPeerPullBlockstore(blocks, pins, peerPool),
+      dht: mkDht(fullyReplicatedProviders(allCids)),
+      pushToK: mkPushToK().pushToK,
+    })
+    const metrics = await loop.runOnce()
+
+    assert.equal(metrics.erasurePeerPullsAttempted, 4, "tried every missing shard")
+    assert.equal(metrics.erasurePeerPullsSucceeded, 0, "no peer had anything")
+    assert.equal(metrics.erasureStripesSkippedInsufficient, 1, "correctly declared unrecoverable")
+    assert.equal(metrics.erasureStripesRepaired, 0, "no reconstruction possible")
+  })
+
+  it("intact local stripe doesn't trigger peer-pull (no work)", async () => {
+    const file = randomBytes(4 * 256 * 1024)
+    const enc = await encodeFile(file, { n: 4, m: 2 })
+    const blocks: BlockstoreMap = new Map()
+    const peerPool: BlockstoreMap = new Map()
+    const pins = new Set<string>()
+    for (const block of enc.shardBlocks) { blocks.set(block.cid, block.bytes); pins.add(block.cid) }
+    blocks.set(enc.manifestCid, enc.manifestBlock.bytes); pins.add(enc.manifestCid)
+
+    const allCids = [...enc.shardBlocks.map((b) => b.cid), enc.manifestCid]
+    const loop = new IpfsRepairLoop({
+      blockstore: mkPeerPullBlockstore(blocks, pins, peerPool),
+      dht: mkDht(fullyReplicatedProviders(allCids)),
+      pushToK: mkPushToK().pushToK,
+    })
+    const metrics = await loop.runOnce()
+
+    assert.equal(metrics.erasureManifestsScanned, 1)
+    assert.equal(metrics.erasurePeerPullsAttempted, 0, "no peer-pull when local is full")
+    assert.equal(metrics.erasureStripesPeerHealed, 0)
+    assert.equal(metrics.erasureStripesRepaired, 0)
+  })
+
+  it("regression — Q.5 unrecoverable scenario now resolves via peer-pull", async () => {
+    // Reproduces the Q.7 multi-server testnet case: server-1 has 3 of 6
+    // shards locally (M+1 missing) and the previous Q.5 tick logged
+    // 'unrecoverable' even though peers held the rest. Q+1 tick should
+    // now resolve this without any external trigger.
+    const file = randomBytes(4 * 256 * 1024)
+    const enc = await encodeFile(file, { n: 4, m: 2 })
+    assert.equal(enc.manifest.stripes.length, 1)
+    const blocks: BlockstoreMap = new Map()
+    const peerPool: BlockstoreMap = new Map()
+    const pins = new Set<string>()
+
+    // Local: data[0], parity[0], parity[1] — 3 of 6, missing 3 data shards.
+    blocks.set(enc.manifest.stripes[0].data[0], enc.shardBlocks[0].bytes)
+    blocks.set(enc.manifest.stripes[0].parity[0], enc.shardBlocks[4].bytes)
+    blocks.set(enc.manifest.stripes[0].parity[1], enc.shardBlocks[5].bytes)
+    blocks.set(enc.manifestCid, enc.manifestBlock.bytes)
+    for (const block of enc.shardBlocks) pins.add(block.cid)
+    pins.add(enc.manifestCid)
+
+    // Peers hold the missing 3 data shards (typical of pushStripe spread).
+    peerPool.set(enc.manifest.stripes[0].data[1], enc.shardBlocks[1].bytes)
+    peerPool.set(enc.manifest.stripes[0].data[2], enc.shardBlocks[2].bytes)
+    peerPool.set(enc.manifest.stripes[0].data[3], enc.shardBlocks[3].bytes)
+
+    const allCids = [...enc.shardBlocks.map((b) => b.cid), enc.manifestCid]
+    const loop = new IpfsRepairLoop({
+      blockstore: mkPeerPullBlockstore(blocks, pins, peerPool),
+      dht: mkDht(fullyReplicatedProviders(allCids)),
+      pushToK: mkPushToK().pushToK,
+    })
+    const metrics = await loop.runOnce()
+
+    assert.equal(metrics.erasurePeerPullsSucceeded, 3, "all 3 missing data shards pulled from peers")
+    assert.equal(metrics.erasureStripesPeerHealed, 1, "stripe fully restored via peer-pull")
+    assert.equal(metrics.erasureStripesSkippedInsufficient, 0, "no unrecoverable warning")
+  })
+})
