@@ -448,6 +448,46 @@ describe("IpfsRepairLoop Phase Q.5 — erasure repair tick", () => {
     assert.ok(blocks.has(lost2))
   })
 
+  it("erasure tick runs even when no CIDs are under-replicated (regression)", async () => {
+    // Reported during Q.5 testnet validation: when every pin's DHT
+    // provider count meets the floor, runOnce() used to return early
+    // before runErasureTick. This test pins all shards as fully-
+    // replicated (3 providers each) but locally deletes one — the
+    // erasure tick must still fire and reconstruct from parity.
+    const file = randomBytes(4 * 256 * 1024 + 5)
+    const enc = await encodeFile(file, { n: 4, m: 2 })
+    const blocks: BlockstoreMap = new Map()
+    const pins = new Set<string>()
+    const providers: ProviderMap = new Map()
+    for (const block of enc.shardBlocks) {
+      blocks.set(block.cid, block.bytes)
+      pins.add(block.cid)
+      providers.set(block.cid, ["peer-x", "peer-y", "peer-z"])
+    }
+    blocks.set(enc.manifestCid, enc.manifestBlock.bytes)
+    pins.add(enc.manifestCid)
+    providers.set(enc.manifestCid, ["peer-x", "peer-y", "peer-z"])
+
+    const lostCid = enc.manifest.stripes[0].data[0]
+    blocks.delete(lostCid)
+    // Note: pin still set — local loss simulated, DHT still claims
+    // we hold the shard (typical for stale provider records during a
+    // brief disk-corruption window).
+
+    const loop = new IpfsRepairLoop({
+      blockstore: mkErasureBlockstore(blocks, pins),
+      dht: mkDht(providers),
+      pushToK: mkPushToK().pushToK,
+      minReplicas: 2,
+    })
+    const metrics = await loop.runOnce()
+    assert.equal(metrics.underReplicatedFound, 0, "nothing under-replicated")
+    assert.equal(metrics.repairsAttempted, 0, "no pushToK fired")
+    assert.equal(metrics.erasureManifestsScanned, 1, "manifest still scanned")
+    assert.equal(metrics.erasureStripesRepaired, 1, "missing shard reconstructed")
+    assert.ok(blocks.has(lostCid), "shard restored locally")
+  })
+
   it("respects erasureManifestBatchSize cap", async () => {
     // Build 5 manifests but only allow 2 per tick.
     const blocks: BlockstoreMap = new Map()
