@@ -70,6 +70,18 @@ export interface IpfsServerConfig {
     failed: string[]
     skippedLowPeers: boolean
   } | null>
+  /**
+   * Phase Q.6: stripe-aware batch push. When attached, the `?erasure=N+M`
+   * branch of /api/v0/add stores shards with `deferStripePush` and then
+   * calls this to fan out across distinct peers. Absent this, the erasure
+   * path falls back to per-CID push-to-K (functionally correct, just less
+   * peer-diverse).
+   */
+  pushStripe?: (shards: Array<{ cid: string; bytes: Uint8Array }>) => Promise<{
+    perShard: Array<{ cid: string; attempted: number; succeeded: string[]; failed: string[]; skippedLowPeers: boolean }>
+    distinctPeersUsed: number
+    worstPeerOverlap: number
+  }>
 }
 
 export class IpfsHttpServer {
@@ -102,6 +114,11 @@ export class IpfsHttpServer {
   ): void {
     this.cfg.awaitReplicationResult = awaiter
     if (typeof minReplicas === "number") this.cfg.minReplicas = minReplicas
+  }
+
+  /** Phase Q.6: attach the stripe-aware push helper. Symmetric with setAwaitReplicationResult. */
+  setPushStripe(pushStripe: IpfsServerConfig["pushStripe"]): void {
+    this.cfg.pushStripe = pushStripe
   }
 
   /**
@@ -282,16 +299,38 @@ export class IpfsHttpServer {
       await this.saveFileMeta(meta)
 
       const enc = await erasureEncode(bytes, { ...params, originalCid: meta.cid })
-      // Store every shard via the standard put path so the existing
-      // onPut hook (push-to-K + DHT announce + LRU bookkeeping) fires
-      // for each. Manifest is also stored but not pinned-recursive yet
-      // (LRU walk over manifests is a Q.5 follow-up); we pin every
-      // shard CID + the manifest CID individually so eviction leaves
-      // the file intact.
-      for (const block of enc.shardBlocks) await this.store.put(block)
+      // Phase Q.6: store every shard with `deferStripePush` so the per-
+      // CID onPut hook skips its individual push-to-K. Self-announce +
+      // gossip still fire (so peers learn we hold each shard via DHT),
+      // but we delay the actual peer-bytes push until we've collected
+      // every shard, then fire `pushStripe` to spread them across
+      // distinct peers. Falls back to per-CID push when the wiring
+      // helper isn't attached (single-node devnet boot window).
+      const useStripePush = typeof this.cfg.pushStripe === "function"
+      for (const block of enc.shardBlocks) {
+        await this.store.put(block, useStripePush ? { deferStripePush: true } : undefined)
+      }
+      // Manifest still uses normal put — single block, no spread issue.
       await this.store.put(enc.manifestBlock)
       for (const block of enc.shardBlocks) await this.store.pin(block.cid)
       await this.store.pin(enc.manifestCid)
+
+      let stripeReplicaHeader: string | undefined
+      if (useStripePush) {
+        try {
+          const r = await this.cfg.pushStripe!(enc.shardBlocks.map((b) => ({ cid: b.cid, bytes: b.bytes })))
+          stripeReplicaHeader = `distinct=${r.distinctPeersUsed},worstOverlap=${r.worstPeerOverlap}`
+          if (r.worstPeerOverlap > 1) {
+            log.info("erasure stripe push: peer overlap detected", {
+              rootCid: enc.manifestCid,
+              distinctPeersUsed: r.distinctPeersUsed,
+              worstPeerOverlap: r.worstPeerOverlap,
+            })
+          }
+        } catch (err) {
+          log.warn("erasure stripe push failed", { rootCid: enc.manifestCid, error: String(err) })
+        }
+      }
       // Track the manifest → originalCid mapping in file-meta so an
       // operator can look up the UnixFS fallback CID without re-decoding
       // the manifest.
@@ -305,11 +344,15 @@ export class IpfsHttpServer {
         Hash: enc.manifestCid,
         Size: bytes.byteLength.toString(),
       }
-      res.writeHead(200, {
+      const erasureHeaders: Record<string, string> = {
         "content-type": "application/json",
         "X-COC-Erasure-Scheme": `rs(${params.n}+${params.m})`,
         "X-COC-Erasure-Original-Cid": meta.cid,
-      })
+      }
+      if (stripeReplicaHeader) {
+        erasureHeaders["X-COC-Erasure-Stripe-Spread"] = stripeReplicaHeader
+      }
+      res.writeHead(200, erasureHeaders)
       res.end(`${JSON.stringify(result)}\n`)
       return
     }

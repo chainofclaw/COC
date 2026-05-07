@@ -38,8 +38,19 @@ export interface IpfsBlockstoreHooks {
 }
 
 export interface OnPutOptions {
-  /** How the bytes arrived. Default "local" (caller-driven write). */
-  source?: "local" | "remote-cache"
+  /**
+   * How the bytes arrived. Default "local" (caller-driven write).
+   *
+   * - `"local"` — local PUT; wiring fires per-CID push-to-K via onPut.
+   * - `"remote-cache"` — bytes arrived from a peer push (or remote
+   *   fetch cache-back); wiring skips push-to-K to avoid cascading.
+   * - `"local-stripe-deferred"` (Phase Q.6) — local PUT but the caller
+   *   will fire a stripe-aware batch push afterwards. Wiring still
+   *   self-announces + gossips the CID, but skips the per-CID push so
+   *   the batch helper can choose distinct peers across shards in the
+   *   same stripe instead of letting each shard pick independently.
+   */
+  source?: "local" | "remote-cache" | "local-stripe-deferred"
 }
 
 /**
@@ -144,8 +155,8 @@ export class IpfsBlockstore {
     this.accessSeqCounter++
   }
 
-  async put(block: IpfsBlock): Promise<void> {
-    return this.doPut(block, "local")
+  async put(block: IpfsBlock, opts?: { deferStripePush?: boolean }): Promise<void> {
+    return this.doPut(block, opts?.deferStripePush ? "local-stripe-deferred" : "local")
   }
 
   /**
@@ -168,7 +179,7 @@ export class IpfsBlockstore {
    * remote-cache path inside `get()`. Keeping the hook invocation here
    * gives us one chokepoint for the `source` discriminator.
    */
-  private async doPut(block: IpfsBlock, source: "local" | "remote-cache"): Promise<void> {
+  private async doPut(block: IpfsBlock, source: "local" | "remote-cache" | "local-stripe-deferred"): Promise<void> {
     await this.init()
     const path = this.blockPath(block.cid)
     await writeFile(path, block.bytes)

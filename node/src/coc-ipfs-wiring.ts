@@ -98,6 +98,21 @@ export interface PushToKResult {
   skippedLowPeers: boolean
 }
 
+/** Returned from pushStripe — per-shard results + diversity metric. */
+export interface PushStripeResult {
+  /** One PushToKResult per input shard, in input order. */
+  perShard: PushToKResult[]
+  /** Distinct peers that received at least one shard from this stripe. */
+  distinctPeersUsed: number
+  /**
+   * Maximum number of shards landed on any single peer. Lower is better;
+   * a value > 1 means the swarm has fewer peers than there are shards in
+   * this stripe (or the spread heuristic couldn't avoid an overlap given
+   * the DHT-distance distribution).
+   */
+  worstPeerOverlap: number
+}
+
 /**
  * Build the hook set that drives the blockstore's fetchRemote / onPut paths,
  * plus the wire-server callback that answers peer BlockRequest frames.
@@ -124,6 +139,18 @@ export function buildCocIpfsWiring(cfg: CocIpfsWiringConfig): {
    * loop can top up under-replicated CIDs on demand.
    */
   pushToK: (cid: string, bytes: Uint8Array) => Promise<PushToKResult>
+  /**
+   * Phase Q.6: stripe-aware batch push. Picks K closest peers per shard
+   * but biases subsequent shards away from peers that already received
+   * other shards in the same stripe. Improves fault tolerance by spreading
+   * an erasure stripe's N+M shards across as many distinct peers as the
+   * routing table allows.
+   *
+   * Falls back gracefully when peer count < N+M: peers will hold multiple
+   * shards (worstPeerOverlap > 1), but the call still succeeds and the
+   * caller sees the diversity metric in the result.
+   */
+  pushStripe: (shards: Array<{ cid: string; bytes: Uint8Array }>) => Promise<PushStripeResult>
   /**
    * Phase C3.1: return the PushToKResult for a recently-PUT CID, or null
    * if the CID hasn't been PUT locally within the last ~30 s (memory
@@ -223,6 +250,124 @@ export function buildCocIpfsWiring(cfg: CocIpfsWiringConfig): {
     return { cid, attempted: targets.length, succeeded, failed, skippedLowPeers: false }
   }
 
+  /**
+   * Phase Q.6: per-shard push with cross-shard peer-spread bias.
+   *
+   * Each shard pulls a wide candidate pool from the routing table (top
+   * `replicationFactor + spreadHeadroom` peers in DHT distance from the
+   * shard's CID), then re-ranks the pool by `(used_count_for_this_stripe
+   * ASC, original_distance_rank ASC)`. This keeps DHT-locality as the
+   * primary signal while breaking ties in favour of unused peers.
+   *
+   * `used` accumulates the (peerId → shard count) tally as each shard
+   * commits its target list, so shard k+1 sees the choices made by
+   * shards 0..k. The resulting distribution is:
+   *
+   *   - peer count ≥ N+M: every shard lands on K distinct peers, and
+   *     across the stripe peers are used at most ⌈(N+M)·K / peer_count⌉
+   *     times.
+   *   - peer count < N+M: unavoidable overlap — peers hold multiple
+   *     shards, but at most ⌈(N+M)·K / peer_count⌉ each instead of all
+   *     of them clustering on the closest peer to one specific shard.
+   *
+   * Returns per-shard results plus diversity metrics so the caller can
+   * surface them (e.g. via response headers in handleAdd).
+   */
+  // Pool size: replicationFactor headroom for self-skip + extra slots so
+  // the spread heuristic has room to re-rank. 8 is safely above K-bucket
+  // cap (20) and never starves the picker.
+  const SPREAD_CANDIDATE_POOL = Math.max(replicationFactor * 4, 8)
+
+  const pushStripe = async (
+    shards: Array<{ cid: string; bytes: Uint8Array }>,
+  ): Promise<PushStripeResult> => {
+    const used = new Map<string, number>()
+    const perShard: PushToKResult[] = []
+
+    for (const shard of shards) {
+      const candidates = cfg.dht.routingTable.findClosest(
+        cidToRoutingKey(shard.cid),
+        SPREAD_CANDIDATE_POOL,
+      )
+      // Annotate with original (DHT-distance) rank to keep stable tie-break
+      // semantics — peers tied on usage count are picked in routing-table
+      // order, preserving locality.
+      const ranked = candidates
+        .map((p, idx) => ({ id: p.id, distRank: idx }))
+        .filter((p) => p.id.toLowerCase() !== cfg.localNodeId.toLowerCase())
+      ranked.sort((a, b) => {
+        const ua = used.get(a.id.toLowerCase()) ?? 0
+        const ub = used.get(b.id.toLowerCase()) ?? 0
+        if (ua !== ub) return ua - ub
+        return a.distRank - b.distRank
+      })
+      const targets = ranked.slice(0, replicationFactor).map((p) => p.id)
+
+      if (targets.length === 0) {
+        const now = Date.now()
+        if (now - lastLowPeerWarnMs >= LOW_PEER_WARN_INTERVAL_MS) {
+          log.warn("pushStripe: no peers available, skipping replication", {
+            cid: shard.cid,
+            replicationFactor,
+            peersInTable: candidates.length,
+          })
+          lastLowPeerWarnMs = now
+        }
+        perShard.push({
+          cid: shard.cid,
+          attempted: 0,
+          succeeded: [],
+          failed: [],
+          skippedLowPeers: true,
+        })
+        continue
+      }
+
+      // Update usage tally BEFORE the awaits so concurrent overlaps
+      // between shards in this loop are scored correctly. We're awaiting
+      // each shard sequentially (Promise.all over the inner per-peer
+      // pushes only) so this is straightforward.
+      for (const peerId of targets) {
+        const key = peerId.toLowerCase()
+        used.set(key, (used.get(key) ?? 0) + 1)
+      }
+
+      const results = await Promise.all(targets.map(async (peerId) => {
+        const client = cfg.connMgr.findByNodeId(peerId)
+        if (!client) {
+          log.debug("pushStripe: no client for peerId", { peerId, cid: shard.cid })
+          return { peerId, ok: false }
+        }
+        let ok = false
+        try {
+          ok = await client.pushBlock(shard.cid, shard.bytes, pushTimeoutMs)
+        } catch (err) {
+          log.debug("pushStripe: peer pushBlock threw", { peerId, cid: shard.cid, error: String(err) })
+        }
+        return { peerId, ok }
+      }))
+      const succeeded = results.filter((r) => r.ok).map((r) => r.peerId)
+      const failed = results.filter((r) => !r.ok).map((r) => r.peerId)
+      perShard.push({
+        cid: shard.cid,
+        attempted: targets.length,
+        succeeded,
+        failed,
+        skippedLowPeers: false,
+      })
+    }
+
+    let worstPeerOverlap = 0
+    for (const count of used.values()) {
+      if (count > worstPeerOverlap) worstPeerOverlap = count
+    }
+    return {
+      perShard,
+      distinctPeersUsed: used.size,
+      worstPeerOverlap,
+    }
+  }
+
   // Phase C3.1: track in-flight per-CID pushToK promises so the HTTP
   // PUT handler can await them and surface replica shortfalls in the
   // response. Keys are lowercased CID strings; entries self-evict ~30 s
@@ -257,10 +402,15 @@ export function buildCocIpfsWiring(cfg: CocIpfsWiringConfig): {
     // `putProvider` (CID, peerId) → expiry bump.
     broadcastProviderAdvertise(cid)
 
-    // Only fire pushToK for local PUTs. A cache-back from remote fetch
-    // (source: "remote-cache") must NOT push, or every GET would amplify
-    // into K pushes and cascade exponentially. Discovery-based diffusion
-    // via putProvider + broadcast above is sufficient in that case.
+    // Only fire per-CID pushToK for plain local PUTs.
+    //
+    // - `"remote-cache"` is a cache-back from a remote fetch — pushing
+    //   would amplify every GET into K pushes and cascade exponentially.
+    // - `"local-stripe-deferred"` (Phase Q.6) is a local PUT where the
+    //   caller will fire a stripe-aware batch push afterwards via
+    //   `pushStripe` so individual shards in the same stripe can be
+    //   biased toward distinct peers. Skipping per-CID push here avoids
+    //   double-spending peer slots.
     const source = opts?.source ?? "local"
     if (source !== "local") return
 
@@ -337,5 +487,5 @@ export function buildCocIpfsWiring(cfg: CocIpfsWiringConfig): {
     }
   }
 
-  return { blockstoreHooks: { fetchRemote, onPut }, onBlockRequest, pushToK, awaitReplicationResult }
+  return { blockstoreHooks: { fetchRemote, onPut }, onBlockRequest, pushToK, pushStripe, awaitReplicationResult }
 }
