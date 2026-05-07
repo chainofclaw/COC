@@ -72,6 +72,26 @@ describe("WireConnectionManager", () => {
     mgr.stop()
   })
 
+  it("findByNodeId is case-insensitive (regression: Q.7 fetchRemote miss)", () => {
+    // Peer registered with EIP-55 mixed-case, looked up with lowercase.
+    const mgr = new WireConnectionManager(baseCfg)
+    const mixedId = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+    const client = {
+      isConnected: () => true,
+      getRemoteNodeId: () => mixedId,
+      requestBlock: async () => null,
+      pushBlock: async () => true,
+      disconnect: () => {},
+    } as unknown as import("./wire-client.ts").WireClient
+    // @ts-expect-error — private map write for the test, mirrors other tests
+    mgr.connections.set(mixedId, { client, host: "h", port: 1, connectedAtMs: 0 })
+
+    assert.equal(mgr.findByNodeId(mixedId.toLowerCase())?.getRemoteNodeId(), mixedId)
+    assert.equal(mgr.findByNodeId(mixedId)?.getRemoteNodeId(), mixedId, "exact case still matches")
+    assert.equal(mgr.findByNodeId(mixedId.toUpperCase())?.getRemoteNodeId(), mixedId)
+    mgr.stop()
+  })
+
   it("broadcast returns 0 when no connected peers", () => {
     const mgr = new WireConnectionManager(baseCfg)
     mgr.addPeer("127.0.0.1", 29998)
