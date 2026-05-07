@@ -477,6 +477,16 @@ ssh root@209.74.64.88 'systemctl start coc-node@1'
 - ✅ 50G cap 已配置 + LRU 驱逐策略生效（cap 测试推荐看 `node/src/ipfs-blockstore.test.ts` 单测，端到端把 45G 数据 PUT 进去过于昂贵）
 
 下一步建议（非本次范围）：
-- Reed-Solomon 纠删码 (Phase Q) 在 K=3 之上加冗余
-- DHT provider records 改持久化（目前重启丢；旧 CID 需要 PUT 来重新 announce）
-- 把 `dhtBootstrapPeers` 也写进 `node-multiserver.env.template`，避免每次部署手填
+- Reed-Solomon 纠删码 (Phase Q) 在 K=3 之上加冗余 — 这是真正的 feature dev，需要单独 design + multi-day 实现，**不属于"follow-up bug fix"范畴**：要选 RS 库、设计 parity 块如何嵌入 UnixFS DAG、决定 N+M 与 K=3 push-to-K 的层次关系、加 encode/decode/repair 流水线，全套加完整单元 + 集成测试。建议拆成独立 PR / phase 立项。
+
+#### Fix 5 (✅ 已修): DHT provider records 持久化
+- **根因**：provider 表（CID → 持有该 CID 的 peer 集）只在内存中，restart 全清。`coc_dhtFindProviders` 对老 CID 返 `[]` 直到对应 peer 在 ≤TTL/2 (=12h) 内重新 announce。本次 testnet 重启就观察到这一现象。
+- **修复 commit `1000bc9`**（mirror 现有 peer 持久化模式）：
+  - `DhtNetwork` 加 `providerStorePath` 配置选项 + `saveProviders()` / `loadProviders()` 方法
+  - `start()` 启动时先从 `dataDir/dht-providers.json` 恢复未过期记录
+  - 每 60s 自动 flush + `stop()` 时最后一次 flush（atomic write via temp + rename）
+  - save 时跳过已过期条目（防文件膨胀），load 时同样过滤（防过期记录复活）
+- **测试**：5 个新单测覆盖 round-trip / 过期过滤 / 缺路径 no-op / 损坏文件容错 / save 跳过过期。
+
+#### Item: dhtBootstrapPeers 写进 env 模板
+- **结论**：误判 — `dhtBootstrapPeers` 是 JSON 数组结构，**已经在 `docker/systemd/native-configs/node-multiserver.json.template` 里以 placeholder 形式存在**，由 `bootstrap-multi-server-genesis.sh` 在 deploy 时填入 per-peer ID/host/wire port。env 文件存的是平铺 `KEY=VAL`，不适合放数组结构。无 fix 可做。
