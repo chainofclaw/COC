@@ -171,7 +171,10 @@ export function buildCocIpfsWiring(cfg: CocIpfsWiringConfig): {
   const fetchRemote = async (cid: CidString): Promise<Uint8Array | null> => {
     const providers = cfg.dht.findProviders(cid, fanOut)
     if (providers.length === 0) {
-      log.debug("fetchRemote: no providers", { cid })
+      // Q+1 ops-visibility: bump from debug to info so operators can see
+      // why a /api/v0/cat or repair-tick peer-pull came back empty without
+      // having to flip log levels at runtime.
+      log.info("fetchRemote: no providers", { cid })
       return null
     }
     const bytes = await cfg.connMgr.requestBlockFromAny(providers, cid, {
@@ -181,7 +184,9 @@ export function buildCocIpfsWiring(cfg: CocIpfsWiringConfig): {
     if (bytes) {
       log.info("fetchRemote: got bytes from peer", { cid, bytesLen: bytes.length, providersTried: providers.length })
     } else {
-      log.debug("fetchRemote: all providers miss", { cid, providersTried: providers.length })
+      // Same Q+1 visibility bump — repair ticks and 503s become diagnosable
+      // from logs without code changes when this surfaces.
+      log.info("fetchRemote: all providers miss", { cid, providersTried: providers.length })
     }
     return bytes
   }
