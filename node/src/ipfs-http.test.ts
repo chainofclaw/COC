@@ -175,6 +175,45 @@ describe("IpfsHttpServer", () => {
     const res = await fetch("/api/v0/ls")
     assert.equal(res.status, 400)
   })
+
+  it("GET /api/v0/cat returns 404 with structured error when CID is not stored", async () => {
+    // Valid CID format but no block on disk → must surface 404 not 500.
+    const missingCid = "bafybeibbaty5wl7jqgcwyouemb5jerxoisdoxwldqdue5dd6evw6lgalhy"
+    const res = await fetch(`/api/v0/cat?arg=${missingCid}`)
+    assert.equal(res.status, 404)
+    const body = await res.json() as Record<string, string>
+    assert.equal(body.error, "block not found")
+  })
+
+  it("GET /api/v0/get returns 404 with structured error when CID is not stored", async () => {
+    const missingCid = "bafybeibbaty5wl7jqgcwyouemb5jerxoisdoxwldqdue5dd6evw6lgalhy"
+    const res = await fetch(`/api/v0/get?arg=${missingCid}`)
+    assert.equal(res.status, 404)
+    const body = await res.json() as Record<string, string>
+    assert.equal(body.error, "block not found")
+  })
+
+  it("POST /api/v0/add accepts a 10 MB payload (regression: 10MB PUT was rejected by the 10MB exact cap)", async () => {
+    const boundary = "----TenMbBoundary"
+    const payload = Buffer.alloc(10 * 1024 * 1024, 0x61) // 10 MB of 'a'
+    const head = Buffer.from(
+      `--${boundary}\r\n` +
+      'Content-Disposition: form-data; name="file"; filename="big.bin"\r\n' +
+      "Content-Type: application/octet-stream\r\n" +
+      "\r\n",
+    )
+    const tail = Buffer.from(`\r\n--${boundary}--\r\n`)
+    const body = Buffer.concat([head, payload, tail])
+    const res = await fetch("/api/v0/add", {
+      method: "POST",
+      headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+      body,
+    })
+    assert.equal(res.status, 200, "10 MB upload must succeed after raising the cap")
+    const json = await res.json() as Record<string, string>
+    assert.ok(json.Hash)
+    assert.equal(json.Size, String(payload.length))
+  })
 })
 
 // Phase C3.1: PUT awaits replication, emits X-COC-Replicas-Warning when
