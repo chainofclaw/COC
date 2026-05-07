@@ -146,10 +146,22 @@ export class WireConnectionManager {
     this.connections.clear()
   }
 
-  /** Find a client by remote node ID */
+  /**
+   * Find a client by remote node ID (case-insensitive).
+   *
+   * Wire handshake stores `getRemoteNodeId()` in the EIP-55 mixed-case
+   * form taken from the peer's config (`nodeId`), but DHT findProviders
+   * returns lowercased addresses (the routing-table normalises on
+   * insert). A strict `===` comparison silently misses every cross-node
+   * fetchRemote — surfaced during Phase Q.7 multi-server validation
+   * when server-1 couldn't pull deleted shards from peers despite both
+   * being healthy.
+   */
   findByNodeId(nodeId: string): WireClient | undefined {
+    const want = nodeId.toLowerCase()
     for (const [, conn] of this.connections) {
-      if (conn.client.getRemoteNodeId() === nodeId && conn.client.isConnected()) {
+      const remote = conn.client.getRemoteNodeId()
+      if (remote && remote.toLowerCase() === want && conn.client.isConnected()) {
         return conn.client
       }
     }
