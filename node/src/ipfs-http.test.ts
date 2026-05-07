@@ -193,6 +193,37 @@ describe("IpfsHttpServer", () => {
     assert.equal(body.error, "block not found")
   })
 
+  it("GET /api/v0/pin/ls?arg=<cid> returns only that CID when pinned", async () => {
+    const dataA = new TextEncoder().encode("pin-A")
+    const dataB = new TextEncoder().encode("pin-B")
+    const metaA = await unixfs.addFile("a.txt", dataA)
+    const metaB = await unixfs.addFile("b.txt", dataB)
+    await store.pin(metaA.cid)
+    await store.pin(metaB.cid)
+
+    const res = await fetch(`/api/v0/pin/ls?arg=${metaA.cid}`)
+    assert.equal(res.status, 200)
+    const body = await res.json() as { Keys: Record<string, { Type: string }> }
+    assert.deepEqual(Object.keys(body.Keys), [metaA.cid])
+    assert.equal(body.Keys[metaA.cid].Type, "recursive")
+  })
+
+  it("GET /api/v0/pin/ls?arg=<cid> returns 404 when the CID is not pinned", async () => {
+    const validButUnpinned = "bafybeibbaty5wl7jqgcwyouemb5jerxoisdoxwldqdue5dd6evw6lgalhy"
+    const res = await fetch(`/api/v0/pin/ls?arg=${validButUnpinned}`)
+    assert.equal(res.status, 404)
+    const body = await res.json() as Record<string, string>
+    assert.equal(body.error, "not pinned")
+  })
+
+  it("GET /api/v0/pin/ls?arg=<cid> returns 400 for malformed CID (path traversal attempt)", async () => {
+    // isValidCid rejects slashes, dots, and whitespace to prevent
+    // path-traversal abuse on the disk layout. Use one of those classes
+    // here; loose-but-valid-looking strings still 404 as "not pinned".
+    const res = await fetch("/api/v0/pin/ls?arg=..%2Fevil")
+    assert.equal(res.status, 400)
+  })
+
   it("POST /api/v0/add accepts a 10 MB payload (regression: 10MB PUT was rejected by the 10MB exact cap)", async () => {
     const boundary = "----TenMbBoundary"
     const payload = Buffer.alloc(10 * 1024 * 1024, 0x61) // 10 MB of 'a'
