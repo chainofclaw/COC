@@ -306,9 +306,17 @@ export class DhtNetwork {
 
           if (found.has(normalizedPeer.id)) continue
           // Skip verification for peers returned from connected clients (already verified).
+          // Issue #70: lookup by lowercase key — wireClientByPeerId is
+          // populated with lowercased keys (see index.ts), and routing-
+          // table peer IDs are lowercase, so a direct Map.get hits.
+          const wantLower = normalizedPeer.id.toLowerCase()
           const hasConnectedClient = !!(
-            this.cfg.wireClientByPeerId?.get(normalizedPeer.id)?.isConnected() ||
-            this.cfg.wireClients.find((c) => c.getRemoteNodeId() === normalizedPeer.id && c.isConnected())
+            this.cfg.wireClientByPeerId?.get(wantLower)?.isConnected() ||
+            this.cfg.wireClients.find((c) => {
+              if (!c.isConnected()) return false
+              const remote = c.getRemoteNodeId()
+              return remote ? remote.toLowerCase() === wantLower : false
+            })
           )
           if (hasConnectedClient) {
             preVerified.push(normalizedPeer)
@@ -354,9 +362,18 @@ export class DhtNetwork {
   /** Verify a peer is reachable via wire protocol (TCP connect + Pong response) */
   async verifyPeer(peer: DhtPeer): Promise<boolean> {
     this.verifyAttempts += 1
-    // Try to find a wire client connected to this peer
-    const client = this.cfg.wireClientByPeerId?.get(peer.id)
-      ?? this.cfg.wireClients.find((c) => c.getRemoteNodeId() === peer.id && c.isConnected())
+    // Try to find a wire client connected to this peer.
+    // Issue #70: lookup is case-insensitive — wireClientByPeerId now uses
+    // lowercased keys at insert (see index.ts), so DHT-sourced peer IDs
+    // (lowercase) hit. Fall back to a wireClients scan with the same
+    // case-folding for robustness.
+    const wantLower = peer.id.toLowerCase()
+    const client = this.cfg.wireClientByPeerId?.get(wantLower)
+      ?? this.cfg.wireClients.find((c) => {
+        if (!c.isConnected()) return false
+        const remote = c.getRemoteNodeId()
+        return remote ? remote.toLowerCase() === wantLower : false
+      })
 
     if (client?.isConnected()) {
       // Verify claimed ID matches actual remote node ID from wire handshake
@@ -481,8 +498,13 @@ export class DhtNetwork {
 
   /** Query a peer for nodes closest to a target */
   private async findNode(peer: DhtPeer, targetId: string): Promise<DhtPeer[]> {
-    // Priority 1: lookup by peer ID in the direct map (O(1))
-    const mappedClient = this.cfg.wireClientByPeerId?.get(peer.id)
+    // Priority 1: lookup by peer ID in the direct map (O(1)).
+    // Issue #70: case-insensitive — keys in wireClientByPeerId are lowercased
+    // at insert (see index.ts) so a lowercase peer.id from the routing
+    // table hits. We also try the as-is case for unit tests that key the
+    // map directly with whatever the caller chose.
+    const mappedClient = this.cfg.wireClientByPeerId?.get(peer.id.toLowerCase())
+      ?? this.cfg.wireClientByPeerId?.get(peer.id)
     if (mappedClient && mappedClient.isConnected()) {
       const remotePeers = await mappedClient.findNode(targetId, LOOKUP_TIMEOUT_MS)
       return remotePeers.map((p) => ({
@@ -493,11 +515,15 @@ export class DhtNetwork {
     }
 
     // Priority 2: scan wireClients by remoteNodeId (backward compat, limited scan)
-    // Cap the scan to first 20 clients to avoid O(n) on large peer sets
+    // Cap the scan to first 20 clients to avoid O(n) on large peer sets.
+    // Issue #70: case-insensitive — peer.id is lowercase from the routing
+    // table, getRemoteNodeId() is mixed-case from the wire handshake.
+    const wantLower = peer.id.toLowerCase()
     const scanLimit = Math.min(this.cfg.wireClients.length, 20)
     for (let i = 0; i < scanLimit; i++) {
       const c = this.cfg.wireClients[i]
-      if (c.getRemoteNodeId() === peer.id && c.isConnected()) {
+      const remote = c.getRemoteNodeId()
+      if (c.isConnected() && remote && remote.toLowerCase() === wantLower) {
         const remotePeers = await c.findNode(targetId, LOOKUP_TIMEOUT_MS)
         return remotePeers.map((p) => ({
           id: p.id,

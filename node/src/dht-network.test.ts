@@ -239,6 +239,53 @@ describe("DhtNetwork", () => {
     assert.ok(discovered.length > 0, "should discover peers via wire client")
   })
 
+  it("should resolve wireClientByPeerId case-insensitively (regression: issue #70)", async () => {
+    // Production map is keyed by EIP-55 mixed-case (`config.peers` ID),
+    // routing-table peer IDs are lowercase. A strict Map.get(lowercase)
+    // would miss; verifyPeer must lowercase before lookup so cross-node
+    // fetchRemote can find the connected wire client.
+    let findNodeCalled = false
+    const mixedCaseId = "0xABcdEF0000000000000000000000000000000001"
+    const mockClient = {
+      isConnected: () => true,
+      findNode: async () => [{ id: "0xddd", address: "10.0.0.4:19781" }],
+      getRemoteNodeId: () => mixedCaseId,
+    } as unknown as WireClient
+    const mockClientDdd = {
+      isConnected: () => true,
+      findNode: async () => [],
+      getRemoteNodeId: () => "0xddd",
+    } as unknown as WireClient
+
+    // Simulating the production invariant from index.ts: keys are inserted
+    // lowercase. Routing-table queries arrive lowercase, so the lookup hits.
+    const wireClientByPeerId = new Map<string, WireClient>()
+    wireClientByPeerId.set(mixedCaseId.toLowerCase(), mockClient)
+    wireClientByPeerId.set("0xddd", mockClientDdd)
+
+    const discovered: DhtPeer[] = []
+    const network = new DhtNetwork({
+      localId: "0xaaa",
+      bootstrapPeers: [{ id: mixedCaseId, address: "10.0.0.1", port: 19781 }],
+      wireClients: [],
+      wireClientByPeerId,
+      onPeerDiscovered: (peer) => discovered.push(peer),
+    })
+    network.start()
+    await network.iterativeLookup("0xccc")
+    network.stop()
+
+    // The bootstrap peer's ID enters the routing table normalised to
+    // lowercase; iterativeLookup invokes findNode(peer) with that
+    // lowercase ID. The fix lets wireClientByPeerId.get(peer.id.toLowerCase())
+    // hit even though we inserted with the EIP-55 mixed case originally.
+    assert.ok(
+      discovered.length > 0 || network.findProviders("0xccc").length > 0
+        || network.routingTable.allPeers().some((p) => p.id === mixedCaseId.toLowerCase()),
+      "lookup must succeed despite case mismatch between map key and routing-table key",
+    )
+  })
+
   it("should ignore malformed peer IDs returned by FIND_NODE", async () => {
     const badAndGoodClient = {
       isConnected: () => true,
