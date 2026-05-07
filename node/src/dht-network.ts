@@ -47,6 +47,11 @@ const REANNOUNCE_INTERVAL_MS = DEFAULT_PROVIDER_TTL_MS / 2
 // drains in ~100 min, well within the 12h cadence. Prevents a fresh-
 // restart node from flooding its own provider map.
 const REANNOUNCE_BATCH_SIZE = 100
+// Periodic flush of provider records to disk. 1 min is short enough that
+// a crash loses ≤1 min of advertise state (re-derivable from local pins
+// via reannounceSelfProviders within ≤TTL/2) and long enough to amortise
+// the JSON serialization cost when the map is hot.
+const PROVIDER_SAVE_INTERVAL_MS = 60_000
 
 export interface DhtNetworkConfig {
   localId: string
@@ -64,6 +69,14 @@ export interface DhtNetworkConfig {
   onPeerDiscovered: (peer: DhtPeer) => void
   /** Path to save/load routing table peers (optional) */
   peerStorePath?: string
+  /**
+   * Path to save/load provider records (CID → peers-who-have-it). Without
+   * persistence, restart wipes the in-memory map and `findProviders()`
+   * returns [] for any CID until peers re-announce (≤ TTL/2 cadence).
+   * Persisted records are filtered against the current TTL on load —
+   * stale entries beyond their expiry are dropped.
+   */
+  providerStorePath?: string
   /** Enforce authenticated handshake verification; when true, disables TCP-only fallback. */
   requireAuthenticatedVerify?: boolean
 }
@@ -74,6 +87,7 @@ export class DhtNetwork {
   private refreshTimer: ReturnType<typeof setInterval> | null = null
   private announceTimer: ReturnType<typeof setInterval> | null = null
   private reannounceTimer: ReturnType<typeof setInterval> | null = null
+  private providerSaveTimer: ReturnType<typeof setInterval> | null = null
   private reannouncePinSource: (() => Promise<string[]> | string[]) | null = null
   private reannouncesPerformed = 0
   private stopped = false
@@ -106,6 +120,12 @@ export class DhtNetwork {
 
   start(): void {
     this.stopped = false
+
+    // Restore provider records from disk before any tick can fire so
+    // findProviders() works for previously-PUT CIDs the moment we're
+    // listening — without this, every restart loses ~12h of advertise
+    // state and old CIDs return [] until peers re-announce.
+    this.loadProviders()
 
     // Add bootstrap peers to routing table
     for (const peer of this.cfg.bootstrapPeers) {
@@ -142,6 +162,17 @@ export class DhtNetwork {
       })
     }, REANNOUNCE_INTERVAL_MS)
     this.reannounceTimer.unref()
+
+    // Periodically flush provider records to disk so a crash loses at
+    // most one save interval. Cadence matches the routing table's
+    // implicit save (savePeers is currently called by the host on stop
+    // only, but the provider map churns every PUT so we save more often).
+    if (this.cfg.providerStorePath) {
+      this.providerSaveTimer = setInterval(() => {
+        this.saveProviders()
+      }, PROVIDER_SAVE_INTERVAL_MS)
+      this.providerSaveTimer.unref()
+    }
   }
 
   stop(): void {
@@ -158,6 +189,13 @@ export class DhtNetwork {
       clearInterval(this.reannounceTimer)
       this.reannounceTimer = null
     }
+    if (this.providerSaveTimer) {
+      clearInterval(this.providerSaveTimer)
+      this.providerSaveTimer = null
+    }
+    // Final flush on stop so a graceful shutdown captures the latest
+    // self-announce + freshly-learned provider entries.
+    if (this.cfg.providerStorePath) this.saveProviders()
   }
 
   /**
@@ -628,6 +666,80 @@ export class DhtNetwork {
       return peers.length
     } catch (err) {
       log.warn("failed to save DHT peers", { error: String(err) })
+      return 0
+    }
+  }
+
+  /**
+   * Persist provider records to disk. Only entries whose expiry is in the
+   * future are written — stale entries are dropped on save to keep the
+   * file bounded. Atomic via temp + rename, mirroring savePeers().
+   * Returns total entry count written (sum across all CIDs).
+   */
+  saveProviders(): number {
+    if (!this.cfg.providerStorePath) return 0
+    const now = Date.now()
+    const records: Array<{ cid: string; peerId: string; expiresAt: number }> = []
+    for (const [cid, providers] of this.providerRecords) {
+      for (const [peerId, expiresAt] of providers) {
+        if (expiresAt > now) {
+          records.push({ cid, peerId, expiresAt })
+        }
+      }
+    }
+    try {
+      const dir = path.dirname(this.cfg.providerStorePath)
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true })
+      }
+      const tmpPath = this.cfg.providerStorePath + ".tmp"
+      fs.writeFileSync(tmpPath, JSON.stringify(records))
+      fs.renameSync(tmpPath, this.cfg.providerStorePath)
+      log.info("DHT providers saved", { entries: records.length, cids: this.providerRecords.size, path: this.cfg.providerStorePath })
+      return records.length
+    } catch (err) {
+      log.warn("failed to save DHT providers", { error: String(err) })
+      return 0
+    }
+  }
+
+  /**
+   * Load provider records from disk into memory. Entries whose expiry has
+   * already passed are silently dropped. Records share the same TTL/eviction
+   * semantics as `putProvider()`, so reloading a snapshot is safe even if
+   * the cap (`MAX_PROVIDERS_PER_CID`) was exceeded between writes —
+   * `putProvider`'s eviction logic kicks in on next put for the affected CID.
+   * Returns number of live entries loaded.
+   */
+  loadProviders(): number {
+    if (!this.cfg.providerStorePath) return 0
+    try {
+      if (!fs.existsSync(this.cfg.providerStorePath)) return 0
+      const data = fs.readFileSync(this.cfg.providerStorePath, "utf-8")
+      const records = JSON.parse(data) as unknown
+      if (!Array.isArray(records)) return 0
+      const now = Date.now()
+      let loaded = 0
+      let stale = 0
+      for (const entry of records) {
+        if (!entry || typeof entry !== "object") continue
+        const r = entry as { cid?: unknown; peerId?: unknown; expiresAt?: unknown }
+        if (typeof r.cid !== "string" || typeof r.peerId !== "string" || typeof r.expiresAt !== "number") continue
+        if (r.expiresAt <= now) { stale++; continue }
+        const cidKey = r.cid.toLowerCase()
+        const peerKey = r.peerId.toLowerCase()
+        let providers = this.providerRecords.get(cidKey)
+        if (!providers) {
+          providers = new Map()
+          this.providerRecords.set(cidKey, providers)
+        }
+        providers.set(peerKey, r.expiresAt)
+        loaded++
+      }
+      log.info("DHT providers loaded", { entries: loaded, stale, cids: this.providerRecords.size, path: this.cfg.providerStorePath })
+      return loaded
+    } catch (err) {
+      log.warn("failed to load DHT providers", { error: String(err) })
       return 0
     }
   }
