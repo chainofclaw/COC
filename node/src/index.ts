@@ -1477,6 +1477,7 @@ if (wireServer && dhtNetwork) {
     dhtNetwork!.putProvider(cid, providerId, ttlMs)
   })
   ipfs.setAwaitReplicationResult(wiring.awaitReplicationResult, config.ipfsMinReplicas)
+  ipfs.setPushStripe(wiring.pushStripe)
 
   // Phase C3.3 repair loop: 10 min sweep tops up under-replicated pins.
   ipfsRepairLoop = new IpfsRepairLoop({

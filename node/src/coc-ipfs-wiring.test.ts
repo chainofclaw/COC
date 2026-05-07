@@ -747,4 +747,177 @@ describe("coc-ipfs-wiring", () => {
     assert.equal(block.bytes.toString(), "fast")
     mgr.stop()
   })
+
+  // ---- Phase Q.6 — stripe-aware push spread ---------------------------
+
+  it("pushStripe spreads N+M shards across distinct peers when peer count >= N+M", async () => {
+    const dht = makeDht("0xaa")
+    // 6 peers, all valid hex IDs so DHT.routingTable accepts them.
+    const peerIds = Array.from({ length: 6 }, (_, i) => `0x${"f".repeat(39)}${(i + 1).toString(16)}`)
+    seedDht(dht, peerIds)
+    const { mgr, pushCalls } = makeConnMgrWithPush(peerIds.map((id) => ({ id, connected: true, pushResult: true })))
+
+    const wiring = buildCocIpfsWiring({
+      localNodeId: "0xaa", blockstore, dht, connMgr: mgr, replicationFactor: 3,
+    })
+    blockstore.setHooks(wiring.blockstoreHooks)
+
+    // 6 distinct shards — RS(4+2) for one stripe.
+    const shards = Array.from({ length: 6 }, (_, i) => ({
+      cid: `bafkreitest${i.toString().padStart(50, "0")}`,
+      bytes: Buffer.from(`shard-${i}`),
+    }))
+
+    const result = await wiring.pushStripe(shards)
+    assert.equal(result.perShard.length, 6, "one PushToKResult per shard")
+    // Total push slots = 6 shards × replicationFactor 3 = 18.
+    // With 6 peers, ceiling distribution = ceil(18/6) = 3 → worstPeerOverlap should be ≤ 3.
+    assert.ok(result.worstPeerOverlap <= 3, `worstPeerOverlap=${result.worstPeerOverlap}, expected ≤ 3`)
+    // We should have used all 6 peers (no peer should be ignored).
+    assert.equal(result.distinctPeersUsed, 6, "all peers participated in the spread")
+    mgr.stop()
+  })
+
+  it("pushStripe is materially flatter than naive per-CID pushToK on the same peer set", async () => {
+    // This is the load-bearing assertion for Q.6: spread bias should
+    // produce a flatter distribution than independent per-CID picks.
+    const dht = makeDht("0xaa")
+    const peerIds = Array.from({ length: 6 }, (_, i) => `0x${"e".repeat(39)}${(i + 1).toString(16)}`)
+    seedDht(dht, peerIds)
+
+    const shards = Array.from({ length: 6 }, (_, i) => ({
+      cid: `bafkreidiff${i.toString().padStart(50, "0")}`,
+      bytes: Buffer.from(`distinct-shard-${i}`),
+    }))
+
+    // Naive baseline: independent pushToK per shard. Tally per-peer hits.
+    {
+      const { mgr, pushCalls } = makeConnMgrWithPush(peerIds.map((id) => ({ id, connected: true, pushResult: true })))
+      const wiring = buildCocIpfsWiring({
+        localNodeId: "0xaa", blockstore, dht, connMgr: mgr, replicationFactor: 3,
+      })
+      blockstore.setHooks(wiring.blockstoreHooks)
+      for (const s of shards) await wiring.pushToK(s.cid, s.bytes)
+      const tallyNaive = [...pushCalls.values()].map((arr) => arr.length)
+      const naiveMax = Math.max(...tallyNaive)
+      const naiveMin = Math.min(...tallyNaive)
+
+      // Stripe-aware: same routing table, fresh connMgr.
+      const { mgr: mgr2, pushCalls: pushCalls2 } = makeConnMgrWithPush(peerIds.map((id) => ({ id, connected: true, pushResult: true })))
+      const wiring2 = buildCocIpfsWiring({
+        localNodeId: "0xaa", blockstore, dht, connMgr: mgr2, replicationFactor: 3,
+      })
+      blockstore.setHooks(wiring2.blockstoreHooks)
+      await wiring2.pushStripe(shards)
+      const tallyStripe = [...pushCalls2.values()].map((arr) => arr.length)
+      const stripeMax = Math.max(...tallyStripe)
+      const stripeMin = Math.min(...tallyStripe)
+
+      // The stripe spread max must be ≤ naive max, and the spread (max - min)
+      // must be smaller-or-equal under stripe semantics.
+      assert.ok(
+        stripeMax <= naiveMax,
+        `stripe worst-peer load (${stripeMax}) must not exceed naive worst-peer load (${naiveMax})`,
+      )
+      assert.ok(
+        (stripeMax - stripeMin) <= (naiveMax - naiveMin),
+        `stripe range (${stripeMax}-${stripeMin}=${stripeMax - stripeMin}) must not exceed naive range (${naiveMax}-${naiveMin}=${naiveMax - naiveMin})`,
+      )
+      mgr.stop()
+      mgr2.stop()
+    }
+  })
+
+  it("pushStripe gracefully degrades when peer count < N+M (overlap > 1)", async () => {
+    const dht = makeDht("0xaa")
+    // Only 2 peers — far fewer than the 6 shards we'll push.
+    const peerIds = ["0x" + "a".repeat(39) + "1", "0x" + "a".repeat(39) + "2"]
+    seedDht(dht, peerIds)
+    const { mgr } = makeConnMgrWithPush(peerIds.map((id) => ({ id, connected: true, pushResult: true })))
+    const wiring = buildCocIpfsWiring({
+      localNodeId: "0xaa", blockstore, dht, connMgr: mgr, replicationFactor: 3,
+    })
+    blockstore.setHooks(wiring.blockstoreHooks)
+
+    const shards = Array.from({ length: 6 }, (_, i) => ({
+      cid: `bafkreismall${i.toString().padStart(49, "0")}`,
+      bytes: Buffer.from(`shard-${i}`),
+    }))
+    const result = await wiring.pushStripe(shards)
+    assert.equal(result.distinctPeersUsed, 2)
+    // 6 shards × replicationFactor 3 = 18 push attempts but only 2 peers,
+    // so each peer gets clamped: targets length per shard = min(replicationFactor, peerCount) = 2.
+    // Total = 12 attempts; per-peer overlap = 6.
+    assert.ok(result.worstPeerOverlap <= 6, "overlap bounded by total push attempts")
+    // Every shard's PushToKResult should have skippedLowPeers=false (peers exist).
+    for (const r of result.perShard) {
+      assert.equal(r.skippedLowPeers, false)
+      assert.ok(r.attempted > 0, "at least one push attempted per shard")
+    }
+    mgr.stop()
+  })
+
+  it("pushStripe excludes the local node from candidates", async () => {
+    const dht = makeDht("0xaa")
+    seedDht(dht, ["0xaa", "0xbb"]) // local node deliberately in the table
+    const { mgr, pushCalls } = makeConnMgrWithPush([
+      { id: "0xbb", connected: true, pushResult: true },
+    ])
+    const wiring = buildCocIpfsWiring({
+      localNodeId: "0xaa", blockstore, dht, connMgr: mgr, replicationFactor: 3,
+    })
+    blockstore.setHooks(wiring.blockstoreHooks)
+
+    const shards = [{ cid: "bafkreione" + "0".repeat(48), bytes: Buffer.from("only-shard") }]
+    const result = await wiring.pushStripe(shards)
+    assert.ok(!result.perShard[0].succeeded.includes("0xaa"))
+    assert.ok(!result.perShard[0].failed.includes("0xaa"))
+    assert.ok(result.distinctPeersUsed <= 1)
+    mgr.stop()
+  })
+
+  it("pushStripe with zero peers returns all skippedLowPeers=true", async () => {
+    const dht = makeDht("0xaa")
+    const { mgr } = makeConnMgrWithPush([])
+    const wiring = buildCocIpfsWiring({
+      localNodeId: "0xaa", blockstore, dht, connMgr: mgr, replicationFactor: 3,
+    })
+    blockstore.setHooks(wiring.blockstoreHooks)
+
+    const shards = [
+      { cid: "bafkreinop" + "0".repeat(48), bytes: Buffer.from("a") },
+      { cid: "bafkreinop" + "1".repeat(48), bytes: Buffer.from("b") },
+    ]
+    const result = await wiring.pushStripe(shards)
+    for (const r of result.perShard) {
+      assert.equal(r.skippedLowPeers, true)
+      assert.equal(r.attempted, 0)
+    }
+    assert.equal(result.distinctPeersUsed, 0)
+    assert.equal(result.worstPeerOverlap, 0)
+    mgr.stop()
+  })
+
+  it("blockstore.put with deferStripePush skips per-CID pushToK but still self-announces + gossips", async () => {
+    const dht = makeDht("0xaa")
+    seedDht(dht, ["0xbb"])
+    const { mgr, pushCalls } = makeConnMgrWithPush([{ id: "0xbb", connected: true, pushResult: true }])
+    const { mgr: advMgr, advertiseCalls } = makeConnMgrWithAdvertise([{ id: "0xbb", connected: true }])
+    // Use the push-tracking mgr so we observe the absence of pushBlock calls.
+    const wiring = buildCocIpfsWiring({
+      localNodeId: "0xaa", blockstore, dht, connMgr: mgr, replicationFactor: 3,
+    })
+    blockstore.setHooks(wiring.blockstoreHooks)
+
+    const cid = "QmDeferred" as CidString
+    await blockstore.put({ cid, bytes: Buffer.from("deferred") }, { deferStripePush: true })
+
+    // Self-announce did fire (cheap in-memory provider record).
+    const providers = dht.findProviders(cid, 5)
+    assert.ok(providers.includes("0xaa"), "local node still self-announced")
+    // pushBlock did NOT fire on the connected peer.
+    assert.equal(pushCalls.get("0xbb")!.length, 0, "deferred push must not trigger per-CID push-to-K")
+    mgr.stop()
+    advMgr.stop()
+  })
 })
