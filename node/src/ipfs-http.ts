@@ -11,6 +11,16 @@ import type { IpfsPubsub } from "./ipfs-pubsub.ts"
 import { createTarArchive } from "./ipfs-tar.ts"
 import { RateLimiter } from "./rate-limiter.ts"
 import { createLogger } from "./logger.ts"
+import {
+  encodeFile as erasureEncode,
+  ErasureError,
+  type ErasureManifest,
+} from "./ipfs-erasure.ts"
+import {
+  resolveCid,
+  readErasureFile,
+  erasureStatus,
+} from "./ipfs-erasure-reader.ts"
 
 const log = createLogger("ipfs")
 const ipfsRateLimiter = new RateLimiter(60_000, 100)
@@ -136,7 +146,7 @@ export class IpfsHttpServer {
       }
 
       if (url.pathname === "/api/v0/add") {
-        await this.handleAdd(req, res)
+        await this.handleAdd(req, res, url.query.erasure as string | undefined)
         return
       }
       if (url.pathname === "/api/v0/version") {
@@ -187,6 +197,10 @@ export class IpfsHttpServer {
         await this.handlePinLs(res, url.query.arg as string | undefined)
         return
       }
+      if (url.pathname === "/api/v0/erasure/status") {
+        await this.handleErasureStatus(res, url.query.arg as string | undefined)
+        return
+      }
 
       // MFS routes
       if (url.pathname?.startsWith("/api/v0/files/") && this.mfs) {
@@ -205,6 +219,7 @@ export class IpfsHttpServer {
       } catch (err) {
         const status = err instanceof HttpError ? err.status : 500
         const code = err instanceof HttpError ? err.code : "internal error"
+        const message = err instanceof HttpError && err.message !== code ? err.message : undefined
         if (!res.headersSent) {
           res.writeHead(status, { "content-type": "application/json" })
         }
@@ -213,7 +228,9 @@ export class IpfsHttpServer {
         } else {
           log.warn("IPFS HTTP request rejected", { status, code })
         }
-        try { res.end(JSON.stringify({ error: code })) } catch { /* connection already closed */ }
+        try {
+          res.end(JSON.stringify(message ? { error: code, message } : { error: code }))
+        } catch { /* connection already closed */ }
       }
     })
     server.on("connection", (socket) => {
@@ -248,8 +265,55 @@ export class IpfsHttpServer {
     })
   }
 
-  private async handleAdd(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  private async handleAdd(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    erasureSpec?: string,
+  ): Promise<void> {
     const { filename, bytes } = await readMultipartFile(req)
+
+    // Phase Q.4: opt-in Reed-Solomon erasure coding via ?erasure=N+M.
+    // The UnixFS DAG is still produced (for back-compat retrieval via
+    // the original CID); we additionally encode + store the erasure
+    // shards and return the manifest CID as the entry-point Hash.
+    const params = parseErasureSpec(erasureSpec)
+    if (params) {
+      const meta = await this.unixfs.addFile(filename ?? "file", bytes)
+      await this.saveFileMeta(meta)
+
+      const enc = await erasureEncode(bytes, { ...params, originalCid: meta.cid })
+      // Store every shard via the standard put path so the existing
+      // onPut hook (push-to-K + DHT announce + LRU bookkeeping) fires
+      // for each. Manifest is also stored but not pinned-recursive yet
+      // (LRU walk over manifests is a Q.5 follow-up); we pin every
+      // shard CID + the manifest CID individually so eviction leaves
+      // the file intact.
+      for (const block of enc.shardBlocks) await this.store.put(block)
+      await this.store.put(enc.manifestBlock)
+      for (const block of enc.shardBlocks) await this.store.pin(block.cid)
+      await this.store.pin(enc.manifestCid)
+      // Track the manifest → originalCid mapping in file-meta so an
+      // operator can look up the UnixFS fallback CID without re-decoding
+      // the manifest.
+      await this.saveFileMeta({
+        ...meta,
+        cid: enc.manifestCid,
+      })
+
+      const result: IpfsAddResult = {
+        Name: filename ?? "file",
+        Hash: enc.manifestCid,
+        Size: bytes.byteLength.toString(),
+      }
+      res.writeHead(200, {
+        "content-type": "application/json",
+        "X-COC-Erasure-Scheme": `rs(${params.n}+${params.m})`,
+        "X-COC-Erasure-Original-Cid": meta.cid,
+      })
+      res.end(`${JSON.stringify(result)}\n`)
+      return
+    }
+
     const meta = await this.unixfs.addFile(filename ?? "file", bytes)
     await this.store.pin(meta.cid)
     await this.saveFileMeta(meta)
@@ -411,13 +475,7 @@ export class IpfsHttpServer {
       res.end(JSON.stringify({ error: !cid ? "missing cid" : "invalid cid" }))
       return
     }
-    let data: Uint8Array
-    try {
-      data = await this.unixfs.readFile(cid)
-    } catch (err) {
-      if (isNotFoundError(err)) throw new HttpError(404, "block not found")
-      throw err
-    }
+    const data = await this.readByCid(cid)
     res.writeHead(200)
     res.end(data)
   }
@@ -428,16 +486,82 @@ export class IpfsHttpServer {
       res.end(JSON.stringify({ error: !cid ? "missing cid" : "invalid cid" }))
       return
     }
-    let data: Uint8Array
+    const data = await this.readByCid(cid)
+    const archive = createTarArchive([{ name: cid, data }])
+    res.writeHead(200, { "content-type": "application/x-tar" })
+    res.end(archive)
+  }
+
+  /**
+   * Phase Q.3+Q.4: dispatch a CID to the right reader by codec.
+   * - dag-cbor → erasure manifest path (parses + reconstructs from shards)
+   * - dag-pb   → UnixFS reader (existing behaviour)
+   * - raw      → return the raw block bytes verbatim
+   *
+   * `resolveCid` already inspects the codec and pre-fetches the manifest
+   * (when applicable) so we don't re-fetch.
+   */
+  private async readByCid(cid: string): Promise<Uint8Array> {
+    let resolved
     try {
-      data = await this.unixfs.readFile(cid)
+      resolved = await resolveCid(cid, this.store)
+    } catch (err) {
+      if (err instanceof ErasureError) {
+        if (err.code === "not_found") throw new HttpError(404, "block not found")
+        if (err.code === "invalid_cid" || err.code === "unsupported_codec") {
+          throw new HttpError(400, err.code)
+        }
+        if (err.code === "not_a_manifest") {
+          throw new HttpError(415, err.code, err.message)
+        }
+        throw new HttpError(500, err.code, err.message)
+      }
+      throw err
+    }
+
+    if (resolved.kind === "raw") {
+      return resolved.bytes!
+    }
+    if (resolved.kind === "erasure") {
+      try {
+        return await readErasureFile(resolved.manifest!, this.store)
+      } catch (err) {
+        if (err instanceof ErasureError && err.code === "insufficient_shards") {
+          throw new HttpError(503, "insufficient_shards", err.message)
+        }
+        throw err
+      }
+    }
+    // unixfs path
+    try {
+      return await this.unixfs.readFile(cid)
     } catch (err) {
       if (isNotFoundError(err)) throw new HttpError(404, "block not found")
       throw err
     }
-    const archive = createTarArchive([{ name: cid, data }])
-    res.writeHead(200, { "content-type": "application/x-tar" })
-    res.end(archive)
+  }
+
+  private async handleErasureStatus(res: http.ServerResponse, cid?: string): Promise<void> {
+    if (!cid || !isValidCid(cid)) {
+      res.writeHead(400, { "content-type": "application/json" })
+      res.end(JSON.stringify({ error: !cid ? "missing cid" : "invalid cid" }))
+      return
+    }
+    let resolved
+    try {
+      resolved = await resolveCid(cid, this.store)
+    } catch (err) {
+      if (err instanceof ErasureError && err.code === "not_found") {
+        throw new HttpError(404, "block not found")
+      }
+      throw err
+    }
+    if (resolved.kind !== "erasure") {
+      throw new HttpError(415, "not_a_manifest", `CID ${cid} is not an erasure manifest`)
+    }
+    const status = await erasureStatus(resolved.manifest!, this.store)
+    res.writeHead(200, { "content-type": "application/json" })
+    res.end(JSON.stringify(status))
   }
 
   private async handleBlockPut(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
@@ -743,6 +867,25 @@ function isValidCid(cid: string): boolean {
   const trimmed = cid.trim()
   if (trimmed !== cid || trimmed.length === 0) return false
   return !/[\/\\]|\.\.|\0|\s/.test(cid)
+}
+
+/**
+ * Parse `?erasure=N+M` query value. Returns null when absent (caller takes
+ * the plain-UnixFS path). Throws `HttpError(400)` when malformed so callers
+ * never silently fall back on a typo.
+ */
+function parseErasureSpec(spec: string | undefined): { n: number; m: number } | null {
+  if (!spec) return null
+  const match = /^(\d+)\+(\d+)$/.exec(spec.trim())
+  if (!match) {
+    throw new HttpError(400, "invalid erasure spec", `expected '?erasure=N+M', got '${spec}'`)
+  }
+  const n = Number(match[1])
+  const m = Number(match[2])
+  if (!Number.isInteger(n) || !Number.isInteger(m) || n < 1 || m < 1) {
+    throw new HttpError(400, "invalid erasure spec", `n and m must be positive integers, got n=${n} m=${m}`)
+  }
+  return { n, m }
 }
 
 // Aligned with UnixFsBuilder.MAX_READ_SIZE (50 MB on the read side).

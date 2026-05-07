@@ -40,7 +40,10 @@ fi
 
 echo "==> [1/9] System packages"
 apt-get update -qq
-apt-get install -y -qq curl git ufw chrony ca-certificates >/dev/null
+# Phase Q.4: build-essential + python3 are needed by @ronomon/reed-solomon
+# (native addon — Reed-Solomon erasure coding library). Without these the
+# `npm install` step below fails with node-gyp errors. ~200 MB extra disk.
+apt-get install -y -qq curl git ufw chrony ca-certificates build-essential python3 >/dev/null
 systemctl enable --now chrony >/dev/null
 
 echo "==> [2/9] Node.js 22"
