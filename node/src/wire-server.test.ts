@@ -998,3 +998,115 @@ describe("WireServer BlockRequest/BlockResponse", () => {
     assert.equal(results.filter((r) => r !== null).length, 3)
   })
 })
+
+// Issue #71 Bug A regression suite. The pre-fix WireClient.send destroyed
+// the socket the moment writableLength crossed 10 MiB; under a 50 MB IPFS
+// PUT (~200 chunked frames in a tight loop) every receiving peer saw
+// ECONNRESET mid-burst and the leaf chunks never replicated. The fix
+// queues frames internally and flushes on `'drain'` instead.
+describe("WireClient backpressure (#71 Bug A)", () => {
+  let server: WireServer | null = null
+  const clients: WireClient[] = []
+
+  afterEach(() => {
+    for (const c of clients) c.disconnect()
+    clients.length = 0
+    if (server) { server.stop(); server = null }
+  })
+
+  async function spawnConnectedClient(): Promise<WireClient> {
+    const port = getRandomPort()
+    server = new WireServer({
+      port,
+      nodeId: "server-bp",
+      chainId: 18780,
+      onBlock: async () => {},
+      onTx: async () => {},
+      getHeight: () => Promise.resolve(0n),
+    })
+    server.start()
+    await new Promise((r) => setTimeout(r, 50))
+
+    const client = new WireClient({
+      host: "127.0.0.1", port, nodeId: "client-bp", chainId: 18780,
+    })
+    clients.push(client)
+    client.connect()
+    for (let i = 0; i < 50; i++) {
+      if (client.isConnected()) break
+      await new Promise((r) => setTimeout(r, 40))
+    }
+    if (!client.isConnected()) throw new Error("handshake did not complete")
+    return client
+  }
+
+  it("send queues internally instead of destroying on backpressure", async () => {
+    const client = await spawnConnectedClient()
+    // Force backpressure by stubbing socket.write to always return false
+    // (kernel-buffer-full signal). The pre-fix code destroyed the socket
+    // here; the fixed code queues and waits for drain.
+    // @ts-expect-error — private-field access for test fan-out
+    const sock = client.socket as net.Socket
+    let writeCalls = 0
+    const realWrite = sock.write.bind(sock)
+    sock.write = ((data: Buffer | Uint8Array, ...rest: unknown[]) => {
+      writeCalls++
+      // Always return false to indicate full kernel buffer; still write
+      // through so the data reaches the server (we want backpressure
+      // signaling, not actual loss).
+      // @ts-expect-error — passthrough variadic args
+      realWrite(data, ...rest)
+      return false
+    }) as typeof sock.write
+
+    // Send 10 frames in burst. Pre-fix: destroys socket on first overflow.
+    // Post-fix: queues and stays connected.
+    const frame = encodeJsonPayload(MessageType.Ping, { ts: 1 })
+    let allOk = true
+    for (let i = 0; i < 10; i++) {
+      if (!client.send(frame)) { allOk = false; break }
+    }
+    assert.equal(allOk, true, "send must return true even under backpressure")
+    assert.equal(client.isConnected(), true, "connection must survive burst")
+    assert.ok(writeCalls >= 1, "at least the first frame went to socket.write")
+  })
+
+  it("queue overflow returns false beyond high watermark instead of destroying", async () => {
+    const client = await spawnConnectedClient()
+    // Stub writableLength so the queueing branch decides every send needs
+    // queueing, then queue past the 64 MiB watermark by stuffing oversize
+    // frames. Use a Uint8Array of declared length 16 MiB; we don't need
+    // real bytes since we override write.
+    // @ts-expect-error — private-field access
+    const sock = client.socket as net.Socket
+    const realWrite = sock.write.bind(sock)
+    sock.write = (() => false) as typeof sock.write
+
+    const big = new Uint8Array(16 * 1024 * 1024) // 16 MiB
+    // First send queues 16 MiB. Subsequent: 16 MiB each.
+    // Watermark is 64 MiB → 4 fit, 5th must be dropped.
+    let lastResult = true
+    for (let i = 0; i < 5; i++) {
+      lastResult = client.send(big)
+      if (!lastResult) break
+    }
+    assert.equal(lastResult, false, "5th oversize frame must be rejected (queue overflow)")
+    assert.equal(client.isConnected(), true, "connection must NOT be destroyed on overflow")
+    sock.write = realWrite as typeof sock.write
+  })
+
+  it("disconnect drops queued frames cleanly", async () => {
+    const client = await spawnConnectedClient()
+    // @ts-expect-error — private-field access
+    const sock = client.socket as net.Socket
+    sock.write = (() => false) as typeof sock.write
+    const frame = encodeJsonPayload(MessageType.Ping, { ts: 1 })
+    client.send(frame)
+    client.send(frame)
+    // @ts-expect-error — peek private state
+    assert.ok(client.sendQueue.length > 0, "queue populated under backpressure")
+    client.disconnect()
+    // @ts-expect-error — peek private state
+    assert.equal(client.sendQueue.length, 0, "disconnect clears the queue")
+  })
+})

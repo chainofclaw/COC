@@ -920,4 +920,101 @@ describe("coc-ipfs-wiring", () => {
     mgr.stop()
     advMgr.stop()
   })
+
+  // Issue #71 Bug B regression: when DHT findProviders is empty (e.g. the
+  // ProviderAdvertise gossip got dropped under burst), fetchRemote should
+  // still try every directly-connected peer. Pre-fix this path returned
+  // null instantly and synchronous /api/v0/get returned 404 even though
+  // the peer was holding the bytes.
+  it("fetchRemote falls back to connected peers when DHT has no providers (#71 Bug B)", async () => {
+    const cid = "QmFallback" as CidString
+    const remoteBytes = Buffer.from("via connected peer")
+    const dht = makeDht("0xaa")
+    // Note: no putProvider call — DHT is empty for this CID.
+
+    // Use the same trick as makeConnMgr but ensure the connected peer is
+    // visible to listConnectedPeerIds (i.e. isConnected returns true).
+    const mgr = new WireConnectionManager({ nodeId: "local", chainId: 1 })
+    const client = {
+      isConnected: () => true,
+      getRemoteNodeId: () => "0xpeer-zz",
+      requestBlock: async (askCid: string) => (askCid === cid ? remoteBytes : null),
+      pushBlock: async () => true,
+      sendProviderAdvertise: () => true,
+      disconnect: () => {},
+    } as unknown as import("./wire-client.ts").WireClient
+    // @ts-expect-error — private-field write for test fan-out
+    mgr.connections.set("0xpeer-zz", { client, host: "h", port: 1, connectedAtMs: 0 })
+
+    const wiring = buildCocIpfsWiring({
+      localNodeId: "0xaa", blockstore, dht, connMgr: mgr,
+    })
+    blockstore.setHooks(wiring.blockstoreHooks)
+
+    const block = await blockstore.get(cid)
+    assert.deepEqual(Array.from(block.bytes), Array.from(remoteBytes))
+    mgr.stop()
+  })
+
+  // Issue #71 Bug A regression: pushBlock calls to the same peer must
+  // serialize through `sendThroughPeer` so we never have >1 in-flight
+  // frame per peer. Without this, a 50 MB UnixFS PUT fans out into ~200
+  // concurrent socket.write() calls per peer; the kernel send buffer
+  // overflows and the connection RSTs mid-burst. We simulate the burst
+  // by giving each pushBlock a small delay; if serialization is broken,
+  // overlapping calls are observable via a peak-concurrency counter.
+  it("pushToK serializes per-peer pushBlock so concurrent burst doesn't overlap (#71 Bug A)", async () => {
+    const dht = makeDht("0x1111")
+    seedDht(dht, [PA])
+    const mgr = new WireConnectionManager({ nodeId: "local", chainId: 1 })
+    const callTimings: Array<{ start: number; end: number }> = []
+    let inFlight = 0
+    let peakInFlight = 0
+    const client = {
+      isConnected: () => true,
+      getRemoteNodeId: () => PA,
+      requestBlock: async () => null,
+      pushBlock: async () => {
+        const start = Date.now()
+        inFlight++
+        peakInFlight = Math.max(peakInFlight, inFlight)
+        // Hold long enough that any concurrent push would overlap into
+        // the same 20 ms window. 20 ms × 5 = 100 ms total wall-clock
+        // when fully serialized.
+        await new Promise((r) => setTimeout(r, 20))
+        inFlight--
+        callTimings.push({ start, end: Date.now() })
+        return true
+      },
+      sendProviderAdvertise: () => true,
+      disconnect: () => {},
+    } as unknown as import("./wire-client.ts").WireClient
+    // @ts-expect-error — private-field write for test fan-out
+    mgr.connections.set(PA, { client, host: "h", port: 1, connectedAtMs: 0 })
+
+    const wiring = buildCocIpfsWiring({
+      localNodeId: "0x1111", blockstore, dht, connMgr: mgr, replicationFactor: 1,
+    })
+
+    // Fire 5 pushToK calls in parallel — simulates burst PUTs.
+    await Promise.all([
+      wiring.pushToK("QmBurst1" as CidString, Buffer.from("a")),
+      wiring.pushToK("QmBurst2" as CidString, Buffer.from("b")),
+      wiring.pushToK("QmBurst3" as CidString, Buffer.from("c")),
+      wiring.pushToK("QmBurst4" as CidString, Buffer.from("d")),
+      wiring.pushToK("QmBurst5" as CidString, Buffer.from("e")),
+    ])
+
+    assert.equal(callTimings.length, 5, "all 5 pushBlock calls landed")
+    assert.equal(peakInFlight, 1, "per-peer concurrency must be 1 (serialized)")
+    // Sanity: end of call N must be ≤ start of call N+1 (chain not interleaved).
+    callTimings.sort((a, b) => a.start - b.start)
+    for (let i = 1; i < callTimings.length; i++) {
+      assert.ok(
+        callTimings[i].start >= callTimings[i - 1].end,
+        `call ${i} started at ${callTimings[i].start} before previous call ended at ${callTimings[i - 1].end}`,
+      )
+    }
+    mgr.stop()
+  })
 })
