@@ -238,17 +238,41 @@ export function buildCocIpfsWiring(cfg: CocIpfsWiringConfig): {
   }
 
   const pushToK = async (cid: string, bytes: Uint8Array): Promise<PushToKResult> => {
-    // findClosest on the routing table is O(peers). Caps at K-bucket size
-    // (20) per bucket so the walk is cheap even at high peer counts. We
-    // ask for `replicationFactor + 1` so we can skip the local node if
-    // it lands in its own table — defensive, since DhtNetwork.announce()
-    // intentionally self-FindNodes and some implementations may mirror
-    // us back.
-    const candidates = cfg.dht.routingTable.findClosest(cidToRoutingKey(cid), replicationFactor + 1)
-    const targets = candidates
-      .map((p) => p.id)
-      .filter((id) => id.toLowerCase() !== cfg.localNodeId.toLowerCase())
-      .slice(0, replicationFactor)
+    // Phase Q.5 follow-up (2026-05-08): pull a wider candidate pool and
+    // filter out peers that have no live wire connection. Without this,
+    // a single TERMINATED peer that the DHT routing table hasn't pruned
+    // yet occupies one of the K replication slots and silently degrades
+    // the effective replication factor. Diagnostic data showed 4-node
+    // mesh with 1 stale peer routinely landing pushToK at 2/3 succeeded
+    // even though all 5 reachable peers had healthy wire connections.
+    //
+    // We mirror pushStripe's SPREAD_CANDIDATE_POOL sizing (K*4) so that a
+    // routing table polluted with up to 3K stale entries still finds K
+    // healthy targets.
+    const POOL_SIZE = Math.max(replicationFactor * 4, 8)
+    const candidates = cfg.dht.routingTable.findClosest(cidToRoutingKey(cid), POOL_SIZE)
+    const targets: string[] = []
+    const seenLc = new Set<string>([cfg.localNodeId.toLowerCase()])
+    let staleSkipped = 0
+    let dupSkipped = 0
+    for (const p of candidates) {
+      const idLc = p.id.toLowerCase()
+      if (seenLc.has(idLc)) {
+        // Either local-node skip or DHT duplicate entry (mixed/lower case
+        // for the same address — Phase X1.6 follow-up).
+        if (idLc !== cfg.localNodeId.toLowerCase()) dupSkipped++
+        continue
+      }
+      const client = cfg.connMgr.findByNodeId(p.id)
+      if (!client || !client.isConnected()) {
+        staleSkipped++
+        seenLc.add(idLc)
+        continue
+      }
+      targets.push(p.id)
+      seenLc.add(idLc)
+      if (targets.length >= replicationFactor) break
+    }
 
     // Clamp: if we have fewer potential peers than the replication target,
     // accept the deficit rather than block the PUT. We also skip entirely
@@ -262,6 +286,7 @@ export function buildCocIpfsWiring(cfg: CocIpfsWiringConfig): {
           cid,
           replicationFactor,
           peersInTable: candidates.length,
+          staleSkipped,
         })
         lastLowPeerWarnMs = now
       }
@@ -272,34 +297,54 @@ export function buildCocIpfsWiring(cfg: CocIpfsWiringConfig): {
     // buffers. Per-peer we fully serialize via `sendThroughPeer` to keep
     // in-flight bytes bounded. The bytes ride base64 in a single frame
     // (Phase C1.2's design note on pushBlock).
+    //
+    // Phase Q.5 follow-up (2026-05-08): pushBlock collapses 5 distinct
+    // failure modes (no-client / not-connected / queue-full / timeout /
+    // null-ack) into a single boolean. Capture the per-peer reason here
+    // so partial replication is diagnosable from the info-level log.
     const results = await Promise.all(targets.map(async (peerId) => {
       const client = cfg.connMgr.findByNodeId(peerId)
       if (!client) {
-        log.debug("pushToK: no client for peerId", { peerId, cid })
-        return { peerId, ok: false }
+        return { peerId, ok: false, reason: "no-client-for-peerId" }
       }
-      const ok = await sendThroughPeer(peerId, async () => {
+      const outcome = await sendThroughPeer(peerId, async () => {
+        if (!client.isConnected()) {
+          return { ok: false, reason: "wire-not-connected" }
+        }
         try {
-          return await client.pushBlock(cid, bytes, pushTimeoutMs)
+          const ok = await client.pushBlock(cid, bytes, pushTimeoutMs)
+          return { ok, reason: ok ? "ok" : "pushBlock-returned-false" }
         } catch (err) {
-          log.debug("pushToK: peer pushBlock threw", { peerId, cid, error: String(err) })
-          return false
+          return { ok: false, reason: `pushBlock-threw: ${String(err)}` }
         }
       })
-      return { peerId, ok }
+      return { peerId, ok: outcome.ok, reason: outcome.reason }
     }))
 
     const succeeded = results.filter((r) => r.ok).map((r) => r.peerId)
     const failed = results.filter((r) => !r.ok).map((r) => r.peerId)
     if (failed.length > 0) {
+      const failedDetail = results
+        .filter((r) => !r.ok)
+        .map((r) => ({ peerId: r.peerId, reason: r.reason }))
       log.info("pushToK: partial replication", {
         cid,
         attempted: targets.length,
-        succeeded: succeeded.length,
-        failed: failed.length,
+        succeededCount: succeeded.length,
+        failedCount: failed.length,
+        succeededPeers: succeeded,
+        failedDetail,
+        staleSkipped,
+        dupSkipped,
       })
     } else {
-      log.debug("pushToK: full replication", { cid, attempted: targets.length })
+      log.info("pushToK: full replication", {
+        cid,
+        attempted: targets.length,
+        succeededPeers: succeeded,
+        staleSkipped,
+        dupSkipped,
+      })
     }
     return { cid, attempted: targets.length, succeeded, failed, skippedLowPeers: false }
   }
