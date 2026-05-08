@@ -513,6 +513,6 @@ DHT state (每个 node 的视图都等价):
   - `node/src/ipfs-merkle.ts` — keccak256 Merkle tree（PoSe 用）
 
 - 相关文档：
-  - `testnet-status-2026-04-24-zh.md` — 当前测试网配置
+  - `archive/testnet-snapshots/testnet-status-2026-04-24-zh.md` — 当前测试网配置
   - `architecture-zh.md` — 总体架构
   - `anti-sybil-zh.md` — 抗女巫攻击设计

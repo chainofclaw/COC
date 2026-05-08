@@ -514,6 +514,6 @@ All listed in Phase C's "explicitly deferred" list, to be addressed in Phase D.
   - `node/src/ipfs-merkle.ts` — keccak256 Merkle tree (for PoSe)
 
 - Related docs:
-  - `testnet-status-2026-04-24-en.md` — current testnet config
+  - `archive/testnet-snapshots/testnet-status-2026-04-24-en.md` — current testnet config
   - `architecture-en.md` — overall architecture
   - `anti-sybil-en.md` — anti-sybil design

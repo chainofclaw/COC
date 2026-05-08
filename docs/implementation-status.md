@@ -30,7 +30,7 @@ This document maps the whitepaper scope to the current codebase and test coverag
 - `pickForBlock` latency: 1.26ms → **0.86ms** (-32%)
 - Infrastructure: `BlockIndex.updateBlockStateRoot()` for future deferred stateRoot
 - 1322 tests passing (zero regression)
-- See `docs/phase-38-39-tps-optimization.md` for full details
+- See `docs/archive/phases/phase-38-39-tps-optimization.md` for full details
 
 Implemented:
 - In-memory EVM execution using `@ethereumjs/vm`
@@ -477,8 +477,8 @@ Code:
 - `COC/node/src/storage/pruner.ts` (UPDATED - M7)
 
 Documentation:
-- `COC/docs/phase-13.1-plan.en.md`
-- `COC/docs/phase-13.1-plan.zh.md`
+- `COC/docs/archive/phases/phase-13.1-plan.en.md`
+- `COC/docs/archive/phases/phase-13.1-plan.zh.md`
 
 ## 15) Phase 13.2: Node Integration & Event Indexing
 **Status: Implemented (2026-02-15)**
@@ -503,8 +503,8 @@ Code:
 - `COC/node/src/rpc-persistent.test.ts` (NEW)
 
 Documentation:
-- `COC/docs/phase-13.2-plan.en.md`
-- `COC/docs/phase-13.2-plan.zh.md`
+- `COC/docs/archive/phases/phase-13.2-plan.en.md`
+- `COC/docs/archive/phases/phase-13.2-plan.zh.md`
 
 ## 16) Phase 14: WebSocket Subscriptions & Real-time Events
 **Status: Implemented (2026-02-15)**
@@ -532,8 +532,8 @@ Code:
 - `COC/node/src/websocket-rpc.test.ts` (NEW - 5 tests)
 
 Documentation:
-- `COC/docs/phase-14-plan.en.md`
-- `COC/docs/phase-14-plan.zh.md`
+- `COC/docs/archive/phases/phase-14-plan.en.md`
+- `COC/docs/archive/phases/phase-14-plan.zh.md`
 
 ## 17) Production Hardening
 **Status: Implemented (Phase 24 + 27 + 33)**
@@ -590,8 +590,8 @@ Code:
 - `COC/contracts/settlement/PoSeManager.sol` (UPDATED - v-value check)
 
 Documentation:
-- `COC/docs/phase-24-plan.en.md`
-- `COC/docs/phase-24-plan.zh.md`
+- `COC/docs/archive/phases/phase-24-plan.en.md`
+- `COC/docs/archive/phases/phase-24-plan.zh.md`
 
 ## 18) Phase 26: Four Limitations Resolution
 **Status: Implemented (2026-02-15)**
@@ -980,8 +980,8 @@ Code:
 - `COC/.github/workflows/testnet-deploy.yml` (UPDATED - metrics health check + image tag flow)
 
 Documentation:
-- `COC/docs/phase-34-plan.en.md`
-- `COC/docs/phase-34-plan.zh.md`
+- `COC/docs/archive/phases/phase-34-plan.en.md`
+- `COC/docs/archive/phases/phase-34-plan.zh.md`
 
 ## 28) Phase 35: Node Installation, Configuration & Type Selection
 **Status: Implemented (2026-02-22)**
