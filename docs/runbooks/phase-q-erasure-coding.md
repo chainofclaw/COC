@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | Status | Shipped (2026-05-07) |
-| Design | [`docs/phase-q-erasure-coding.md`](../phase-q-erasure-coding.md) |
-| Validation | [`docs/phase-q-validation-2026-05-07.md`](../phase-q-validation-2026-05-07.md) |
+| Design | [`docs/archive/phases/phase-q-erasure-coding.md`](../archive/phases/phase-q-erasure-coding.md) |
+| Validation | [`docs/archive/phases/phase-q-validation-2026-05-07.md`](../archive/phases/phase-q-validation-2026-05-07.md) |
 | Tracking | [chainofclaw/COC#68](https://github.com/chainofclaw/COC/issues/68) |
 
 ## What it does
@@ -300,6 +300,6 @@ DHT     POST /api/v0/.../coc_dhtFindProviders?cid=<...>  (RPC port)
 
 For Phase Q questions or follow-up work, reference:
 - Tracking issue: [chainofclaw/COC#68](https://github.com/chainofclaw/COC/issues/68)
-- Design: `docs/phase-q-erasure-coding.md`
-- Q.7 validation: `docs/phase-q-validation-2026-05-07.md`
+- Design: `docs/archive/phases/phase-q-erasure-coding.md`
+- Q.7 validation: `docs/archive/phases/phase-q-validation-2026-05-07.md`
 - Benchmark replay: `scripts/phase-q-benchmark/`
