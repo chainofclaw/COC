@@ -64,8 +64,13 @@ const SYNC_INFLIGHT_WATCHDOG_MS = 90_000
 // fires at this threshold; secondary fallbacks stagger +30s per step so that
 // at most one node activates per tick interval, preventing equivocation storms
 // (observed 2026-05-02: all 3 nodes fired simultaneously → 3-way block split).
-const NO_PROGRESS_TIMEOUT_MS = 600_000
-const NO_PROGRESS_STAGGER_MS = 30_000
+// Exported so the consensus test suite can express its assertions in terms
+// of the live thresholds (rather than hard-coded magic numbers that drift
+// silently when these tune — historical bug: 558b697 raised the timeout
+// from 120s → 600s but consensus.test.ts kept asserting at 125s, leaving
+// three stale failures until the next proactive sweep caught them).
+export const NO_PROGRESS_TIMEOUT_MS = 600_000
+export const NO_PROGRESS_STAGGER_MS = 30_000
 const NO_PROGRESS_MAX_VALIDATORS = 10
 
 /** Race a promise against a timeout. Throws on timeout, otherwise returns the value. */
