@@ -1,7 +1,7 @@
 import test, { describe, it } from "node:test"
 import assert from "node:assert/strict"
 import { ChainEngine } from "./chain-engine.ts"
-import { ConsensusEngine } from "./consensus.ts"
+import { ConsensusEngine, NO_PROGRESS_TIMEOUT_MS, NO_PROGRESS_STAGGER_MS } from "./consensus.ts"
 import type { SnapSyncProvider } from "./consensus.ts"
 import { EvmChain } from "./evm.ts"
 import { hashBlockPayload, zeroHash } from "./hash.ts"
@@ -553,7 +553,8 @@ test("Phase H15 stagger: only fallback proposer arms override, not all nodes", a
   //
   // Setup: 3-validator chain [node-1, node-2, node-3]. Height 0 → stuck height 1.
   // expectedProposer(1) = node-1 (stuck). Fallback = expectedProposer(2) = node-2.
-  // node-2 should fire at elapsed ≥ 120s. node-3 fires at ≥ 150s. node-1 never fires.
+  // node-2 should fire at elapsed ≥ NO_PROGRESS_TIMEOUT_MS. node-3 fires at
+  // ≥ NO_PROGRESS_TIMEOUT_MS + NO_PROGRESS_STAGGER_MS. node-1 never fires.
 
   const validators = ["node-1", "node-2", "node-3"]
   const stuckHeight = 1n // height we're stuck on
@@ -579,19 +580,26 @@ test("Phase H15 stagger: only fallback proposer arms override, not all nodes", a
     return (c as any).noProgressProposerOverride === true
   }
 
-  // Stuck proposer (node-1) never arms override
-  assert.equal(await watchdogFires("node-1", 125_000), false, "stuck proposer never arms override")
+  // Threshold values relative to live constants — keeps the assertions
+  // accurate even if the timeout is retuned (was 120s pre-558b697, 600s now).
+  const PRIMARY_BELOW = NO_PROGRESS_TIMEOUT_MS - 5_000
+  const PRIMARY_ABOVE = NO_PROGRESS_TIMEOUT_MS + 5_000
+  const SECONDARY_BELOW = NO_PROGRESS_TIMEOUT_MS + NO_PROGRESS_STAGGER_MS - 5_000
+  const SECONDARY_ABOVE = NO_PROGRESS_TIMEOUT_MS + NO_PROGRESS_STAGGER_MS + 5_000
 
-  // Primary fallback (node-2, offset=1) arms at elapsed ≥ 120s
-  assert.equal(await watchdogFires("node-2", 115_000), false, "node-2 does NOT fire at 115s (below 120s threshold)")
-  assert.equal(await watchdogFires("node-2", 125_000), true,  "node-2 fires at 125s (above 120s threshold)")
+  // Stuck proposer (node-1) never arms override even far past secondary threshold.
+  assert.equal(await watchdogFires("node-1", SECONDARY_ABOVE), false, "stuck proposer never arms override")
 
-  // Secondary fallback (node-3, offset=2) fires at ≥ 150s
-  assert.equal(await watchdogFires("node-3", 125_000), false, "node-3 does NOT fire at 125s (below 150s threshold)")
-  assert.equal(await watchdogFires("node-3", 155_000), true,  "node-3 fires at 155s (above 150s threshold)")
+  // Primary fallback (node-2, offset=1) arms at elapsed ≥ NO_PROGRESS_TIMEOUT_MS.
+  assert.equal(await watchdogFires("node-2", PRIMARY_BELOW), false, "node-2 does NOT fire below primary threshold")
+  assert.equal(await watchdogFires("node-2", PRIMARY_ABOVE), true,  "node-2 fires above primary threshold")
+
+  // Secondary fallback (node-3, offset=2) fires at ≥ NO_PROGRESS_TIMEOUT_MS + stagger.
+  assert.equal(await watchdogFires("node-3", PRIMARY_ABOVE), false, "node-3 does NOT fire below secondary threshold")
+  assert.equal(await watchdogFires("node-3", SECONDARY_ABOVE), true, "node-3 fires above secondary threshold")
 
   // Without nodeId the watchdog is disabled (safe fallback)
-  assert.equal(await watchdogFires("", 300_000), false, "no-nodeId: watchdog disabled")
+  assert.equal(await watchdogFires("", SECONDARY_ABOVE * 2), false, "no-nodeId: watchdog disabled")
 })
 
 test("Phase J2.2: self-stuck proposer with active round force-clears its own BFT round", async () => {
@@ -630,18 +638,18 @@ test("Phase J2.2: self-stuck proposer with active round force-clears its own BFT
   const c = new ConsensusEngine(mockChain, mockP2p, { blockTimeMs: 1000, syncIntervalMs: 300_000 }, { bft: mockBft, nodeId: "node-1" })
 
   // Below threshold — no clear
-  ;(c as any).lastBftProgressAtMs = Date.now() - 115_000
+  ;(c as any).lastBftProgressAtMs = Date.now() - (NO_PROGRESS_TIMEOUT_MS - 5_000)
   await (c as any).checkNoProgressWatchdog()
   assert.equal(forceClearCount, 0, "below threshold: no force-clear")
 
   // Above threshold — should clear once
-  ;(c as any).lastBftProgressAtMs = Date.now() - 125_000
+  ;(c as any).lastBftProgressAtMs = Date.now() - (NO_PROGRESS_TIMEOUT_MS + 5_000)
   await (c as any).checkNoProgressWatchdog()
   assert.equal(forceClearCount, 1, "above threshold: forceClearRound called once")
   assert.match(lastClearReason, /self-stuck/, "reason mentions self-stuck")
 
   // Throttle: immediate re-tick must not refire
-  ;(c as any).lastBftProgressAtMs = Date.now() - 125_000
+  ;(c as any).lastBftProgressAtMs = Date.now() - (NO_PROGRESS_TIMEOUT_MS + 5_000)
   await (c as any).checkNoProgressWatchdog()
   assert.equal(forceClearCount, 1, "throttled: second consecutive call must not refire")
 
@@ -672,7 +680,7 @@ test("Phase J2.2: non-stuck-proposer with active round still skips arming overri
 
   // node-2 is fallback (not stuck proposer for height 1)
   const c = new ConsensusEngine(mockChain, mockP2p, { blockTimeMs: 1000, syncIntervalMs: 300_000 }, { bft: mockBft, nodeId: "node-2" })
-  ;(c as any).lastBftProgressAtMs = Date.now() - 125_000
+  ;(c as any).lastBftProgressAtMs = Date.now() - (NO_PROGRESS_TIMEOUT_MS + 5_000)
   await (c as any).checkNoProgressWatchdog()
   assert.equal((c as any).noProgressProposerOverride, false, "active round blocks rotation-override arming")
 })
