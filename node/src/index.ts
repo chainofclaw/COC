@@ -1341,13 +1341,16 @@ if (config.enableWireProtocol) {
 
   // Issue #72: when a peer's handshake reports a height materially ahead
   // of ours, kick off snap-sync directly instead of waiting for the
-  // 600 s no-progress watchdog. Threshold is intentionally small —
-  // restarted validator might be 1-3 blocks behind; we don't want to
-  // wait for a 100-block gap to accumulate.
-  const PEER_HEIGHT_SYNC_THRESHOLD = 3n
+  // 600 s no-progress watchdog. Threshold + cooldown tuned 2026-05-08
+  // post-#72 deploy: original (3 blocks / 30 s) caused server-3 to
+  // forceSnapSync ~17×/hour on a 1 block/s chain because normal ±1 BFT
+  // lag transiently exceeded 3. Bumped to 20 blocks / 120 s — a real
+  // restart still triggers (typically 100+ block gap before catch-up
+  // begins) but transient lag during normal operation does not.
+  const PEER_HEIGHT_SYNC_THRESHOLD = 20n
   // Cooldown so reconnect storms don't spawn parallel forceSnapSync calls.
   let lastPeerHeightSyncMs = 0
-  const PEER_HEIGHT_SYNC_COOLDOWN_MS = 30_000
+  const PEER_HEIGHT_SYNC_COOLDOWN_MS = 120_000
   const onPeerHeightAdvance = (remoteHeight: bigint, peerId: string): void => {
     void (async () => {
       try {
