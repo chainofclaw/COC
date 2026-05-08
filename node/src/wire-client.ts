@@ -36,6 +36,20 @@ export interface WireClientConfig {
   chainId: number
   onConnected?: () => void
   onDisconnected?: () => void
+  /**
+   * Issue #72: provide the local chain height so the outbound handshake
+   * advertises a real value instead of "0". Without this, peers can't tell
+   * when this client is behind, and a restarted validator stalls until the
+   * 600 s no-progress watchdog fires. Returning a Promise is fine — the
+   * handshake send awaits before writing the frame.
+   */
+  getHeight?: () => bigint | Promise<bigint>
+  /**
+   * Issue #72: called once per handshake completion with the remote's
+   * advertised height. Wires up snap-sync triggers in higher layers
+   * without coupling the wire client to the chain engine itself.
+   */
+  onPeerHeight?: (remoteHeight: bigint, peerId: string) => void
   signer?: NodeSigner
   verifier?: SignatureVerifier
 }
@@ -47,6 +61,12 @@ export class WireClient {
   private connected = false
   private handshakeComplete = false
   private remoteNodeId: string | null = null
+  // Issue #72: parsed remote height from handshake. -1n means "not yet
+  // observed"; positive values are the peer's claimed chain height when
+  // the handshake completed. Stored so callers (snap-sync trigger,
+  // metrics) can ask after the fact rather than racing the onPeerHeight
+  // callback.
+  private remoteHeight: bigint = -1n
   private reconnectMs = MIN_RECONNECT_MS
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private handshakeTimer: ReturnType<typeof setTimeout> | null = null
@@ -238,6 +258,16 @@ export class WireClient {
     return this.remoteNodeId
   }
 
+  /**
+   * Issue #72: peer's chain height reported during the handshake. Returns
+   * `-1n` if no handshake has completed yet (or peer's height was not
+   * parseable). Callers driving snap-sync triggers should ignore the -1
+   * sentinel rather than treating it as "behind genesis".
+   */
+  getRemoteHeight(): bigint {
+    return this.remoteHeight
+  }
+
   /** Send a ping and measure round-trip latency */
   ping(): boolean {
     if (!this.isConnected()) return false
@@ -407,19 +437,39 @@ export class WireClient {
         this.reconnectMs = MIN_RECONNECT_MS
         log.info("wire client connected", { host: this.cfg.host, port: this.cfg.port })
 
-        // Send handshake
-        const nonce = `${Date.now()}:${crypto.randomUUID()}`
-        const hs: HandshakePayload = {
-          nodeId: this.cfg.nodeId,
-          chainId: this.cfg.chainId,
-          height: "0", // client doesn't track height
-        }
-        if (this.cfg.signer) {
-          const msg = buildWireHandshakeMessage(this.cfg.nodeId, this.cfg.chainId, nonce)
-          hs.nonce = nonce
-          hs.signature = this.cfg.signer.sign(msg)
-        }
-        socket.write(encodeJsonPayload(MessageType.Handshake, hs))
+        // Send handshake. Resolve height inside an async IIFE so we can
+        // await `cfg.getHeight()` (the chain reads through LevelDB which
+        // is async) without blocking the connect callback.
+        ;(async () => {
+          let heightStr = "0"
+          if (this.cfg.getHeight) {
+            try {
+              const h = await Promise.resolve(this.cfg.getHeight())
+              heightStr = h.toString()
+            } catch (err) {
+              log.warn("getHeight failed, advertising height=0", { error: String(err) })
+            }
+          }
+          const nonce = `${Date.now()}:${crypto.randomUUID()}`
+          const hs: HandshakePayload = {
+            nodeId: this.cfg.nodeId,
+            chainId: this.cfg.chainId,
+            height: heightStr,
+          }
+          if (this.cfg.signer) {
+            const msg = buildWireHandshakeMessage(this.cfg.nodeId, this.cfg.chainId, nonce)
+            hs.nonce = nonce
+            hs.signature = this.cfg.signer.sign(msg)
+          }
+          // Socket may have closed between connect callback and async
+          // resolution — guard so we don't write into a destroyed socket.
+          if (this.socket === socket && !socket.destroyed) {
+            socket.write(encodeJsonPayload(MessageType.Handshake, hs))
+          }
+        })().catch((err) => {
+          log.warn("handshake send failed", { error: String(err) })
+          socket.destroy()
+        })
 
         // Handshake timeout: disconnect if server doesn't complete handshake in time
         const HANDSHAKE_TIMEOUT_MS = 10_000
@@ -452,6 +502,8 @@ export class WireClient {
       this.connected = false
       this.handshakeComplete = false
       this.remoteNodeId = null
+      // Reset remote height — next reconnect will re-handshake and refresh.
+      this.remoteHeight = -1n
       // Clear handshake timer to prevent timer leak on rapid connect/disconnect cycles
       if (this.handshakeTimer) {
         clearTimeout(this.handshakeTimer)
@@ -567,6 +619,31 @@ export class WireClient {
           return
         }
         this.remoteNodeId = hs.nodeId
+        // Issue #72: parse and store remote height from the handshake.
+        // Only fire onPeerHeight on the *first* completed handshake —
+        // wire-server sends a Handshake frame (proactive on connect)
+        // AND a HandshakeAck (reply to our outbound), and both reach
+        // this branch with identical payloads. Without the gate the
+        // callback fires twice and snap-sync triggers run double.
+        // Defensive: malicious peer could send a non-numeric or negative
+        // string. On parse failure, leave the previous value in place
+        // rather than overwriting with garbage.
+        const firstHandshake = !this.handshakeComplete
+        try {
+          const parsed = BigInt(hs.height)
+          if (parsed >= 0n) {
+            this.remoteHeight = parsed
+            // Only fire onPeerHeight when we have a non-zero height so
+            // honest fresh-genesis peers don't trigger spurious sync
+            // attempts on the local side. Callers can read getRemoteHeight()
+            // unconditionally if they want the zero too.
+            if (firstHandshake && parsed > 0n) {
+              try { this.cfg.onPeerHeight?.(parsed, hs.nodeId) } catch { /* swallow */ }
+            }
+          }
+        } catch {
+          // Non-numeric height field — ignore, leave remoteHeight as-is.
+        }
         this.handshakeComplete = true
         if (this.handshakeTimer) {
           clearTimeout(this.handshakeTimer)
