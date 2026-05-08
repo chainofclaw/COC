@@ -103,6 +103,18 @@ export interface BftCoordinatorConfig {
    * the counter.
    */
   persistentDivergenceThreshold?: number
+  /**
+   * Issue #73: optional chain-tip query, used to gate `startRound` against
+   * stale block proposals. Without it, a restarted validator that catches
+   * up via gossip-block (rather than BFT-finalize) keeps `lastFinalizedHeight`
+   * at its pre-restart value, lets stale blocks slip past the existing
+   * `processDeferredBlock` guard, and produces phantom rounds at past-
+   * finalized heights that generate false equivocation evidence.
+   *
+   * Returning a Promise is fine — the coordinator awaits before deciding.
+   * When omitted, only the legacy `lastFinalizedHeight` guard applies.
+   */
+  getChainHeight?: () => bigint | Promise<bigint>
 }
 
 /**
@@ -203,6 +215,19 @@ export class BftCoordinator {
    * Start a new BFT round for a proposed block.
    */
   async startRound(block: ChainBlock): Promise<void> {
+    // Issue #73: gate against stale heights. `lastFinalizedHeight` only
+    // advances on local BFT finalize; a node that catches up via gossip-
+    // block keeps it stuck and lets stale proposals through. Querying the
+    // authoritative chain tip (when available) closes that gap.
+    const stalenessFloor = await this.computeStalenessFloor()
+    if (block.number <= stalenessFloor) {
+      log.warn("BFT refusing startRound: block height ≤ chain tip / lastFinalized (stale)", {
+        blockHeight: block.number.toString(),
+        stalenessFloor: stalenessFloor.toString(),
+        lastFinalized: this.lastFinalizedHeight.toString(),
+      })
+      return
+    }
     // Auto-clear stale rounds in terminal state before evaluating defer logic
     if (this.activeRound) {
       const phase = this.activeRound.state.phase
@@ -975,11 +1000,15 @@ export class BftCoordinator {
     this.deferredBlock = null
     if (!block) return
 
-    // Guard: reject stale deferred blocks that are at or below the last finalized height
-    // (activeRound is null after clearRound, so we track finalized height separately)
-    if (block.number <= this.lastFinalizedHeight) {
+    // Guard: reject stale deferred blocks that are at or below the chain
+    // tip (when known) or last BFT-finalized height. Issue #73: the
+    // chain-height query catches the gap where local catch-up happened
+    // outside of BFT (gossip-block) and lastFinalizedHeight stays stale.
+    const stalenessFloor = await this.computeStalenessFloor()
+    if (block.number <= stalenessFloor) {
       log.warn("BFT discarding stale deferred block", {
         deferredHeight: block.number.toString(),
+        stalenessFloor: stalenessFloor.toString(),
         lastFinalized: this.lastFinalizedHeight.toString(),
       })
       return
@@ -1072,6 +1101,31 @@ export class BftCoordinator {
       clearInterval(this.lingerTimer)
       this.lingerTimer = null
     }
+  }
+
+  /**
+   * Issue #73: combined staleness floor — `max(lastFinalizedHeight, chainTip)`.
+   * `lastFinalizedHeight` only advances on local BFT finalize; `chainTip`
+   * (when callback supplied) reflects authoritative chain progress including
+   * gossip-block catch-up after a restart. A block at or below this floor
+   * has already been finalized, so starting a BFT round for it is wasted
+   * work and the proposed hash will conflict with what peers already
+   * committed → false equivocation evidence.
+   */
+  private async computeStalenessFloor(): Promise<bigint> {
+    let floor = this.lastFinalizedHeight
+    if (this.cfg.getChainHeight) {
+      try {
+        const tip = await Promise.resolve(this.cfg.getChainHeight())
+        if (tip > floor) floor = tip
+      } catch (err) {
+        // getChainHeight failure is non-fatal — fall back to lastFinalizedHeight.
+        log.debug("BFT getChainHeight threw; using lastFinalizedHeight only", {
+          error: String(err),
+        })
+      }
+    }
+    return floor
   }
 
   private clearRound(): void {

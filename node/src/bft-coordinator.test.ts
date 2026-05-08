@@ -754,4 +754,68 @@ describe("BftCoordinator", () => {
     assert.equal(state.active, true)
     assert.equal(state.height, 1n)
   })
+
+  // Issue #73 regression: startRound must refuse stale heights when the
+  // chain has already finalized them out-of-band (e.g. via gossip-block
+  // after a restart). Without the getChainHeight guard, lastFinalizedHeight
+  // stays pinned at the pre-restart value, the stale block slips past
+  // the legacy guard, and the coordinator burns cycles on a phantom
+  // round that can never quorum.
+  it("refuses startRound for height ≤ chain tip (#73)", async () => {
+    const broadcasted: BftMessage[] = []
+    const coord = new BftCoordinator({
+      localId: "v1",
+      validators,
+      broadcastMessage: async (msg) => { broadcasted.push(msg) },
+      onFinalized: async () => {},
+      // Chain has advanced to height 10 via gossip-block; lastFinalizedHeight
+      // (BFT-internal) is still 0 because no local round has finalized.
+      getChainHeight: () => 10n,
+    })
+
+    const stale = makeBlock(5n, "v1")
+    await coord.startRound(stale)
+
+    // No prepare message should have been broadcast — the round was rejected.
+    assert.equal(broadcasted.length, 0, "stale startRound must not broadcast")
+    const state = coord.getRoundState()
+    assert.equal(state.active, false, "no active round after stale startRound")
+  })
+
+  it("accepts startRound for height > chain tip (#73)", async () => {
+    const broadcasted: BftMessage[] = []
+    const coord = new BftCoordinator({
+      localId: "v1",
+      validators,
+      broadcastMessage: async (msg) => { broadcasted.push(msg) },
+      onFinalized: async () => {},
+      getChainHeight: () => 10n,
+    })
+
+    const fresh = makeBlock(11n, "v1")
+    await coord.startRound(fresh)
+
+    assert.equal(broadcasted.length, 1, "fresh startRound broadcasts prepare")
+    const state = coord.getRoundState()
+    assert.equal(state.active, true)
+    assert.equal(state.height, 11n)
+  })
+
+  it("getChainHeight failure falls back to lastFinalizedHeight (#73)", async () => {
+    // Failure path: getChainHeight throws. Should not cascade — startRound
+    // proceeds using lastFinalizedHeight (which is 0 here, so any positive
+    // height is accepted).
+    const broadcasted: BftMessage[] = []
+    const coord = new BftCoordinator({
+      localId: "v1",
+      validators,
+      broadcastMessage: async (msg) => { broadcasted.push(msg) },
+      onFinalized: async () => {},
+      getChainHeight: () => { throw new Error("simulated chain unreachable") },
+    })
+
+    const block = makeBlock(7n, "v1")
+    await coord.startRound(block)
+    assert.equal(broadcasted.length, 1, "fallback path still broadcasts prepare")
+  })
 })
