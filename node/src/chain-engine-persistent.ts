@@ -1359,14 +1359,20 @@ export class PersistentChainEngine {
         return false
       }
 
-      // Verify proposer is in validator set (skip for SnapSync — historical validators may differ)
-      if (!skipProposerCheck && validators.length > 0 && !validators.includes(block.proposer)) {
-        log.warn("verifyBlockChain failed: proposer not in validator set", {
-          index: i,
-          number: String(block.number),
-          proposer: block.proposer,
-        })
-        return false
+      // Verify proposer is in validator set (skip for SnapSync — historical validators may differ).
+      // Phase X1.6 (2026-05-08): case-insensitive — block.proposer arrives in mixed
+      // case from remote signers but `validators` may be lowercased by config.
+      if (!skipProposerCheck && validators.length > 0) {
+        const proposerLc = block.proposer.toLowerCase()
+        const matched = validators.some((v) => v.toLowerCase() === proposerLc)
+        if (!matched) {
+          log.warn("verifyBlockChain failed: proposer not in validator set", {
+            index: i,
+            number: String(block.number),
+            proposer: block.proposer,
+          })
+          return false
+        }
       }
 
       // Verify proposer signature if verifier available
