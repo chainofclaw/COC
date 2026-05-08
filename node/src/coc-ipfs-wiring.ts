@@ -168,27 +168,73 @@ export function buildCocIpfsWiring(cfg: CocIpfsWiringConfig): {
   // devnet doesn't spam its log every PUT.
   let lastLowPeerWarnMs = 0
 
+  // Issue #71 Bug A: serialize per-peer pushBlock calls. Without this, a
+  // 50 MB UnixFS PUT fans out into ~200 simultaneous `socket.write()` calls
+  // per peer (one per chunk × K peers). The kernel send buffer overflows,
+  // the wire-client used to self-destroy on overflow (now fixed too), and
+  // every chunk after the first batch returned `ok=false`. Serializing
+  // per-peer keeps in-flight bytes bounded to one frame at a time, which
+  // pairs with the wire-client's drain-event queue to give us natural
+  // backpressure end-to-end.
+  const perPeerSendChain = new Map<string, Promise<unknown>>()
+  const sendThroughPeer = async <T>(peerId: string, fn: () => Promise<T>): Promise<T> => {
+    const key = peerId.toLowerCase()
+    const prev = perPeerSendChain.get(key) ?? Promise.resolve()
+    const next = prev.then(fn, fn)
+    // Drop the chain entry once this segment settles — keeps the map size
+    // bounded to "currently-active peers" instead of "every peer ever".
+    perPeerSendChain.set(key, next)
+    void next.finally(() => {
+      if (perPeerSendChain.get(key) === next) perPeerSendChain.delete(key)
+    })
+    return next
+  }
+
   const fetchRemote = async (cid: CidString): Promise<Uint8Array | null> => {
     const providers = cfg.dht.findProviders(cid, fanOut)
-    if (providers.length === 0) {
-      // Q+1 ops-visibility: bump from debug to info so operators can see
-      // why a /api/v0/cat or repair-tick peer-pull came back empty without
-      // having to flip log levels at runtime.
-      log.info("fetchRemote: no providers", { cid })
+    if (providers.length > 0) {
+      const bytes = await cfg.connMgr.requestBlockFromAny(providers, cid, {
+        concurrency: fanOut,
+        timeoutMs,
+      })
+      if (bytes) {
+        log.info("fetchRemote: got bytes from peer", { cid, bytesLen: bytes.length, providersTried: providers.length })
+        return bytes
+      }
+      log.info("fetchRemote: all providers miss", { cid, providersTried: providers.length })
+    }
+    // Issue #71 Bug B fallback: when DHT has no provider record (or every
+    // listed provider missed) we still try every directly-connected peer.
+    // The provider gossip can lag a real `pushToK` — large UnixFS PUTs in
+    // particular fan out so many ProviderAdvertise frames that the kernel
+    // queue can drop some — leaving the receiving peer holding the bytes
+    // but not advertising. A direct ask catches that case so synchronous
+    // GETs don't 404 just because the gossip race lost.
+    const connectedPeers = cfg.connMgr.listConnectedPeerIds?.() ?? []
+    const fallback = connectedPeers.filter((id) => !providers.some((p) => p.toLowerCase() === id.toLowerCase()))
+    if (fallback.length === 0) {
+      log.info("fetchRemote: no providers", { cid, providersTried: providers.length })
       return null
     }
-    const bytes = await cfg.connMgr.requestBlockFromAny(providers, cid, {
-      concurrency: fanOut,
+    const bytes = await cfg.connMgr.requestBlockFromAny(fallback, cid, {
+      concurrency: Math.min(fanOut, fallback.length),
       timeoutMs,
     })
     if (bytes) {
-      log.info("fetchRemote: got bytes from peer", { cid, bytesLen: bytes.length, providersTried: providers.length })
-    } else {
-      // Same Q+1 visibility bump — repair ticks and 503s become diagnosable
-      // from logs without code changes when this surfaces.
-      log.info("fetchRemote: all providers miss", { cid, providersTried: providers.length })
+      log.info("fetchRemote: got bytes from connected peer (fallback)", {
+        cid,
+        bytesLen: bytes.length,
+        providersTried: providers.length,
+        fallbackTried: fallback.length,
+      })
+      return bytes
     }
-    return bytes
+    log.info("fetchRemote: all providers + connected peers miss", {
+      cid,
+      providersTried: providers.length,
+      fallbackTried: fallback.length,
+    })
+    return null
   }
 
   const pushToK = async (cid: string, bytes: Uint8Array): Promise<PushToKResult> => {
@@ -222,21 +268,24 @@ export function buildCocIpfsWiring(cfg: CocIpfsWiringConfig): {
       return { cid, attempted: 0, succeeded: [], failed: [], skippedLowPeers: true }
     }
 
-    // Fire in parallel. Per-peer push uses `WireConnectionManager.findByNodeId
-    // + WireClient.pushBlock`, which returns `boolean`. The bytes ride base64
-    // in a single frame (Phase C1.2's design note on pushBlock).
+    // Cross-peer parallelism is fine — different sockets, different kernel
+    // buffers. Per-peer we fully serialize via `sendThroughPeer` to keep
+    // in-flight bytes bounded. The bytes ride base64 in a single frame
+    // (Phase C1.2's design note on pushBlock).
     const results = await Promise.all(targets.map(async (peerId) => {
       const client = cfg.connMgr.findByNodeId(peerId)
       if (!client) {
         log.debug("pushToK: no client for peerId", { peerId, cid })
         return { peerId, ok: false }
       }
-      let ok = false
-      try {
-        ok = await client.pushBlock(cid, bytes, pushTimeoutMs)
-      } catch (err) {
-        log.debug("pushToK: peer pushBlock threw", { peerId, cid, error: String(err) })
-      }
+      const ok = await sendThroughPeer(peerId, async () => {
+        try {
+          return await client.pushBlock(cid, bytes, pushTimeoutMs)
+        } catch (err) {
+          log.debug("pushToK: peer pushBlock threw", { peerId, cid, error: String(err) })
+          return false
+        }
+      })
       return { peerId, ok }
     }))
 
@@ -343,12 +392,16 @@ export function buildCocIpfsWiring(cfg: CocIpfsWiringConfig): {
           log.debug("pushStripe: no client for peerId", { peerId, cid: shard.cid })
           return { peerId, ok: false }
         }
-        let ok = false
-        try {
-          ok = await client.pushBlock(shard.cid, shard.bytes, pushTimeoutMs)
-        } catch (err) {
-          log.debug("pushStripe: peer pushBlock threw", { peerId, cid: shard.cid, error: String(err) })
-        }
+        // Issue #71 Bug A: route through the per-peer chain so erasure
+        // shard pushes can't burst-overflow the wire either.
+        const ok = await sendThroughPeer(peerId, async () => {
+          try {
+            return await client.pushBlock(shard.cid, shard.bytes, pushTimeoutMs)
+          } catch (err) {
+            log.debug("pushStripe: peer pushBlock threw", { peerId, cid: shard.cid, error: String(err) })
+            return false
+          }
+        })
         return { peerId, ok }
       }))
       const succeeded = results.filter((r) => r.ok).map((r) => r.peerId)

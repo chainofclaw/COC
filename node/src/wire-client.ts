@@ -125,22 +125,104 @@ export class WireClient {
     }
     this.connected = false
     this.handshakeComplete = false
+    this.sendQueue.length = 0
+    this.queuedBytes = 0
+    this.drainAttached = false
   }
+
+  // Queue used when socket.write() reports backpressure (returns false). We
+  // hold the frames here until the kernel buffer drains; the socket's `'drain'`
+  // event flushes them in order. Prior to issue #71's fix, large IPFS PUTs
+  // (50 MB → ~200 chunks pushed in a tight loop) tripped a 10 MB write-buffer
+  // ceiling that *destroyed* the socket — every receiving peer saw ECONNRESET
+  // mid-burst and the leaf chunks never replicated. Queueing instead of
+  // destroying preserves the connection; the cap below stops a stuck peer
+  // from growing the queue forever.
+  private readonly sendQueue: Uint8Array[] = []
+  private queuedBytes = 0
+  // 64 MiB ceiling. Beyond this we drop frames (return false) — a peer this
+  // far behind is effectively dead and force-destroying preserves memory.
+  // For comparison, K=3 × 50 MiB UnixFS file ≈ 150 MiB total write volume,
+  // far higher than this cap; we rely on socket flow-control + the per-peer
+  // concurrency cap in `pushToK` to keep us under the cap in practice.
+  private static readonly SEND_QUEUE_HIGH_WATERMARK = 64 * 1024 * 1024
+  private drainAttached = false
 
   /** Send a raw wire frame to the peer */
   send(data: Uint8Array): boolean {
     if (!this.socket || !this.handshakeComplete) return false
-    // Disconnect if write buffer exceeds 10MB (peer not reading)
-    if (this.socket.writableLength > 10 * 1024 * 1024) {
-      log.warn("wire client write buffer overflow, disconnecting", {
-        peer: this.remoteNodeId,
-        bufferedBytes: this.socket.writableLength,
-      })
-      this.socket.destroy()
-      return false
+    // If a queue is already draining, append to it rather than racing
+    // socket.write — preserves frame ordering when backpressure clears.
+    if (this.sendQueue.length > 0) {
+      if (this.queuedBytes + data.length > WireClient.SEND_QUEUE_HIGH_WATERMARK) {
+        log.warn("wire client send queue overflow, dropping frame", {
+          peer: this.remoteNodeId,
+          queuedBytes: this.queuedBytes,
+          frameLen: data.length,
+        })
+        return false
+      }
+      this.sendQueue.push(data)
+      this.queuedBytes += data.length
+      this.attachDrain()
+      return true
     }
-    this.socket.write(data)
+    const ok = this.socket.write(data)
+    if (!ok) {
+      // Kernel buffer full. Queue the frame and wait for `'drain'`.
+      this.sendQueue.push(data)
+      this.queuedBytes += data.length
+      this.attachDrain()
+    }
     return true
+  }
+
+  /** Resolves once the send queue is empty (or peer disconnects). */
+  awaitDrain(timeoutMs = 30_000): Promise<boolean> {
+    if (!this.socket || !this.handshakeComplete) return Promise.resolve(false)
+    if (this.sendQueue.length === 0 && (this.socket.writableLength ?? 0) === 0) {
+      return Promise.resolve(true)
+    }
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(false), timeoutMs)
+      const check = () => {
+        if (this.sendQueue.length === 0 && (this.socket?.writableLength ?? 0) === 0) {
+          clearTimeout(timer)
+          resolve(true)
+          return
+        }
+        this.socket?.once("drain", check)
+      }
+      check()
+    })
+  }
+
+  private attachDrain(): void {
+    if (this.drainAttached || !this.socket) return
+    this.drainAttached = true
+    this.socket.on("drain", this.flushQueue)
+  }
+
+  private flushQueue = (): void => {
+    if (!this.socket || !this.handshakeComplete) {
+      this.sendQueue.length = 0
+      this.queuedBytes = 0
+      this.drainAttached = false
+      return
+    }
+    while (this.sendQueue.length > 0) {
+      const next = this.sendQueue[0]
+      const ok = this.socket.write(next)
+      this.sendQueue.shift()
+      this.queuedBytes -= next.length
+      if (!ok) {
+        // Still backpressured — leave the rest queued, drain will fire again.
+        return
+      }
+    }
+    // Queue empty. Detach the drain handler so we don't accumulate listeners.
+    this.socket.removeListener("drain", this.flushQueue)
+    this.drainAttached = false
   }
 
   /** Send a typed JSON payload */
@@ -375,6 +457,10 @@ export class WireClient {
         clearTimeout(this.handshakeTimer)
         this.handshakeTimer = null
       }
+      // Drop any queued send frames — the socket is gone, they'd never go out.
+      this.sendQueue.length = 0
+      this.queuedBytes = 0
+      this.drainAttached = false
       // Stop ping timer to prevent stale latency calculations after reconnect
       this.stopPing()
       this.lastPingSentMs = 0
