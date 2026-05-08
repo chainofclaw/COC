@@ -403,6 +403,10 @@ if (bftEnabled) {
     signer: nodeSigner,
     verifier: nodeSigner,
     relaxedQuorum,
+    // Issue #73: gate startRound + processDeferredBlock against stale
+    // proposals (height ≤ chain tip). `lastFinalizedHeight` alone misses
+    // gossip-block catch-up after a restart; this closes the gap.
+    getChainHeight: () => chain.getHeight(),
     onEquivocation: (evidence: EquivocationEvidence) => {
       log.warn("BFT equivocation detected", {
         validator: evidence.validatorId,
