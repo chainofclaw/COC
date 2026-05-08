@@ -1335,6 +1335,46 @@ if (config.enableWireProtocol) {
     peerWirePortMap.set(bp.id, bp.port)
   }
 
+  // Issue #72: when a peer's handshake reports a height materially ahead
+  // of ours, kick off snap-sync directly instead of waiting for the
+  // 600 s no-progress watchdog. Threshold is intentionally small —
+  // restarted validator might be 1-3 blocks behind; we don't want to
+  // wait for a 100-block gap to accumulate.
+  const PEER_HEIGHT_SYNC_THRESHOLD = 3n
+  // Cooldown so reconnect storms don't spawn parallel forceSnapSync calls.
+  let lastPeerHeightSyncMs = 0
+  const PEER_HEIGHT_SYNC_COOLDOWN_MS = 30_000
+  const onPeerHeightAdvance = (remoteHeight: bigint, peerId: string): void => {
+    void (async () => {
+      try {
+        const localHeight = BigInt(await Promise.resolve(chain.getHeight()))
+        if (remoteHeight <= localHeight + PEER_HEIGHT_SYNC_THRESHOLD) return
+        const now = Date.now()
+        if (now - lastPeerHeightSyncMs < PEER_HEIGHT_SYNC_COOLDOWN_MS) {
+          log.debug("peer-height advance: forceSnapSync skipped (cooldown)", {
+            peer: peerId,
+            localHeight: localHeight.toString(),
+            remoteHeight: remoteHeight.toString(),
+            cooldownMsRemaining: PEER_HEIGHT_SYNC_COOLDOWN_MS - (now - lastPeerHeightSyncMs),
+          })
+          return
+        }
+        lastPeerHeightSyncMs = now
+        log.warn("peer-height advance — triggering forceSnapSync (#72)", {
+          peer: peerId,
+          localHeight: localHeight.toString(),
+          remoteHeight: remoteHeight.toString(),
+          gap: (remoteHeight - localHeight).toString(),
+        })
+        consensus.forceSnapSync().catch((err) => {
+          log.warn("peer-height forceSnapSync failed", { peer: peerId, error: String(err) })
+        })
+      } catch (err) {
+        log.warn("peer-height advance handler threw", { peer: peerId, error: String(err) })
+      }
+    })()
+  }
+
   // Connect to known peers via wire protocol
   for (const peer of config.peers) {
     try {
@@ -1357,6 +1397,10 @@ if (config.enableWireProtocol) {
         chainId: config.chainId,
         signer: nodeSigner,
         verifier: nodeSigner,
+        // Issue #72: advertise current chain height so peers don't
+        // mistake us for genesis, and react when peers report ahead of us.
+        getHeight: () => chain.getHeight(),
+        onPeerHeight: onPeerHeightAdvance,
         onConnected: () => log.info("wire client connected", { peer: peer.id }),
         onDisconnected: () => log.info("wire client disconnected", { peer: peer.id }),
       })
