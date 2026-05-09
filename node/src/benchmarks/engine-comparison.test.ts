@@ -14,8 +14,23 @@ import { Wallet, parseEther } from "ethers"
 const CHAIN_ID = 18780
 const PREFUND_BALANCE = "100000000000000000000000" // 100K ETH
 
+// Probe whether the revm WASM artifact is available. In CI we don't build
+// Rust/wasm-pack, so revm-dependent comparison tests are skipped with a
+// clear message rather than failing. Local dev with the WASM built runs
+// the full comparison.
+//
+// Probed eagerly at module load (not in `before`) so the `skip` option is
+// resolvable when node:test enumerates tests.
+let revmUnavailableReason: string | null = null
+try {
+  await createEvmEngine("revm", CHAIN_ID)
+} catch (err) {
+  revmUnavailableReason = `revm WASM not built: ${(err as Error).message}`
+  console.warn(`  ⚠ ${revmUnavailableReason}`)
+}
+
 describe("Dual-Engine Comparison", () => {
-  test("both engines produce identical results for simple ETH transfer", async () => {
+  test("both engines produce identical results for simple ETH transfer", { skip: revmUnavailableReason ?? false }, async () => {
     const wallet = Wallet.createRandom()
     const recipient = Wallet.createRandom().address
     const prefund = [{ address: wallet.address, balanceWei: PREFUND_BALANCE }]
@@ -60,7 +75,7 @@ describe("Dual-Engine Comparison", () => {
     assert.strictEqual(nonceA, nonceB, "nonce mismatch")
   })
 
-  test("both engines handle contract deployment identically", async () => {
+  test("both engines handle contract deployment identically", { skip: revmUnavailableReason ?? false }, async () => {
     const wallet = Wallet.createRandom()
     const prefund = [{ address: wallet.address, balanceWei: PREFUND_BALANCE }]
 
@@ -88,7 +103,7 @@ describe("Dual-Engine Comparison", () => {
     assert.strictEqual(resultA.success, resultB.success, "deploy success mismatch")
   })
 
-  test("both engines handle multiple sequential transactions identically", async () => {
+  test("both engines handle multiple sequential transactions identically", { skip: revmUnavailableReason ?? false }, async () => {
     const wallet = Wallet.createRandom()
     const recipients = Array.from({ length: 10 }, () => Wallet.createRandom().address)
     const prefund = [{ address: wallet.address, balanceWei: PREFUND_BALANCE }]
@@ -129,7 +144,7 @@ describe("Dual-Engine Comparison", () => {
     }
   })
 
-  test("engine factory creates correct engine types", async () => {
+  test("engine factory creates correct engine types", { skip: revmUnavailableReason ?? false }, async () => {
     const engineA = await createEvmEngine("ethereumjs", CHAIN_ID)
     const engineB = await createEvmEngine("revm", CHAIN_ID)
 

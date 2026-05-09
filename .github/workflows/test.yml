@@ -72,10 +72,14 @@ jobs:
       - run: cd contracts && npm install --no-audit --no-fund && npm run compile
       - name: Run service tests
         run: |
+          # Exclude tests/multinode-integration/scenarios — those require a
+          # docker compose fixture (5-node H15 fork-off + agent + relayer
+          # sidecars) and run in a separate weekly soak lane, not standard CI.
+          # See tests/multinode-integration/README.md.
           node --experimental-strip-types --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=service-results.xml \
             $(find services -name '*.test.ts' -type f | sort) \
             $(find nodeops -name '*.test.ts' -type f | sort) \
-            $(find tests -name '*.test.ts' -type f | sort)
+            $(find tests -name '*.test.ts' -type f -not -path '*/multinode-integration/*' | sort)
         env:
           NODE_ENV: test
       - name: Upload test results
