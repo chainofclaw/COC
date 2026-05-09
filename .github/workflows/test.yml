@@ -20,9 +20,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
-          cache-dependency-path: package-lock.json
-      - run: cd node && npm ci
+      - run: cd node && npm install --no-audit --no-fund
+      - run: cd node && npm install --no-save --no-audit --no-fund solc
       - name: Run node tests
         run: |
           cd node
@@ -46,9 +45,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
-          cache-dependency-path: package-lock.json
-      - run: cd node && npm ci
+      - run: cd node && npm install --no-audit --no-fund
       - run: cd runtime && npm install --omit=dev
       - name: Run runtime tests
         run: |
@@ -61,16 +58,18 @@ jobs:
   test-services:
     name: Services + NodeOps + Tests Workspace (337+)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
-          cache-dependency-path: package-lock.json
-      - run: cd node && npm ci
+      - run: cd node && npm install --no-audit --no-fund
       - run: npm install --no-save ethers
+      # Service integration tests load contract artifacts from contracts/artifacts.
+      # Compile them once here so tests/integration/relayer-v2-hardhat-recovery
+      # can read PoSeManagerV2.json etc.
+      - run: cd contracts && npm install --no-audit --no-fund && npm run compile
       - name: Run service tests
         run: |
           node --experimental-strip-types --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=service-results.xml \
@@ -96,9 +95,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
-          cache-dependency-path: package-lock.json
-      - run: cd contracts && npm ci
+      - run: cd contracts && npm install --no-audit --no-fund
       - run: cd contracts && npm test
       - run: |
           node --experimental-default-type=module --experimental-strip-types --test \
@@ -113,8 +110,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
-          cache-dependency-path: package-lock.json
       - run: cd wallet && npm install --omit=dev
       - name: Run wallet tests
         run: |
@@ -132,9 +127,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
-          cache-dependency-path: package-lock.json
-      - run: cd explorer && npm ci
+      - run: cd explorer && npm install --no-audit --no-fund
       - name: Run explorer lib tests
         run: |
           node --experimental-default-type=module --experimental-strip-types --test \
@@ -155,9 +148,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
-          cache-dependency-path: package-lock.json
-      - run: cd faucet && npm ci
+      - run: cd faucet && npm install --no-audit --no-fund
       - name: Run faucet tests
         run: |
           node --experimental-strip-types --test \
