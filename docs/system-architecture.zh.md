@@ -112,3 +112,23 @@ COC 是一个 EVM 兼容的区块链原型，结合轻量执行层与 PoSe（Pro
 - 安全加固（Phase 33）：Wire 握手节点身份认证（NodeSigner/SignatureVerifier）、BFT 强制消息签名、DHT 节点验证（加入路由表前 TCP 探测）、每 IP Wire 连接限制（最多 5）、IPFS 上传大小限制（10MB）、MFS 路径遍历防护、区块时间戳验证、节点指数 ban（最长 24h）、WebSocket 空闲超时（1h）、开发账户需 `COC_DEV_ACCOUNTS=1`、默认绑定 `127.0.0.1`、共享速率限制器（RPC 200/min, IPFS 100/min, PoSe 60/min）、HTTP gossip 签名认证信封（`off`/`monitor`/`enforce` 灰度模式 + 防重放）、治理自投票移除、PoSeManager ecrecover v 值校验、状态快照 stateRoot 校验。
 - 所有高级功能（BFT、Wire、DHT、SnapSync）在多节点 devnet 中通过 `start-devnet.sh` 默认启用。单节点 devnet 自动禁用 BFT（需要 >= 3 验证者）。DHT 迭代查找使用 Wire 协议 FIND_NODE（可用时），回退到本地路由表。
 - 硅基永生载体层通过 CidRegistry 合约提供链上 CID 恢复。载体守护进程监控 agent 存活性，使用三层 CID 解析（本地 → MFS → 链上）执行跨节点复活。二进制数据库快照捕获 OpenClaw 记忆索引，实现完整认知状态恢复。OpenClaw 生命周期钩子（`onAgentSpawn`/`onAgentHalt`/`onAgentResurrect`）驱动复活工作流。
+
+## R1/R2/R3 架构激活状态
+
+以下里程碑把系统从「代码已发布」推进到「在真实链上端到端验证」。截至 2026-05-10：
+
+### R1 — 链上动态验证者集合（chainId 18780）
+- **R1.1**：10 个治理合约已部署（SoulRegistry、CidRegistry、ValidatorRegistry、PoSeManagerV2、DIDRegistry、FactionRegistry、GovernanceDAO、Treasury、InsuranceFund、EquivocationDetector）。地址固化在 `contracts/deployed-registries-newchain.json`。
+- **R1.2**：Fullnode bootstrap（`scripts/bootstrap-5-fullnode-deploy.sh`）把 `COC_VALIDATOR_REGISTRY_ADDRESS` 注入 systemd EnvironmentFile，节点从链上 `ValidatorRegistry.getActiveValidators()` 引导 BFT validator set 而非 hardcoded 列表。env 留空回退到 hardcoded 模式以保安全回滚。
+- **R1.3**：BFT 迁移 SOP 在 `scripts/migrate-bft-to-registry.sh` — 预检、滚动重启、后验、回滚开关。
+- **R1.4**：H15 staggered-fallback proposer override 通过 `tests/multinode-integration/scenarios/04-h15-fallback.test.ts` 在独立的 5 节点 chainId 88888 fork-off 上覆盖。
+
+### R2 — PoSe 多节点端到端（chainId 88888 fork-off）
+- **R2.1.a–g**：7 个场景（`scenarios/05–11`）覆盖 sanity 启动、缺失收据、坏 witness 签名、aggregator 崩溃、并发 claim 竞态、slash 事件一致性、epoch 边界单调性。全部通过 `bash scripts/run-pose.sh up` 在真实 H15 fork-off 集群上运行。
+- **R2.2**：GovernanceDAO 完整生命周期在 `tests/integration/governance-dao-lifecycle.integration.test.ts` — 在 hardhat node 上 4.2 秒跑 propose → vote → fast-forward → queue → fast-forward → execute。生产 testnet 只读 sanity 在 `contracts/r2-2-governance-demo.mjs` (6/6 PASS @ chainId 18780)。
+- **R2.3**：两个新 nodeops policy YAML（`nodeops/policies/{validator-churn,pose-fault}-policy.yaml`）实现自动化 churn 治理（持续离线时自动 `requestUnstake` 提案）和 slash 候选检测。
+
+### R3 — Slash 自动化 + 准生产准备
+- **R3.1**：`runtime/lib/equivocation-detector-client.ts` (Phase I3c) 集成在 `runtime/coc-relayer.ts` — 轮询 BFT equivocation 事件，从 `ValidatorRegistered` 事件预热 address→nodeId 缓存，提交 `EquivocationDetector.submitEvidence`。端到端通过 `tests/multinode-integration/scenarios/12-pose-slash-automation.test.ts` 在 H15 fork-off 验证（4/4 PASS：缓存预热、slash 实测 stake 32→28.8 ETH 并 `active=false`、冷却闸守住）。
+- **R3.2**：准生产 testnet chainId 88780 SOP 在 `docs/r3-2-prod-candidate-testnet-88780.md`。
+- **R3.3**：Operator runbook 在 `docs/operator-runbook.{en,zh}.md` 覆盖注册/退出/slash 响应/治理参与/监控。Explorer `/validators` 页面来源于 `coc_getValidators` RPC，该 RPC 通过进程内治理状态读取 `ValidatorRegistry.getActiveValidators()` — `node/src/rpc.ts:1329`。

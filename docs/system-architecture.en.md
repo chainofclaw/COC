@@ -112,3 +112,23 @@ COC is an EVM-compatible blockchain prototype that combines a lightweight execut
 - Security hardening (Phase 33): node identity authentication in wire handshake (NodeSigner/SignatureVerifier), BFT mandatory message signatures, DHT peer verification (TCP probe before routing table insertion), per-IP wire connection limits (max 5), IPFS upload size limit (10MB), MFS path traversal prevention, block timestamp validation, exponential peer ban (max 24h), WebSocket idle timeout (1h), dev accounts gated behind `COC_DEV_ACCOUNTS=1`, default bind `127.0.0.1`, shared rate limiter (RPC 200/min, IPFS 100/min, PoSe 60/min), HTTP gossip signed auth envelope with phased rollout mode (`off`/`monitor`/`enforce`) and replay protection, governance self-vote removed, PoSeManager ecrecover v-value check, state snapshot stateRoot verification.
 - All advanced features (BFT, Wire, DHT, SnapSync) enabled by default in multi-node devnet via `start-devnet.sh`. Single-node devnet auto-disables BFT (requires >= 3 validators). DHT iterative lookup uses wire protocol FIND_NODE when available, falls back to local routing table.
 - AI Silicon Immortality carrier layer provides on-chain CID recovery via CidRegistry contract. Carrier daemon monitors agent liveness and performs cross-node resurrection using three-layer CID resolution (local → MFS → on-chain). Binary database snapshots capture OpenClaw memory indices for full cognitive state restore. OpenClaw lifecycle hooks (`onAgentSpawn`/`onAgentHalt`/`onAgentResurrect`) drive the resurrection workflow.
+
+## R1/R2/R3 Architecture Activation Status
+
+The following milestones moved the system from "code shipped" to "verified end-to-end on a live chain". Status as of 2026-05-10:
+
+### R1 — On-chain dynamic validator set (chainId 18780)
+- **R1.1**: 10 governance contracts deployed (SoulRegistry, CidRegistry, ValidatorRegistry, PoSeManagerV2, DIDRegistry, FactionRegistry, GovernanceDAO, Treasury, InsuranceFund, EquivocationDetector). Addresses pinned in `contracts/deployed-registries-newchain.json`.
+- **R1.2**: Fullnode bootstrap (`scripts/bootstrap-5-fullnode-deploy.sh`) injects `COC_VALIDATOR_REGISTRY_ADDRESS` into systemd EnvironmentFile so nodes seed the BFT validator set from on-chain `ValidatorRegistry.getActiveValidators()` instead of a hardcoded list. Empty env value falls back to hardcoded mode for rollback safety.
+- **R1.3**: BFT migration SOP at `scripts/migrate-bft-to-registry.sh` — precheck, rolling restart, post-verify, rollback toggle.
+- **R1.4**: H15 staggered-fallback proposer override has dedicated coverage via `tests/multinode-integration/scenarios/04-h15-fallback.test.ts` on a 5-validator chainId 88888 fork-off (no collision with the 3-validator J3 fixture).
+
+### R2 — PoSe multinode end-to-end (chainId 88888 fork-off)
+- **R2.1.a–g**: Seven scenarios (`scenarios/05–11`) cover sanity boot, missing receipts, bad witness signature, aggregator crash, concurrent claim race, slash event consistency, and epoch boundary monotonicity. All run against the live H15 fork-off cluster via `bash scripts/run-pose.sh up`.
+- **R2.2**: GovernanceDAO full lifecycle in `tests/integration/governance-dao-lifecycle.integration.test.ts` — propose → vote → fast-forward → queue → fast-forward → execute on a hardhat node in 4.2 s. Live testnet read-only sanity in `contracts/r2-2-governance-demo.mjs` (6/6 PASS @ chainId 18780).
+- **R2.3**: Two new nodeops policy YAMLs (`nodeops/policies/{validator-churn,pose-fault}-policy.yaml`) for automated churn governance (auto `requestUnstake` proposal on prolonged offline) and slash candidate detection.
+
+### R3 — Slash automation + prod-candidate prep
+- **R3.1**: `runtime/lib/equivocation-detector-client.ts` (Phase I3c) integrated in `runtime/coc-relayer.ts` — polls BFT equivocation events, primes address→nodeId cache from `ValidatorRegistered` events, submits `EquivocationDetector.submitEvidence`. End-to-end verified by `tests/multinode-integration/scenarios/12-pose-slash-automation.test.ts` against the H15 fork-off (4/4 PASS: prime cache, slash bites stake 32→28.8 ETH and flips `active=false`, cooldown gate holds).
+- **R3.2**: Prod-candidate testnet chainId 88780 SOP at `docs/r3-2-prod-candidate-testnet-88780.md`.
+- **R3.3**: Operator runbook at `docs/operator-runbook.{en,zh}.md` covers register/exit/slash response/governance participation/monitoring. Explorer `/validators` page sources from `coc_getValidators` RPC which reads `ValidatorRegistry.getActiveValidators()` via the in-process governance state — `node/src/rpc.ts:1329`.
