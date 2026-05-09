@@ -21,6 +21,7 @@ jobs:
         with:
           node-version: "22"
       - run: cd node && npm install --no-audit --no-fund
+      - run: cd node && npm install --no-save --no-audit --no-fund solc
       - name: Run node tests
         run: |
           cd node
@@ -65,6 +66,10 @@ jobs:
           node-version: "22"
       - run: cd node && npm install --no-audit --no-fund
       - run: npm install --no-save ethers
+      # Service integration tests load contract artifacts from contracts/artifacts.
+      # Compile them once here so tests/integration/relayer-v2-hardhat-recovery
+      # can read PoSeManagerV2.json etc.
+      - run: cd contracts && npm install --no-audit --no-fund && npm run compile
       - name: Run service tests
         run: |
           node --experimental-strip-types --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=service-results.xml \
