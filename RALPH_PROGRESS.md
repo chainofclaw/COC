@@ -16,7 +16,7 @@
 | M5 | R2.1.e 09-concurrent-reward-claim | ✅ 2/2 | 15 | 5 parallel claims all reverted (CAS atomic) |
 | M6 | R2.1.f 10-slash-event-consistency | ✅ 2/2 | 15 | all 5 nodes report identical VR state |
 | M7 | R2.1.g 11-epoch-boundary-fork | ✅ 2/2 | 15 | block + timestamp monotonic across cluster |
-| M8 | R2.2 GovernanceDAO + Treasury demo | 🟨 partial | 11, 22 | r2-2-governance-demo.mjs READ-ONLY inspection 6/6 PASS on live chainId 18780; **full DAO lifecycle (FactionRegistry register → propose → vote → queue → execute) NOT verified** — 7d voting + 2d timelock makes E2E impractical without admin shorten; counted as code-ready stub |
+| M8 | R2.2 GovernanceDAO + Treasury demo | ✅ E2E + 6/6 sanity | 11, 22, 28 | E2E test `governance-dao-lifecycle.integration.test.ts` PASS in 4.2 s on hardhat node: deploy FactionRegistry/GovernanceDAO/Treasury → setVotingPeriod(1d) + setTimelockDelay(0) → 4 HUMAN voters register → propose FreeText → 4 vote FOR → queue (reverts before deadline ✓ guard) → evm_increaseTime → queue succeeds (state=Queued) → execute succeeds (state=Executed) → double-execute reverts ✓; r2-2-governance-demo.mjs read-only sanity 6/6 still PASS @ chainId 18780 |
 | M9 | R2.3 nodeops policy churn rules | ✅ | 11 | validator-churn-policy.yaml + pose-fault-policy.yaml |
 | M10 | R3.1 EquivocationDetector ↔ BFT slash automation | ✅ 4/4 E2E + 6/6 unit | 11, 22, 27 | E2E test `12-pose-slash-automation` @ H15 fork-off PASS 4/4: client primes 5 validators from on-chain events, slash bites (stake 32→28.8 ETH = -10% SLASH_BPS, active flips false), cooldown gate holds; Phase I3c production integration verified end-to-end |
 | M11 | R3.2 准生产 testnet 88780 prep | ✅ | 11 | docs/r3-2-prod-candidate-testnet-88780.md SOP |
