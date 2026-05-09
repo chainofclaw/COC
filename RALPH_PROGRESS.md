@@ -18,7 +18,7 @@
 | M7 | R2.1.g 11-epoch-boundary-fork | ✅ 2/2 | 15 | block + timestamp monotonic across cluster |
 | M8 | R2.2 GovernanceDAO + Treasury demo | 🟨 partial | 11, 22 | r2-2-governance-demo.mjs READ-ONLY inspection 6/6 PASS on live chainId 18780; **full DAO lifecycle (FactionRegistry register → propose → vote → queue → execute) NOT verified** — 7d voting + 2d timelock makes E2E impractical without admin shorten; counted as code-ready stub |
 | M9 | R2.3 nodeops policy churn rules | ✅ | 11 | validator-churn-policy.yaml + pose-fault-policy.yaml |
-| M10 | R3.1 EquivocationDetector ↔ BFT slash automation | 🟨 partial | 11, 22 | runtime/coc-relayer.ts has EquivocationDetectorClient (Phase I3c) with 6/6 UNIT tests; **E2E slash automation on H15 fork-off (inject double-sign → detect → report → slash) NOT verified**; counted as code-ready stub |
+| M10 | R3.1 EquivocationDetector ↔ BFT slash automation | ✅ 4/4 E2E + 6/6 unit | 11, 22, 27 | E2E test `12-pose-slash-automation` @ H15 fork-off PASS 4/4: client primes 5 validators from on-chain events, slash bites (stake 32→28.8 ETH = -10% SLASH_BPS, active flips false), cooldown gate holds; Phase I3c production integration verified end-to-end |
 | M11 | R3.2 准生产 testnet 88780 prep | ✅ | 11 | docs/r3-2-prod-candidate-testnet-88780.md SOP |
 
 ## Iteration Log
