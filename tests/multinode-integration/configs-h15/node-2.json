@@ -1,0 +1,76 @@
+{
+  "nodeId": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
+  "chainId": 88888,
+  "rpcBind": "0.0.0.0",
+  "rpcPort": 18780,
+  "p2pBind": "0.0.0.0",
+  "p2pPort": 19780,
+  "wsBind": "0.0.0.0",
+  "wsPort": 18781,
+  "ipfsBind": "0.0.0.0",
+  "wireBind": "0.0.0.0",
+  "wirePort": 19781,
+  "validators": [
+    "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+    "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
+    "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",
+    "0x90f79bf6eb2c4f870365e785982e1f101e93b906",
+    "0x15d34aaf54267db7d7c367839aaf71a00a2c6a65"
+  ],
+  "peers": [
+    {
+      "id": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+      "url": "http://h15-node-1:19780"
+    },
+    {
+      "id": "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",
+      "url": "http://h15-node-3:19780"
+    },
+    {
+      "id": "0x90f79bf6eb2c4f870365e785982e1f101e93b906",
+      "url": "http://h15-node-4:19780"
+    },
+    {
+      "id": "0x15d34aaf54267db7d7c367839aaf71a00a2c6a65",
+      "url": "http://h15-node-5:19780"
+    }
+  ],
+  "enableBft": true,
+  "enableWireProtocol": true,
+  "enableDht": true,
+  "enableSnapSync": true,
+  "enableAdminRpc": true,
+  "blockTimeMs": 3000,
+  "finalityDepth": 3,
+  "maxTxPerBlock": 100,
+  "dhtBootstrapPeers": [
+    {
+      "id": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+      "address": "h15-node-1",
+      "port": 19781
+    },
+    {
+      "id": "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",
+      "address": "h15-node-3",
+      "port": 19781
+    },
+    {
+      "id": "0x90f79bf6eb2c4f870365e785982e1f101e93b906",
+      "address": "h15-node-4",
+      "port": 19781
+    },
+    {
+      "id": "0x15d34aaf54267db7d7c367839aaf71a00a2c6a65",
+      "address": "h15-node-5",
+      "port": 19781
+    }
+  ],
+  "prefund": [
+    {
+      "address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      "balanceEth": "10000"
+    }
+  ],
+  "p2pInboundAuthMode": "off",
+  "poseInboundAuthMode": "off"
+}

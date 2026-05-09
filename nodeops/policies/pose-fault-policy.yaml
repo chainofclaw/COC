@@ -1,0 +1,31 @@
+# R2.3 — PoSe fault policy (M9 part 2)
+#
+# Detects sustained low-quality PoSe scoring and proposes (off-chain)
+# the operator file an EquivocationDetector.report() commit. The actual
+# slash decision is on-chain — this policy only flags candidates.
+
+policy:
+  name: pose-fault
+  version: 1
+  description: |
+    Watch for nodes whose PoSe receipt failure rate exceeds threshold
+    over a rolling window, suggesting either consistent operator
+    misconfiguration or active misbehavior. Surfaces candidates for
+    EquivocationDetector.report() — humans confirm before submission.
+
+  triggers:
+    - id: pose-low-score-extended
+      condition: "node.poseScore < 0.5 && node.epochsObserved >= 5"
+      action: flagForSlashCandidate
+      severity: warning
+    - id: pose-receipt-timeout
+      condition: "node.timeoutCount > 100 && window >= 10m"
+      action: log
+      severity: info
+
+  policies:
+    - rule: equivocation-suspicion
+      window: "1h"
+      threshold: 3   # ≥3 fault events trigger flagForSlashCandidate
+      action: flagForSlashCandidate
+      followup: notify-human-operator

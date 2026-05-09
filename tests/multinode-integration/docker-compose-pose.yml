@@ -1,0 +1,75 @@
+# R2.1 Phase A — PoSe sidecar overlay on top of docker-compose-h15.yml
+#
+# This is a "merge" file — bring up via:
+#   docker compose -f docker-compose-h15.yml -f docker-compose-pose.yml up -d --build
+#
+# It adds 1 challenger agent + 1 relayer (using the same fork-off chain
+# 88888 as the H15 fixture). The agent uses anvil-0 as the operator key
+# (already prefunded via genesis on h15-node-1) and the relayer uses
+# anvil-3 (also prefunded by deploy-pose-on-h15.mjs's funding step).
+#
+# Configs/contracts from configs-h15/deployed-pose.json (written by the
+# deploy script). The sidecars depend on the H15 nodes being healthy AND
+# on configs-h15/deployed-pose.json existing on disk; mount the file
+# into the container for the entrypoint to read.
+
+services:
+  pose-agent:
+    build:
+      context: ../..
+      dockerfile: docker/Dockerfile.runtime
+    container_name: coc-h15-agent
+    hostname: pose-agent
+    volumes:
+      - ./configs-h15/deployed-pose.json:/data/coc/deployed-pose.json:ro
+      - ./configs-h15/agent-config.json:/data/coc/config.json:ro
+      - h15-agent-data:/data/coc
+    environment:
+      # Targets the fork-off chain via h15-node-1 RPC inside the docker network
+      - COC_NODE_URL=http://h15-node-1:18780
+      - COC_L1_RPC_URL=http://h15-node-1:18780
+      - COC_OPERATOR_PK=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+      - COC_AGENT_INTERVAL_MS=15000
+      - COC_AGENT_BATCH_SIZE=3
+      - COC_AGENT_SAMPLE_SIZE=2
+      # PoSeManagerV2 address picked up from agent-config.json
+    command: ["runtime/coc-agent.ts"]
+    depends_on:
+      h15-node-1:
+        condition: service_healthy
+      h15-node-2:
+        condition: service_healthy
+      h15-node-3:
+        condition: service_healthy
+      h15-node-4:
+        condition: service_healthy
+      h15-node-5:
+        condition: service_healthy
+    networks: [coc-h15]
+    restart: unless-stopped
+
+  pose-relayer:
+    build:
+      context: ../..
+      dockerfile: docker/Dockerfile.runtime
+    container_name: coc-h15-relayer
+    hostname: pose-relayer
+    volumes:
+      - ./configs-h15/deployed-pose.json:/data/coc/deployed-pose.json:ro
+      - ./configs-h15/relayer-config.json:/data/coc/config.json:ro
+      - h15-relayer-data:/data/coc
+    environment:
+      - COC_NODE_URL=http://h15-node-1:18780
+      - COC_L1_RPC_URL=http://h15-node-1:18780
+      - COC_SLASHER_PK=0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6
+      - COC_RELAYER_INTERVAL_MS=20000
+    command: ["runtime/coc-relayer.ts"]
+    depends_on:
+      pose-agent:
+        condition: service_started
+    networks: [coc-h15]
+    restart: unless-stopped
+
+volumes:
+  h15-agent-data:
+  h15-relayer-data:

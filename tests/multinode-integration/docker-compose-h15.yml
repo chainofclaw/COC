@@ -1,0 +1,150 @@
+# R1.4 — H15 fork-off devnet fixture
+#
+# Spawns 5 BFT validators on chainId 88888 (independent of upstream 18780)
+# so the H15 staggered-fallback proposer override (consensus.ts L256-365)
+# can be exercised by stopping the round-robin proposer for ≥600s.
+#
+# All 5 validators use the well-known anvil index 0..4 private keys
+# (public test keys, no real ETH at risk). nodeId == EVM address derived
+# from each key.
+#
+# Port allocation avoids the production 28780-29781 + 38780-38786 (legacy
+# 3-validator fixture) ranges:
+#   h15-node-1: 38790 (RPC), 39110 (metrics)
+#   h15-node-2: 38792, 39112
+#   h15-node-3: 38794, 39114
+#   h15-node-4: 38796, 39116
+#   h15-node-5: 38798, 39118
+
+services:
+  h15-node-1:
+    build:
+      context: ../..
+      dockerfile: docker/Dockerfile.node
+    container_name: coc-h15-node-1
+    hostname: h15-node-1
+    ports:
+      - "38790:18780"
+      - "39110:9100"
+    volumes:
+      - ./configs-h15/node-1.json:/data/coc/node-config.json:ro
+      - h15-node1-data:/data/coc
+    environment:
+      - COC_DATA_DIR=/data/coc
+      - COC_NODE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+      - COC_BFT_AUTO_RECOVERY=1
+    networks: [coc-h15]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:18780 -X POST -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"method\":\"eth_blockNumber\",\"params\":[],\"id\":1}' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  h15-node-2:
+    build:
+      context: ../..
+      dockerfile: docker/Dockerfile.node
+    container_name: coc-h15-node-2
+    hostname: h15-node-2
+    ports:
+      - "38792:18780"
+      - "39112:9100"
+    volumes:
+      - ./configs-h15/node-2.json:/data/coc/node-config.json:ro
+      - h15-node2-data:/data/coc
+    environment:
+      - COC_DATA_DIR=/data/coc
+      - COC_NODE_KEY=0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
+      - COC_BFT_AUTO_RECOVERY=1
+    networks: [coc-h15]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:18780 -X POST -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"method\":\"eth_blockNumber\",\"params\":[],\"id\":1}' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  h15-node-3:
+    build:
+      context: ../..
+      dockerfile: docker/Dockerfile.node
+    container_name: coc-h15-node-3
+    hostname: h15-node-3
+    ports:
+      - "38794:18780"
+      - "39114:9100"
+    volumes:
+      - ./configs-h15/node-3.json:/data/coc/node-config.json:ro
+      - h15-node3-data:/data/coc
+    environment:
+      - COC_DATA_DIR=/data/coc
+      - COC_NODE_KEY=0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a
+      - COC_BFT_AUTO_RECOVERY=1
+    networks: [coc-h15]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:18780 -X POST -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"method\":\"eth_blockNumber\",\"params\":[],\"id\":1}' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  h15-node-4:
+    build:
+      context: ../..
+      dockerfile: docker/Dockerfile.node
+    container_name: coc-h15-node-4
+    hostname: h15-node-4
+    ports:
+      - "38796:18780"
+      - "39116:9100"
+    volumes:
+      - ./configs-h15/node-4.json:/data/coc/node-config.json:ro
+      - h15-node4-data:/data/coc
+    environment:
+      - COC_DATA_DIR=/data/coc
+      - COC_NODE_KEY=0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6
+      - COC_BFT_AUTO_RECOVERY=1
+    networks: [coc-h15]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:18780 -X POST -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"method\":\"eth_blockNumber\",\"params\":[],\"id\":1}' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  h15-node-5:
+    build:
+      context: ../..
+      dockerfile: docker/Dockerfile.node
+    container_name: coc-h15-node-5
+    hostname: h15-node-5
+    ports:
+      - "38798:18780"
+      - "39118:9100"
+    volumes:
+      - ./configs-h15/node-5.json:/data/coc/node-config.json:ro
+      - h15-node5-data:/data/coc
+    environment:
+      - COC_DATA_DIR=/data/coc
+      - COC_NODE_KEY=0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a
+      - COC_BFT_AUTO_RECOVERY=1
+    networks: [coc-h15]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:18780 -X POST -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"method\":\"eth_blockNumber\",\"params\":[],\"id\":1}' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  h15-node1-data:
+  h15-node2-data:
+  h15-node3-data:
+  h15-node4-data:
+  h15-node5-data:
+
+networks:
+  coc-h15:
+    driver: bridge
+    name: coc-h15

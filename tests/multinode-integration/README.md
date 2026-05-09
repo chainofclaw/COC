@@ -12,6 +12,7 @@ the canonical case.
 |---|---|---|
 | `01-stateroot-divergence` | LevelDB block-header stateRoot field corrupted on one validator (the "shadow divergence" of 2026-05-05) | J1.1 fires `onPeerQuorumDiverged` from buffered prepare votes WITHOUT waiting for round timeout; J1.3 routes to `consensus.requestSyncNow`; chain recovers in ≤30 s |
 | `02-stuck-proposer` | Proposer's BFT round state internally deadlocked (prepareVotes pinned at 1, no peer votes arriving — the H15b watchdog gap) | J2.2 watchdog calls `bft.forceClearRound` on the self-stuck proposer; chain recovers in ≤2 × NO_PROGRESS_TIMEOUT_MS (≤4 min) |
+| `04-h15-fallback` (R1.4) | Round-robin proposer offline; chain freezes when its rotation slot comes up | H15 fallback proposer (rotation+1) arms `noProgressProposerOverride` after NO_PROGRESS_TIMEOUT_MS=600s and produces the stuck block via `forcePropose=true`; chain advances ≥1 block within 660s; "Phase H15: …" log line present |
 
 ## Why a separate fixture (not `tests/integration/`)
 
@@ -44,6 +45,23 @@ node --experimental-strip-types --test scenarios/01-stateroot-divergence.test.ts
 
 # J2 path — stuck proposer self-clear
 node --experimental-strip-types --test scenarios/02-stuck-proposer.test.ts
+```
+
+## H15 fork-off scenario (R1.4)
+
+`04-h15-fallback` runs against a **separate** 5-validator fixture
+(chainId 88888, `docker-compose-h15.yml`) so the round-robin proposer
+slot can be evacuated for ≥600 s without colliding with the 3-validator
+J3 fixture.
+
+```bash
+# all-in-one (build + warmup + scenario + teardown, ~13-15 min)
+bash scripts/run-h15.sh
+
+# or step by step
+bash scripts/run-h15.sh up
+bash scripts/run-h15.sh test-only
+bash scripts/run-h15.sh down
 ```
 
 ## CI integration (future)
