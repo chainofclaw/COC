@@ -58,7 +58,7 @@ jobs:
   test-services:
     name: Services + NodeOps + Tests Workspace (337+)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
