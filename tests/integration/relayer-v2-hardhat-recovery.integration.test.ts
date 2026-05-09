@@ -25,7 +25,12 @@ import { PoseV2DisputeExecutor } from "../../runtime/lib/pose-v2-dispute-executo
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const repoRoot = join(__dirname, "..", "..")
 const contractsDir = join(repoRoot, "contracts")
-const hardhatCli = join(repoRoot, "node_modules", "hardhat", "internal", "cli", "bootstrap.js")
+// hardhat may be installed at repo root (npm workspaces) or in contracts/
+// (after `cd contracts && npm install`). Resolve whichever exists.
+import { existsSync } from "node:fs"
+const hardhatCliRootPath = join(repoRoot, "node_modules", "hardhat", "internal", "cli", "bootstrap.js")
+const hardhatCliContractsPath = join(contractsDir, "node_modules", "hardhat", "internal", "cli", "bootstrap.js")
+const hardhatCli = existsSync(hardhatCliRootPath) ? hardhatCliRootPath : hardhatCliContractsPath
 const poseArtifact = JSON.parse(
   readFileSync(
     join(
@@ -104,6 +109,12 @@ async function getFreePort(): Promise<number> {
 }
 
 async function startHardhatNode(port: number): Promise<{ process: ChildProcessWithoutNullStreams; url: string; logs: () => string; stop: () => Promise<void> }> {
+  if (!existsSync(hardhatCli)) {
+    throw new Error(
+      `hardhat CLI not found at ${hardhatCliRootPath} or ${hardhatCliContractsPath}. ` +
+      `Run \`cd contracts && npm install\` (or root \`npm install\`) before this test.`,
+    )
+  }
   const child = spawn(process.execPath, [hardhatCli, "node", "--hostname", "127.0.0.1", "--port", String(port)], {
     cwd: contractsDir,
     stdio: ["ignore", "pipe", "pipe"],
@@ -114,40 +125,47 @@ async function startHardhatNode(port: number): Promise<{ process: ChildProcessWi
   child.stderr.on("data", (chunk) => { output += String(chunk) })
 
   const url = `http://127.0.0.1:${port}`
-  const provider = new JsonRpcProvider(url)
+  const probe = new JsonRpcProvider(url)
   const startedAt = Date.now()
 
-  while (Date.now() - startedAt < 20_000) {
-    if (child.exitCode !== null) {
-      throw new Error(`hardhat node exited early with code ${child.exitCode}\n${output}`)
-    }
-    try {
-      await provider.getBlockNumber()
-      return {
-        process: child,
-        url,
-        logs: () => output,
-        stop: async () => {
-          if (child.exitCode !== null) return
-          child.kill("SIGTERM")
-          await new Promise<void>((resolve) => {
-            const timer = setTimeout(() => {
-              if (child.exitCode === null) child.kill("SIGKILL")
-            }, 3_000)
-            child.once("exit", () => {
-              clearTimeout(timer)
-              resolve()
-            })
-          })
-        },
+  try {
+    while (Date.now() - startedAt < 20_000) {
+      if (child.exitCode !== null) {
+        throw new Error(`hardhat node exited early with code ${child.exitCode}\n${output}`)
       }
-    } catch {
-      await new Promise((resolve) => setTimeout(resolve, 200))
+      try {
+        await probe.getBlockNumber()
+        return {
+          process: child,
+          url,
+          logs: () => output,
+          stop: async () => {
+            if (child.exitCode !== null) return
+            child.kill("SIGTERM")
+            await new Promise<void>((resolve) => {
+              const timer = setTimeout(() => {
+                if (child.exitCode === null) child.kill("SIGKILL")
+              }, 3_000)
+              child.once("exit", () => {
+                clearTimeout(timer)
+                resolve()
+              })
+            })
+          },
+        }
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 200))
+      }
     }
-  }
 
-  child.kill("SIGKILL")
-  throw new Error(`hardhat node did not start in time\n${output}`)
+    child.kill("SIGKILL")
+    throw new Error(`hardhat node did not start in time\n${output}`)
+  } finally {
+    // Always destroy the probe provider so its internal poller doesn't leak.
+    // The returned `node` object intentionally does NOT carry this probe;
+    // the test creates its own provider for actual work.
+    probe.destroy()
+  }
 }
 
 async function registerNode(manager: Contract, funder: { sendTransaction: (tx: { to: string; value: bigint }) => Promise<unknown> }, provider: JsonRpcProvider): Promise<{ operator: Wallet; nodeId: string; bond: bigint }> {
@@ -268,8 +286,9 @@ test("relayer v2 recovery works against real Hardhat JSON-RPC + deployed PoSeMan
   const evidencePath = join(tempDir, "evidence-agent.jsonl")
   const pendingPath = join(tempDir, "pending-challenges-v2.json")
 
+  let provider: JsonRpcProvider | null = null
   try {
-    const provider = new JsonRpcProvider(node.url)
+    provider = new JsonRpcProvider(node.url)
     const deployerWallet = new Wallet(DEPLOYER_KEY, provider)
     const txSigner = new NonceManager(deployerWallet)
     const factory = new ContractFactory(poseArtifact.abi, poseArtifact.bytecode, txSigner)
@@ -373,6 +392,11 @@ test("relayer v2 recovery works against real Hardhat JSON-RPC + deployed PoSeMan
     const nodeRecord = await manager.getNode(registered.nodeId)
     assert.equal(nodeRecord.bondAmount, parseEther("0.95"))
   } finally {
+    // Destroy the provider FIRST so its retry/keepalive poller stops before
+    // the hardhat node goes down. Without this, ethers v6 would log
+    // "JsonRpcProvider failed to detect network and cannot start up; retry
+    // in 1s" forever and pin the test runner past timeout.
+    provider?.destroy()
     await node.stop()
   }
 })
