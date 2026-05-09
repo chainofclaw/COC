@@ -20,6 +20,7 @@
 | M9 | R2.3 nodeops policy churn rules | ✅ | 11 | validator-churn-policy.yaml + pose-fault-policy.yaml |
 | M10 | R3.1 EquivocationDetector ↔ BFT slash automation | ✅ 4/4 E2E + 6/6 unit | 11, 22, 27 | E2E test `12-pose-slash-automation` @ H15 fork-off PASS 4/4: client primes 5 validators from on-chain events, slash bites (stake 32→28.8 ETH = -10% SLASH_BPS, active flips false), cooldown gate holds; Phase I3c production integration verified end-to-end |
 | M11 | R3.2 准生产 testnet 88780 prep | ✅ | 11 | docs/r3-2-prod-candidate-testnet-88780.md SOP |
+| M12 | R3.3 文档 + explorer Validator 页面对接 | ✅ | 29 | docs/operator-runbook.{en,zh}.md (注册/退出/slash 响应/治理/监控完整 SOP); docs/system-architecture.{en,zh}.md 追加 R1/R2/R3 现状节; explorer `/validators` 已通过 `coc_getValidators` RPC 接 `ValidatorRegistry.getActiveValidators()` (`node/src/rpc.ts:1329`) — 无需额外改动 |
 
 ## Iteration Log
 
