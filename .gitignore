@@ -64,3 +64,5 @@ vendor/
 
 CLAUDE.zh.md
 docs/*.zh.md
+# gcloud testbed operator config (private — contains GCP project ID, IPs)
+scripts/gcloud/config.env

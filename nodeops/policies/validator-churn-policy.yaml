@@ -1,0 +1,34 @@
+# R2.3 — Validator churn policy (M9)
+#
+# Triggers automated unstake when a validator goes offline for longer than
+# NO_PROGRESS_TIMEOUT_MS (600 s, see node/src/consensus.ts L72). Pairs with
+# the H15 staggered fallback proposer to reduce equivocation storm risk
+# during long network partitions.
+
+policy:
+  name: validator-churn
+  version: 1
+  description: |
+    Auto-unstake validators that miss > NO_PROGRESS_TIMEOUT consecutive
+    proposer slots. The unstake is a 14-day-locked withdrawal so an
+    operator returning within the window can re-stake without losing
+    bond.
+
+  triggers:
+    - id: validator-offline-extended
+      condition: "validator.consecutiveMissedSlots > 200"  # 200 × 3 s/block = 600 s
+      action: requestUnstake
+      cooldown: "24h"
+      severity: warning
+
+  policies:
+    - rule: heartbeat-missing
+      window: "10m"
+      threshold: 200
+      action: alert
+      target: nodeops.heartbeat
+    - rule: consecutive-rounds-stuck
+      window: "10m"
+      threshold: 1
+      action: log
+      target: validator.staggerSelect

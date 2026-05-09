@@ -1,0 +1,14 @@
+{
+  "_comment": "R2.1 Phase A — coc-relayer config for H15 fork-off chain (88888). poseManagerAddress + equivocationDetectorAddress are filled in by run-pose.sh from deployed-pose.json.",
+  "dataDir": "/data/coc",
+  "nodeUrl": "http://h15-node-1:18780",
+  "l1RpcUrl": "http://h15-node-1:18780",
+  "relayerIntervalMs": 20000,
+  "poseManagerAddress": "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0",
+  "equivocationDetectorAddress": "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9",
+  "validatorRegistryAddress": "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512",
+  "challengerShareBps": 500,
+  "txRetryAttempts": 2,
+  "txRetryBaseDelayMs": 250,
+  "txRetryMaxDelayMs": 5000
+}

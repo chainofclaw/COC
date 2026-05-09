@@ -1,0 +1,29 @@
+{
+  "_comment": "R2.1 Phase A — coc-agent config for the H15 fork-off chain (88888). The poseManagerAddress field is filled in by run-pose.sh after deploy-pose-on-h15.mjs writes deployed-pose.json. agent-config.json.tmpl is the canonical template; this file is updated in-place by the helper.",
+  "dataDir": "/data/coc",
+  "nodeUrl": "http://h15-node-1:18780",
+  "l1RpcUrl": "http://h15-node-1:18780",
+  "agentIntervalMs": 15000,
+  "agentBatchSize": 3,
+  "agentSampleSize": 2,
+  "poseManagerAddress": "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0",
+  "cidRegistryAddress": "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+  "minBondWei": "100000000000000000",
+  "txRetryAttempts": 2,
+  "txRetryBaseDelayMs": 250,
+  "txRetryMaxDelayMs": 5000,
+  "endpointFingerprintMode": "off",
+  "challengerSet": [
+    "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"
+  ],
+  "aggregatorSet": [
+    "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"
+  ],
+  "_targetNodes": [
+    "http://h15-node-1:18780",
+    "http://h15-node-2:18780",
+    "http://h15-node-3:18780",
+    "http://h15-node-4:18780",
+    "http://h15-node-5:18780"
+  ]
+}
