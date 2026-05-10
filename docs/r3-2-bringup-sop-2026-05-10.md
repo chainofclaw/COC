@@ -16,6 +16,19 @@ for N=5 to be operationally viable.
 - [x] **3.3** — `configs/r3-2-candidate/node-config-template.json` +
   `scripts/render-r3-2-configs.sh` ready. Renderer tested with placeholder
   hostnames; produces valid JSON.
+- [x] **3.3a (dry-run)** — `scripts/start-r3-2-devnet.sh` brings up the 5
+  validators against local `127.0.0.1` ports using the generated keys. Run
+  on 2026-05-10:
+  - All 5 nodes ready in 2s after spawn.
+  - All 5 reached h=8 within 12s (`eth_chainId` returns 0x15ac4 = 88780).
+  - 7 BFT rounds finalized 5/5 before localhost peer-scoring throttling
+    (the documented `127.0.0.1` shared-IP issue, not a code bug) caused
+    the cluster to stall waiting for chain-snapshot polls. PR-1E's
+    structured warn log immediately surfaced the cause via per-peer
+    `HTTP 429: peer temporarily banned` attribution.
+  - **Conclusion**: 88780 genesis + per-validator wire-up is correct.
+    Real validation of PR-1A's 15s fast-path requires the cross-IP gcloud
+    cluster (different IPs per validator → no shared scoring quota).
 - [ ] **3.4** — GCP VMs provisioned with reserved static IPs (5 regions).
 - [ ] **3.5** — coc-node services running on all 5 hosts at h≈10.
 - [ ] **3.6** — 10 governance contracts deployed via
