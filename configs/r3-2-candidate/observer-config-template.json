@@ -1,0 +1,59 @@
+{
+  "_comment_template": "Observer fullnode for chainId 88780. Does NOT participate in BFT (enableBft=false), nodeId is a generated random key per host (NOT in validators[]). Replace ${...} placeholders before deploy.",
+  "_comment_keys": "Set COC_NODE_KEY env to a freshly-generated random hex (NOT one of the 5 validator keys). bash scripts/generate-validator-keys.sh 1 ~/.coc/keys/88780-observer-N/ produces a usable key file (rename validator-1 → observer-N).",
+  "dataDir": "/var/lib/coc/node-1",
+  "nodeId": "${OBSERVER_NODE_ID}",
+  "chainId": 88780,
+  "rpcBind": "0.0.0.0",
+  "rpcPort": 28780,
+  "p2pBind": "0.0.0.0",
+  "p2pPort": 29780,
+  "wsBind": "0.0.0.0",
+  "wsPort": 28790,
+  "ipfsBind": "0.0.0.0",
+  "ipfsPort": 28800,
+  "wireBind": "0.0.0.0",
+  "wirePort": 29781,
+  "advertisedP2pUrl": "http://${SELF_HOST}:29780",
+  "peers": [
+    { "id": "0xde4e7889aa9007318ff261b1ee675f1305153590", "url": "http://${V1_HOST}:29780" },
+    { "id": "0xb939e5a68abd2e000e78876bd86edd1cbba49eb9", "url": "http://${V2_HOST}:29780" },
+    { "id": "0xdefc8430388093fdfacb0a929fedc14d2e631d19", "url": "http://${V3_HOST}:29780" },
+    { "id": "0xcc64096600c1759d7aaea91166837a5873175867", "url": "http://${V4_HOST}:29780" },
+    { "id": "0x5e773c9359a6bb416bdfffe0c9aac9f568bd11ae", "url": "http://${V5_HOST}:29780" }
+  ],
+  "dhtBootstrapPeers": [
+    { "id": "0xde4e7889aa9007318ff261b1ee675f1305153590", "address": "${V1_HOST}", "port": 29781 },
+    { "id": "0xb939e5a68abd2e000e78876bd86edd1cbba49eb9", "address": "${V2_HOST}", "port": 29781 },
+    { "id": "0xdefc8430388093fdfacb0a929fedc14d2e631d19", "address": "${V3_HOST}", "port": 29781 },
+    { "id": "0xcc64096600c1759d7aaea91166837a5873175867", "address": "${V4_HOST}", "port": 29781 },
+    { "id": "0x5e773c9359a6bb416bdfffe0c9aac9f568bd11ae", "address": "${V5_HOST}", "port": 29781 }
+  ],
+  "validators": [
+    "0xde4e7889aa9007318ff261b1ee675f1305153590",
+    "0xb939e5a68abd2e000e78876bd86edd1cbba49eb9",
+    "0xdefc8430388093fdfacb0a929fedc14d2e631d19",
+    "0xcc64096600c1759d7aaea91166837a5873175867",
+    "0x5e773c9359a6bb416bdfffe0c9aac9f568bd11ae"
+  ],
+  "validatorStakes": [
+    { "id": "0xde4e7889aa9007318ff261b1ee675f1305153590", "address": "0xde4e7889aa9007318ff261b1ee675f1305153590", "stake": "32000000000000000000" },
+    { "id": "0xb939e5a68abd2e000e78876bd86edd1cbba49eb9", "address": "0xb939e5a68abd2e000e78876bd86edd1cbba49eb9", "stake": "32000000000000000000" },
+    { "id": "0xdefc8430388093fdfacb0a929fedc14d2e631d19", "address": "0xdefc8430388093fdfacb0a929fedc14d2e631d19", "stake": "32000000000000000000" },
+    { "id": "0xcc64096600c1759d7aaea91166837a5873175867", "address": "0xcc64096600c1759d7aaea91166837a5873175867", "stake": "32000000000000000000" },
+    { "id": "0x5e773c9359a6bb416bdfffe0c9aac9f568bd11ae", "address": "0x5e773c9359a6bb416bdfffe0c9aac9f568bd11ae", "stake": "32000000000000000000" }
+  ],
+  "blockTimeMs": 3000,
+  "syncIntervalMs": 5000,
+  "finalityDepth": 3,
+  "maxTxPerBlock": 100,
+  "minGasPriceWei": "1",
+  "poseEpochMs": 3600000,
+  "enableBft": false,
+  "enableWireProtocol": true,
+  "enableDht": true,
+  "enableSnapSync": true,
+  "snapSyncThreshold": 100,
+  "p2pInboundAuthMode": "enforce",
+  "poseInboundAuthMode": "enforce"
+}
