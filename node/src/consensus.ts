@@ -73,6 +73,22 @@ export const NO_PROGRESS_TIMEOUT_MS = 600_000
 export const NO_PROGRESS_STAGGER_MS = 30_000
 const NO_PROGRESS_MAX_VALIDATORS = 10
 
+// PR-1A (2026-05-10): fast-path fallback when we have *direct evidence* the
+// stuck proposer is unreachable — either because BFT round timed out at their
+// slot, or wire-connection-manager reports their socket is closed. The 600s
+// H15 timeout is appropriate when we don't know *why* progress halted (could
+// be slow network, GC pause, etc.), but when reachability is observable,
+// waiting 10 minutes per dead validator wastes liveness. N=5 attempt 2026-05-10
+// observed: H15 fired, override armed → 14 blocks produced → next slot rotated
+// back to dead validator → another 600s wait. Fast timeout + persistent
+// unreachable marks (refreshed by repeated round timeouts) eliminate the
+// re-freeze cycle.
+//
+// FAST < SLOW so the fast path beats H15 when evidence is present;
+// FAST < TTL so a single round does not expire its own evidence mid-flight.
+export const PROPOSER_UNREACHABLE_FAST_TIMEOUT_MS = 15_000
+export const PROPOSER_UNREACHABLE_TTL_MS = 60_000
+
 /** Race a promise against a timeout. Throws on timeout, otherwise returns the value. */
 async function withSyncTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -220,11 +236,29 @@ export class ConsensusEngine {
   // we occupy so only the designated fallback proposer arms the override.
   private readonly nodeId: string | null
 
+  // PR-1A: validators (lowercased) marked as unreachable with absolute
+  // expiry timestamp. Refreshed by BFT round timeouts (proposer-stuck callback)
+  // or by reachability provider returning a set that excludes them. Drives the
+  // fast-path fallback in checkNoProgressWatchdog.
+  private unreachableProposers = new Map<string, number>()
+
+  // PR-1A: optional injection of wire-layer reachability. When provided,
+  // returns the lowercased set of validator IDs the local node currently has
+  // a wire connection to. Validators NOT in this set (excluding self) are
+  // treated as unreachable for fast-fallback purposes.
+  private readonly reachabilityProvider: (() => Set<string>) | null
+
   constructor(
     chain: IChainEngine,
     p2p: P2PNode,
     cfg: ConsensusConfig,
-    opts?: { bft?: BftCoordinator; snapSync?: SnapSyncProvider; wireBroadcast?: (block: ChainBlock) => void; nodeId?: string },
+    opts?: {
+      bft?: BftCoordinator
+      snapSync?: SnapSyncProvider
+      wireBroadcast?: (block: ChainBlock) => void
+      nodeId?: string
+      reachabilityProvider?: () => Set<string>
+    },
   ) {
     this.chain = chain
     this.p2p = p2p
@@ -233,6 +267,50 @@ export class ConsensusEngine {
     this.snapSync = opts?.snapSync ?? null
     this.wireBroadcast = opts?.wireBroadcast ?? null
     this.nodeId = opts?.nodeId ?? null
+    this.reachabilityProvider = opts?.reachabilityProvider ?? null
+  }
+
+  /**
+   * PR-1A: mark a validator as unreachable for `ttlMs` (default 60s).
+   * Called by the BFT coordinator's round-timeout handler when the round's
+   * proposer was not the local node — strong evidence the slot proposer is
+   * offline, partitioned, or otherwise unable to drive their round.
+   *
+   * Repeat marks refresh the TTL, so a persistently dead validator stays
+   * marked across many rounds without the slow path's 600s wait.
+   */
+  markProposerUnreachable(proposerId: string, ttlMs: number = PROPOSER_UNREACHABLE_TTL_MS): void {
+    const id = proposerId.toLowerCase()
+    if (id === (this.nodeId?.toLowerCase() ?? "")) return // never mark self
+    this.unreachableProposers.set(id, Date.now() + ttlMs)
+  }
+
+  /**
+   * PR-1A: probe whether `proposerId` is currently believed unreachable.
+   * Sources of evidence (any positive => unreachable):
+   *   1. Active mark from markProposerUnreachable still in TTL
+   *   2. reachabilityProvider returns a set that excludes them
+   * Self is never reported unreachable. Expired marks are pruned on read.
+   */
+  private isProposerUnreachable(proposerId: string): boolean {
+    const id = proposerId.toLowerCase()
+    if (id === (this.nodeId?.toLowerCase() ?? "")) return false
+
+    const exp = this.unreachableProposers.get(id)
+    if (exp !== undefined) {
+      if (Date.now() < exp) return true
+      this.unreachableProposers.delete(id)
+    }
+
+    if (this.reachabilityProvider) {
+      try {
+        const reachable = this.reachabilityProvider()
+        if (reachable && !reachable.has(id)) return true
+      } catch {
+        // Provider failure is non-fatal — fall through to slow path
+      }
+    }
+    return false
   }
 
   start(): void {
@@ -290,7 +368,6 @@ export class ConsensusEngine {
     if (this.syncInFlight) return
     if (!this.bft) return
     const elapsed = Date.now() - this.lastBftProgressAtMs
-    if (elapsed <= NO_PROGRESS_TIMEOUT_MS) return
 
     if (!this.nodeId) {
       // Cannot determine fallback proposer identity — skip to avoid storm
@@ -308,6 +385,18 @@ export class ConsensusEngine {
     // but a node's nodeId may be EIP-55 checksummed).
     const stuckProposerId = this.chain.expectedProposer(stuckHeight).toLowerCase()
     const localNodeId = this.nodeId?.toLowerCase()
+
+    // PR-1A: if we have direct evidence the stuck proposer is unreachable
+    // (recent BFT round timed out at their slot, or wire socket is closed),
+    // bypass the conservative 600s H15 timeout. The fast path keeps the same
+    // rotation-stagger logic so only one fallback fires per tick — preventing
+    // the 2026-05-02 equivocation storm — but with FAST=15s as the base
+    // threshold instead of SLOW=600s. Falls through to slow path otherwise.
+    const stuckUnreachable = this.isProposerUnreachable(stuckProposerId)
+    const baseTimeoutMs = stuckUnreachable
+      ? PROPOSER_UNREACHABLE_FAST_TIMEOUT_MS
+      : NO_PROGRESS_TIMEOUT_MS
+    if (elapsed <= baseTimeoutMs) return
 
     // Phase J2.2: when we are the stuck proposer AND we hold an active
     // round whose state is internally deadlocked (no peers responding,
@@ -360,7 +449,11 @@ export class ConsensusEngine {
 
     // Primary fallback fires at base timeout; each subsequent fallback adds
     // one stagger interval so at most one node fires per tick.
-    const activationThresholdMs = NO_PROGRESS_TIMEOUT_MS + (rotationOffset - 1) * NO_PROGRESS_STAGGER_MS
+    // PR-1A: when the stuck proposer is known unreachable, baseTimeoutMs is
+    // the fast threshold (15s) so secondary/tertiary fallbacks proportionally
+    // shift down too — but stagger interval stays at NO_PROGRESS_STAGGER_MS
+    // to keep the equivocation-storm protection intact.
+    const activationThresholdMs = baseTimeoutMs + (rotationOffset - 1) * NO_PROGRESS_STAGGER_MS
     if (elapsed < activationThresholdMs) return
 
     log.error("Phase H15: no BFT progress — enabling proposer override (fallback proposer)", {
@@ -370,6 +463,8 @@ export class ConsensusEngine {
       stuckHeight: stuckHeight.toString(),
       stuckProposerId,
       localNodeId: this.nodeId,
+      stuckUnreachable,
+      path: stuckUnreachable ? "fast" : "slow",
     })
     this.noProgressProposerOverride = true
   }
@@ -676,6 +771,11 @@ export class ConsensusEngine {
   notifyBftProgress(): void {
     this.lastBftProgressAtMs = Date.now()
     this.noProgressProposerOverride = false
+    // PR-1A: a successful finalize is the strongest "the cluster is healthy"
+    // signal we have. Clear all unreachable marks so the next rotation slot
+    // is evaluated on fresh evidence rather than stale BFT timeouts from
+    // before the cluster recovered.
+    this.unreachableProposers.clear()
   }
 
   /**
