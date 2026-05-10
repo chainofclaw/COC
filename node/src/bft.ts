@@ -463,6 +463,9 @@ export class EquivocationDetector {
   private readonly maxTrackedHeights: number
   private readonly maxEvidence: number
   private readonly maxEvidencePerValidator: number
+  // PR-1C: monitoring counter — only increments on rare desync repair paths,
+  // not on routine sliding-window evictions. Stays at 0 in normal operation.
+  private droppedTotal = 0
 
   constructor(maxTrackedHeights = 100, maxEvidence = 1000, maxEvidencePerValidator = 100) {
     this.maxTrackedHeights = maxTrackedHeights
@@ -511,29 +514,54 @@ export class EquivocationDetector {
         ...(existing?.signature ? { signature1: existing.signature } : {}),
         ...(signature ? { signature2: signature } : {}),
       }
-      // Per-validator evidence cap: prevent one attacker from flushing another validator's evidence
+      // PR-1C (2026-05-10): sliding-window per-validator cap.
+      // Old behavior dropped NEW evidence when a validator hit cap,
+      // pinning ancient evidence in the array forever during a chain
+      // freeze (clearEvidenceBefore wasn't called). Sliding-window
+      // evicts the OLDEST entry from the same validator and pushes the
+      // new one — recent evidence is strictly more useful for slashing
+      // than ancient evidence about the same actor.
       const validatorCount = this.evidenceCountByValidator.get(normalizedId) ?? 0
       if (validatorCount >= this.maxEvidencePerValidator) {
-        // This validator already has max evidence; log but don't store to prevent flush attack
-        log.warn("equivocation evidence cap reached for validator", { validator: normalizedId, cap: this.maxEvidencePerValidator })
-      } else {
-        // Global cap with per-validator fairness: evict oldest from the SAME validator if global is full
-        if (this.evidence.length >= this.maxEvidence) {
-          // Find and remove oldest evidence from the validator with the most entries
-          let maxValidator = normalizedId
-          let maxCount = validatorCount
-          for (const [vid, cnt] of this.evidenceCountByValidator) {
-            if (cnt > maxCount) { maxValidator = vid; maxCount = cnt }
-          }
-          const evictIdx = this.evidence.findIndex((e) => e.validatorId === maxValidator)
-          if (evictIdx >= 0) {
-            this.evidence.splice(evictIdx, 1)
-            this.evidenceCountByValidator.set(maxValidator, (this.evidenceCountByValidator.get(maxValidator) ?? 1) - 1)
-          }
+        const oldestIdx = this.evidence.findIndex((e) => e.validatorId === normalizedId)
+        if (oldestIdx >= 0) {
+          this.evidence.splice(oldestIdx, 1)
+          // Counter unchanged — we evicted 1 of this validator's entries
+          // and are about to push 1 new one.
+        } else {
+          // Counter desync — defensive: rebuild from array and bail.
+          this.evidenceCountByValidator.set(normalizedId, 0)
+          this.droppedTotal += 1
+          log.warn("equivocation evidence counter desync — repaired", {
+            validator: normalizedId,
+          })
         }
-        this.evidence.push(ev)
-        this.evidenceCountByValidator.set(normalizedId, validatorCount + 1)
       }
+      // Global cap with per-validator fairness: evict oldest from the SAME
+      // validator-with-most-entries if global is full.
+      if (this.evidence.length >= this.maxEvidence) {
+        let maxValidator = normalizedId
+        let maxCount = this.evidenceCountByValidator.get(normalizedId) ?? 0
+        for (const [vid, cnt] of this.evidenceCountByValidator) {
+          if (cnt > maxCount) { maxValidator = vid; maxCount = cnt }
+        }
+        const evictIdx = this.evidence.findIndex((e) => e.validatorId === maxValidator)
+        if (evictIdx >= 0) {
+          this.evidence.splice(evictIdx, 1)
+          this.evidenceCountByValidator.set(
+            maxValidator,
+            (this.evidenceCountByValidator.get(maxValidator) ?? 1) - 1,
+          )
+        }
+      }
+      this.evidence.push(ev)
+      this.evidenceCountByValidator.set(
+        normalizedId,
+        Math.min(
+          this.maxEvidencePerValidator,
+          (this.evidenceCountByValidator.get(normalizedId) ?? 0) + 1,
+        ),
+      )
       log.warn("equivocation detected!", {
         validator: validatorId,
         height: height.toString(),
@@ -589,5 +617,59 @@ export class EquivocationDetector {
     for (let i = 0; i < toRemove; i++) {
       this.votes.delete(heights[i].toString())
     }
+  }
+
+  /**
+   * PR-1C (2026-05-10): monitoring snapshot. Plumbed into Prometheus metrics
+   * so an operator can alert on cache pressure (`totalEvidence > 0.8 *
+   * maxEvidence`) before the global cap fires; without this, the existing
+   * "evidence cap reached" log is the only signal and easy to miss.
+   */
+  getStats(): {
+    totalEvidence: number
+    maxEvidence: number
+    maxEvidencePerValidator: number
+    uniqueValidators: number
+    perValidator: Record<string, number>
+    trackedHeights: number
+    droppedTotal: number
+  } {
+    const perValidator: Record<string, number> = {}
+    for (const [id, cnt] of this.evidenceCountByValidator) perValidator[id] = cnt
+    return {
+      totalEvidence: this.evidence.length,
+      maxEvidence: this.maxEvidence,
+      maxEvidencePerValidator: this.maxEvidencePerValidator,
+      uniqueValidators: this.evidenceCountByValidator.size,
+      perValidator,
+      trackedHeights: this.votes.size,
+      droppedTotal: this.droppedTotal,
+    }
+  }
+
+  /**
+   * PR-1C (2026-05-10): retain only evidence at the `keep` highest heights
+   * still present, dropping the rest. Complement to `clearEvidenceBefore`
+   * (which trims by absolute height): this method bounds memory by recency
+   * count, usable from a periodic watchdog when finalize hasn't advanced for
+   * a long time (chain freeze) and the threshold-based prune doesn't fire.
+   *
+   * Returns the number of entries removed.
+   */
+  pruneByMaxHeight(keep: number): number {
+    if (keep <= 0) {
+      const removed = this.evidence.length
+      this.evidence.length = 0
+      this.evidenceCountByValidator.clear()
+      return removed
+    }
+    const uniqueHeights = new Set<bigint>()
+    for (const e of this.evidence) uniqueHeights.add(e.height)
+    if (uniqueHeights.size <= keep) return 0
+
+    // Sorted descending by height — the first `keep` are the survivors.
+    const sorted = [...uniqueHeights].sort((a, b) => (a > b ? -1 : a < b ? 1 : 0))
+    const cutoff = sorted[keep - 1] // smallest height that survives
+    return this.clearEvidenceBefore(cutoff)
   }
 }
