@@ -115,6 +115,17 @@ export interface BftCoordinatorConfig {
    * When omitted, only the legacy `lastFinalizedHeight` guard applies.
    */
   getChainHeight?: () => bigint | Promise<bigint>
+  /**
+   * PR-1A (2026-05-10): callback fired when a BFT round times out and the
+   * round's proposer was *not* the local node. The parent (consensus engine)
+   * uses this signal to mark the proposer unreachable, which arms the fast-
+   * path H15 fallback (~15s) instead of waiting for the conservative 600s
+   * timeout. Repeat callbacks for the same proposer refresh the TTL,
+   * keeping a persistently-down validator marked across many rounds.
+   *
+   * Optional — when omitted, only the slow 600s path applies.
+   */
+  onProposerStuck?: (proposerId: string, height: bigint) => void
 }
 
 /**
@@ -972,6 +983,20 @@ export class BftCoordinator {
               })
             } catch (err) {
               log.warn("BFT onPersistentDivergence callback threw", { error: String(err) })
+            }
+          }
+        }
+
+        // PR-1A: notify parent that this round's proposer is likely unreachable.
+        // Skip when the proposer was local — `onProposerStuck` is for *peer*
+        // unreachability evidence; self-stuck has its own J2.2 path.
+        if (this.cfg.onProposerStuck && this.activeRound) {
+          const proposerId = this.activeRound.state.proposedBlock?.proposer
+          if (proposerId && proposerId.toLowerCase() !== this.cfg.localId.toLowerCase()) {
+            try {
+              this.cfg.onProposerStuck(proposerId, this.activeRound.state.height)
+            } catch (err) {
+              log.warn("BFT onProposerStuck callback threw", { error: String(err) })
             }
           }
         }

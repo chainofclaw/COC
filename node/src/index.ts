@@ -407,6 +407,17 @@ if (bftEnabled) {
     // proposals (height ≤ chain tip). `lastFinalizedHeight` alone misses
     // gossip-block catch-up after a restart; this closes the gap.
     getChainHeight: () => chain.getHeight(),
+    // PR-1A (2026-05-10): when a BFT round times out at a peer's slot, mark
+    // that proposer unreachable so consensus.checkNoProgressWatchdog's fast
+    // path (~15s) takes over from the conservative 600s H15 timeout.
+    onProposerStuck: (proposerId: string, height: bigint) => {
+      if (!consensus) return
+      log.warn("PR-1A: BFT round timed out — marking proposer unreachable", {
+        proposerId,
+        height: height.toString(),
+      })
+      consensus.markProposerUnreachable(proposerId)
+    },
     onEquivocation: (evidence: EquivocationEvidence) => {
       log.warn("BFT equivocation detected", {
         validator: evidence.validatorId,
@@ -1080,6 +1091,21 @@ const consensus = new ConsensusEngine(chain, p2p, {
   snapSync: snapSyncProvider,
   wireBroadcast: (block) => wireBroadcastFn?.(block),
   nodeId: config.nodeId,
+  // PR-1A (2026-05-10): expose wire-layer reachability so
+  // checkNoProgressWatchdog can detect a disconnected proposer immediately
+  // (rather than waiting for the 600s H15 timeout). `wireClients` is
+  // populated when the wire layer initialises later in this module — the
+  // closure captures the array reference, so this provider works as soon
+  // as the wire connections come up.
+  reachabilityProvider: (): Set<string> => {
+    const set = new Set<string>()
+    for (const c of wireClients) {
+      if (!c.isConnected()) continue
+      const id = c.getRemoteNodeId()
+      if (id) set.add(id.toLowerCase())
+    }
+    return set
+  },
 })
 consensus.start()
 
