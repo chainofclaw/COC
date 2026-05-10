@@ -3,8 +3,13 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 NODES="${1:-3}"
+# PR-1B preparatory: chainId is now optional second arg / env var
+# (default 18780 keeps existing scripts working). Phase 2 chaos drill
+# scripts pass 88780 here for fresh-chain dry runs.
+CHAIN_ID="${2:-${COC_DEVNET_CHAIN_ID:-18780}}"
 if [[ "$NODES" != "3" && "$NODES" != "5" && "$NODES" != "7" ]]; then
-  echo "usage: $0 <3|5|7>"
+  echo "usage: $0 <3|5|7> [chainId]"
+  echo "       env: COC_DEVNET_CHAIN_ID=<id>"
   exit 1
 fi
 
@@ -115,7 +120,7 @@ for i in $(seq 1 "$NODES"); do
 {
   "dataDir": "${DATA_DIR}",
   "nodeId": "${NODE_ID}",
-  "chainId": 18780,
+  "chainId": ${CHAIN_ID},
   "rpcBind": "127.0.0.1",
   "rpcPort": ${RPC_PORT},
   "p2pBind": "127.0.0.1",
