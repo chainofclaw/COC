@@ -208,6 +208,88 @@ export class BlockIndex implements IBlockIndex {
     return block
   }
 
+  /**
+   * PR-1D (2026-05-10): scan `b:` prefix, find the numerically-highest block
+   * actually stored, and promote LATEST_BLOCK_KEY if it lags behind. Returns
+   * a structured result rather than throwing so callers can log + continue.
+   *
+   * 2026-05-10 N=5 attempt #2 fingerprint: server-1 RPC reported h=71448
+   * but eth_getBlockByNumber("0x116ba"=71450) returned a valid block. The
+   * atomic batch in `buildBlockOps` writes b:N AND LATEST together, so a
+   * desync should be impossible — yet it happened, most plausibly because
+   * snap-sync's per-block putBlock loop rewinds LATEST without deleting
+   * stale b:>peerTip entries left from a prior run.
+   *
+   * This method recovers from any such desync. Called from
+   * PersistentChainEngine.init() so every restart self-heals — no more
+   * manual rsync recovery for tip-pointer-only corruption.
+   */
+  async repairLatestPointer(): Promise<{
+    repaired: boolean
+    latestBefore: bigint | null
+    latestAfter: bigint | null
+    highestStored: bigint | null
+  }> {
+    const before = await this.getLatestBlock()
+    const beforeNum = before?.number ?? null
+
+    // Scan b: prefix; parse numeric suffix; track BigInt max.
+    const keys = await this.db.getKeysWithPrefix(BLOCK_BY_NUMBER_PREFIX, { limit: -1 })
+    let highest: bigint | null = null
+    for (const k of keys) {
+      const suffix = k.slice(BLOCK_BY_NUMBER_PREFIX.length)
+      let n: bigint
+      try {
+        n = BigInt(suffix)
+      } catch {
+        continue // skip malformed key
+      }
+      if (highest === null || n > highest) highest = n
+    }
+
+    // No data on disk at all
+    if (highest === null) {
+      return {
+        repaired: false,
+        latestBefore: beforeNum,
+        latestAfter: beforeNum,
+        highestStored: null,
+      }
+    }
+
+    // LATEST already matches (or exceeds) highest stored
+    if (beforeNum !== null && beforeNum >= highest) {
+      return {
+        repaired: false,
+        latestBefore: beforeNum,
+        latestAfter: beforeNum,
+        highestStored: highest,
+      }
+    }
+
+    // LATEST lags — promote it to the highest stored block. Re-write
+    // LATEST_BLOCK_KEY only (b:N already present, no need to re-batch).
+    const newLatest = await this.getBlockByNumber(highest)
+    if (!newLatest) {
+      // Highest scanned key but block parse failed — leave alone.
+      return {
+        repaired: false,
+        latestBefore: beforeNum,
+        latestAfter: beforeNum,
+        highestStored: highest,
+      }
+    }
+    const blockData = encoder.encode(serializeJSON(newLatest))
+    await this.db.batch([{ type: "put", key: LATEST_BLOCK_KEY, value: blockData }])
+
+    return {
+      repaired: true,
+      latestBefore: beforeNum,
+      latestAfter: highest,
+      highestStored: highest,
+    }
+  }
+
   buildTransactionOps(txHash: Hex, tx: TxWithReceipt): BatchOp[] {
     const key = TX_BY_HASH_PREFIX + txHash
     const txData = encoder.encode(serializeJSON(tx))
