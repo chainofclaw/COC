@@ -445,8 +445,15 @@ export class ChainEngine {
     }
 
     // Post-execution stateRoot signature (proposer signs after EVM execution)
+    //
+    // Phase X2 (#84): mirror the actual-proposer guard from
+    // chain-engine-persistent.ts. BFT onFinalized hits applyBlock(., true)
+    // on every validator; without this guard each follower re-signs the
+    // field with its own key.
     let stateRootSig = block.stateRootSig
-    if (locallyProposed && this.nodeSigner && block.stateRoot) {
+    const isActualProposer = this.nodeSigner !== null
+      && block.proposer.toLowerCase() === this.nodeSigner.nodeId.toLowerCase()
+    if (locallyProposed && isActualProposer && block.stateRoot) {
       const stateRootMsg = `stateRoot:${block.hash}:${block.stateRoot}`
       stateRootSig = this.nodeSigner.sign(stateRootMsg) as Hex
     } else if (!locallyProposed && block.stateRootSig && block.stateRoot && this.signatureVerifier) {

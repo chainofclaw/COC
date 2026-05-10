@@ -12,6 +12,7 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Wallet, parseEther, Transaction } from "ethers"
+import { createNodeSigner } from "./crypto/signer.ts"
 
 test("PersistentChainEngine: init and close", async () => {
   const tmpDir = mkdtempSync(join(tmpdir(), "coc-engine-test-"))
@@ -1504,5 +1505,150 @@ test("Phase I2: feeDistribution disabled — proposer balance unchanged, priorit
   } finally {
     await engine.close()
     rmSync(tmpDir, { recursive: true, force: true })
+  }
+})
+
+// ── Phase X2 (#84) — sign stateRootSig only when local node is actual proposer ─────
+
+/**
+ * Build an isolated PersistentChainEngine pinned to a specific signing key.
+ * The engine is a fresh tmpdir so each test instance has independent state.
+ */
+async function buildPhaseX2Engine(opts: {
+  signerKey: string
+  validators: string[]
+  prefund?: { address: string; balanceWei: string }[]
+}): Promise<{ engine: PersistentChainEngine; wallet: Wallet; tmpDir: string; close: () => Promise<void> }> {
+  const tmpDir = mkdtempSync(join(tmpdir(), "coc-x2-"))
+  const db = new LevelDatabase(join(tmpDir, "state"))
+  await db.open()
+  const trie = new PersistentStateTrie(db)
+  await trie.init()
+  const sm = new PersistentStateManager(trie)
+  const evm = await EvmChain.create(SPEC_CHAIN_ID, sm)
+  const wallet = new Wallet(opts.signerKey)
+  const engine = new PersistentChainEngine(
+    {
+      dataDir: tmpDir,
+      nodeId: wallet.address.toLowerCase(),
+      chainId: SPEC_CHAIN_ID,
+      validators: opts.validators,
+      finalityDepth: 3,
+      maxTxPerBlock: 50,
+      minGasPriceWei: 1n,
+      stateTrie: trie,
+      prefundAccounts: opts.prefund,
+    },
+    evm,
+  )
+  await engine.init()
+  // Attach a signer so applyBlock's sig logic actually runs.
+  const signer = createNodeSigner(opts.signerKey)
+  engine.setNodeSigner(signer, signer)
+  return {
+    engine,
+    wallet,
+    tmpDir,
+    close: async () => {
+      await engine.close()
+      rmSync(tmpDir, { recursive: true, force: true })
+    },
+  }
+}
+
+test("Phase X2 (#84): non-proposer applyBlock(., true) does NOT re-sign stateRootSig as itself", async () => {
+  // Repro for chainofclaw/COC#84: BFT onFinalized calls applyBlock(., true)
+  // on every validator, but only the actual block proposer should sign the
+  // stateRootSig field. Pre-fix: each follower re-signs with its own key, so
+  // observers fetching the block via /p2p/chain-snapshot recover an address
+  // that doesn't match block.proposer and reject with "stateRoot signature
+  // invalid". Post-fix: followers preserve block.stateRootSig (undefined when
+  // gossip strips it, which is the production reality) and skip the verify
+  // branch on subsequent applies.
+  const proposerKey = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+  const followerKey = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
+  const proposer = new Wallet(proposerKey)
+  const follower = new Wallet(followerKey)
+
+  const ctxA = await buildPhaseX2Engine({
+    signerKey: proposerKey,
+    // Single-validator round-robin so the proposer always wins height N.
+    validators: [proposer.address.toLowerCase()],
+  })
+  const ctxB = await buildPhaseX2Engine({
+    signerKey: followerKey,
+    // Single-validator round-robin so the proposer always wins height N.
+    validators: [proposer.address.toLowerCase()],
+  })
+
+  try {
+    // Proposer builds + applies block (locallyProposed=true via proposeNextBlock).
+    // forcePropose=true bypasses round-robin so this test is height-agnostic.
+    const block = await ctxA.engine.proposeNextBlock(false, true)
+    assert.ok(block, "proposer should produce a block")
+
+    // Simulate gossip → follower: gossip strips stateRootSig from broadcast,
+    // so the block the follower applies has stateRootSig=undefined.
+    // Set bftFinalized=true to mirror node/src/index.ts:493 finalizedBlock,
+    // which lets applyBlock skip its round-robin proposer check.
+    const blockFromGossip: ChainBlock = {
+      ...block!,
+      stateRootSig: undefined,
+      bftFinalized: true,
+    }
+
+    // Follower applies as BFT-finalized (locallyProposed=true) — exact path
+    // hit by node/src/index.ts:510 onFinalized callback.
+    await ctxB.engine.applyBlock(blockFromGossip, true)
+
+    // Assert: follower's stored block has stateRootSig=undefined, NOT
+    // re-signed with the follower's key.
+    const stored = await ctxB.engine.getBlockByHash(block!.hash)
+    assert.ok(stored, "follower must store block")
+    assert.strictEqual(
+      stored!.stateRootSig,
+      undefined,
+      "non-proposer must NOT re-sign stateRootSig — preserve gossip's value",
+    )
+  } finally {
+    await ctxA.close()
+    await ctxB.close()
+  }
+})
+
+test("Phase X2 (#84): actual proposer applyBlock(., true) DOES sign stateRootSig recoverable to its address", async () => {
+  // Counter-test: when the local engine IS the actual block proposer, the
+  // sign branch fires and the stored sig recovers to the proposer's address.
+  const proposerKey = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+  const proposer = new Wallet(proposerKey)
+
+  const ctx = await buildPhaseX2Engine({
+    signerKey: proposerKey,
+    validators: [proposer.address.toLowerCase()],
+  })
+
+  try {
+    const block = await ctx.engine.proposeNextBlock(false, true)
+    assert.ok(block, "proposer should produce a block")
+
+    // proposeNextBlock returns the in-memory block ref; the sig is populated
+    // on the persisted copy by applyBlock. Read back via blockIndex.
+    const stored = await ctx.engine.getBlockByHash(block!.hash)
+    assert.ok(stored, "proposer must persist block")
+    assert.ok(stored!.stateRootSig, "proposer must populate stateRootSig in stored block")
+    assert.ok(stored!.stateRoot, "stored block must carry stateRoot")
+
+    // Recover the signer from the stored sig and confirm it matches the
+    // proposer's address (proves the right key signed).
+    const signer = createNodeSigner(proposerKey)
+    const stateRootMsg = `stateRoot:${stored!.hash}:${stored!.stateRoot!}`
+    const recovered = signer.recoverAddress(stateRootMsg, stored!.stateRootSig!)
+    assert.strictEqual(
+      recovered,
+      proposer.address.toLowerCase(),
+      "stateRootSig must recover to the actual proposer's address",
+    )
+  } finally {
+    await ctx.close()
   }
 })
