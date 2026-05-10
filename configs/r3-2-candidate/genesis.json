@@ -1,0 +1,56 @@
+{
+  "chainId": 88780,
+  "chainName": "COC R3.2 Prod-Candidate Testnet",
+  "blockTimeMs": 3000,
+  "syncIntervalMs": 5000,
+  "validators": [
+    "0xde4e7889aa9007318ff261b1ee675f1305153590",
+    "0xb939e5a68abd2e000e78876bd86edd1cbba49eb9",
+    "0xdefc8430388093fdfacb0a929fedc14d2e631d19",
+    "0xcc64096600c1759d7aaea91166837a5873175867",
+    "0x5e773c9359a6bb416bdfffe0c9aac9f568bd11ae"
+  ],
+  "validatorStakes": [
+    { "id": "0xde4e7889aa9007318ff261b1ee675f1305153590", "address": "0xde4e7889aa9007318ff261b1ee675f1305153590", "stake": "32000000000000000000" },
+    { "id": "0xb939e5a68abd2e000e78876bd86edd1cbba49eb9", "address": "0xb939e5a68abd2e000e78876bd86edd1cbba49eb9", "stake": "32000000000000000000" },
+    { "id": "0xdefc8430388093fdfacb0a929fedc14d2e631d19", "address": "0xdefc8430388093fdfacb0a929fedc14d2e631d19", "stake": "32000000000000000000" },
+    { "id": "0xcc64096600c1759d7aaea91166837a5873175867", "address": "0xcc64096600c1759d7aaea91166837a5873175867", "stake": "32000000000000000000" },
+    { "id": "0x5e773c9359a6bb416bdfffe0c9aac9f568bd11ae", "address": "0x5e773c9359a6bb416bdfffe0c9aac9f568bd11ae", "stake": "32000000000000000000" }
+  ],
+  "prefund": [
+    {
+      "address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      "balanceEth": "10000000"
+    },
+    {
+      "address": "0xde4e7889aa9007318ff261b1ee675f1305153590",
+      "balanceEth": "100"
+    },
+    {
+      "address": "0xb939e5a68abd2e000e78876bd86edd1cbba49eb9",
+      "balanceEth": "100"
+    },
+    {
+      "address": "0xdefc8430388093fdfacb0a929fedc14d2e631d19",
+      "balanceEth": "100"
+    },
+    {
+      "address": "0xcc64096600c1759d7aaea91166837a5873175867",
+      "balanceEth": "100"
+    },
+    {
+      "address": "0x5e773c9359a6bb416bdfffe0c9aac9f568bd11ae",
+      "balanceEth": "100"
+    }
+  ],
+  "enableBft": true,
+  "enableWireProtocol": true,
+  "enableDht": true,
+  "enableSnapSync": true,
+  "finalityDepth": 3,
+  "maxTxPerBlock": 100,
+  "minGasPriceWei": "1",
+  "poseEpochMs": 3600000,
+  "p2pInboundAuthMode": "enforce",
+  "poseInboundAuthMode": "enforce"
+}

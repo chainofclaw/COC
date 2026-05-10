@@ -1,0 +1,67 @@
+{
+  "_comment_template": "Replace ${...} placeholders before deploy. One file per validator, sitting at /etc/coc/node-1.json on each host. validator-N's nodeId = validators.json[N-1] (lowercase).",
+  "_comment_keys": "Set COC_NODE_KEY env from ~/.coc/keys/88780-prod-candidate/validator-N.env on the matching host. Never bake the key into this JSON.",
+  "dataDir": "/var/lib/coc/node-1",
+  "nodeId": "${NODE_ID}",
+  "chainId": 88780,
+  "rpcBind": "0.0.0.0",
+  "rpcPort": 28780,
+  "p2pBind": "0.0.0.0",
+  "p2pPort": 29780,
+  "wsBind": "0.0.0.0",
+  "wsPort": 28790,
+  "ipfsBind": "0.0.0.0",
+  "ipfsPort": 28800,
+  "wireBind": "0.0.0.0",
+  "wirePort": 29781,
+  "advertisedP2pUrl": "http://${SELF_HOST}:29780",
+  "peers": [
+    { "id": "${PEER_1_ID}", "url": "http://${PEER_1_HOST}:29780" },
+    { "id": "${PEER_2_ID}", "url": "http://${PEER_2_HOST}:29780" },
+    { "id": "${PEER_3_ID}", "url": "http://${PEER_3_HOST}:29780" },
+    { "id": "${PEER_4_ID}", "url": "http://${PEER_4_HOST}:29780" }
+  ],
+  "dhtBootstrapPeers": [
+    { "id": "${PEER_1_ID}", "address": "${PEER_1_HOST}", "port": 29781 },
+    { "id": "${PEER_2_ID}", "address": "${PEER_2_HOST}", "port": 29781 },
+    { "id": "${PEER_3_ID}", "address": "${PEER_3_HOST}", "port": 29781 },
+    { "id": "${PEER_4_ID}", "address": "${PEER_4_HOST}", "port": 29781 }
+  ],
+  "validators": [
+    "0xde4e7889aa9007318ff261b1ee675f1305153590",
+    "0xb939e5a68abd2e000e78876bd86edd1cbba49eb9",
+    "0xdefc8430388093fdfacb0a929fedc14d2e631d19",
+    "0xcc64096600c1759d7aaea91166837a5873175867",
+    "0x5e773c9359a6bb416bdfffe0c9aac9f568bd11ae"
+  ],
+  "validatorStakes": [
+    { "id": "0xde4e7889aa9007318ff261b1ee675f1305153590", "address": "0xde4e7889aa9007318ff261b1ee675f1305153590", "stake": "32000000000000000000" },
+    { "id": "0xb939e5a68abd2e000e78876bd86edd1cbba49eb9", "address": "0xb939e5a68abd2e000e78876bd86edd1cbba49eb9", "stake": "32000000000000000000" },
+    { "id": "0xdefc8430388093fdfacb0a929fedc14d2e631d19", "address": "0xdefc8430388093fdfacb0a929fedc14d2e631d19", "stake": "32000000000000000000" },
+    { "id": "0xcc64096600c1759d7aaea91166837a5873175867", "address": "0xcc64096600c1759d7aaea91166837a5873175867", "stake": "32000000000000000000" },
+    { "id": "0x5e773c9359a6bb416bdfffe0c9aac9f568bd11ae", "address": "0x5e773c9359a6bb416bdfffe0c9aac9f568bd11ae", "stake": "32000000000000000000" }
+  ],
+  "blockTimeMs": 3000,
+  "syncIntervalMs": 5000,
+  "finalityDepth": 3,
+  "maxTxPerBlock": 100,
+  "minGasPriceWei": "1",
+  "poseEpochMs": 3600000,
+  "enableBft": true,
+  "bftPrepareTimeoutMs": 5000,
+  "bftCommitTimeoutMs": 5000,
+  "enableWireProtocol": true,
+  "enableDht": true,
+  "enableSnapSync": true,
+  "snapSyncThreshold": 100,
+  "p2pInboundAuthMode": "enforce",
+  "poseInboundAuthMode": "enforce",
+  "prefund": [
+    { "address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", "balanceEth": "10000000" },
+    { "address": "0xde4e7889aa9007318ff261b1ee675f1305153590", "balanceEth": "100" },
+    { "address": "0xb939e5a68abd2e000e78876bd86edd1cbba49eb9", "balanceEth": "100" },
+    { "address": "0xdefc8430388093fdfacb0a929fedc14d2e631d19", "balanceEth": "100" },
+    { "address": "0xcc64096600c1759d7aaea91166837a5873175867", "balanceEth": "100" },
+    { "address": "0x5e773c9359a6bb416bdfffe0c9aac9f568bd11ae", "balanceEth": "100" }
+  ]
+}
