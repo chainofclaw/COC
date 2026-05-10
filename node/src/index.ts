@@ -606,10 +606,18 @@ if (bftEnabled) {
       log.info("BFT finalized block", { height: block.number.toString(), hash: block.hash })
       // Phase H15: reset the no-progress watchdog baseline on every successful finalize
       consensus?.notifyBftProgress()
-      // Sync BFT validator set with governance after each finalized block
+      // Sync BFT validator set with governance after each finalized block.
+      // PR-1B: route through onValidatorSetChange so consensus also clears
+      // its lastProposed cache when membership changes — preventing stale
+      // re-broadcast on round timeout against the new rotation.
       if (hasGovernance(chain)) {
         const active = chain.governance.getActiveValidators()
-        bftCoordinator?.updateValidators(active.map((v) => ({ id: v.id, stake: v.stake })))
+        const next = active.map((v) => ({ id: v.id, stake: v.stake }))
+        if (consensus) {
+          consensus.onValidatorSetChange(next)
+        } else {
+          bftCoordinator?.updateValidators(next)
+        }
       }
       } // end of work()
       // Wall-clock timeout around the entire work() body. Observed on testnet:
@@ -890,7 +898,17 @@ if (bftEnabled) {
         id: ("0x" + e.nodeId.slice(-40)).toLowerCase(),
         stake: e.stake,
       }))
-      bftCoordinator?.updateValidators(next)
+      // PR-1B (2026-05-10): route through consensus.onValidatorSetChange so
+      // the lastProposed cache is invalidated alongside the BFT cache. The
+      // 2026-05-09 attempt #1 fingerprint was reader-driven N=3→N=8 keeping
+      // a stale cached block in consensus, which Phase R then refused as
+      // self-equivocation. Falls back to direct BFT update if consensus
+      // hasn't been constructed yet (only happens during init race).
+      if (consensus) {
+        consensus.onValidatorSetChange(next)
+      } else {
+        bftCoordinator?.updateValidators(next)
+      }
       log.info("BFT validator set updated from ValidatorRegistry", {
         count: next.length,
         ids: next.map((v) => v.id),
@@ -1061,10 +1079,16 @@ if (stateTrie && config.enableSnapSync) {
         (chain.governance as { initGenesis(v: Array<{ id: string; address: string; stake: bigint }>): void }).initGenesis(validators)
         log.info("governance validators restored from snap sync", { count: validators.length })
       }
-      // Sync BFT coordinator validator set with restored governance
+      // Sync BFT coordinator validator set with restored governance.
+      // PR-1B: also invalidate consensus.lastProposed if consensus exists.
       if (bftCoordinator) {
         const activeValidators = validators.filter((v) => v.active)
-        bftCoordinator.updateValidators(activeValidators.map((v) => ({ id: v.id, stake: v.stake })))
+        const next = activeValidators.map((v) => ({ id: v.id, stake: v.stake }))
+        if (consensus) {
+          consensus.onValidatorSetChange(next)
+        } else {
+          bftCoordinator.updateValidators(next)
+        }
         log.info("BFT coordinator validators synced after governance restore", { count: activeValidators.length })
       }
     },
