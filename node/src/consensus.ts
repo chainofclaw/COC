@@ -779,6 +779,35 @@ export class ConsensusEngine {
   }
 
   /**
+   * PR-1B (2026-05-10): drop the cached `lastProposedBlock` / `lastProposedHeight`
+   * so the BFT-timeout re-broadcast path (in tryPropose) does not replay a
+   * stale block whose proposer was assigned by an old rotation. Called by
+   * onValidatorSetChange and exposed publicly so the validator-registry
+   * reader (or any other set-mutating actor) can invoke it directly.
+   */
+  clearLastProposed(): void {
+    this.lastProposedHeight = undefined
+    this.lastProposedBlock = undefined
+  }
+
+  /**
+   * PR-1B (2026-05-10): single entry point for "the active validator set has
+   * changed; clean up cross-cutting state". Performs:
+   *   1. clearLastProposed — drop the consensus-layer re-broadcast cache
+   *   2. bft.updateValidators(newSet) — push the new set to the BFT
+   *      coordinator, which itself decides whether membership changed and
+   *      clears its own local-state caches if so.
+   *
+   * Wired into `validator-registry-reader.on("validatorAdded"/"validatorRemoved")`
+   * by index.ts so reader-driven set transitions cannot leave stale rotation
+   * caches behind.
+   */
+  onValidatorSetChange(validators: Array<{ id: string; stake: bigint }>): void {
+    this.clearLastProposed()
+    this.bft?.updateValidators(validators)
+  }
+
+  /**
    * Phase H5: Force a state-snapshot import from peers, bypassing the
    * usual gap-based heuristics. Used when the BFT layer has detected
    * persistent divergence — i.e. snap-sync wouldn't trigger via

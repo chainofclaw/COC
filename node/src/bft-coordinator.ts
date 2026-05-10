@@ -614,12 +614,55 @@ export class BftCoordinator {
 
   /**
    * Update the validator set (e.g., after governance changes).
+   *
+   * PR-1B (2026-05-10): when membership *changes* (validators added or
+   * removed, not just stake reweighted), force-clear local-state caches.
+   * Carrying localPreparedAt / localCommittedAt / localPreparedBlock /
+   * pendingMessages across a membership change can replay stale blocks
+   * whose proposer was assigned by the OLD rotation — Phase R then refuses
+   * a re-prepare of the new rotation's block as self-equivocation, and
+   * the chain stalls (2026-05-09 reader-driven N=3→N=8 attempt #1, ~7h).
+   *
+   * Stake-only updates (re-balancing without membership churn) are
+   * non-disruptive and DO preserve the local state.
    */
   updateValidators(validators: Array<{ id: string; stake: bigint }>): void {
-    // Defensive copy to prevent external mutation of the active validator set.
-    // Without this, the caller could modify the array after passing it, potentially
-    // corrupting quorum calculations in an active BFT round.
+    const oldIds = new Set(this.cfg.validators.map(v => v.id.toLowerCase()))
+    const newIds = new Set(validators.map(v => v.id.toLowerCase()))
+    const membershipChanged = oldIds.size !== newIds.size
+      || [...newIds].some(id => !oldIds.has(id))
+      || [...oldIds].some(id => !newIds.has(id))
+
+    // Defensive copy — caller could mutate the array after passing it.
     this.cfg.validators = validators.map(v => ({ id: v.id, stake: v.stake }))
+
+    if (!membershipChanged) return
+
+    log.info("BFT validator set membership changed — clearing local state caches", {
+      added: [...newIds].filter(id => !oldIds.has(id)),
+      removed: [...oldIds].filter(id => !newIds.has(id)),
+    })
+    // Self-vote ledger: drop entirely. Heights below currentHeight are
+    // already finalized so the entries are dead weight; heights at-or-above
+    // were voted under stale rotation and must be redone under the new set.
+    this.localPreparedAt.clear()
+    this.localCommittedAt.clear()
+    this.localPreparedBlock.clear()
+    // Pending messages may carry senderIds that are no longer validators;
+    // drop them so handleMessage doesn't reject them one-by-one (and so
+    // a removed peer's stale prepare can't influence quorum after they're out).
+    this.pendingMessages.length = 0
+    // Active round held the OLD validator stake snapshot — quorum would
+    // be computed against stale distribution. Clean break: drop it; next
+    // propose / received block will start a fresh round under the new set.
+    if (this.activeRound) {
+      log.warn("BFT clearing active round due to validator set change", {
+        height: this.activeRound.state.height.toString(),
+        phase: this.activeRound.state.phase,
+      })
+      this.clearRound()
+    }
+    this.deferredBlock = null
   }
 
   /**
