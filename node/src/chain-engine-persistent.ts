@@ -1073,8 +1073,19 @@ export class PersistentChainEngine {
     }
 
     // Post-execution stateRoot signature
+    //
+    // Phase X2 (#84): only the actual proposer signs stateRootSig. The
+    // BFT onFinalized callback (node/src/index.ts:510) calls applyBlock
+    // with locallyProposed=true on EVERY validator (proposer + followers)
+    // so the chain engine can no longer use locallyProposed alone as the
+    // "I authored this block" signal. Without this guard each follower
+    // re-signs the field with its own key, observers fetching via
+    // /p2p/chain-snapshot recover an address ≠ block.proposer, and apply
+    // throws "stateRoot signature invalid".
     let stateRootSig = block.stateRootSig
-    if (locallyProposed && this.nodeSigner && stateRoot) {
+    const isActualProposer = this.nodeSigner !== null
+      && block.proposer.toLowerCase() === this.nodeSigner.nodeId.toLowerCase()
+    if (locallyProposed && isActualProposer && stateRoot) {
       const stateRootMsg = `stateRoot:${block.hash}:${stateRoot}`
       stateRootSig = this.nodeSigner.sign(stateRootMsg) as Hex
     } else if (!locallyProposed && block.stateRootSig && stateRoot && this.signatureVerifier) {
