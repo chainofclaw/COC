@@ -171,6 +171,22 @@ export class PersistentChainEngine {
   async init(): Promise<void> {
     await this.db.open()
 
+    // PR-1D (2026-05-10): self-heal tip-pointer desync. The N=5 attempt #2
+    // observed disk holding b:71450 with consistent stateRoot but LATEST
+    // pointer at 71448 — most plausibly because snap-sync rewinds LATEST
+    // without deleting stale b:>peerTip entries from a prior run. Without
+    // this repair, the node would have to wait for cluster gossip to push
+    // it forward (slow) or be manually rsync'd. With it, every restart
+    // self-aligns LATEST with the highest stored block.
+    const repair = await this.blockIndex.repairLatestPointer()
+    if (repair.repaired) {
+      log.warn("PR-1D: tip pointer desync detected — repaired on init", {
+        latestBefore: repair.latestBefore?.toString() ?? "<none>",
+        latestAfter: repair.latestAfter?.toString() ?? "<none>",
+        highestStored: repair.highestStored?.toString() ?? "<none>",
+      })
+    }
+
     // Load latest block first to decide whether this is a genesis boot or a restart.
     const latestBlock = await this.blockIndex.getLatestBlock()
 
