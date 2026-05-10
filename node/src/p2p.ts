@@ -388,6 +388,17 @@ export class P2PNode {
   private bytesReceived = 0
   private bytesSent = 0
   private startedAtMs = 0
+  // PR-1E (2026-05-10): per-call instrumentation of /p2p/chain-snapshot
+  // fetches. Plumbed into Prometheus + diagnostic logs so operators can see
+  // *why* forceSnapSync reports "no peer snapshot available" — distinguishing
+  // unreachable peers from rate-limited (429) from auth-failed from empty
+  // bodies from the 15s aggregate timeout.
+  private snapshotFetchAttempts = 0
+  private snapshotFetchSuccesses = 0
+  private snapshotFetchErrors = 0
+  private snapshotFetchTimeouts = 0
+  private snapshotFetchEmptyResults = 0
+  private snapshotFetchLastFailureReasons = new Map<string, string>()
   readonly scoring: PeerScoring
   readonly discovery: PeerDiscovery
   private pubsubHandler: ((topic: string, message: unknown) => void) | null = null
@@ -864,8 +875,18 @@ export class P2PNode {
       }
     }
 
+    this.snapshotFetchAttempts += 1
+    // PR-1E: empty peer list is itself diagnostic — operators should see
+    // immediately that the node has no peer URLs configured / discovered.
+    if (allPeers.length === 0) {
+      this.snapshotFetchEmptyResults += 1
+      log.warn("fetchSnapshots: no peers to query (empty peer list)")
+      return []
+    }
+
     // Parallel fetch with total timeout to prevent slow peers from blocking sync
     const FETCH_TOTAL_TIMEOUT_MS = 15_000
+    let timedOut = false
     const settled = await Promise.race([
       Promise.allSettled(
         allPeers.map((peer) => {
@@ -877,14 +898,89 @@ export class P2PNode {
         })
       ),
       new Promise<PromiseSettledResult<ChainSnapshot>[]>((resolve) =>
-        setTimeout(() => resolve([]), FETCH_TOTAL_TIMEOUT_MS)
+        setTimeout(() => { timedOut = true; resolve([]) }, FETCH_TOTAL_TIMEOUT_MS)
       ),
     ])
+
+    if (timedOut) {
+      this.snapshotFetchTimeouts += 1
+      log.warn("fetchSnapshots: aggregate timeout — peers may be slow or unreachable", {
+        peerCount: allPeers.length,
+        timeoutMs: FETCH_TOTAL_TIMEOUT_MS,
+      })
+    }
+
     const results: ChainSnapshot[] = []
-    for (const r of settled) {
-      if (r.status === "fulfilled") results.push(r.value)
+    let perPeerErrors = 0
+    let perPeerEmpties = 0
+    // PR-1E: per-peer outcome attribution. settled[] aligns 1:1 with allPeers
+    // when timedOut=false; on timeout it's [] and we mark all peers as timed
+    // out below.
+    if (!timedOut) {
+      for (let i = 0; i < settled.length; i++) {
+        const r = settled[i]
+        const peerUrl = allPeers[i].url
+        if (r.status === "fulfilled") {
+          if (r.value && Array.isArray((r.value as ChainSnapshot).blocks) && (r.value as ChainSnapshot).blocks.length > 0) {
+            results.push(r.value)
+          } else {
+            perPeerEmpties += 1
+            this.snapshotFetchLastFailureReasons.set(peerUrl, "empty-response")
+          }
+        } else {
+          perPeerErrors += 1
+          const reason = String(r.reason ?? "unknown").slice(0, 200)
+          this.snapshotFetchLastFailureReasons.set(peerUrl, reason)
+        }
+      }
+    } else {
+      // All peers slipped past the 15s deadline → mark as timed-out.
+      for (const peer of allPeers) {
+        this.snapshotFetchLastFailureReasons.set(peer.url, "aggregate-timeout")
+      }
+      perPeerErrors = allPeers.length
+    }
+
+    this.snapshotFetchErrors += perPeerErrors
+    this.snapshotFetchEmptyResults += perPeerEmpties
+    if (results.length > 0) {
+      this.snapshotFetchSuccesses += 1
+    } else {
+      log.warn("fetchSnapshots: no successful snapshot fetched", {
+        peerCount: allPeers.length,
+        errors: perPeerErrors,
+        empty: perPeerEmpties,
+        timedOut,
+        // Cap at first 5 peers to keep log entry bounded
+        sampleFailures: [...this.snapshotFetchLastFailureReasons.entries()].slice(0, 5),
+      })
     }
     return results
+  }
+
+  /**
+   * PR-1E (2026-05-10): structured snapshot of fetch-snapshot health for
+   * Prometheus / diagnostic logs. forceSnapSync's "no peer snapshot
+   * available" was previously a single-line warn with no per-peer
+   * attribution; this exposes the underlying counters so operators can
+   * tell apart "all peers timing out" from "all peers returning 429" etc.
+   */
+  getSnapshotFetchStats(): {
+    attempts: number
+    successes: number
+    errors: number
+    timeouts: number
+    emptyResults: number
+    lastFailureReasons: Record<string, string>
+  } {
+    return {
+      attempts: this.snapshotFetchAttempts,
+      successes: this.snapshotFetchSuccesses,
+      errors: this.snapshotFetchErrors,
+      timeouts: this.snapshotFetchTimeouts,
+      emptyResults: this.snapshotFetchEmptyResults,
+      lastFailureReasons: Object.fromEntries(this.snapshotFetchLastFailureReasons),
+    }
   }
 
   getPeers(): NodePeer[] {

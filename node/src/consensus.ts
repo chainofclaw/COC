@@ -852,7 +852,15 @@ export class ConsensusEngine {
         }
       }
       if (!best) {
-        log.warn("forceSnapSync: no peer snapshot available")
+        // PR-1E: pull P2P-layer fetch stats into the failure log so operators
+        // can tell apart "peers unreachable" from "all peers returning 429"
+        // from "aggregate timeout fired". Pre-PR-1E this was a single-line
+        // warn with no per-peer attribution — the N=5 attempt #2 cluster
+        // burned 30+ minutes in this state with no actionable diagnostic.
+        const stats = (this.p2p as unknown as { getSnapshotFetchStats?: () => unknown }).getSnapshotFetchStats?.()
+        log.warn("forceSnapSync: no peer snapshot available", {
+          stats: stats ?? "<unavailable>",
+        })
         return false
       }
       log.warn("forceSnapSync: starting state-snapshot import from peers", {
