@@ -204,6 +204,22 @@ async function runAdversarial(target: string, results: DrillResult[]): Promise<v
     { name: "envelope_missing_id", req: { jsonrpc: "2.0", method: "eth_blockNumber", params: [] } },
     { name: "envelope_wrong_jsonrpc", req: { jsonrpc: "1.0", id: 1, method: "eth_blockNumber", params: [] } },
     { name: "envelope_empty_body", req: {} },
+    // PR-1Q hunt additions: silent-coercion sites beyond block tag
+    { name: "block_tag_bool", req: { jsonrpc: "2.0", id: 1, method: "eth_getBalance", params: ["0x" + "0".repeat(40), true] } },
+    { name: "block_tag_object", req: { jsonrpc: "2.0", id: 1, method: "eth_getBalance", params: ["0x" + "0".repeat(40), {}] } },
+    { name: "block_tag_in_getStorageAt", req: { jsonrpc: "2.0", id: 1, method: "eth_getStorageAt", params: ["0x" + "0".repeat(40), "0x0", true] } },
+    { name: "filter_fromBlock_array", req: { jsonrpc: "2.0", id: 1, method: "eth_getLogs", params: [{ fromBlock: [] }] } },
+    { name: "filter_toBlock_array", req: { jsonrpc: "2.0", id: 1, method: "eth_getLogs", params: [{ fromBlock: "0xff", toBlock: [] }] } },
+    { name: "filter_address_object", req: { jsonrpc: "2.0", id: 1, method: "eth_getLogs", params: [{ address: {} }] } },
+    { name: "filter_topic_object", req: { jsonrpc: "2.0", id: 1, method: "eth_getLogs", params: [{ topics: [{}] }] } },
+    { name: "feeHistory_newestBlock_array", req: { jsonrpc: "2.0", id: 1, method: "eth_feeHistory", params: ["0x1", [], []] } },
+    { name: "txhash_object", req: { jsonrpc: "2.0", id: 1, method: "eth_getTransactionByHash", params: [{}] } },
+    { name: "txhash_number", req: { jsonrpc: "2.0", id: 1, method: "eth_getTransactionByHash", params: [123] } },
+    { name: "receipt_array", req: { jsonrpc: "2.0", id: 1, method: "eth_getTransactionReceipt", params: [[]] } },
+    { name: "sendRawTransaction_array", req: { jsonrpc: "2.0", id: 1, method: "eth_sendRawTransaction", params: [[]] } },
+    { name: "getProof_address_array", req: { jsonrpc: "2.0", id: 1, method: "eth_getProof", params: [[], [], "latest"] } },
+    { name: "empty_batch", req: [] },
+    { name: "unknown_coc_method", req: { jsonrpc: "2.0", id: 1, method: "coc_undefinedFooBar", params: [] } },
   ]
 
   for (const { name, req } of cases) {
