@@ -139,6 +139,23 @@ function requireBlockHashParam(params: unknown[], index: number): Hex {
   return requireTxHashParam(params, index, "block hash")
 }
 
+/**
+ * Validate that the first param of eth_call / eth_estimateGas /
+ * eth_sendTransaction / eth_createAccessList is an object — not a
+ * string, number, array, or boolean. #172: pre-fix the type assertion
+ * `as Record<string, string>` was a no-op at runtime; non-object input
+ * coerced to an effectively-empty tx and the EVM returned "0x".
+ * null/undefined pass through as `undefined` so the caller can still
+ * fall back to `{}` (matches geth's `eth_call(null)` ergonomic).
+ */
+function requireCallObject(raw: unknown, methodName: string): Record<string, unknown> | undefined {
+  if (raw === null || raw === undefined) return undefined
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw { code: -32602, message: `invalid ${methodName} object: expected object, got ${Array.isArray(raw) ? "array" : typeof raw}` }
+  }
+  return raw as Record<string, unknown>
+}
+
 function optionalHexParam(params: unknown[], index: number): Hex | undefined {
   const value = (params ?? [])[index]
   if (value === undefined || value === null) return undefined
@@ -731,7 +748,11 @@ async function handleRpc(
       return `0x${suggestedPrice.toString(16)}`
     }
     case "eth_estimateGas": {
-      const estParams = ((payload.params ?? [])[0] ?? {}) as Record<string, string>
+      // #172: reject non-object first param (string/array/number/bool)
+      // upfront — the `as Record<string,string>` cast was a no-op at
+      // runtime so garbage input coerced to {} and returned a default
+      // 21000-ish gas estimate.
+      const estParams = (requireCallObject((payload.params ?? [])[0], "eth_estimateGas") ?? {}) as Record<string, string>
       // #128: pre-fix the regex was /^0x[0-9a-fA-F]{1,40}$/ which
       // accepted "0x1" or any 1-39 hex chars. Same class as #124 fix
       // for eth_call but eth_estimateGas was missed in that pass.
@@ -765,7 +786,10 @@ async function handleRpc(
       return await evm.getCode(codeAddr, stateRoot)
     }
     case "eth_call": {
-      const callParams = ((payload.params ?? [])[0] ?? {}) as Record<string, string>
+      // #172: reject non-object first param upfront — runtime type
+      // assertion bypass let strings/arrays/numbers coerce to {} and
+      // return a no-op "0x" instead of the expected -32602.
+      const callParams = (requireCallObject((payload.params ?? [])[0], "eth_call") ?? {}) as Record<string, string>
       const to = callParams.to ?? ""
       // #124: pre-fix the regex was /^0x[0-9a-fA-F]{1,40}$/ which
       // accepted "0x1" or any 1-39 hex chars. An address must be
@@ -1011,7 +1035,10 @@ async function handleRpc(
       return filters.delete(id)
     }
     case "eth_sendTransaction": {
-      const txParams = ((payload.params ?? [])[0] ?? {}) as Record<string, string>
+      // #172: same shape validation as eth_call. Pre-fix the type
+      // assertion bypass let non-object input through; downstream
+      // "missing from address" was the only thing that caught it.
+      const txParams = (requireCallObject((payload.params ?? [])[0], "eth_sendTransaction") ?? {}) as Record<string, string>
       const from = txParams.from?.toLowerCase()
       if (!from) throw { code: -32602, message: "missing from address" }
       if (!/^0x[0-9a-fA-F]{40}$/.test(from)) {
@@ -1112,7 +1139,8 @@ async function handleRpc(
       return signature.serialized
     }
     case "eth_createAccessList": {
-      const callParams = ((payload.params ?? [])[0] ?? {}) as Record<string, string>
+      // #172: shape validation symmetric with eth_call.
+      const callParams = (requireCallObject((payload.params ?? [])[0], "eth_createAccessList") ?? {}) as Record<string, string>
       // #148: validate address + value/gas/data shape upfront.
       if (callParams.to && !/^0x[0-9a-fA-F]{40}$/.test(callParams.to)) {
         throw { code: -32602, message: "invalid to address: must match /^0x[0-9a-fA-F]{40}$/" }
@@ -1136,7 +1164,8 @@ async function handleRpc(
     }
     case "debug_traceCall": {
       if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
-      const callParams = ((payload.params ?? [])[0] ?? {}) as Record<string, string>
+      // #172: shape validation symmetric with eth_call.
+      const callParams = (requireCallObject((payload.params ?? [])[0], "debug_traceCall") ?? {}) as Record<string, string>
       // #148: validate shape — same as eth_call.
       if (callParams.to && !/^0x[0-9a-fA-F]{40}$/.test(callParams.to)) {
         throw { code: -32602, message: "invalid to address: must match /^0x[0-9a-fA-F]{40}$/" }
@@ -1201,7 +1230,8 @@ async function handleRpc(
     }
     case "trace_call": {
       if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
-      const callParams = ((payload.params ?? [])[0] ?? {}) as Record<string, string>
+      // #172: shape validation symmetric with eth_call.
+      const callParams = (requireCallObject((payload.params ?? [])[0], "trace_call") ?? {}) as Record<string, string>
       const traceTypes = normalizeReplayTraceTypes((payload.params ?? [])[1])
       const executionContext = await resolveHistoricalExecutionContext((payload.params ?? [])[2], chain)
       const result = await evm.traceCall({

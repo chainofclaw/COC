@@ -1274,6 +1274,30 @@ test("RPC Extended Methods", async (t) => {
     assert.equal(valid.result, "0xd4fd4e189132273036449fc9e11198c739161b4c0116a9a2dccdfa1c492006f1")
   })
 
+  await t.test("#172: eth_call / eth_estimateGas reject non-object first param", async () => {
+    // Pre-fix `((params)[0] ?? {}) as Record<string,string>` was a
+    // no-op type assertion; strings/arrays/numbers coerced to {} and
+    // the EVM returned "0x" or a default gas estimate. Now: only
+    // object | null | undefined accepted.
+    const probe = async (method: string, params: unknown[]) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    }
+    // (a) eth_call with string tx → -32602
+    const r1 = await probe("eth_call", ["string-input", "latest"])
+    assert.equal(r1.error?.code, -32602, `string tx must be -32602, got ${r1.error?.code}`)
+    // (b) eth_estimateGas with array tx → -32602
+    const r2 = await probe("eth_estimateGas", [["array"]])
+    assert.equal(r2.error?.code, -32602, `array tx must be -32602, got ${r2.error?.code}`)
+    // Sanity: null still treated as empty (ergonomic for ping-style probes).
+    const ok = await probe("eth_call", [null, "latest"])
+    assert.equal(ok.error, undefined, `null tx must NOT error: ${JSON.stringify(ok.error)}`)
+  })
+
   if (prevDevAccounts === undefined) {
     delete process.env.COC_DEV_ACCOUNTS
   } else {
