@@ -1554,6 +1554,41 @@ test("RPC Extended Methods", async (t) => {
     assert.equal(removed, true, "valid filter id uninstall must return true")
   })
 
+  await t.test("#204: JSON-RPC envelope rejects params that aren't Array/Object/omitted", async () => {
+    // §4.2 — params, when present, MUST be Array or Object. Pre-fix
+    // string/bool/number flowed through to `payload.params ?? []` and
+    // most methods just returned their default response, masking buggy
+    // clients. Geth/erigon enforce this; we should too for inter-op.
+    const probe = async (body: Record<string, unknown>) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    }
+    // Bad params shapes — all -32600.
+    for (const params of ["not-an-array", 42, true, false]) {
+      const r = await probe({ jsonrpc: "2.0", id: 1, method: "eth_chainId", params })
+      assert.equal(r.error?.code, -32600, `params=${JSON.stringify(params)} must be -32600, got ${JSON.stringify(r)}`)
+      assert.match(r.error!.message, /params must be/i, "error must explain params shape")
+    }
+    // Sanity: array params (the canonical form) works.
+    const okArr = await probe({ jsonrpc: "2.0", id: 1, method: "eth_chainId", params: [] })
+    assert.equal(okArr.error, undefined, "params=[] must NOT error")
+    // Sanity: omitting params works.
+    const okOmit = await probe({ jsonrpc: "2.0", id: 1, method: "eth_chainId" })
+    assert.equal(okOmit.error, undefined, "omitted params must NOT error")
+    // Sanity: explicit null works (treated as "no params").
+    const okNull = await probe({ jsonrpc: "2.0", id: 1, method: "eth_chainId", params: null })
+    assert.equal(okNull.error, undefined, "params=null must NOT error")
+    // Sanity: object params accepted at the envelope layer (handler may
+    // still reject if it doesn't support by-name params, but the
+    // envelope check is shape-only).
+    const okObj = await probe({ jsonrpc: "2.0", id: 1, method: "eth_chainId", params: {} })
+    assert.equal(okObj.error, undefined, "params={} must NOT error at envelope layer")
+  })
+
   if (prevDevAccounts === undefined) {
     delete process.env.COC_DEV_ACCOUNTS
   } else {
