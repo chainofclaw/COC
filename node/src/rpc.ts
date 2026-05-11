@@ -118,6 +118,31 @@ function optionalHexParam(params: unknown[], index: number): Hex | undefined {
   return value as Hex
 }
 
+/**
+ * #148: validate the numeric/data fields of an eth_call / estimateGas /
+ * sendTransaction-shaped object. Pre-fix, malformed `value`/`gas`/etc
+ * either flowed through to the EVM (which silently treated non-hex as
+ * 0) or surfaced as -32603 internal-error with the V8 message leaked.
+ * Rejects each field at the boundary with -32602.
+ */
+const HEX_QUANTITY_RE = /^0x[0-9a-fA-F]+$/
+const HEX_DATA_RE = /^0x([0-9a-fA-F]{2})*$/
+function validateTxCallFields(callParams: Record<string, unknown>): void {
+  for (const field of ["value", "gas", "gasPrice", "maxFeePerGas", "maxPriorityFeePerGas"] as const) {
+    const v = callParams[field]
+    if (v === undefined || v === null || v === "") continue
+    if (typeof v !== "string" || !HEX_QUANTITY_RE.test(v)) {
+      throw { code: -32602, message: `invalid ${field}: must match /^0x[0-9a-fA-F]+$/` }
+    }
+  }
+  const data = callParams.data
+  if (data !== undefined && data !== null && data !== "") {
+    if (typeof data !== "string" || !HEX_DATA_RE.test(data)) {
+      throw { code: -32602, message: "invalid data: must match /^0x([0-9a-fA-F]{2})*$/" }
+    }
+  }
+}
+
 const MAX_RPC_BODY = 1024 * 1024 // 1 MB max request body for RPC
 const rateLimiter = new RateLimiter()
 // Cleanup expired buckets every 5 minutes
@@ -667,6 +692,10 @@ async function handleRpc(
       if (estParams.from && !/^0x[0-9a-fA-F]{40}$/.test(estParams.from)) {
         throw { code: -32602, message: "invalid from address: must match /^0x[0-9a-fA-F]{40}$/" }
       }
+      // #148: validate value/gas/data shape — pre-fix the EVM silently
+      // treated non-hex as 0, so {value:"not-hex"} gave a clean gas
+      // estimate that ignored the value transfer.
+      validateTxCallFields(estParams)
       // Default gas cap to block gas limit (30M) to prevent DoS via unbounded execution
       const gasForEstimate = estParams.gas ?? "0x1c9c380"
       const executionContext = await resolveHistoricalExecutionContext((payload.params ?? [])[1], chain)
@@ -697,6 +726,10 @@ async function handleRpc(
       if (callParams.from && !/^0x[0-9a-fA-F]{40}$/.test(callParams.from)) {
         throw { code: -32602, message: "invalid from address: must match /^0x[0-9a-fA-F]{40}$/" }
       }
+      // #148: validate value/gas/data shape before reaching the EVM,
+      // where malformed input either silently becomes 0 (value) or
+      // surfaces as -32603 with V8 message leak (data).
+      validateTxCallFields(callParams)
       const executionContext = await resolveHistoricalExecutionContext((payload.params ?? [])[1], chain)
       const callResult = await evm.callRaw({
         from: callParams.from,
@@ -915,10 +948,18 @@ async function handleRpc(
     case "eth_sendTransaction": {
       const txParams = ((payload.params ?? [])[0] ?? {}) as Record<string, string>
       const from = txParams.from?.toLowerCase()
-      if (!from) throw new Error("missing from address")
+      if (!from) throw { code: -32602, message: "missing from address" }
+      if (!/^0x[0-9a-fA-F]{40}$/.test(from)) {
+        throw { code: -32602, message: "invalid from address: must match /^0x[0-9a-fA-F]{40}$/" }
+      }
+      if (txParams.to && !/^0x[0-9a-fA-F]{40}$/.test(txParams.to)) {
+        throw { code: -32602, message: "invalid to address: must match /^0x[0-9a-fA-F]{40}$/" }
+      }
+      // #148: validate value/gas/data shape before reaching the mempool.
+      validateTxCallFields(txParams)
 
       const account = testAccounts.get(from)
-      if (!account) throw new Error(`account not found: ${from}. Use eth_accounts to list available test accounts.`)
+      if (!account) throw { code: -32004, message: `account not found: ${from}. Use eth_accounts to list available test accounts.` }
 
       // Serialize per-account to prevent concurrent nonce collision
       const prev = sendTxLocks.get(from) ?? Promise.resolve()
@@ -990,6 +1031,14 @@ async function handleRpc(
     }
     case "eth_createAccessList": {
       const callParams = ((payload.params ?? [])[0] ?? {}) as Record<string, string>
+      // #148: validate address + value/gas/data shape upfront.
+      if (callParams.to && !/^0x[0-9a-fA-F]{40}$/.test(callParams.to)) {
+        throw { code: -32602, message: "invalid to address: must match /^0x[0-9a-fA-F]{40}$/" }
+      }
+      if (callParams.from && !/^0x[0-9a-fA-F]{40}$/.test(callParams.from)) {
+        throw { code: -32602, message: "invalid from address: must match /^0x[0-9a-fA-F]{40}$/" }
+      }
+      validateTxCallFields(callParams)
       const executionContext = await resolveHistoricalExecutionContext((payload.params ?? [])[1], chain)
       const result = await evm.traceCall({
         from: callParams.from,
@@ -1006,6 +1055,14 @@ async function handleRpc(
     case "debug_traceCall": {
       if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
       const callParams = ((payload.params ?? [])[0] ?? {}) as Record<string, string>
+      // #148: validate shape — same as eth_call.
+      if (callParams.to && !/^0x[0-9a-fA-F]{40}$/.test(callParams.to)) {
+        throw { code: -32602, message: "invalid to address: must match /^0x[0-9a-fA-F]{40}$/" }
+      }
+      if (callParams.from && !/^0x[0-9a-fA-F]{40}$/.test(callParams.from)) {
+        throw { code: -32602, message: "invalid from address: must match /^0x[0-9a-fA-F]{40}$/" }
+      }
+      validateTxCallFields(callParams)
       const executionContext = await resolveHistoricalExecutionContext((payload.params ?? [])[1], chain)
       const traceOpts = ((payload.params ?? [])[2] ?? {}) as Record<string, unknown>
       const result = await evm.traceCall({
