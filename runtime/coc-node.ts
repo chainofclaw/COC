@@ -122,7 +122,16 @@ const server = http.createServer((req, res) => {
     let body = "";
     req.on("data", (chunk) => (body += chunk));
     req.on("end", () => {
-      const payload = JSON.parse(body || "{}") as { challengeId?: string };
+      // #222: wrap JSON.parse — pre-fix a malformed body threw inside
+      // the async callback and bubbled to process.on("uncaughtException"),
+      // either crashing coc-node or leaking the V8 SyntaxError wording.
+      // Unauthenticated DoS / destabilisation vector.
+      let payload: { challengeId?: string };
+      try {
+        payload = JSON.parse(body || "{}");
+      } catch {
+        return json(res, 400, { error: "invalid JSON body" });
+      }
       if (!payload.challengeId) {
         return json(res, 400, { error: "missing challengeId" });
       }
@@ -136,7 +145,14 @@ const server = http.createServer((req, res) => {
     let body = "";
     req.on("data", (chunk) => (body += chunk));
     req.on("end", () => {
-      const payload = JSON.parse(body || "{}") as { challengeId?: string; challengeType?: string; payload?: unknown };
+      // #222: parity with /pose/challenge — wrap JSON.parse so a
+      // malformed body returns 400 instead of crashing the process.
+      let payload: { challengeId?: string; challengeType?: string; payload?: unknown };
+      try {
+        payload = JSON.parse(body || "{}");
+      } catch {
+        return json(res, 400, { error: "invalid JSON body" });
+      }
       if (!payload.challengeId) {
         return json(res, 400, { error: "missing challengeId" });
       }
@@ -291,12 +307,20 @@ const server = http.createServer((req, res) => {
     let body = "";
     req.on("data", (chunk: string) => (body += chunk));
     req.on("end", () => {
-      const payload = JSON.parse(body || "{}") as {
+      // #222: parity with the other two POST endpoints — wrap
+      // JSON.parse so a malformed body returns 400 instead of
+      // crashing the process via uncaughtException.
+      let payload: {
         challengeId?: string;
         nodeId?: string;
         responseBodyHash?: string;
         witnessIndex?: number;
       };
+      try {
+        payload = JSON.parse(body || "{}");
+      } catch {
+        return json(res, 400, { error: "invalid JSON body" });
+      }
       if (!payload.challengeId || !payload.nodeId || !payload.responseBodyHash || payload.witnessIndex === undefined) {
         return json(res, 400, { error: "missing required fields" });
       }
