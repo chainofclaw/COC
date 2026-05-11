@@ -241,6 +241,49 @@ describe("IpfsHttpServer", () => {
     assert.deepEqual(okBody.Pins, [meta2.cid])
   })
 
+  it("#284: POST /api/v0/pubsub/pub returns 413 (not 500 'internal error') when body exceeds maxMessageSize", async () => {
+    // Pre-fix bug: IpfsPubsub.publish throws a plain Error("message too
+    // large: N > M") when data.length exceeds maxMessageSize. The error
+    // bubbled to the outer try/catch (which only special-cases HttpError
+    // and ErasureError) → 500 "internal error". Clients couldn't tell a
+    // server fault from their own oversized payload. Same class as #276
+    // (mempool plain Errors leaking as -32603). Remap to 413.
+    const { IpfsPubsub } = await import("./ipfs-pubsub.ts")
+    // Tight cap (1 KB) so the test doesn't have to allocate megabytes.
+    const pubsub = new IpfsPubsub({ nodeId: "test-node", maxMessageSize: 1024 })
+    server.attachSubsystems({ pubsub })
+    try {
+      // Sanity: small body → 200 OK.
+      const ok = await fetch("/api/v0/pubsub/pub?arg=test-topic", {
+        method: "POST",
+        headers: { "content-type": "application/octet-stream" },
+        body: new TextEncoder().encode("small msg"),
+      })
+      assert.equal(ok.status, 200, `small msg must succeed, got ${ok.status}`)
+      // 2 KB body > 1 KB cap → must be 413, NOT 500 "internal error".
+      const oversized = randomBytes(2048)
+      const res = await fetch("/api/v0/pubsub/pub?arg=test-topic", {
+        method: "POST",
+        headers: { "content-type": "application/octet-stream" },
+        body: oversized,
+      })
+      assert.equal(res.status, 413,
+        `oversized pubsub msg must be 413, got ${res.status}`)
+      const body = await res.json() as { error?: string; message?: string }
+      assert.match(body.error ?? "", /payload too large/i,
+        `error code must say 'payload too large', got ${JSON.stringify(body)}`)
+      assert.match(body.message ?? "", /message too large/i,
+        "message must surface the underlying pubsub error for diagnostics")
+      // Critical regression-anchor: NEVER surface this client-input
+      // condition as "internal error" — that's the 500 path which means
+      // operator pages, not "your payload is too big".
+      assert.ok(!/internal error/i.test(JSON.stringify(body)),
+        "must NOT surface as 'internal error' — that was the pre-fix mis-classification")
+    } finally {
+      pubsub.stop()
+    }
+  })
+
   it("#126: POST /api/v0/pin/rm removes a pin, returns 404 on second call", async () => {
     const data = new TextEncoder().encode("pin then unpin")
     const meta = await unixfs.addFile("p.txt", data)
