@@ -160,6 +160,25 @@ function requireIndexParam(params: unknown[], index: number, name = "index"): nu
 }
 
 /**
+ * Validate a 16-byte filter ID (#196). Filter IDs are minted as
+ * `0x` + `randomBytes(16).toString("hex")` (32 hex chars). Pre-fix
+ * `String((payload.params ?? [])[0] ?? "")` silently coerced any
+ * input — numbers, arrays, objects — to a never-matching string, so
+ * `eth_getFilterChanges` / `eth_getFilterLogs` / `eth_uninstallFilter`
+ * returned `[]` or `false` indistinguishable from "filter expired."
+ */
+function requireFilterId(params: unknown[], index: number): string {
+  const value = (params ?? [])[index]
+  if (typeof value !== "string") {
+    throw { code: -32602, message: `invalid filter id at index ${index}: expected string` }
+  }
+  if (!/^0x[0-9a-fA-F]{32}$/.test(value)) {
+    throw { code: -32602, message: `invalid filter id at index ${index}: must match /^0x[0-9a-fA-F]{32}$/` }
+  }
+  return value.toLowerCase()
+}
+
+/**
  * Validate that the first param of eth_call / eth_estimateGas /
  * eth_sendTransaction / eth_createAccessList is an object — not a
  * string, number, array, or boolean. #172: pre-fix the type assertion
@@ -1007,7 +1026,10 @@ async function handleRpc(
       return id
     }
     case "eth_getFilterChanges": {
-      const id = String((payload.params ?? [])[0] ?? "")
+      // #196: validate filter-id shape upfront so a buggy client polling
+      // with the wrong type (number, array, null) sees -32602 instead of
+      // a perpetual empty stream that mimics "no new events."
+      const id = requireFilterId(payload.params ?? [], 0)
       const filter = filters.get(id)
       if (!filter) return []
       // Refresh the filter's last-access timestamp so cleanupExpiredFilters
@@ -1051,7 +1073,11 @@ async function handleRpc(
       return logs
     }
     case "eth_uninstallFilter": {
-      const id = String((payload.params ?? [])[0] ?? "")
+      // #196: same shape validation as eth_getFilterChanges so a
+      // malformed id surfaces as -32602 rather than silently returning
+      // `false` (which clients can't distinguish from "filter already
+      // expired or never existed").
+      const id = requireFilterId(payload.params ?? [], 0)
       return filters.delete(id)
     }
     case "eth_sendTransaction": {
@@ -1592,7 +1618,8 @@ async function handleRpc(
       return id
     }
     case "eth_getFilterLogs": {
-      const id = String((payload.params ?? [])[0] ?? "")
+      // #196: parity with eth_getFilterChanges / eth_uninstallFilter.
+      const id = requireFilterId(payload.params ?? [], 0)
       const filter = filters.get(id)
       if (!filter) return []
       // Refresh last-access time so active polls keep the filter alive.
