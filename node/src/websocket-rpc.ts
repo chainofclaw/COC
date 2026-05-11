@@ -481,7 +481,20 @@ export class WsRpcServer {
         break
       }
       case "logs": {
-        const filterParam = (params[1] ?? {}) as Record<string, unknown>
+        // #244: pre-fix `(params[1] ?? {}) as Record<string, unknown>`
+        // was a TS-only runtime no-op. eth_subscribe("logs", true) etc.
+        // silently fell through to validateLogFilter, which read only
+        // undefined fields and returned an empty filter — silent "match
+        // ALL logs" subscription, leaking subscription handles. Same
+        // anti-pattern as #238 (its HTTP-side sibling).
+        const rawFilter = params[1]
+        let filterParam: Record<string, unknown> = {}
+        if (rawFilter !== undefined && rawFilter !== null) {
+          if (typeof rawFilter !== "object" || Array.isArray(rawFilter)) {
+            throw { code: -32602, message: `invalid filter: expected object, got ${Array.isArray(rawFilter) ? "array" : typeof rawFilter}` }
+          }
+          filterParam = rawFilter as Record<string, unknown>
+        }
         const filter = validateLogFilter(filterParam)
 
         const handler = (event: LogEvent) => {
