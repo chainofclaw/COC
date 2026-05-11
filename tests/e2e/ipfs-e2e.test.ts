@@ -326,6 +326,31 @@ describe("IPFS E2E", () => {
       assert.deepEqual(buf, new TextEncoder().encode("hello mfs"))
     })
 
+    it("#92: files/write extracts file bytes from kubo-style multipart upload", async () => {
+      // Pre-fix bug: the entire multipart envelope (boundary, headers,
+      // file content, closing boundary) was stored as the file content.
+      // kubo CLI's `ipfs files write` always uses multipart/form-data, so
+      // any standard IPFS client previously corrupted the file.
+      const { body, contentType } = multipart("mp.txt", "hello multipart write")
+      const writeRes = await fetch(
+        `${base}/api/v0/files/write?arg=/test-dir/mp.txt&create=true&truncate=true`,
+        { method: "POST", headers: { "content-type": contentType }, body },
+      )
+      assert.equal(writeRes.status, 200)
+      try {
+        const readRes = await fetch(
+          `${base}/api/v0/files/read?arg=/test-dir/mp.txt`,
+          { method: "POST" },
+        )
+        assert.equal(readRes.status, 200)
+        const got = await readRes.text()
+        assert.equal(got, "hello multipart write", "files/write must extract file bytes, not store envelope")
+      } finally {
+        // Clean up so the subsequent rm-empties-the-directory test still sees only hello.txt
+        await fetch(`${base}/api/v0/files/rm?arg=/test-dir/mp.txt`, { method: "POST" })
+      }
+    })
+
     it("ls lists directory entries", async () => {
       const res = await fetch(`${base}/api/v0/files/ls?arg=/test-dir`, {
         method: "POST",
@@ -379,6 +404,29 @@ describe("IPFS E2E", () => {
       assert.equal(res.status, 200)
       const json = (await res.json()) as { ok: boolean }
       assert.equal(json.ok, true)
+    })
+
+    it("#92: pubsub/pub delivers inner bytes from kubo-style multipart message", async () => {
+      // Pre-fix bug: publish() received the full multipart envelope as the
+      // message body. Subscribers then got the envelope instead of the
+      // intended payload.
+      const received: Uint8Array[] = []
+      pubsub.subscribe("mp-topic", (msg) => { received.push(msg.data) })
+      try {
+        const { body, contentType } = multipart("msg.bin", "hello mp message")
+        const res = await fetch(`${base}/api/v0/pubsub/pub?arg=mp-topic`, {
+          method: "POST",
+          headers: { "content-type": contentType },
+          body,
+        })
+        assert.equal(res.status, 200)
+        // Subscribers run synchronously inside publish() in this impl, so
+        // we don't need to await dispatch.
+        assert.equal(received.length, 1, "exactly one message delivered")
+        assert.equal(new TextDecoder().decode(received[0]), "hello mp message")
+      } finally {
+        pubsub.unsubscribe("mp-topic")
+      }
     })
 
     it("ls lists subscribed topics", async () => {

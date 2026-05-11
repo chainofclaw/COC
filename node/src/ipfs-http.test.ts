@@ -150,6 +150,37 @@ describe("IpfsHttpServer", () => {
     assert.deepEqual(new Uint8Array(buf), data)
   })
 
+  it("#92: POST /api/v0/block/put extracts file bytes from kubo-style multipart", async () => {
+    // Pre-fix bug: the entire multipart envelope (boundary, headers,
+    // closing boundary) was stored as block bytes — incompatible with the
+    // kubo CLI / js-ipfs which always send multipart.
+    const boundary = "----BlockPutMpBoundary"
+    const content = "raw bytes inside multipart"
+    const body = [
+      `--${boundary}`,
+      'Content-Disposition: form-data; name="data"; filename="b.bin"',
+      "Content-Type: application/octet-stream",
+      "",
+      content,
+      `--${boundary}--`,
+      "",
+    ].join("\r\n")
+    const putRes = await fetch("/api/v0/block/put", {
+      method: "POST",
+      headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+      body,
+    })
+    assert.equal(putRes.status, 200)
+    const putBody = await putRes.json() as Record<string, unknown>
+    assert.ok(putBody.Key)
+    assert.equal(putBody.Size, Buffer.byteLength(content), "stored block must be the inner file bytes, not the multipart envelope")
+
+    const getRes = await fetch(`/api/v0/block/get?arg=${putBody.Key}`)
+    assert.equal(getRes.status, 200)
+    const buf = await getRes.buffer()
+    assert.equal(new TextDecoder().decode(buf), content)
+  })
+
   it("GET /api/v0/pin/ls returns pins list", async () => {
     const res = await fetch("/api/v0/pin/ls")
     assert.equal(res.status, 200)

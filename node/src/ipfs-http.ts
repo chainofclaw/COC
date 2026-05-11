@@ -608,7 +608,12 @@ export class IpfsHttpServer {
   }
 
   private async handleBlockPut(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-    const body = await readBody(req)
+    // Use readMultipartFile so kubo-standard multipart uploads
+    // (Content-Type: multipart/form-data; boundary=...) get parsed —
+    // otherwise the entire envelope is stored as block bytes. The helper
+    // falls back to readBody for raw-body POSTs, so existing callers that
+    // PUT plain bytes keep working.
+    const { bytes: body } = await readMultipartFile(req)
     const block = await storeRawBlock(this.store, body)
     res.writeHead(200, { "content-type": "application/json" })
     res.end(JSON.stringify({ Key: block.cid, Size: block.bytes.length }))
@@ -733,7 +738,11 @@ export class IpfsHttpServer {
           break
         }
         case "write": {
-          const body = await readBody(req)
+          // kubo CLI + js-ipfs send file content as multipart/form-data; raw
+          // body uploads (Uint8Array POSTs) also need to work. readMultipartFile
+          // handles both: it extracts the file bytes from multipart, or returns
+          // raw bytes when the request has no boundary in Content-Type.
+          const { bytes: body } = await readMultipartFile(req)
           await this.mfs.write(arg, body, {
             create: url.query?.create === "true",
             truncate: url.query?.truncate === "true",
@@ -837,7 +846,11 @@ export class IpfsHttpServer {
             res.end(JSON.stringify({ error: "missing topic" }))
             break
           }
-          const body = await readBody(req)
+          // kubo's pubsub/pub accepts the message body as multipart/form-data;
+          // raw-body POSTs (e2e tests, simple curl --data-binary) still work
+          // because readMultipartFile falls back to raw bytes when there's no
+          // boundary in Content-Type.
+          const { bytes: body } = await readMultipartFile(req)
           await this.pubsub.publish(topic, body)
           res.writeHead(200, { "content-type": "application/json" })
           res.end(JSON.stringify({ ok: true }))
