@@ -33,13 +33,31 @@ export interface ForkChoice {
 
 /**
  * Compare two fork candidates and determine the winner.
+ *
+ * PR-1P (#176, 2026-05-12): Rule 1 gates BFT-finality on `height >= other.height`.
+ *
+ * Pre-fix invariant was "BFT-finalized chain always wins". That broke
+ * post-restart catch-up: trySync sets `remote.bftFinalized = false`
+ * deliberately (peer's finality claim can't be trusted), so a node that
+ * restarts holding a finalized tip at h=71813 would always beat any
+ * peer's tip at h=71820+ via Rule 1 — even though the peers were ahead.
+ * shouldSwitchFork returned null, the sync loop skipped the snapshot,
+ * and the restarted node could never catch a small gap.
+ *
+ * Correct invariant: BFT finality protects the *prefix* (no reorg below
+ * the finalized tip), not the *suffix*. A finalized tip at height H
+ * does not justify rejecting peers at height > H — extending into
+ * un-finalized territory is normal. So Rule 1 only fires when the
+ * finalized side is also at-or-ahead. Below that, Rule 2 (longer
+ * chain) takes over, which is the desired catch-up behaviour.
  */
 export function compareForks(a: ForkCandidate, b: ForkCandidate): ForkChoice {
-  // Rule 1: BFT finalized chain always wins
-  if (a.bftFinalized && !b.bftFinalized) {
+  // Rule 1: BFT-finalized chain wins — but only when it isn't strictly
+  // shorter than the unfinalized alternative. See block doc above.
+  if (a.bftFinalized && !b.bftFinalized && a.height >= b.height) {
     return { winner: a, loser: b, reason: "bft-finality" }
   }
-  if (b.bftFinalized && !a.bftFinalized) {
+  if (b.bftFinalized && !a.bftFinalized && b.height >= a.height) {
     return { winner: b, loser: a, reason: "bft-finality" }
   }
 

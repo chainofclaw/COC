@@ -214,7 +214,12 @@ describe("ConsensusEngine fork choice sync", () => {
     assert.ok(adopted, "should adopt remote chain that is longer")
   })
 
-  it("should prefer BFT-finalized chain even if shorter", async () => {
+  it("#176 (PR-1P): does NOT prefer BFT-finalized remote when it is strictly shorter", async () => {
+    // Pre-fix invariant ("BFT-finalized chain always wins, even if shorter")
+    // is the root cause of #176: a restarted node holding a finalized tip
+    // would reject every taller-but-unfinalized peer and never catch up.
+    // New invariant: finality only protects the prefix; height takes
+    // precedence when the finalized side is strictly behind.
     const local: ForkCandidate = {
       height: 10n,
       tipHash: "0xaaa" as Hex,
@@ -222,7 +227,6 @@ describe("ConsensusEngine fork choice sync", () => {
       cumulativeWeight: 10n,
       peerId: "local",
     }
-
     const remote: ForkCandidate = {
       height: 8n,
       tipHash: "0xbbb" as Hex,
@@ -230,10 +234,7 @@ describe("ConsensusEngine fork choice sync", () => {
       cumulativeWeight: 8n,
       peerId: "remote",
     }
-
-    const result = shouldSwitchFork(local, remote)
-    assert.ok(result, "should switch to BFT-finalized chain")
-    assert.equal(result!.reason, "bft-finality")
+    assert.equal(shouldSwitchFork(local, remote), null, "shorter finalized remote must not win")
   })
 
   it("should not switch when local is equal or better", async () => {
