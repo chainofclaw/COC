@@ -340,4 +340,28 @@ describe("WebSocket RPC", () => {
       ws.close()
     }
   })
+
+  it("#144: WS notification (no id) gets no response (JSON-RPC §4.1)", async () => {
+    const ws = await connectWs(WS_PORT)
+    try {
+      // Send a notification — no id field. Wait briefly to confirm no
+      // message arrives. Pre-fix the server replied with {id:null,result}.
+      let received: unknown = null
+      const handler = (data: Buffer | string) => {
+        received = JSON.parse(data.toString())
+      }
+      ws.on("message", handler)
+      ws.send(JSON.stringify({ jsonrpc: "2.0", method: "eth_chainId", params: [] }))
+      // Give the server 500ms to (incorrectly) respond.
+      await new Promise((resolve) => setTimeout(resolve, 500))
+      ws.removeListener("message", handler)
+      assert.equal(received, null, `WS server must NOT respond to notification, got: ${JSON.stringify(received)}`)
+
+      // Sanity: a normal request after the notification still works.
+      const result = await sendRpc(ws, "eth_chainId")
+      assert.equal(result, `0x${CHAIN_ID.toString(16)}`, "subsequent request must still work")
+    } finally {
+      ws.close()
+    }
+  })
 })
