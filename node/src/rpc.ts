@@ -1608,9 +1608,12 @@ async function handleRpc(
       return block ? `0x${block.txs.length.toString(16)}` : null
     }
     case "eth_getBlockTransactionCountByNumber": {
-      const tag = String((payload.params ?? [])[0] ?? "latest")
-      const height = await Promise.resolve(chain.getHeight())
-      const num = parseBlockTag(tag, height)
+      // #256: pre-fix `String((params)[0] ?? "latest")` made `String([1500])
+      // === "1500"` slip past parseBlockTag's non-string rejection,
+      // silently treating a single-element array as block 1500. Pass
+      // the raw input through so parseBlockTag's invalidParams branch
+      // catches every non-string/non-number shape. Same fix as #250.
+      const num = await resolveBlockNumber((payload.params ?? [])[0], chain)
       const block = await Promise.resolve(chain.getBlockByNumber(num))
       return block ? `0x${block.txs.length.toString(16)}` : null
     }
@@ -1685,7 +1688,11 @@ async function handleRpc(
       } else {
         invalidParams("invalid blockCount: expected hex quantity or positive integer")
       }
-      const newestBlock = String((payload.params ?? [])[1] ?? "latest")
+      // #256: pre-fix `String((params)[1] ?? "latest")` made `String([1500])
+      // === "1500"` silently coerce a single-element array to block 1500.
+      // Pass raw through resolveBlockNumber so non-string/non-number shapes
+      // hit parseBlockTag's invalidParams branch. Same fix as #250.
+      const newestBlock = (payload.params ?? [])[1]
       // #224: `as number[]` was a TS runtime no-op so an object/string/
       // bool silently passed through (`{}.length === undefined`
       // bypassed the >100 check and the for-loop). Reject non-array
@@ -1899,6 +1906,13 @@ async function handleRpc(
         const num = await resolveBlockNumber(tag, chain)
         block = await Promise.resolve(chain.getBlockByNumber(num))
       }
+  })
+
+      // #256: pre-fix `String((params)[0] ?? "latest")` made `String([1500])
+      // === "1500"` silently coerce a single-element array to block 1500.
+      // Pass raw through resolveBlockNumber. Same fix as #250.
+      const num = await resolveBlockNumber((payload.params ?? [])[0], chain)
+      const block = await Promise.resolve(chain.getBlockByNumber(num))
       if (!block) return null
       const receipts: unknown[] = []
       for (const rawTx of block.txs) {
