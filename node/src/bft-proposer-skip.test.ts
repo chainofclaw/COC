@@ -373,6 +373,50 @@ test("PR-1J: noProgressWatchdog stays on slow path when N<4", async () => {
   )
 })
 
+test("PR-1L: checkNoProgressWatchdog skips on N<4 even when elapsed exceeds slow timeout", async () => {
+  const c = new ConsensusEngine(
+    mkMockChain(VALIDATORS_5),
+    mkMockP2p(),
+    { blockTimeMs: 1000, syncIntervalMs: 300_000 },
+    {
+      bft: mkMockBft(),
+      nodeId: "node-2",
+      validatorCountProvider: () => 3,
+    },
+  )
+  ;(c as any).startedAtMs = Date.now() - 90_000
+  ;(c as any).lastBftProgressAtMs = Date.now() - (NO_PROGRESS_TIMEOUT_MS + 60_000)
+
+  await (c as any).checkNoProgressWatchdog()
+  assert.equal(
+    (c as any).noProgressProposerOverride,
+    false,
+    "H15 override never arms on N=3 — chain must stop loudly rather than fork silently",
+  )
+})
+
+test("PR-1L: checkNoProgressWatchdog still engages on N>=4", async () => {
+  const c = new ConsensusEngine(
+    mkMockChain(VALIDATORS_5),
+    mkMockP2p(),
+    { blockTimeMs: 1000, syncIntervalMs: 300_000 },
+    {
+      bft: mkMockBft(),
+      nodeId: "node-2",
+      validatorCountProvider: () => 5,
+    },
+  )
+  ;(c as any).startedAtMs = Date.now() - 90_000
+  ;(c as any).lastBftProgressAtMs = Date.now() - (NO_PROGRESS_TIMEOUT_MS + 60_000)
+
+  await (c as any).checkNoProgressWatchdog()
+  assert.equal(
+    (c as any).noProgressProposerOverride,
+    true,
+    "H15 override arms on N=5 (above threshold)",
+  )
+})
+
 test("PR-1A: TTL constant is reasonable", () => {
   // Sanity check the constants relate sensibly:
   //   FAST < TTL  (a single round must not expire its own evidence mid-flight)
