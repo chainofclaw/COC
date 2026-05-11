@@ -89,6 +89,30 @@ const NO_PROGRESS_MAX_VALIDATORS = 10
 export const PROPOSER_UNREACHABLE_FAST_TIMEOUT_MS = 15_000
 export const PROPOSER_UNREACHABLE_TTL_MS = 60_000
 
+/**
+ * PR-1H (2026-05-11): startup grace period for PR-1A's fast-path. Within
+ * `PROPOSER_REACHABILITY_STARTUP_GRACE_MS` after consensus.start(),
+ * markProposerUnreachable + isProposerUnreachable are no-ops, so the
+ * BFT cluster falls back to the 600 s H15 slow path during cold start.
+ *
+ * Rationale (2026-05-11 18780 prod redeploy fingerprint): after a
+ * simultaneous restart of all N=3 validators, the wire-client mesh takes
+ * several seconds to fully reconnect. During that window the
+ * reachabilityProvider on one validator may legitimately see another as
+ * disconnected even though the peer is up and listening — triggering
+ * PR-1A's fast-path, which causes the local node to skip the absent
+ * proposer and propose itself. Then when wire converges and the "absent"
+ * peer's round catches up, the cluster ends up with two competing block
+ * proposals at the same height that BFT cannot reconcile inside one round.
+ * The 60 s grace lets the wire mesh stabilize before fast-path arms.
+ *
+ * Override at runtime with `COC_PR1A_STARTUP_GRACE_MS`. Set to `0` to
+ * disable grace and restore the original PR-1A behavior.
+ */
+export const PROPOSER_REACHABILITY_STARTUP_GRACE_MS = Number(
+  process.env.COC_PR1A_STARTUP_GRACE_MS ?? 60_000,
+)
+
 /** Race a promise against a timeout. Throws on timeout, otherwise returns the value. */
 async function withSyncTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -282,6 +306,15 @@ export class ConsensusEngine {
   markProposerUnreachable(proposerId: string, ttlMs: number = PROPOSER_UNREACHABLE_TTL_MS): void {
     const id = proposerId.toLowerCase()
     if (id === (this.nodeId?.toLowerCase() ?? "")) return // never mark self
+    // PR-1H: suppress during startup grace so wire mesh has time to converge
+    // before fast-path arms. See PROPOSER_REACHABILITY_STARTUP_GRACE_MS docs.
+    if (
+      this.startedAtMs > 0
+      && PROPOSER_REACHABILITY_STARTUP_GRACE_MS > 0
+      && Date.now() - this.startedAtMs < PROPOSER_REACHABILITY_STARTUP_GRACE_MS
+    ) {
+      return
+    }
     this.unreachableProposers.set(id, Date.now() + ttlMs)
   }
 
@@ -295,6 +328,17 @@ export class ConsensusEngine {
   private isProposerUnreachable(proposerId: string): boolean {
     const id = proposerId.toLowerCase()
     if (id === (this.nodeId?.toLowerCase() ?? "")) return false
+
+    // PR-1H: during startup grace, always claim proposers reachable so PR-1A
+    // fast-path stays disarmed while the wire mesh is still converging. The
+    // 600 s H15 slow path remains the only override mechanism during grace.
+    if (
+      this.startedAtMs > 0
+      && PROPOSER_REACHABILITY_STARTUP_GRACE_MS > 0
+      && Date.now() - this.startedAtMs < PROPOSER_REACHABILITY_STARTUP_GRACE_MS
+    ) {
+      return false
+    }
 
     const exp = this.unreachableProposers.get(id)
     if (exp !== undefined) {
