@@ -1497,14 +1497,21 @@ async function handleRpc(
     }
     case "coc_dhtFindProviders": {
       // Phase C2.2: the PoSe challenger pre-filters monopoly CIDs by
-      // asking the local DHT who currently advertises a given CID
-      // before committing to a Storage challenge. Mirror of
-      // DhtNetwork.findProviders; returns an array of lowercased peer IDs.
-      const cid = String((payload.params ?? [])[0] ?? "")
-      const rawMaxK = Number((payload.params ?? [])[1] ?? 3)
-      if (cid.length === 0) {
-        return { providers: [], error: "cid must be a non-empty string" }
+      // asking the local DHT who currently advertises a given CID.
+      // #146: pre-fix this returned errors wrapped in `result.error`,
+      // which clients that check `response.error` per JSON-RPC §5
+      // never noticed. Switch to -32602 structured throws + sanitize
+      // CID shape against path traversal / control chars (same
+      // isValidCid policy as the IPFS HTTP layer).
+      const rawCid = (payload.params ?? [])[0]
+      if (typeof rawCid !== "string" || rawCid.length === 0) {
+        throw { code: -32602, message: "cid must be a non-empty string" }
       }
+      if (rawCid.length > 512 || /[\/\\]|\.\.|\0|\s/.test(rawCid)) {
+        throw { code: -32602, message: "invalid cid: contains illegal characters or exceeds 512 chars" }
+      }
+      const cid = rawCid
+      const rawMaxK = Number((payload.params ?? [])[1] ?? 3)
       const cap = Number.isFinite(rawMaxK) && rawMaxK > 0 ? Math.min(Math.floor(rawMaxK), 64) : 3
       const findProviders = opts?.findProviders as ((cid: string, maxK: number) => string[]) | undefined
       const providers = findProviders?.(cid, cap) ?? []
@@ -1514,13 +1521,18 @@ async function handleRpc(
       // Phase C2.4: audit sampling. Fetch the raw chunk bytes for `cid`
       // from a DHT-advertised peer, optionally excluding `excludePeerId`
       // (the prover). Returns base64-encoded bytes so JSON-RPC can
-      // transport the blob. Returns { bytes: null } when no
-      // non-excluded provider served the CID.
-      const cid = String((payload.params ?? [])[0] ?? "")
-      const excludePeerId = String((payload.params ?? [])[1] ?? "")
-      if (cid.length === 0) {
-        return { bytes: null, error: "cid must be a non-empty string" }
+      // transport the blob.
+      // #146: same fix as coc_dhtFindProviders — structured error in
+      // the `error` field, not embedded in `result`.
+      const rawCid = (payload.params ?? [])[0]
+      if (typeof rawCid !== "string" || rawCid.length === 0) {
+        throw { code: -32602, message: "cid must be a non-empty string" }
       }
+      if (rawCid.length > 512 || /[\/\\]|\.\.|\0|\s/.test(rawCid)) {
+        throw { code: -32602, message: "invalid cid: contains illegal characters or exceeds 512 chars" }
+      }
+      const cid = rawCid
+      const excludePeerId = String((payload.params ?? [])[1] ?? "")
       const fetchBlockFromPeer = opts?.fetchBlockFromPeer as ((cid: string, exclude?: string) => Promise<Uint8Array | null>) | undefined
       const bytes = await fetchBlockFromPeer?.(cid, excludePeerId || undefined)
       return { bytes: bytes ? Buffer.from(bytes).toString("base64") : null }
@@ -2115,24 +2127,24 @@ async function handleRpc(
     // ── DID Identity Layer ──────────────────────────────────────
     case "coc_resolveDid": {
       const didResolver = opts?.didResolver as { resolve: (did: string) => Promise<{ didDocument: unknown; didResolutionMetadata: unknown }> } | undefined
-      if (!didResolver) throw new Error("DID resolver not configured (set soulRegistryAddress + didRegistryAddress)")
+      if (!didResolver) throw { code: -32601, message: "DID resolver not configured on this node (requires soulRegistryAddress + didRegistryAddress)" }
       const did = String((payload.params ?? [])[0] ?? "")
-      if (!did) throw new Error("missing DID parameter")
+      if (!did) throw { code: -32602, message: "missing DID parameter" }
       return didResolver.resolve(did)
     }
     case "coc_getDIDDocument": {
       const didResolver = opts?.didResolver as { resolve: (did: string) => Promise<{ didDocument: unknown }> } | undefined
-      if (!didResolver) throw new Error("DID resolver not configured")
+      if (!didResolver) throw { code: -32601, message: "DID resolver not configured on this node" }
       const agentId = String((payload.params ?? [])[0] ?? "")
-      if (!agentId) throw new Error("missing agentId parameter")
+      if (!agentId) throw { code: -32602, message: "missing agentId parameter" }
       const result = await didResolver.resolve(`did:coc:${agentId}`)
       return result.didDocument ?? null
     }
     case "coc_getAgentCapabilities": {
       const didProvider = opts?.didDataProvider
-      if (!didProvider) throw new Error("DID data provider not configured")
+      if (!didProvider) throw { code: -32601, message: "DID data provider not configured on this node" }
       const agentId = String((payload.params ?? [])[0] ?? "")
-      if (!agentId) throw new Error("missing agentId parameter")
+      if (!agentId) throw { code: -32602, message: "missing agentId parameter" }
       const bitmask = await didProvider.getCapabilities(agentId)
       // Import inline to avoid top-level dependency
       const { capabilityBitmaskToNames } = await import("./did/did-types.ts")
@@ -2140,23 +2152,23 @@ async function handleRpc(
     }
     case "coc_getDelegations": {
       const didProvider = opts?.didDataProvider
-      if (!didProvider) throw new Error("DID data provider not configured")
+      if (!didProvider) throw { code: -32601, message: "DID data provider not configured on this node" }
       const agentId = String((payload.params ?? [])[0] ?? "")
-      if (!agentId) throw new Error("missing agentId parameter")
+      if (!agentId) throw { code: -32602, message: "missing agentId parameter" }
       return didProvider.getFullDelegations(agentId)
     }
     case "coc_getAgentLineage": {
       const didProvider = opts?.didDataProvider
-      if (!didProvider?.getLineage) throw new Error("DID data provider not configured")
+      if (!didProvider?.getLineage) throw { code: -32601, message: "DID data provider not configured on this node" }
       const agentId = String((payload.params ?? [])[0] ?? "")
-      if (!agentId) throw new Error("missing agentId parameter")
+      if (!agentId) throw { code: -32602, message: "missing agentId parameter" }
       return didProvider.getLineage(agentId)
     }
     case "coc_getVerificationMethods": {
       const didProvider = opts?.didDataProvider
-      if (!didProvider?.getVerificationMethods) throw new Error("DID data provider not configured")
+      if (!didProvider?.getVerificationMethods) throw { code: -32601, message: "DID data provider not configured on this node" }
       const agentId = String((payload.params ?? [])[0] ?? "")
-      if (!agentId) throw new Error("missing agentId parameter")
+      if (!agentId) throw { code: -32602, message: "missing agentId parameter" }
       return didProvider.getVerificationMethods(agentId)
     }
     case "coc_getCredentialAnchor": {
@@ -2164,9 +2176,9 @@ async function handleRpc(
       // Does NOT verify VC content, signatures, or proofs — use verifiable-credentials.ts
       // for full credential verification.
       const didProvider = opts?.didDataProvider
-      if (!didProvider?.getCredentialAnchor) throw new Error("DID data provider not configured")
+      if (!didProvider?.getCredentialAnchor) throw { code: -32601, message: "DID data provider not configured on this node" }
       const credentialId = String((payload.params ?? [])[0] ?? "")
-      if (!credentialId) throw new Error("missing credentialId parameter")
+      if (!credentialId) throw { code: -32602, message: "missing credentialId parameter" }
       return didProvider.getCredentialAnchor(credentialId)
     }
     default:

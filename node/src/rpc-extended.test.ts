@@ -983,6 +983,43 @@ test("RPC Extended Methods", async (t) => {
     assert.match(okId as string, /^0x[0-9a-f]+$/i, "valid filter must return id")
   })
 
+  await t.test("#146: coc_dhtFindProviders / coc_ipfsFetchBlockFromPeer surface errors via JSON-RPC error field", async () => {
+    // Pre-fix these handlers returned `{result: {providers: [], error: "..."}}`
+    // (or `{result: {bytes: null, error: "..."}}`), wrapping the error
+    // inside the result body. Clients that check `response.error` per
+    // JSON-RPC §5 never saw the failure.
+    const probeError = async (method: string, params: unknown[]) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+      })
+      return await r.json() as { result?: unknown; error?: { code: number; message: string } }
+    }
+    // (a) coc_dhtFindProviders with no/empty/bad CID → -32602
+    for (const params of [[], [""], ["not-a-cid\nwith-newline"], ["x".repeat(513)], ["../path"]]) {
+      const j = await probeError("coc_dhtFindProviders", params)
+      assert.ok(j.error, `coc_dhtFindProviders(${JSON.stringify(params)}) must error, got result=${JSON.stringify(j.result)}`)
+      assert.equal(j.error!.code, -32602)
+      // The error must NOT live inside the result body anymore.
+      assert.equal(j.result, undefined, "errors must be in error field, not result body")
+    }
+    // (b) coc_ipfsFetchBlockFromPeer same shape
+    for (const params of [[], [""], ["foo\0bar"]]) {
+      const j = await probeError("coc_ipfsFetchBlockFromPeer", params)
+      assert.ok(j.error)
+      assert.equal(j.error!.code, -32602)
+      assert.equal(j.result, undefined)
+    }
+    // (c) coc_resolveDid / coc_getDIDDocument on a node without DID config
+    // → -32601 method not available (not -32603 internal-error).
+    for (const method of ["coc_resolveDid", "coc_getDIDDocument"]) {
+      const j = await probeError(method, [])
+      assert.ok(j.error)
+      assert.equal(j.error!.code, -32601, `${method} must be -32601 when not configured, got ${j.error!.code}`)
+    }
+  })
+
   if (prevDevAccounts === undefined) {
     delete process.env.COC_DEV_ACCOUNTS
   } else {
