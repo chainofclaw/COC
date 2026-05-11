@@ -2872,6 +2872,39 @@ test("RPC Extended Methods", async (t) => {
       `well-shaped blockHash must pass shape validation: ${JSON.stringify(ok)}`)
   })
 
+  await t.test("#276: eth_sendRawTransaction maps mempool/chain client-input errors to -32602 (not -32603)", async () => {
+    // Pre-fix mempool/chain-engine throws plain `new Error(...)` for client-input
+    // rejections (wrong chainId, nonce too low, blob tx, gasLimit exceeded,
+    // poisoned tx). The eth_sendRawTransaction catch only filtered ethers shape
+    // errors → plain Errors fell through to outer 500/−32603 internal-error.
+    // This regression asserts the message-pattern remap to -32602.
+    const { Transaction, Wallet, getBytes } = await import("ethers")
+    const wallet = new Wallet(`0x${"01".repeat(32)}`)
+    // Sign a tx with WRONG chainId (mempool requires this.cfg.chainId=18780).
+    const tx = Transaction.from({
+      to: `0x${"02".repeat(20)}`,
+      value: 1n,
+      gasLimit: 21_000n,
+      gasPrice: 1_000_000_000n,
+      nonce: 0,
+      chainId: 99999, // wrong — fixture chain is 18780
+    })
+    const unsignedHash = tx.unsignedHash
+    const sig = wallet.signingKey.sign(getBytes(unsignedHash))
+    const signed = tx.clone()
+    signed.signature = sig
+    const r = await fetch(`http://127.0.0.1:${port}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_sendRawTransaction", params: [signed.serialized] }),
+    })
+    const body = await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    assert.equal(body.error?.code, -32602,
+      `chainId-mismatch must be -32602, got ${body.error?.code} (${body.error?.message})`)
+    assert.match(body.error!.message, /invalid chain ID/,
+      `error must preserve "invalid chain ID" surface, got: ${JSON.stringify(body)}`)
+  })
+
   if (prevDevAccounts === undefined) {
     delete process.env.COC_DEV_ACCOUNTS
   } else {

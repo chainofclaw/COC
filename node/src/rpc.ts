@@ -1097,6 +1097,22 @@ async function handleRpc(
         const msg = parseErr instanceof Error ? parseErr.message : String(parseErr)
         if (/^replacement tx gas price too low/i.test(msg)) {
           throw { code: -32000, message: msg }
+  })
+
+        // #276: mempool / chain-engine throw plain `new Error(...)` for
+        // a handful of client-input rejections that pre-fix surfaced as
+        // -32603 "internal error". Map known message patterns to the
+        // proper JSON-RPC §5.1 codes (-32602 invalid params, -32005
+        // limit exceeded) so indexers/dApps can react correctly. Same
+        // regex-mapping pattern as ipfs-http.ts:1140 for MFS errors.
+        const msg = parseErr instanceof Error ? parseErr.message : String(parseErr)
+        if (
+          /^invalid chain ID|^invalid tx: |^blob transactions|^gasLimit exceeds|^tx .* is poisoned|^tx already confirmed|^nonce too low/i.test(msg)
+        ) {
+          invalidParams(msg)
+        }
+        if (/^mempool is full|exceeds max pending tx limit/i.test(msg)) {
+          limitExceeded(msg)
         }
         throw parseErr
       }
