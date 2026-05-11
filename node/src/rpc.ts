@@ -3326,6 +3326,17 @@ function validateLogFilter(query: Record<string, unknown>): {
   const FILTER_TOPIC_RE = /^0x[0-9a-fA-F]{64}$/
   const MAX_FILTER_ADDRESSES = 100
   const MAX_FILTER_TOPICS = 4
+  // #186: blockHash field shape validation was missed by #162's
+  // address+topics work. Pre-fix `{blockHash: "0x123"}` silently
+  // returned `result: []` indistinguishable from "no logs". Match
+  // the 32-byte hex shape of eth_getBlockByHash (#166).
+  if (query.blockHash !== undefined && query.blockHash !== null) {
+    if (typeof query.blockHash !== "string" || !FILTER_TOPIC_RE.test(query.blockHash)) {
+      throw { code: -32602, message: "invalid blockHash: must match /^0x[0-9a-fA-F]{64}$/" }
+    }
+    // Normalize for downstream consumers (lowercase canonical form).
+    query.blockHash = query.blockHash.toLowerCase()
+  }
   const validateFilterAddr = (raw: unknown, idx: number): Hex => {
     if (typeof raw !== "string" || !FILTER_ADDR_RE.test(raw)) {
       throw { code: -32602, message: `invalid filter address at index ${idx}: must match /^0x[0-9a-fA-F]{40}$/` }
