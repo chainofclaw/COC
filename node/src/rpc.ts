@@ -614,6 +614,17 @@ async function handleOne(
     return { jsonrpc: "2.0", id: payload?.id ?? null, error: { code: -32600, message: "invalid request" } }
   }
 
+  // #204: §4.2 — params, when present, MUST be a Structured value
+  // (Array or Object). Pre-fix passing a string / bool / number flowed
+  // through to `payload.params ?? []` and most methods just returned
+  // their default response, masking buggy clients. Allow omission and
+  // explicit `null` (we treat both as "no params"); reject everything
+  // else with -32600.
+  const rawParams = (payload as JsonRpcRequest).params
+  if (rawParams !== undefined && rawParams !== null && typeof rawParams !== "object") {
+    return { jsonrpc: "2.0", id: payload.id ?? null, error: { code: -32600, message: "invalid request: params must be Array or Object" } }
+  }
+
   // #140: §4.1 — a request without an `id` field is a Notification.
   // The server processes it but MUST NOT respond. Return null and let
   // the dispatcher omit the response from the wire.
