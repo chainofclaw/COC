@@ -1862,6 +1862,41 @@ test("RPC Extended Methods", async (t) => {
     }
   })
 
+  await t.test("#238: eth_getLogs + eth_newFilter reject non-object filter params (no silent no-filter)", async () => {
+    // Pre-fix `((payload.params ?? [])[0] ?? {}) as Record<string, unknown>`
+    // was a TS-only runtime no-op. Boolean/string/number/array all slipped
+    // through as "the object" — fromBlock/toBlock/address/topics reads
+    // returned undefined → validateLogFilter rejected nothing → silent
+    // "all logs" (eth_getLogs) or silent filter-creation (eth_newFilter,
+    // which leaked entries in the MAX_FILTERS-capped map). Same class as
+    // #220/#224/#226/#234.
+    const probe = async (method: string, params: unknown[]) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    }
+    const badShapes: unknown[][] = [[true], [false], ["string-not-object"], [42], [[1, 2]]]
+    for (const params of badShapes) {
+      for (const method of ["eth_getLogs", "eth_newFilter"]) {
+        const r = await probe(method, params)
+        assert.equal(r.error?.code, -32602,
+          `${method}(${JSON.stringify(params)}) must be -32602, got ${JSON.stringify(r)}`)
+        assert.match(r.error!.message, /invalid filter|expected object/i,
+          `${method} error must name the filter shape, got ${r.error!.message}`)
+      }
+    }
+    // Sanity: omitted / null / empty object still work as full-range default
+    const ok1 = await probe("eth_getLogs", [])
+    assert.equal(ok1.error, undefined, "omitted filter must succeed")
+    const ok2 = await probe("eth_getLogs", [null])
+    assert.equal(ok2.error, undefined, "null filter must succeed (treated as {})")
+    const ok3 = await probe("eth_getLogs", [{}])
+    assert.equal(ok3.error, undefined, "empty object filter must succeed")
+  })
+
   if (prevDevAccounts === undefined) {
     delete process.env.COC_DEV_ACCOUNTS
   } else {
