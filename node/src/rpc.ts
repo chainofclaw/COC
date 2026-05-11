@@ -195,6 +195,24 @@ function requireCallObject(raw: unknown, methodName: string): Record<string, unk
   return raw as Record<string, unknown>
 }
 
+/**
+ * #238: Filter param validator for eth_getLogs / eth_newFilter. Pre-fix
+ * `(payload.params[0] ?? {}) as Record<string, unknown>` was a TS-only
+ * runtime no-op so booleans, strings, numbers, and arrays slipped through.
+ * Every `.fromBlock` / `.address` / `.topics` read returned undefined →
+ * validateLogFilter saw nothing to reject → silent "no filter" path.
+ * Worse for eth_newFilter: silently created a filter ID for garbage,
+ * leaking entries in the MAX_FILTERS-capped map. Returns {} for
+ * null/undefined to keep `eth_getLogs(null)` working as "default range".
+ */
+function requireFilterObject(raw: unknown): Record<string, unknown> {
+  if (raw === undefined || raw === null) return {}
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw { code: -32602, message: `invalid filter: expected object, got ${Array.isArray(raw) ? "array" : typeof raw}` }
+  }
+  return raw as Record<string, unknown>
+}
+
 function optionalHexParam(params: unknown[], index: number): Hex | undefined {
   const value = (params ?? [])[index]
   if (value === undefined || value === null) return undefined
@@ -1015,7 +1033,7 @@ async function handleRpc(
       return tx.hash
     }
     case "eth_getLogs": {
-      const query = ((payload.params ?? [])[0] ?? {}) as Record<string, unknown>
+      const query = requireFilterObject((payload.params ?? [])[0])
       // EIP-234: blockHash is mutually exclusive with fromBlock/toBlock.
       // Pre-fix this silently processed the range and surfaced a confusing
       // "block range too large" error referencing the full chain height.
@@ -1035,7 +1053,7 @@ async function handleRpc(
         cleanupExpiredFilters(filters)
         if (filters.size >= MAX_FILTERS) throw { code: -32005, message: "filter limit exceeded" }
       }
-      const query = ((payload.params ?? [])[0] ?? {}) as Record<string, unknown>
+      const query = requireFilterObject((payload.params ?? [])[0])
       const id = `0x${randomBytes(16).toString("hex")}`
       const newFilterHeight = await Promise.resolve(chain.getHeight())
       const fromBlock = parseBlockTag(query.fromBlock, newFilterHeight)
@@ -1404,7 +1422,7 @@ async function handleRpc(
     }
     case "trace_filter": {
       if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
-      const query = ((payload.params ?? [])[0] ?? {}) as Record<string, unknown>
+      const query = requireFilterObject((payload.params ?? [])[0])
       return await queryTraceFilter(chain, evm, query)
     }
     case "trace_get": {
