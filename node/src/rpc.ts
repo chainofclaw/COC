@@ -664,6 +664,7 @@ async function handleRpc(
       }
       const filter: PendingFilter = {
         id,
+        kind: "log",
         fromBlock,
         toBlock,
         address: filterAddress,
@@ -679,6 +680,21 @@ async function handleRpc(
       const id = String((payload.params ?? [])[0] ?? "")
       const filter = filters.get(id)
       if (!filter) return []
+      // pendingTx filter: return mempool tx hashes that haven't been
+      // returned to this filter yet, then record them so the next poll
+      // only sees newly-arrived hashes.
+      if (filter.kind === "pendingTx") {
+        filter.seenPendingTxs ??= new Set<Hex>()
+        const seen = filter.seenPendingTxs
+        const fresh: Hex[] = []
+        for (const tx of chain.mempool.getAll()) {
+          if (!seen.has(tx.hash)) {
+            fresh.push(tx.hash)
+            seen.add(tx.hash)
+          }
+        }
+        return fresh
+      }
       const start = filter.lastCursor + 1n
       const filterHeight = await Promise.resolve(chain.getHeight())
       const end = filter.toBlock ?? filterHeight
@@ -686,6 +702,17 @@ async function handleRpc(
       if (start > end) { return [] }
       // Cap scan range to prevent DoS from long-idle filters
       const cappedEnd = (end - start > MAX_LOG_BLOCK_RANGE) ? start + MAX_LOG_BLOCK_RANGE : end
+      // block filter: return block hashes for [start..cappedEnd] inclusive.
+      if (filter.kind === "block") {
+        const hashes: Hex[] = []
+        for (let h = start; h <= cappedEnd; h++) {
+          const block = await Promise.resolve(chain.getBlockByNumber(h))
+          if (block) hashes.push(block.hash)
+        }
+        filter.lastCursor = cappedEnd
+        return hashes
+      }
+      // log filter (default): existing behaviour.
       const logs = await collectLogs(chain, start, cappedEnd, filter)
       filter.lastCursor = cappedEnd
       return logs
@@ -1101,6 +1128,7 @@ async function handleRpc(
       const height = await Promise.resolve(chain.getHeight())
       const filter: PendingFilter = {
         id,
+        kind: "block",
         fromBlock: height,
         lastCursor: height,
         createdAtMs: Date.now(),
@@ -1114,11 +1142,19 @@ async function handleRpc(
         if (filters.size >= MAX_FILTERS) throw new Error("filter limit exceeded")
       }
       const id = `0x${randomBytes(16).toString("hex")}`
+      // Pre-populate seenPendingTxs with everything already in the mempool
+      // when the filter was created. eth_newPendingTransactionFilter's spec
+      // is "new pending tx hashes since the filter was created" — pre-existing
+      // mempool entries don't qualify.
+      const seenPendingTxs = new Set<Hex>()
+      for (const tx of chain.mempool.getAll()) seenPendingTxs.add(tx.hash)
       const filter: PendingFilter = {
         id,
+        kind: "pendingTx",
         fromBlock: 0n,
         lastCursor: 0n,
         createdAtMs: Date.now(),
+        seenPendingTxs,
       }
       filters.set(id, filter)
       return id
@@ -1127,6 +1163,11 @@ async function handleRpc(
       const id = String((payload.params ?? [])[0] ?? "")
       const filter = filters.get(id)
       if (!filter) return []
+      // getFilterLogs is a log-filter-only method: block and pendingTx
+      // filters have no historical "logs" to return. Match the kubo/geth
+      // behaviour of returning [] rather than confusing the caller with
+      // garbage from an unintended code path.
+      if (filter.kind && filter.kind !== "log") return []
       const height = await Promise.resolve(chain.getHeight())
       const end = filter.toBlock ?? height
       if (end - filter.fromBlock > MAX_LOG_BLOCK_RANGE) {
