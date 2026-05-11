@@ -307,4 +307,42 @@ describe("IpfsBlockstore", () => {
     const list = await s2.listBlocks()
     assert.ok(list.length <= 3, `expected eviction after restart-aware overflow; got ${list.length}`)
   })
+
+  it("#126: unpin removes from pins.json, returns true once, false after", async () => {
+    await store.put(makeBlock("QmUnpinA", "x"))
+    await store.pin("QmUnpinA" as CidString)
+    assert.deepEqual(await store.listPins(), ["QmUnpinA"])
+    assert.equal(await store.unpin("QmUnpinA" as CidString), true, "first unpin returns true")
+    assert.deepEqual(await store.listPins(), [], "pin removed")
+    assert.equal(await store.unpin("QmUnpinA" as CidString), false, "second unpin is idempotent (false)")
+    // Block file still on disk — unpin does NOT touch bytes.
+    assert.equal(await store.has("QmUnpinA" as CidString), true)
+  })
+
+  it("#126: removeBlock evicts both file and pin entry", async () => {
+    await store.put(makeBlock("QmRmA", "data"))
+    await store.pin("QmRmA" as CidString)
+    const result = await store.removeBlock("QmRmA" as CidString)
+    assert.deepEqual(result, { removedFile: true, wasPinned: true })
+    assert.equal(await store.has("QmRmA" as CidString), false)
+    assert.deepEqual(await store.listPins(), [])
+    // Second remove is idempotent — neither file nor pin remains.
+    const second = await store.removeBlock("QmRmA" as CidString)
+    assert.deepEqual(second, { removedFile: false, wasPinned: false })
+  })
+
+  it("#126: gc sweeps unpinned blocks, preserves pinned", async () => {
+    await store.put(makeBlock("QmPinnedA", "p"))
+    await store.put(makeBlock("QmGarbageA", "g"))
+    await store.put(makeBlock("QmGarbageB", "g"))
+    await store.pin("QmPinnedA" as CidString)
+    const removed = await store.gc()
+    assert.deepEqual(removed.sort(), ["QmGarbageA", "QmGarbageB"].sort())
+    assert.equal(await store.has("QmPinnedA" as CidString), true, "pinned block survives GC")
+    assert.equal(await store.has("QmGarbageA" as CidString), false, "unpinned block evicted")
+    assert.equal(await store.has("QmGarbageB" as CidString), false, "unpinned block evicted")
+    // Second GC is a no-op (everything left is pinned).
+    const removedAgain = await store.gc()
+    assert.deepEqual(removedAgain, [])
+  })
 })

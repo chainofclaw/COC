@@ -28,21 +28,24 @@ fi
 ZONE="$(resolve_zone "$NODE")"
 echo "==> Deleting CID $CID from $NODE blockstore"
 
-# Use the IPFS HTTP API to unpin and gc — that's what the production "delete" path is.
+# Use the IPFS HTTP API to force-evict the block (#126: block/rm bypasses
+# pin/GC indirection so chaos drills are deterministic).
 gcloud compute ssh "$NODE" --zone="$ZONE" --project="$COC_GCP_PROJECT" --quiet --command="
 set -e
 echo 'Local IPFS reachable on port 28786? '
 curl -sS --max-time 5 -X POST 'http://localhost:28786/api/v0/version' | head -c 80; echo
 
-echo 'Unpinning $CID...'
-curl -sS -X POST 'http://localhost:28786/api/v0/pin/rm?arg=$CID' || echo '  (pin/rm may 404 if not pinned)'
-
-echo 'Triggering GC to evict block...'
-curl -sS -X POST 'http://localhost:28786/api/v0/repo/gc' >/dev/null || true
+echo 'Force-removing block $CID...'
+rm_resp=\$(curl -sS --max-time 5 -X POST 'http://localhost:28786/api/v0/block/rm?arg=$CID' || echo '{\"error\":\"curl failed\"}')
+echo \"  block/rm response: \$rm_resp\"
 
 echo 'Verifying the block is gone (cat should 404):'
 status=\$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 -X POST 'http://localhost:28786/api/v0/cat?arg=$CID' || true)
 echo \"  HTTP \$status (404 = success, 200 = not deleted)\"
+if [[ \"\$status\" = \"200\" ]]; then
+  echo '  ERROR: block was not actually evicted — chaos drill invalid' >&2
+  exit 1
+fi
 "
 
 echo ""

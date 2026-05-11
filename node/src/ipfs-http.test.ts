@@ -8,6 +8,7 @@ import http from "node:http"
 import { IpfsBlockstore } from "./ipfs-blockstore.ts"
 import { UnixFsBuilder } from "./ipfs-unixfs.ts"
 import { IpfsHttpServer } from "./ipfs-http.ts"
+import type { CidString } from "./ipfs-types.ts"
 
 let tmpDir: string
 let store: IpfsBlockstore
@@ -196,6 +197,65 @@ describe("IpfsHttpServer", () => {
     assert.equal(res.status, 200)
     const body = await res.json() as Record<string, unknown>
     assert.deepEqual(body.Pins, [meta.cid])
+  })
+
+  it("#126: POST /api/v0/pin/rm removes a pin, returns 404 on second call", async () => {
+    const data = new TextEncoder().encode("pin then unpin")
+    const meta = await unixfs.addFile("p.txt", data)
+    await fetch(`/api/v0/pin/add?arg=${meta.cid}`, { method: "POST" })
+    const first = await fetch(`/api/v0/pin/rm?arg=${meta.cid}`, { method: "POST" })
+    assert.equal(first.status, 200, "first pin/rm must succeed")
+    const firstBody = await first.json() as Record<string, unknown>
+    assert.deepEqual(firstBody.Pins, [meta.cid])
+    const second = await fetch(`/api/v0/pin/rm?arg=${meta.cid}`, { method: "POST" })
+    assert.equal(second.status, 404, "second pin/rm must 404 (kubo-compatible)")
+  })
+
+  it("#126: POST /api/v0/pin/rm rejects missing/invalid CID with 400", async () => {
+    const noArg = await fetch(`/api/v0/pin/rm`, { method: "POST" })
+    assert.equal(noArg.status, 400)
+    const badArg = await fetch(`/api/v0/pin/rm?arg=../etc/passwd`, { method: "POST" })
+    assert.equal(badArg.status, 400)
+  })
+
+  it("#126: POST /api/v0/block/rm force-evicts the block from disk", async () => {
+    const data = new TextEncoder().encode("evict me")
+    const meta = await unixfs.addFile("e.txt", data)
+    // Confirm cat reaches the bytes pre-evict.
+    const pre = await fetch(`/api/v0/cat?arg=${meta.cid}`, { method: "POST" })
+    assert.equal(pre.status, 200)
+    const rm = await fetch(`/api/v0/block/rm?arg=${meta.cid}`, { method: "POST" })
+    assert.equal(rm.status, 200)
+    const rmBody = await rm.json() as Record<string, unknown>
+    assert.equal(rmBody.Hash, meta.cid)
+    assert.equal(rmBody.Error, "", "successful eviction has empty Error string")
+    // After block/rm, cat must 404. This is the chaos kill-shard
+    // post-condition that the script asserts on.
+    const post = await fetch(`/api/v0/cat?arg=${meta.cid}`, { method: "POST" })
+    assert.equal(post.status, 404, "cat must 404 after block/rm — chaos kill-shard depends on this")
+  })
+
+  it("#126: POST /api/v0/block/rm returns 404 if the block is not present", async () => {
+    const res = await fetch(`/api/v0/block/rm?arg=QmNonExistent123`, { method: "POST" })
+    assert.equal(res.status, 404)
+  })
+
+  it("#126: POST /api/v0/repo/gc sweeps unpinned blocks but preserves pinned", async () => {
+    // Use single-block put+pin (not unixfs.addFile, which stores
+    // chunks at separate CIDs that the root-CID pin does NOT cover —
+    // by design, see the flat-GC limitation documented on blockstore.gc).
+    const cidA = "QmGcPinned123456789012345678901234567890ABC"
+    const cidB = "QmGcUnpinned123456789012345678901234567890A"
+    await store.put({ cid: cidA as CidString, bytes: Buffer.from("pinned content") })
+    await store.put({ cid: cidB as CidString, bytes: Buffer.from("unpinned content") })
+    await fetch(`/api/v0/pin/add?arg=${cidA}`, { method: "POST" })
+    const res = await fetch(`/api/v0/repo/gc`, { method: "POST" })
+    assert.equal(res.status, 200)
+    const body = await res.text()
+    assert.match(body, new RegExp(cidB), `unpinned CID ${cidB} must appear in GC output`)
+    assert.doesNotMatch(body, new RegExp(cidA), `pinned CID ${cidA} must NOT appear in GC output`)
+    assert.equal(await store.has(cidA as CidString), true, "pinned block must survive GC")
+    assert.equal(await store.has(cidB as CidString), false, "unpinned block must be evicted by GC")
   })
 
   it("GET unknown path returns 404", async () => {

@@ -214,6 +214,18 @@ export class IpfsHttpServer {
         await this.handlePinLs(res, url.query.arg as string | undefined)
         return
       }
+      if (url.pathname === "/api/v0/pin/rm") {
+        await this.handlePinRm(res, url.query.arg as string | undefined)
+        return
+      }
+      if (url.pathname === "/api/v0/block/rm") {
+        await this.handleBlockRm(res, url.query.arg as string | undefined)
+        return
+      }
+      if (url.pathname === "/api/v0/repo/gc") {
+        await this.handleRepoGc(res)
+        return
+      }
       if (url.pathname === "/api/v0/erasure/status") {
         await this.handleErasureStatus(res, url.query.arg as string | undefined)
         return
@@ -650,6 +662,73 @@ export class IpfsHttpServer {
     await this.store.pin(cid)
     res.writeHead(200, { "content-type": "application/json" })
     res.end(JSON.stringify({ Pins: [cid] }))
+  }
+
+  /**
+   * #126: kubo-compatible `/api/v0/pin/rm?arg=<cid>`. Idempotent — if
+   * the CID was never pinned, returns 404 to match kubo. The block
+   * file itself stays on disk; call `/api/v0/repo/gc` or
+   * `/api/v0/block/rm` to evict bytes.
+   */
+  private async handlePinRm(res: http.ServerResponse, cid?: string): Promise<void> {
+    if (!cid) {
+      res.writeHead(400, { "content-type": "application/json" })
+      res.end(JSON.stringify({ error: "missing cid" }))
+      return
+    }
+    if (!isValidCid(cid)) {
+      res.writeHead(400, { "content-type": "application/json" })
+      res.end(JSON.stringify({ error: "invalid cid" }))
+      return
+    }
+    const wasPinned = await this.store.unpin(cid)
+    if (!wasPinned) {
+      res.writeHead(404, { "content-type": "application/json" })
+      res.end(JSON.stringify({ error: "not pinned" }))
+      return
+    }
+    res.writeHead(200, { "content-type": "application/json" })
+    res.end(JSON.stringify({ Pins: [cid] }))
+  }
+
+  /**
+   * #126: kubo-compatible `/api/v0/block/rm?arg=<cid>`. Force-evicts
+   * the block from disk (and unpins it if pinned) — used by the
+   * chaos kill-shard drill to simulate disk loss. Returns the kubo
+   * `{Hash, Error}` shape; Error is empty string on success.
+   */
+  private async handleBlockRm(res: http.ServerResponse, cid?: string): Promise<void> {
+    if (!cid) {
+      res.writeHead(400, { "content-type": "application/json" })
+      res.end(JSON.stringify({ error: "missing cid" }))
+      return
+    }
+    if (!isValidCid(cid)) {
+      res.writeHead(400, { "content-type": "application/json" })
+      res.end(JSON.stringify({ error: "invalid cid" }))
+      return
+    }
+    const result = await this.store.removeBlock(cid)
+    if (!result.removedFile && !result.wasPinned) {
+      res.writeHead(404, { "content-type": "application/json" })
+      res.end(JSON.stringify({ Hash: cid, Error: "block not found locally" }))
+      return
+    }
+    res.writeHead(200, { "content-type": "application/json" })
+    res.end(JSON.stringify({ Hash: cid, Error: "" }))
+  }
+
+  /**
+   * #126: kubo-compatible `/api/v0/repo/gc`. Sweeps unpinned blocks
+   * from disk. Returns one JSON object per removed CID, one per line
+   * (kubo streams these). This is a flat GC — pinning a UnixFS root
+   * does not recursively pin its chunks; callers must pin each chunk
+   * CID explicitly to keep them across a GC pass.
+   */
+  private async handleRepoGc(res: http.ServerResponse): Promise<void> {
+    const removed = await this.store.gc()
+    res.writeHead(200, { "content-type": "application/json" })
+    res.end(removed.map((cid) => JSON.stringify({ Key: { "/": cid } })).join("\n"))
   }
 
   private async handlePinLs(res: http.ServerResponse, cid?: string): Promise<void> {
