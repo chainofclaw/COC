@@ -1767,6 +1767,16 @@ async function handleRpc(
       }
       return null
     }
+    case "coc_getEquivocationsTotal": {
+      // Cheap counter for ops monitoring. The operator runbook
+      // (docs/operator-runbook.{en,zh}.md section 5) instructs operators
+      // to alert when this rises above zero, so the method must exist as
+      // a first-class endpoint instead of forcing callers to fetch the
+      // full evidence array via coc_getEquivocations and count it.
+      const totalGetter = (opts as RpcRuntimeOptions | undefined)?.getBftEquivocations
+      if (!totalGetter) return 0
+      return totalGetter(0).length
+    }
     case "coc_getEquivocations": {
       const sinceMs = Number((payload.params ?? [])[0] ?? 0)
       const getter = (opts as RpcRuntimeOptions | undefined)?.getBftEquivocations
