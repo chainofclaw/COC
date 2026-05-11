@@ -2158,6 +2158,52 @@ test("RPC Extended Methods", async (t) => {
     assert.equal(okC.error, undefined, `well-shaped getRewardClaim must succeed: ${JSON.stringify(okC)}`)
   })
 
+  await t.test("#254: coc_getTransactionsByAddress rejects non-integer limit/offset and non-boolean reverse", async () => {
+    // Pre-fix `Number((params)[1] ?? 50)` silently coerced `true`→1, `"5"`→5,
+    // `[3]`→3, `{}`→NaN→fallback. `(params[2] !== false)` accepted every
+    // non-false value (`0`, `"false"`, `null`, `""`) as reverse=true. Same
+    // anti-pattern family as #252/#251/#224/#120.
+    const probe = async (params: unknown[]) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "coc_getTransactionsByAddress", params }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    }
+    const addr = `0x${"ab".repeat(20)}`
+    // limit: non-integer shapes must be rejected
+    for (const bad of [true, false, "5", [3], [1, 2], {}, 1.5, -1]) {
+      const r = await probe([addr, bad, true, 0])
+      assert.equal(r.error?.code, -32602,
+        `limit=${JSON.stringify(bad)} must be -32602, got ${JSON.stringify(r)}`)
+    }
+    // offset: same
+    for (const bad of [true, "0", [0], {}, 0.5, -1]) {
+      const r = await probe([addr, 10, true, bad])
+      assert.equal(r.error?.code, -32602,
+        `offset=${JSON.stringify(bad)} must be -32602, got ${JSON.stringify(r)}`)
+    }
+    // reverse: non-boolean shapes must be rejected (no silent enable)
+    for (const bad of [0, 1, "false", "true", [true], {}]) {
+      const r = await probe([addr, 10, bad, 0])
+      assert.equal(r.error?.code, -32602,
+        `reverse=${JSON.stringify(bad)} must be -32602, got ${JSON.stringify(r)}`)
+    }
+    // Sanity: well-shaped + null/undefined defaults still succeed
+    for (const params of [
+      [addr, 10, true, 0],
+      [addr, null, null, null],
+      [addr],
+      [addr, undefined, false, undefined],
+    ]) {
+      const r = await probe(params)
+      assert.equal(r.error, undefined,
+        `well-shaped ${JSON.stringify(params)} must succeed, got ${JSON.stringify(r)}`)
+      assert.ok(Array.isArray(r.result), `result must be array for ${JSON.stringify(params)}`)
+    }
+  })
+
   if (prevDevAccounts === undefined) {
     delete process.env.COC_DEV_ACCOUNTS
   } else {

@@ -37,6 +37,8 @@ import {
   requireFilterObject,
   requireStringParam,
   requireIntegerParam,
+  optionalIntegerParam,
+  optionalBooleanParam,
   validateTxCallFields,
   validateLogFilter,
   sanitizeEthersError,
@@ -1701,16 +1703,14 @@ async function handleRpc(
       // of silently missing the index → empty result. Pre-fix, "not-an-address"
       // and "0x123" both returned [] indistinguishable from a real empty
       // address.
-      const rawAddr = String((payload.params ?? [])[0] ?? "")
-      if (!/^0x[0-9a-fA-F]{40}$/.test(rawAddr)) {
-        invalidParams("invalid address: must match /^0x[0-9a-fA-F]{40}$/")
-      }
-      const addr = rawAddr.toLowerCase() as Hex
-      const rawLimit = Number((payload.params ?? [])[1] ?? 50)
-      const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 10_000) : 50
-      const reverse = (payload.params ?? [])[2] !== false
-      const rawOffset = Number((payload.params ?? [])[3] ?? 0)
-      const offset = Number.isFinite(rawOffset) ? Math.min(Math.max(rawOffset, 0), 100_000) : 0
+      // #254: pre-fix `Number((params)[1] ?? 50)` silently coerced
+      // `true`→1, `"5"`→5, `[3]`→3, `{}`→NaN→fallback 50. Same for
+      // offset. The `(params[2] !== false)` reverse check was even
+      // worse — `0`/`"false"`/`null`/`""` all parsed as reverse=true.
+      const addr = requireAddressParam(payload.params ?? [], 0).toLowerCase() as Hex
+      const limit = optionalIntegerParam(payload.params ?? [], 1, "limit", 50, { min: 1, max: 10_000 })
+      const reverse = optionalBooleanParam(payload.params ?? [], 2, "reverse", true)
+      const offset = optionalIntegerParam(payload.params ?? [], 3, "offset", 0, { min: 0, max: 100_000 })
 
       if (typeof chain.getTransactionsByAddress === "function") {
         const txs = await chain.getTransactionsByAddress(addr, { limit, reverse, offset })
