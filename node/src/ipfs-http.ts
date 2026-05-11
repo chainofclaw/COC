@@ -604,7 +604,23 @@ export class IpfsHttpServer {
       res.end(JSON.stringify({ error: !cid ? "missing cid" : "invalid cid" }))
       return
     }
-    const block = await this.store.get(cid)
+    // #230: pre-fix the bare `store.get(cid)` call let ENOENT bubble
+    // out as 500 "internal error" when the block was shape-valid but
+    // not present locally. The sibling handleCat correctly maps this
+    // to 404 via isNotFoundError. Mirror that here so observers
+    // probing for a CID can distinguish "we don't have it" (404)
+    // from a real server fault (500).
+    let block: Awaited<ReturnType<typeof this.store.get>>
+    try {
+      block = await this.store.get(cid)
+    } catch (err) {
+      if (isNotFoundError(err)) {
+        res.writeHead(404, { "content-type": "application/json" })
+        res.end(JSON.stringify({ error: "block not found" }))
+        return
+      }
+      throw err
+    }
     const meta = await this.readFileMeta()
     const file = meta[cid]
     // #134: DataSize and LinksSize were hardcoded to 0. For UnixFS
