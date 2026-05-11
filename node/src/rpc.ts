@@ -623,7 +623,19 @@ async function handleRpc(
     }
     case "eth_getStorageAt": {
       const storageAddr = requireHexParam(payload.params, 0, "address")
-      const storageSlot = String((payload.params ?? [])[1] ?? "0x0")
+      // #118: validate the slot before forwarding to evm. Pre-fix, an
+      // unsanitised slot like "-1" or unprefixed "1" was concatenated +
+      // padded inside the EVM layer, surfacing either as -32603 with a
+      // leaked padded-hex string ("0x000…-1") or as silent zero returns
+      // that masked the underlying input bug.
+      const slotRaw = (payload.params ?? [])[1]
+      if (typeof slotRaw !== "string" || slotRaw.length === 0) {
+        throw { code: -32602, message: "invalid storage slot: expected non-empty 0x-prefixed hex string" }
+      }
+      const storageSlot = slotRaw
+      if (!/^0x[0-9a-fA-F]{1,64}$/.test(storageSlot)) {
+        throw { code: -32602, message: `invalid storage slot: must match /^0x[0-9a-fA-F]{1,64}$/` }
+      }
       const stateRoot = await resolveHistoricalStateRoot((payload.params ?? [])[2], chain)
       return await evm.getStorageAt(storageAddr, storageSlot, stateRoot)
     }

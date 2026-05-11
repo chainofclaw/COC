@@ -336,6 +336,30 @@ test("RPC Extended Methods", async (t) => {
     assert.strictEqual(receipts, null)
   })
 
+  await t.test("#118: eth_getStorageAt rejects malformed slots with -32602", async () => {
+    // Pre-fix: invalid slots either leaked the evm's padded hex back
+    // ("0x000…-1") or silently returned zero. Now each malformed shape
+    // gets a clean -32602.
+    const accounts = await rpcCall(port, "eth_accounts") as string[]
+    const addr = accounts[0]
+    for (const badSlot of ["-1", "", "0x", "0xZZ", "1", "0x" + "f".repeat(65)]) {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0", id: 1, method: "eth_getStorageAt",
+          params: [addr, badSlot, "latest"],
+        }),
+      })
+      const json = await r.json() as { error?: { code: number; message: string } }
+      assert.ok(json.error, `expected error for slot=${JSON.stringify(badSlot)}`)
+      assert.equal(json.error!.code, -32602, `slot=${JSON.stringify(badSlot)} must be -32602, got ${json.error!.code}`)
+    }
+    // Sanity: a valid slot still works.
+    const ok = await rpcCall(port, "eth_getStorageAt", [addr, "0x0", "latest"]) as string
+    assert.match(ok, /^0x[0-9a-f]{64}$/, "valid slot must return a 32-byte hex word")
+  })
+
   await t.test("#116: eth_getLogs rejects blockHash + fromBlock combo with -32602", async () => {
     // EIP-234: blockHash is mutually exclusive with fromBlock/toBlock.
     // Pre-fix the implementation silently processed the range and surfaced
