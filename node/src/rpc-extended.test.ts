@@ -1196,6 +1196,27 @@ test("RPC Extended Methods", async (t) => {
     assert.ok(Array.isArray(ok.result), "valid filter returns an array")
   })
 
+  await t.test("#164: oversized JSON-RPC batch rejects with -32600 (no silent truncation)", async () => {
+    // Pre-fix `payload.slice(0, MAX_BATCH_SIZE)` silently dropped items
+    // beyond the 100 cap — clients sending 1000 items got 100 results
+    // and had no way to tell their other 900 requests never ran. For
+    // state-changing requests (eth_sendRawTransaction) that's a silent
+    // data-loss bug. Now reject the whole batch with -32600.
+    const oversizedBatch = Array.from({ length: 101 }, (_, i) => ({
+      jsonrpc: "2.0", id: i, method: "eth_blockNumber", params: [],
+    }))
+    const r = await fetch(`http://127.0.0.1:${port}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(oversizedBatch),
+    })
+    const j = await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    // Must be a single object error response, NOT an array of 100 results.
+    assert.ok(!Array.isArray(j), `expected single error object, got array of length ${Array.isArray(j) ? (j as unknown[]).length : "n/a"}`)
+    assert.equal(j.error?.code, -32600, `expected -32600, got ${j.error?.code}`)
+    assert.match(j.error!.message, /batch too large|max/i, "error must explain the cap")
+  })
+
   if (prevDevAccounts === undefined) {
     delete process.env.COC_DEV_ACCOUNTS
   } else {
