@@ -1415,6 +1415,34 @@ test("RPC Extended Methods", async (t) => {
     assert.equal(r2.error?.code, -32602, `0.5 must be -32602, got ${r2.error?.code}`)
   })
 
+  await t.test("#194: parseBlockTag rejects array/object/bool shapes (no silent fallback to latest)", async () => {
+    // Pre-fix the unknown-shape branch of parseBlockTag fell through
+    // to `return fallback` — every non-string, non-number input (arrays,
+    // objects, booleans) silently mapped to the latest block height.
+    // A client passing the wrong shape got latest's state with no
+    // signal that their query was malformed.
+    const probe = async (tag: unknown) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getBalance",
+          params: ["0x" + "0".repeat(40), tag] }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    }
+    // Array, object, bool → -32602.
+    for (const tag of [["latest"], { k: "v" }, true, false] as const) {
+      const r = await probe(tag)
+      assert.equal(r.error?.code, -32602, `tag=${JSON.stringify(tag)} must be -32602, got ${JSON.stringify(r)}`)
+      assert.match(r.error!.message, /block tag/i, "error must explain the shape")
+    }
+    // Sanity: omitting / null tag is still the canonical "latest" shorthand.
+    const okUndef = await probe(undefined)
+    assert.equal(okUndef.error, undefined, "undefined tag must NOT error")
+    const okNull = await probe(null)
+    assert.equal(okNull.error, undefined, "null tag must NOT error")
+  })
+
   if (prevDevAccounts === undefined) {
     delete process.env.COC_DEV_ACCOUNTS
   } else {
