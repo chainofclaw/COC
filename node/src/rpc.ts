@@ -45,6 +45,9 @@ import {
 
   optionalIntegerField,
   optionalBooleanField,
+  })
+
+  optionalBooleanParam,
   validateTxCallFields,
   validateLogFilter,
   sanitizeEthersError,
@@ -821,7 +824,11 @@ async function handleRpc(
       // → 0n → silently returned the genesis block. Sibling of #188 / #194.
       // resolveBlockNumber accepts unknown and dispatches through parseBlockTag,
       // which rejects non-string / non-number shapes at -32602.
-      const includeTx = Boolean((payload.params ?? [])[1])
+      // #260: pre-fix `Boolean((params)[1])` silently coerced `"false"`→true,
+      // `0`→false, `{}`→true, `[]`→true. Worst: a sloppy client sending
+      // `"false"` got full tx objects (~5-6× hash bytes), the OPPOSITE of
+      // intent. Use strict optionalBooleanParam to reject every non-boolean.
+      const includeTx = optionalBooleanParam(payload.params ?? [], 1, "includeTx", false)
       const number = await resolveBlockNumber((payload.params ?? [])[0], chain)
       const block = await Promise.resolve(chain.getBlockByNumber(number))
       // #112: synthesise a genesis block when block 0 is missing. The
@@ -843,7 +850,8 @@ async function handleRpc(
       // indistinguishable from "valid hash, no such block". Symmetric
       // with #150's eth_getTransactionByHash fix.
       const hash = requireBlockHashParam(payload.params ?? [], 0)
-      const includeTx = Boolean((payload.params ?? [])[1])
+      // #260: same Boolean(...) silent-coercion bug as eth_getBlockByNumber.
+      const includeTx = optionalBooleanParam(payload.params ?? [], 1, "includeTx", false)
       const block = await Promise.resolve(chain.getBlockByHash(hash))
       return formatBlock(block, includeTx, chain, evm)
     }

@@ -2439,6 +2439,14 @@ test("RPC Extended Methods", async (t) => {
     // silently became block 1500 — never hitting parseBlockTag's
     // non-string rejection. Same anti-pattern fixed in #250 for
     // eth_getBlockByNumber.
+  })
+
+  await t.test("#260: eth_getBlockByNumber / eth_getBlockByHash reject non-boolean includeTx", async () => {
+    // Pre-fix `Boolean((params)[1])` silently coerced:
+    //   "false"→true, 0→false, 1→true, ""→false, {}→true, []→true, "yes"→true
+    // The string-vs-bool case is the most user-hostile: a JS client sending
+    // `"false"` as a stringified bool gets the OPPOSITE of intent — full
+    // tx objects (~5-6× more bytes per tx than hashes).
     const probe = async (method: string, params: unknown[]) => {
       const r = await fetch(`http://127.0.0.1:${port}`, {
         method: "POST",
@@ -2783,6 +2791,42 @@ test("RPC Extended Methods", async (t) => {
     assert.equal(ok3.error, undefined, `feeHistory latest must pass: ${JSON.stringify(ok3)}`)
   })
 
+  })
+
+  })
+
+    const blockTag = "0x0"
+    const blockHash = `0x${"0".repeat(64)}`
+    const cases = [
+      { name: "string 'false'", value: "false" },
+      { name: "string 'true'", value: "true" },
+      { name: "string 'yes'", value: "yes" },
+      { name: "empty string", value: "" },
+      { name: "number 0", value: 0 },
+      { name: "number 1", value: 1 },
+      { name: "array [true]", value: [true] },
+      { name: "empty object", value: {} },
+      { name: "array empty", value: [] },
+    ]
+    for (const c of cases) {
+      const r1 = await probe("eth_getBlockByNumber", [blockTag, c.value])
+      assert.equal(r1.error?.code, -32602,
+        `eth_getBlockByNumber(${blockTag}, ${c.name}) must be -32602, got ${JSON.stringify(r1)}`)
+      const r2 = await probe("eth_getBlockByHash", [blockHash, c.value])
+      assert.equal(r2.error?.code, -32602,
+        `eth_getBlockByHash(<hash>, ${c.name}) must be -32602, got ${JSON.stringify(r2)}`)
+    }
+    // Sanity: strict booleans + omitted/null still work
+    for (const params of [
+      [blockTag],
+      [blockTag, null],
+      [blockTag, true],
+      [blockTag, false],
+    ]) {
+      const r = await probe("eth_getBlockByNumber", params)
+      assert.equal(r.error, undefined,
+        `well-shaped ${JSON.stringify(params)} must succeed: ${JSON.stringify(r)}`)
+    }
   })
 
   if (prevDevAccounts === undefined) {
