@@ -467,9 +467,27 @@ export function startRpcServer(
           res.end(JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "invalid request: empty batch" } }))
           return
         }
+        // #164: pre-fix oversized batches were silently truncated via
+        // payload.slice(0, MAX_BATCH_SIZE) — clients got 100 results and
+        // had no way to tell their other 900 requests were dropped. If
+        // those were state-changing (eth_sendRawTransaction), the client
+        // thinks the txs were sent when they never ran. Reject the whole
+        // batch with a single -32600 instead; same pattern as the
+        // oversized-body rejection at line 373.
+        if (Array.isArray(payload) && payload.length > MAX_BATCH_SIZE) {
+          if (!res.headersSent) {
+            res.writeHead(200, { "content-type": "application/json" })
+          }
+          res.end(JSON.stringify({
+            jsonrpc: "2.0",
+            id: null,
+            error: { code: -32600, message: `batch too large: ${payload.length} items (max ${MAX_BATCH_SIZE})` },
+          }))
+          return
+        }
 
         const response = Array.isArray(payload)
-          ? await Promise.all(payload.slice(0, MAX_BATCH_SIZE).map((item) => handleOne(item, chainId, evm, chain, p2p, filters, bftCoordinator, scopedOpts)))
+          ? await Promise.all(payload.map((item) => handleOne(item, chainId, evm, chain, p2p, filters, bftCoordinator, scopedOpts)))
           : await handleOne(payload, chainId, evm, chain, p2p, filters, bftCoordinator, scopedOpts)
 
         // #140: §4.1 server MUST NOT reply to notifications (requests
