@@ -1165,6 +1165,37 @@ test("RPC Extended Methods", async (t) => {
     assert.match(r2.error!.message, /monotonic|ascending|non-decreasing/i, "error must mention ordering")
   })
 
+  await t.test("#162: eth_getLogs validates address + topic shape (parity with eth_newFilter #142)", async () => {
+    // Pre-fix `eth_getLogs({address:"0x123"})` silently returned [] —
+    // clients couldn't distinguish "no matching logs" from "your filter
+    // is malformed". eth_newFilter was already strict via #142; this
+    // closes the eth_getLogs backdoor.
+    const probe = async (filter: unknown) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getLogs", params: [filter] }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    }
+    // (a) bad address shape → -32602
+    const r1 = await probe({ address: "0x123" })
+    assert.equal(r1.error?.code, -32602, `bad address must be -32602, got ${r1.error?.code}`)
+    assert.match(r1.error!.message, /address/i, "error must name the field")
+    // (b) bad topic shape → -32602
+    const r2 = await probe({ topics: ["0x123"] })
+    assert.equal(r2.error?.code, -32602, `short topic must be -32602, got ${r2.error?.code}`)
+    assert.match(r2.error!.message, /topic/i, "error must name the field")
+    // (c) too many topics (max 4) → -32602
+    const t64 = "0x" + "0".repeat(64)
+    const r3 = await probe({ topics: [t64, t64, t64, t64, t64] })
+    assert.equal(r3.error?.code, -32602, `5 topics must be -32602, got ${r3.error?.code}`)
+    // Sanity: valid filter returns an empty (or populated) array, not error.
+    const ok = await probe({ address: "0x" + "a".repeat(40), topics: [t64, null] })
+    assert.equal(ok.error, undefined, `valid filter must not error: ${JSON.stringify(ok.error)}`)
+    assert.ok(Array.isArray(ok.result), "valid filter returns an array")
+  })
+
   if (prevDevAccounts === undefined) {
     delete process.env.COC_DEV_ACCOUNTS
   } else {

@@ -877,6 +877,11 @@ async function handleRpc(
       if (query.blockHash !== undefined && (query.fromBlock !== undefined || query.toBlock !== undefined)) {
         throw { code: -32602, message: "eth_getLogs: blockHash is mutually exclusive with fromBlock/toBlock" }
       }
+      // #162: validate filter address/topic shape so malformed inputs
+      // surface as -32602 instead of silently matching nothing. PR #142
+      // already did this for eth_newFilter; eth_getLogs was the wide-open
+      // backdoor that bypassed validation despite taking the same shape.
+      validateLogFilter(query)
       const logsHeight = await Promise.resolve(chain.getHeight())
       return await queryLogs(chain, query, logsHeight)
     }
@@ -890,55 +895,10 @@ async function handleRpc(
       const newFilterHeight = await Promise.resolve(chain.getHeight())
       const fromBlock = parseBlockTag(query.fromBlock, newFilterHeight)
       const toBlock = query.toBlock !== undefined ? parseBlockTag(query.toBlock, newFilterHeight) : undefined
-      // #142: validate address + topic shape so malformed inputs reject
-      // at the boundary instead of silently consuming a filter slot.
-      // Pre-fix `eth_newFilter({address:"0x123"})` succeeded and returned
-      // a filter id; the filter then matched zero logs forever, while
-      // the slot counted against MAX_FILTERS.
-      const FILTER_ADDR_RE = /^0x[0-9a-fA-F]{40}$/
-      const FILTER_TOPIC_RE = /^0x[0-9a-fA-F]{64}$/
-      const validateFilterAddr = (raw: unknown, idx: number): Hex => {
-        if (typeof raw !== "string" || !FILTER_ADDR_RE.test(raw)) {
-          throw { code: -32602, message: `invalid filter address at index ${idx}: must match /^0x[0-9a-fA-F]{40}$/` }
-        }
-        return raw.toLowerCase() as Hex
-      }
-      // Normalize address: support both single string and array of addresses
-      let filterAddress: Hex | undefined
-      let filterAddresses: Hex[] | undefined
-      if (query.address) {
-        if (Array.isArray(query.address)) {
-          const MAX_FILTER_ADDRESSES = 100
-          if (query.address.length > MAX_FILTER_ADDRESSES) {
-            throw { code: -32602, message: `address array too large: ${query.address.length} > ${MAX_FILTER_ADDRESSES}` }
-          }
-          filterAddresses = (query.address as unknown[]).map((a, i) => validateFilterAddr(a, i))
-          filterAddress = filterAddresses.length > 0 ? filterAddresses[0] : undefined
-        } else {
-          filterAddress = validateFilterAddr(query.address, 0)
-        }
-      }
-      // Each topic position can be: null (wildcard), a 32-byte hex
-      // string, or a non-empty array of 32-byte hex strings (OR
-      // semantics) per the Ethereum JSON-RPC spec.
-      let normalizedTopics: Array<Hex | Hex[] | null> | undefined
-      if (Array.isArray(query.topics)) {
-        normalizedTopics = query.topics.map((t, i) => {
-          if (t === null || t === undefined) return null
-          if (Array.isArray(t)) {
-            return t.map((tt, j) => {
-              if (typeof tt !== "string" || !FILTER_TOPIC_RE.test(tt)) {
-                throw { code: -32602, message: `invalid filter topic at index ${i}[${j}]: must match /^0x[0-9a-fA-F]{64}$/ or null` }
-              }
-              return tt as Hex
-            })
-          }
-          if (typeof t !== "string" || !FILTER_TOPIC_RE.test(t)) {
-            throw { code: -32602, message: `invalid filter topic at index ${i}: must match /^0x[0-9a-fA-F]{64}$/ or null` }
-          }
-          return t as Hex
-        })
-      }
+      // #142 / #162: validate address + topic shape so malformed inputs
+      // reject at the boundary. Shared with eth_getLogs (#162) — both
+      // consume the same filter shape, both should reject the same way.
+      const { address: filterAddress, addresses: filterAddresses, topics: normalizedTopics } = validateLogFilter(query)
       const filter: PendingFilter = {
         id,
         kind: "log",
@@ -946,7 +906,7 @@ async function handleRpc(
         toBlock,
         address: filterAddress,
         addresses: filterAddresses,
-        topics: normalizedTopics as Array<Hex | null> | undefined,
+        topics: normalizedTopics,
         lastCursor: fromBlock > 0n ? fromBlock - 1n : 0n,
         createdAtMs: Date.now(),
       }
@@ -3233,6 +3193,70 @@ const MAX_LOG_BLOCK_RANGE = 10_000n
 const MAX_LOG_RESULTS = 10_000
 const MAX_TRACE_BLOCK_RANGE = 1_024n
 const MAX_TRACE_RESULTS = 1_000
+
+/**
+ * Validate + normalize the address/topic fields of a log filter shape
+ * (the object accepted by `eth_getLogs`, `eth_newFilter`, and downstream
+ * subscription paths). Mutates `query` in place with normalized lowercase
+ * hex so downstream consumers don't need to re-validate. Throws -32602
+ * on malformed input; PR #142 added these rules for `eth_newFilter`;
+ * PR #162 extends them to `eth_getLogs`.
+ */
+function validateLogFilter(query: Record<string, unknown>): {
+  address: Hex | undefined
+  addresses: Hex[] | undefined
+  topics: Array<Hex | Hex[] | null> | undefined
+} {
+  const FILTER_ADDR_RE = /^0x[0-9a-fA-F]{40}$/
+  const FILTER_TOPIC_RE = /^0x[0-9a-fA-F]{64}$/
+  const MAX_FILTER_ADDRESSES = 100
+  const MAX_FILTER_TOPICS = 4
+  const validateFilterAddr = (raw: unknown, idx: number): Hex => {
+    if (typeof raw !== "string" || !FILTER_ADDR_RE.test(raw)) {
+      throw { code: -32602, message: `invalid filter address at index ${idx}: must match /^0x[0-9a-fA-F]{40}$/` }
+    }
+    return raw.toLowerCase() as Hex
+  }
+  let address: Hex | undefined
+  let addresses: Hex[] | undefined
+  if (query.address !== undefined && query.address !== null) {
+    if (Array.isArray(query.address)) {
+      if (query.address.length > MAX_FILTER_ADDRESSES) {
+        throw { code: -32602, message: `address array too large: ${query.address.length} > ${MAX_FILTER_ADDRESSES}` }
+      }
+      addresses = (query.address as unknown[]).map((a, i) => validateFilterAddr(a, i))
+      address = addresses.length > 0 ? addresses[0] : undefined
+    } else {
+      address = validateFilterAddr(query.address, 0)
+    }
+    // Mutate the query in-place so downstream collectLogs / chain.getLogs
+    // see the lowercased canonical form and don't need to re-validate.
+    query.address = addresses ?? address
+  }
+  let topics: Array<Hex | Hex[] | null> | undefined
+  if (Array.isArray(query.topics)) {
+    if (query.topics.length > MAX_FILTER_TOPICS) {
+      throw { code: -32602, message: `topics array too large: ${query.topics.length} > ${MAX_FILTER_TOPICS} (max indexed log topics)` }
+    }
+    topics = query.topics.map((t, i) => {
+      if (t === null || t === undefined) return null
+      if (Array.isArray(t)) {
+        return t.map((tt, j) => {
+          if (typeof tt !== "string" || !FILTER_TOPIC_RE.test(tt)) {
+            throw { code: -32602, message: `invalid filter topic at index ${i}[${j}]: must match /^0x[0-9a-fA-F]{64}$/ or null` }
+          }
+          return tt.toLowerCase() as Hex
+        })
+      }
+      if (typeof t !== "string" || !FILTER_TOPIC_RE.test(t)) {
+        throw { code: -32602, message: `invalid filter topic at index ${i}: must match /^0x[0-9a-fA-F]{64}$/ or null` }
+      }
+      return t.toLowerCase() as Hex
+    })
+    query.topics = topics
+  }
+  return { address, addresses, topics }
+}
 
 async function queryLogs(chain: IChainEngine, query: Record<string, unknown>, resolvedHeight?: bigint): Promise<unknown[]> {
   const height = resolvedHeight ?? await Promise.resolve(chain.getHeight())
