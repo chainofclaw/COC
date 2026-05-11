@@ -363,6 +363,59 @@ describe("WebSocket RPC", () => {
     }
   })
 
+  it("#274: eth_subscribe('logs', filter) validates fromBlock / toBlock / blockHash / inner-topic-cap with -32602", async () => {
+    // Pre-fix the LOCAL `validateLogFilter` in websocket-rpc.ts didn't
+    // validate fromBlock/toBlock/blockHash at all, threw `new Error(...)`
+    // (-32603 internal-error) instead of `invalidParams` (-32602), and
+    // had an inner OR-topic cap of 100 versus HTTP's 32 (after #266).
+    // This test asserts WS now matches HTTP — single source of truth.
+    const ws = await connectWs(WS_PORT)
+    try {
+      // fromBlock: negative number / negative string / non-string-non-number → -32602
+      for (const bad of [-1, "-1", true, {}, [1]]) {
+        const err = await sendRpcExpectError(ws, "eth_subscribe", ["logs", { fromBlock: bad }])
+        assert.equal(err.code, -32602,
+          `fromBlock=${JSON.stringify(bad)} must be -32602, got ${err.code} (${err.message})`)
+      }
+      // toBlock: same
+      for (const bad of [-1, "-1", true, {}, [1]]) {
+        const err = await sendRpcExpectError(ws, "eth_subscribe", ["logs", { toBlock: bad }])
+        assert.equal(err.code, -32602,
+          `toBlock=${JSON.stringify(bad)} must be -32602, got ${err.code} (${err.message})`)
+      }
+      // blockHash: anything that isn't a 32-byte hex string → -32602
+      for (const bad of ["not-hex", "0xshort", 123, true, {}, [1]]) {
+        const err = await sendRpcExpectError(ws, "eth_subscribe", ["logs", { blockHash: bad }])
+        assert.equal(err.code, -32602,
+          `blockHash=${JSON.stringify(bad)} must be -32602, got ${err.code} (${err.message})`)
+      }
+      // address: shape-rejected → -32602 (was -32603 pre-fix)
+      const addrErr = await sendRpcExpectError(ws, "eth_subscribe", ["logs", { address: "not-an-address" }])
+      assert.equal(addrErr.code, -32602,
+        `malformed address must be -32602, got ${addrErr.code} (${addrErr.message})`)
+      // Topics: 5 outer → -32602 (was -32603)
+      const tooManyTopicsErr = await sendRpcExpectError(ws, "eth_subscribe",
+        ["logs", { topics: [null, null, null, null, null] }])
+      assert.equal(tooManyTopicsErr.code, -32602,
+        `5 outer topics must be -32602, got ${tooManyTopicsErr.code} (${tooManyTopicsErr.message})`)
+      // Inner topic OR-array: 33+ → -32602 (matches HTTP cap from #266)
+      const inner33 = Array.from({ length: 33 }, (_, i) => `0x${i.toString(16).padStart(64, "0")}`)
+      const innerCapErr = await sendRpcExpectError(ws, "eth_subscribe",
+        ["logs", { topics: [inner33] }])
+      assert.equal(innerCapErr.code, -32602,
+        `inner OR-array of 33 must be -32602, got ${innerCapErr.code} (${innerCapErr.message})`)
+      // Sanity: well-shaped filters still create subscriptions
+      const okHash = `0x${"ab".repeat(32)}`
+      const okAddr = `0x${"cd".repeat(20)}`
+      const okTopic = `0x${"ef".repeat(32)}`
+      const sub1 = await sendRpc(ws, "eth_subscribe",
+        ["logs", { fromBlock: "0x1", toBlock: "0x100", blockHash: okHash, address: okAddr, topics: [okTopic] }])
+      assert.match(sub1, /^0x[0-9a-f]+$/, `well-shaped filter must create subscription, got ${sub1}`)
+    } finally {
+      ws.close()
+    }
+  })
+
   it("#130: 11th subscription on one client returns -32005 (not -32603)", async () => {
     const ws = await connectWs(WS_PORT)
     try {
