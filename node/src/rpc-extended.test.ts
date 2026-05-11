@@ -1110,6 +1110,32 @@ test("RPC Extended Methods", async (t) => {
     assert.equal(r2.error?.code, -32602, `non-object typedData must be -32602, got ${r2.error?.code}`)
   })
 
+  await t.test("#156: eth_sendRawTransaction rejects malformed input with -32602 and clean message (no ethers leak)", async () => {
+    // Pre-fix bogus input (e.g. "0xff") flowed into ethers.Transaction.from()
+    // and surfaced as -32603 "data short segment too short (buffer=0xff,
+    // length=1, offset=9, code=BUFFER_OVERRUN, version=6.16.0)" — leaking
+    // the ethers.js version + internal error class to any unauthenticated
+    // caller. Validate shape upfront so clients get -32602 with a clean
+    // message. (Kept to 2 probes to stay under the per-IP rate-limit
+    // shared with other tests in this fixture.)
+    const probe = async (raw: unknown) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_sendRawTransaction", params: [raw] }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    }
+    // (a) Non-string param hits the type guard → -32602
+    const r1 = await probe(null)
+    assert.equal(r1.error?.code, -32602, `null must be -32602, got ${r1.error?.code}`)
+    assert.doesNotMatch(r1.error!.message, /version=|BUFFER_OVERRUN|INVALID_ARGUMENT|UNSUPPORTED_OPERATION/, "must not leak ethers internals")
+    // (b) Well-shaped but too-short hex hits the length floor → -32602
+    const r2 = await probe("0xff")
+    assert.equal(r2.error?.code, -32602, `too-short must be -32602, got ${r2.error?.code}`)
+    assert.doesNotMatch(r2.error!.message, /version=|BUFFER_OVERRUN|INVALID_ARGUMENT|UNSUPPORTED_OPERATION/, "must not leak ethers internals")
+  })
+
   if (prevDevAccounts === undefined) {
     delete process.env.COC_DEV_ACCOUNTS
   } else {
