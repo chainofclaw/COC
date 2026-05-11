@@ -486,6 +486,27 @@ export class ConsensusEngine {
       return
     }
 
+    // PR-1L (2026-05-11): permanently disable the H15 override mechanism on
+    // tiny clusters (N < PR1A_MIN_VALIDATORS, default 4).
+    //
+    // Observed 2026-05-11 18780 prod 3-node redeploy fingerprint: after a
+    // single stalled round, server-2's H15 watchdog armed the override and
+    // it began proposing every height regardless of round-robin. server-1
+    // and server-3 continued to expect round-robin slot ownership for their
+    // own slots, refusing to prepare-vote server-2's H15-override proposes.
+    // server-2 then "finalized" rounds against its own view (single commit
+    // vote slipping through some BFT path) while server-1 / server-3 stayed
+    // frozen at the pre-override height — effectively a fork.
+    //
+    // For N < 4 the trade-off favors clean "stop the chain on single fault"
+    // over "let one node take over": the latter is silent safety violation,
+    // the former is loud loss of liveness that a human notices and fixes.
+    // PR-1J already permanently disables PR-1A's 15 s fast-path on N<4 for
+    // the same reason; PR-1L extends that contract to the 600 s slow path.
+    if (!this.isPr1aEnabled()) {
+      return
+    }
+
     let currentHeight: bigint
     try {
       currentHeight = await Promise.resolve(this.chain.getHeight())
