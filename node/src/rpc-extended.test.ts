@@ -1001,7 +1001,6 @@ test("RPC Extended Methods", async (t) => {
       const j = await probeError("coc_dhtFindProviders", params)
       assert.ok(j.error, `coc_dhtFindProviders(${JSON.stringify(params)}) must error, got result=${JSON.stringify(j.result)}`)
       assert.equal(j.error!.code, -32602)
-      // The error must NOT live inside the result body anymore.
       assert.equal(j.result, undefined, "errors must be in error field, not result body")
     }
     // (b) coc_ipfsFetchBlockFromPeer same shape
@@ -1018,6 +1017,38 @@ test("RPC Extended Methods", async (t) => {
       assert.ok(j.error)
       assert.equal(j.error!.code, -32601, `${method} must be -32601 when not configured, got ${j.error!.code}`)
     }
+  })
+
+  await t.test("#148: eth_call / estimateGas / sendTransaction / createAccessList validate value/gas/data shape", async () => {
+    // Pre-fix `eth_estimateGas({value:"not-hex"})` returned a clean gas
+    // estimate — the EVM silently treated non-hex value as 0, masking
+    // client typos. `eth_call({data:"not-hex"})` surfaced as -32603 with
+    // the V8 message leaking ("Input must be a 0x-prefixed...").
+    const validAddr = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+    const badShapes = [
+      { value: "not-hex" }, { value: "100" }, { value: "0xZZ" },
+      { gas: "not-hex" }, { gasPrice: "100" },
+      { data: "not-hex" }, { data: "0xZ" }, { data: "0x123" }, // odd-length data
+    ]
+    for (const method of ["eth_call", "eth_estimateGas", "eth_createAccessList"]) {
+      for (const bad of badShapes) {
+        const r = await fetch(`http://127.0.0.1:${port}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0", id: 1, method,
+            params: [{ to: validAddr, from: validAddr, ...bad }],
+          }),
+        })
+        const json = await r.json() as { result?: unknown; error?: { code: number; message: string } }
+        assert.ok(json.error, `${method}(${JSON.stringify(bad)}) must reject, got result=${JSON.stringify(json.result)}`)
+        assert.equal(json.error!.code, -32602, `${method}(${JSON.stringify(bad)}) must be -32602, got ${json.error!.code}`)
+        assert.match(json.error!.message, /invalid (value|gas|gasPrice|data)/, "message must name the bad field")
+      }
+    }
+    // Sanity: clean values pass through.
+    const ok = await rpcCall(port, "eth_estimateGas", [{ from: validAddr, to: validAddr, value: "0x1000", data: "0x" }])
+    assert.match(ok as string, /^0x[0-9a-f]+$/i)
   })
 
   if (prevDevAccounts === undefined) {
