@@ -2445,8 +2445,11 @@ async function handleRpc(
       // resolveCid + erasureStatus.
       const getter = (opts as RpcRuntimeOptions | undefined)?.getErasureStatus
       if (!getter) throw { code: -32601, message: "erasure status not available on this node" }
-      const cid = String((payload.params ?? [])[0] ?? "")
-      if (!cid) throw { code: -32602, message: "missing manifest CID" }
+      // #248: pre-fix `String((payload.params ?? [])[0] ?? "")` silently
+      // coerced non-string CIDs (123 → "123", {} → "[object Object]")
+      // and fed bogus identifiers to the erasure getter. Same anti-pattern
+      // as #120/#220/#226/#240/#242/#246. Use requireStringParam.
+      const cid = requireStringParam(payload.params ?? [], 0, "manifest CID")
       return getter(cid)
     }
     case "coc_getEquivocationsTotal": {

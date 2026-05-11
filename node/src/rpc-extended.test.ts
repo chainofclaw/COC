@@ -1897,43 +1897,35 @@ test("RPC Extended Methods", async (t) => {
     assert.equal(ok3.error, undefined, "empty object filter must succeed")
   })
 
-  await t.test("#246: eth_compileSolidity rejects non-string source (no silent coercion, no solc leak)", async () => {
+  await t.test("#248: coc_erasureStatus rejects non-string manifest CID", async () => {
     // Pre-fix `String((payload.params ?? [])[0] ?? "")` silently coerced
-    // bool/number/object via JS String() to "true"/"123"/"[object Object]",
-    // which passed the empty check and reached solc. solc returned a
-    // -32000 ParserError whose message LEAKED the coerced input back
-    // ("1 | [object Object]"). Same anti-pattern as #240/#242 but the
-    // leak surface is the solc compiler error.
+    // 123 → "123", true → "true", {} → "[object Object]" and forwarded
+    // bogus CIDs to the erasure getter. Same anti-pattern as #240/#242/#246.
     const probe = async (params: unknown[]) => {
       const r = await fetch(`http://127.0.0.1:${port}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_compileSolidity", params }),
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "coc_erasureStatus", params }),
       })
       return await r.json() as { error?: { code: number; message: string }; result?: unknown }
     }
-    for (const bad of [true, false, 123, {}, [1, 2]]) {
+    for (const bad of [123, true, false, {}, [1, 2]]) {
       const r = await probe([bad])
       assert.equal(r.error?.code, -32602,
-        `eth_compileSolidity(${JSON.stringify(bad)}) must be -32602, got ${JSON.stringify(r)}`)
-      assert.match(r.error!.message, /expected string|expected non-empty/i)
-      // The leak surface: solc's ParserError would surface "[object Object]"
-      // / "true" / "123" in the message. Pre-fix this leaked; post-fix
-      // we reject before solc runs.
-      assert.doesNotMatch(r.error!.message, /ParserError|object Object|input\.sol/i,
-        `must not leak solc wording, got ${r.error!.message}`)
+        `coc_erasureStatus(${JSON.stringify(bad)}) must be -32602, got ${JSON.stringify(r)}`)
+      assert.match(r.error!.message, /manifest CID|expected string/i)
     }
-    // Missing/null/empty source → -32602 "missing" message
+    // Missing/null/empty → -32602 "missing"
     for (const empty of [[], [null], [""]]) {
       const r = await probe(empty)
       assert.equal(r.error?.code, -32602,
-        `eth_compileSolidity(${JSON.stringify(empty)}) must be -32602, got ${JSON.stringify(r)}`)
+        `coc_erasureStatus(${JSON.stringify(empty)}) must be -32602, got ${JSON.stringify(r)}`)
     }
-    // Sanity: real source compiles (existing test #263 covers this; just
-    // verify the new validation doesn't break it).
-    const ok = await probe(["pragma solidity ^0.8.0; contract Empty {}"])
+    // Sanity: well-shaped string passes shape validation and reaches
+    // the stub fixture's getErasureStatus.
+    const ok = await probe(["bafy-real-manifest"])
     assert.notEqual(ok.error?.code, -32602,
-      `valid source must pass shape validation, got ${JSON.stringify(ok)}`)
+      `valid CID must pass shape validation, got ${JSON.stringify(ok)}`)
   })
 
   await t.test("#240: admin_addPeer / admin_removePeer reject non-string shape (no silent coercion)", async () => {
