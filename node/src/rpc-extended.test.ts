@@ -1051,6 +1051,42 @@ test("RPC Extended Methods", async (t) => {
     assert.match(ok as string, /^0x[0-9a-f]+$/i)
   })
 
+  await t.test("#150: eth_getTransactionByHash / eth_getTransactionReceipt reject short tx hashes with -32602", async () => {
+    // Pre-fix the loose requireHexParam accepted any 0x-prefixed hex up
+    // to 64 chars. `"0x123"` slipped through and the tx-lookup returned
+    // null ("not found") — clients couldn't tell a typo from a missing
+    // tx, so receipt pollers waited forever on bad hashes.
+    // Probe a few representative shapes; full panel covered in the
+    // #122/#124 address-validation tests. (Kept short to stay under
+    // the per-IP rate-limit shared with other tests in this fixture.)
+    const cases = [
+      { method: "eth_getTransactionByHash", hash: "0x123" },
+      { method: "eth_getTransactionByHash", hash: "0x" + "f".repeat(63) },
+      { method: "eth_getTransactionReceipt", hash: "0x" + "g".repeat(64) },
+    ]
+    for (const { method, hash } of cases) {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: [hash] }),
+      })
+      const json = await r.json() as { result?: unknown; error?: { code: number; message: string } }
+      assert.ok(json.error, `${method}(${JSON.stringify(hash)}) must error, got result=${JSON.stringify(json.result)}`)
+      assert.equal(json.error!.code, -32602, `${method}(${JSON.stringify(hash)}) must be -32602, got ${json.error!.code}`)
+      assert.match(json.error!.message, /invalid transaction hash/, "error must name the field")
+    }
+    // Sanity: a valid (but non-existent) hash returns null, not error.
+    const validButMissing = "0x" + "a".repeat(64)
+    const r = await fetch(`http://127.0.0.1:${port}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getTransactionByHash", params: [validButMissing] }),
+    })
+    const json = await r.json() as { result: unknown; error?: unknown }
+    assert.equal(json.error, undefined, "valid-shape but non-existent hash must NOT error")
+    assert.equal(json.result, null, "valid-shape but non-existent hash returns null")
+  })
+
   if (prevDevAccounts === undefined) {
     delete process.env.COC_DEV_ACCOUNTS
   } else {
