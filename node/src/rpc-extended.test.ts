@@ -2447,6 +2447,17 @@ test("RPC Extended Methods", async (t) => {
     // The string-vs-bool case is the most user-hostile: a JS client sending
     // `"false"` as a stringified bool gets the OPPOSITE of intent — full
     // tx objects (~5-6× more bytes per tx than hashes).
+  })
+
+  await t.test("#262: resolveHistoricalExecutionContext rejects non-string blockHash field (eth_call / estimateGas / createAccessList)", async () => {
+    // Pre-fix `String((input).blockHash ?? "")` made
+    //   {blockHash: [VALID_HASH]}  → silently unwrapped → call against that block
+    //   {blockHash: 123}           → -32001 "block not found: 123" (wrong code)
+    //   {blockHash: true}          → -32001 "block not found: true"
+    //   {blockHash: null}          → -32001 "block not found: " (silent empty)
+    // Same family as #250/#260 — every non-string shape should surface as
+    // -32602 invalid params with a clear message, not as a downstream
+    // "block not found" or, worse, a silent successful call.
     const probe = async (method: string, params: unknown[]) => {
       const r = await fetch(`http://127.0.0.1:${port}`, {
         method: "POST",
@@ -2827,6 +2838,38 @@ test("RPC Extended Methods", async (t) => {
       assert.equal(r.error, undefined,
         `well-shaped ${JSON.stringify(params)} must succeed: ${JSON.stringify(r)}`)
     }
+  })
+
+    const callObj = { to: `0x${"ab".repeat(20)}` }
+    const fakeHash = `0x${"ab".repeat(32)}` // syntactically valid 32-byte hash
+    const badBlockHashes: unknown[] = [
+      123,
+      true,
+      false,
+      null,
+      "",
+      "0xshort",
+      [fakeHash],            // single-element array (the worst — silent unwrap)
+      [fakeHash, fakeHash],
+      { hash: fakeHash },
+      {},
+    ]
+    for (const method of ["eth_call", "eth_estimateGas", "eth_createAccessList"]) {
+      for (const bad of badBlockHashes) {
+        const r = await probe(method, [callObj, { blockHash: bad }])
+        assert.equal(r.error?.code, -32602,
+          `${method}(call, {blockHash:${JSON.stringify(bad)}}) must be -32602, got ${JSON.stringify(r)}`)
+        assert.match(r.error!.message, /blockHash|invalid/i,
+          `${method} error must reference blockHash, got ${JSON.stringify(r)}`)
+      }
+    }
+    // Sanity: well-shaped string blockHash flows through validation
+    // (will likely surface as -32001 "block not found" since the hash
+    // doesn't exist on this test fixture — but it's NOT -32602, which
+    // is what we care about).
+    const ok = await probe("eth_call", [callObj, { blockHash: fakeHash }])
+    assert.notEqual(ok.error?.code, -32602,
+      `well-shaped blockHash must pass shape validation: ${JSON.stringify(ok)}`)
   })
 
   if (prevDevAccounts === undefined) {
