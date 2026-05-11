@@ -337,6 +337,65 @@ describe("IpfsHttpServer", () => {
     assert.ok(json.Hash)
     assert.equal(json.Size, String(payload.length))
   })
+
+  it("#134: /api/v0/ls returns per-leaf chunk size, sum equals file size", async () => {
+    // Upload via /api/v0/add so file-meta.json is populated (the
+    // UnixFsBuilder direct path used in other tests does not write
+    // file meta — only the HTTP add endpoint does). UnixFsBuilder
+    // chunks at 256 KiB; use 700 KB to get a multi-leaf file.
+    const totalSize = 700 * 1024
+    const content = Buffer.alloc(totalSize, 0x37)
+    const boundary = "----LsBoundary134"
+    const head = Buffer.from(
+      `--${boundary}\r\n` +
+      `Content-Disposition: form-data; name="file"; filename="multi.bin"\r\n` +
+      "Content-Type: application/octet-stream\r\n\r\n",
+    )
+    const tail = Buffer.from(`\r\n--${boundary}--\r\n`)
+    const body = Buffer.concat([head, content, tail])
+    const addRes = await fetch("/api/v0/add", {
+      method: "POST",
+      headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+      body,
+    })
+    assert.equal(addRes.status, 200)
+    const addJson = await addRes.json() as Record<string, string>
+    const cid = addJson.Hash
+    const res = await fetch(`/api/v0/ls?arg=${cid}`)
+    assert.equal(res.status, 200)
+    const lsJson = await res.json() as { Objects: Array<{ Links: Array<{ Name: string; Hash: string; Size: number; Type: number }> }> }
+    const links = lsJson.Objects[0].Links
+    assert.ok(links.length >= 2, `expected multi-chunk file but got ${links.length} leaves`)
+    const sumLeafBytes = links.reduce((acc, l) => acc + l.Size, 0)
+    assert.equal(sumLeafBytes, totalSize, `leaf size sum (${sumLeafBytes}) must equal file size (${totalSize})`)
+    for (const l of links) {
+      assert.ok(l.Size > 0, `leaf ${l.Name} has Size 0 — kubo-spec regression`)
+    }
+  })
+
+  it("#134: /api/v0/object/stat exposes DataSize (not hardcoded 0)", async () => {
+    const totalSize = 5000
+    const content = Buffer.alloc(totalSize, 0x42)
+    const boundary = "----StatBoundary134"
+    const head = Buffer.from(
+      `--${boundary}\r\n` +
+      `Content-Disposition: form-data; name="file"; filename="statme.bin"\r\n` +
+      "Content-Type: application/octet-stream\r\n\r\n",
+    )
+    const tail = Buffer.from(`\r\n--${boundary}--\r\n`)
+    const body = Buffer.concat([head, content, tail])
+    const addRes = await fetch("/api/v0/add", {
+      method: "POST",
+      headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+      body,
+    })
+    const addJson = await addRes.json() as Record<string, string>
+    const res = await fetch(`/api/v0/object/stat?arg=${addJson.Hash}`)
+    assert.equal(res.status, 200)
+    const statBody = await res.json() as Record<string, number>
+    assert.equal(statBody.DataSize, totalSize, `DataSize must reflect actual user data, got ${statBody.DataSize}`)
+    assert.equal(statBody.CumulativeSize, totalSize, "CumulativeSize must equal file size")
+  })
 })
 
 // Phase Q.4 — Reed-Solomon erasure coding integration tests.
