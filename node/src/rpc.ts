@@ -2428,8 +2428,13 @@ function safeBigInt(input: string): bigint {
 
 function parseBlockTag(input: unknown, fallback: bigint, finalizedHeight?: bigint): bigint {
   if (typeof input === "number") {
-    if (!Number.isFinite(input) || input < 0) throw { code: -32602, message: `invalid block number` }
-    return BigInt(Math.floor(input))
+    // #188: pre-fix `BigInt(Math.floor(input))` silently truncated
+    // fractional values (1.5 → 1). On a real chain the user would
+    // get block 1's data without realizing their input was wrong.
+    if (!Number.isFinite(input) || input < 0 || !Number.isInteger(input)) {
+      throw { code: -32602, message: `invalid block number: ${input}` }
+    }
+    return BigInt(input)
   }
   if (typeof input === "string") {
     if (input === "latest" || input === "pending") return fallback
