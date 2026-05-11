@@ -1963,6 +1963,36 @@ test("RPC Extended Methods", async (t) => {
       `valid excludePeerId string must pass shape, got ${JSON.stringify(okStr)}`)
   })
 
+  await t.test("#251: coc_dhtFindProviders rejects non-integer maxK (preserves omitted)", async () => {
+    // Pre-fix `Number((payload.params ?? [])[1] ?? 3)` silently mapped
+    // every malformed maxK to a clamped default: true → 1, "huge" → NaN→3,
+    // {} → NaN→3, -5 → fallback 3, 1.7 → Math.floor → 1. Clients with
+    // shape bugs got plausible result counts and never learned their
+    // input was wrong. Same anti-pattern as #224/#248.
+    const probe = async (params: unknown[]) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "coc_dhtFindProviders", params }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    }
+    const validCid = "bafy-real-cid"
+    // Non-integer or negative maxK → -32602
+    for (const bad of [true, false, "huge", {}, [1, 2], -1, -5, 0, 1.5, 1.7]) {
+      const r = await probe([validCid, bad])
+      assert.equal(r.error?.code, -32602,
+        `maxK=${JSON.stringify(bad)} must be -32602, got ${JSON.stringify(r)}`)
+      assert.match(r.error!.message, /maxK|positive integer/i)
+    }
+    // Omitted / null → default 3; positive integer → cap
+    for (const ok of [[validCid], [validCid, null], [validCid, 3], [validCid, 16], [validCid, 64]]) {
+      const r = await probe(ok)
+      assert.notEqual(r.error?.code, -32602,
+        `maxK=${JSON.stringify(ok[1])} must pass shape, got ${JSON.stringify(r)}`)
+    }
+  })
+
   await t.test("#240: admin_addPeer / admin_removePeer reject non-string shape (no silent coercion)", async () => {
     // Pre-fix `String((payload.params ?? [])[1] ?? ...)` silently coerced
     // numbers/bools to plausible peerIds ("123", "true"). Pre-fix

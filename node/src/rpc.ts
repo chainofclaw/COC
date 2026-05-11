@@ -1743,8 +1743,19 @@ async function handleRpc(
         invalidParams("invalid cid: contains illegal characters or exceeds 512 chars")
       }
       const cid = rawCid
-      const rawMaxK = Number((payload.params ?? [])[1] ?? 3)
-      const cap = Number.isFinite(rawMaxK) && rawMaxK > 0 ? Math.min(Math.floor(rawMaxK), 64) : 3
+      // #251: pre-fix `Number(... ?? 3)` silently mapped any malformed
+      // maxK (true → 1, "huge" → NaN→3, {} → NaN→3, -5 → fallback 3,
+      // 1.7 → 1 via Math.floor) to a clamped default. Clients passing
+      // wrong shapes got plausible result counts and never knew they
+      // had a bug. Same anti-pattern as #224 (eth_feeHistory blockCount).
+      const rawMaxK = (payload.params ?? [])[1]
+      let cap = 3
+      if (rawMaxK !== undefined && rawMaxK !== null) {
+        if (typeof rawMaxK !== "number" || !Number.isFinite(rawMaxK) || !Number.isInteger(rawMaxK) || rawMaxK < 1) {
+          throw { code: -32602, message: "invalid maxK: expected positive integer or omitted" }
+        }
+        cap = Math.min(rawMaxK, 64)
+      }
       const findProviders = opts?.findProviders as ((cid: string, maxK: number) => string[]) | undefined
       const providers = findProviders?.(cid, cap) ?? []
       return { providers }
