@@ -2137,7 +2137,13 @@ async function handleRpc(
           pendingTxCount: poolStats.size,
           recentTxCount,
           validatorCount: validators.length,
-          chainId: `0x${hasConfig(chain) ? chain.cfg.chainId.toString(16) : "1"}`,
+          // #184: pre-fix the inner ternary assumed chain.cfg.chainId
+          // was defined whenever hasConfig() returned true. But
+          // ChainEngineConfig.chainId is optional in the type — the
+          // constructor only defaults it for the mempool, not for cfg
+          // itself. Bare `undefined.toString(16)` leaked to clients
+          // as -32603 "Cannot read properties of undefined".
+          chainId: `0x${chain.cfg?.chainId?.toString(16) ?? "1"}`,
         }
         chainStatsCache = { result: statsResult, height, cachedAtMs: now }
         return statsResult
