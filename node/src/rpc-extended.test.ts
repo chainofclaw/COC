@@ -1559,7 +1559,7 @@ test("RPC Extended Methods", async (t) => {
     // string/bool/number flowed through to `payload.params ?? []` and
     // most methods just returned their default response, masking buggy
     // clients. Geth/erigon enforce this; we should too for inter-op.
-    const probe = async (body: Record<string, unknown>) => {
+    const probe204 = async (body: Record<string, unknown>) => {
       const r = await fetch(`http://127.0.0.1:${port}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -1569,24 +1569,68 @@ test("RPC Extended Methods", async (t) => {
     }
     // Bad params shapes — all -32600.
     for (const params of ["not-an-array", 42, true, false]) {
-      const r = await probe({ jsonrpc: "2.0", id: 1, method: "eth_chainId", params })
+      const r = await probe204({ jsonrpc: "2.0", id: 1, method: "eth_chainId", params })
       assert.equal(r.error?.code, -32600, `params=${JSON.stringify(params)} must be -32600, got ${JSON.stringify(r)}`)
       assert.match(r.error!.message, /params must be/i, "error must explain params shape")
     }
     // Sanity: array params (the canonical form) works.
-    const okArr = await probe({ jsonrpc: "2.0", id: 1, method: "eth_chainId", params: [] })
+    const okArr = await probe204({ jsonrpc: "2.0", id: 1, method: "eth_chainId", params: [] })
     assert.equal(okArr.error, undefined, "params=[] must NOT error")
     // Sanity: omitting params works.
-    const okOmit = await probe({ jsonrpc: "2.0", id: 1, method: "eth_chainId" })
+    const okOmit = await probe204({ jsonrpc: "2.0", id: 1, method: "eth_chainId" })
     assert.equal(okOmit.error, undefined, "omitted params must NOT error")
     // Sanity: explicit null works (treated as "no params").
-    const okNull = await probe({ jsonrpc: "2.0", id: 1, method: "eth_chainId", params: null })
-    assert.equal(okNull.error, undefined, "params=null must NOT error")
+    const okNull204 = await probe204({ jsonrpc: "2.0", id: 1, method: "eth_chainId", params: null })
+    assert.equal(okNull204.error, undefined, "params=null must NOT error")
     // Sanity: object params accepted at the envelope layer (handler may
     // still reject if it doesn't support by-name params, but the
     // envelope check is shape-only).
-    const okObj = await probe({ jsonrpc: "2.0", id: 1, method: "eth_chainId", params: {} })
+    const okObj = await probe204({ jsonrpc: "2.0", id: 1, method: "eth_chainId", params: {} })
     assert.equal(okObj.error, undefined, "params={} must NOT error at envelope layer")
+  })
+
+  await t.test("#202: JSON-RPC envelope rejects jsonrpc!='2.0' and non-conforming id types", async () => {
+    // Pre-fix handleOne only checked `!payload || typeof payload !== "object" || !payload.method`.
+    // It accepted jsonrpc:"1.0" (or omitted), and accepted id as object,
+    // array, bool — all spec violations. Conformant clients (geth/erigon)
+    // strictly enforce these, so any inter-op needs the same.
+    const probe = async (body: Record<string, unknown>) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown; id?: unknown }
+    }
+    // jsonrpc must be exactly "2.0"
+    for (const v of ["1.0", "1.1", "", 2, undefined]) {
+      const body: Record<string, unknown> = { id: 1, method: "eth_chainId" }
+      if (v !== undefined) body.jsonrpc = v
+      const r = await probe(body)
+      assert.equal(r.error?.code, -32600, `jsonrpc=${JSON.stringify(v)} must be -32600, got ${JSON.stringify(r)}`)
+      assert.match(r.error!.message, /jsonrpc/i, "error must name the field")
+    }
+    // id must be string | number | null
+    for (const badId of [{ obj: 1 }, [1, 2], true, false]) {
+      const r = await probe({ jsonrpc: "2.0", id: badId, method: "eth_chainId" })
+      assert.equal(r.error?.code, -32600, `id=${JSON.stringify(badId)} must be -32600, got ${JSON.stringify(r)}`)
+      assert.match(r.error!.message, /id must be/i, "error must explain id shape")
+    }
+    // method must be a non-empty string
+    for (const m of [0, "", null, true, ["eth_chainId"]]) {
+      const r = await probe({ jsonrpc: "2.0", id: 1, method: m })
+      assert.equal(r.error?.code, -32600, `method=${JSON.stringify(m)} must be -32600, got ${JSON.stringify(r)}`)
+    }
+    // Sanity: well-formed envelope still works.
+    const ok = await probe({ jsonrpc: "2.0", id: 1, method: "eth_chainId" })
+    assert.equal(ok.error, undefined, "well-formed envelope must NOT error")
+    assert.ok(typeof ok.result === "string", "result must be returned")
+    // Sanity: null id is allowed.
+    const okNull = await probe({ jsonrpc: "2.0", id: null, method: "eth_chainId" })
+    assert.equal(okNull.error, undefined, "id=null must be allowed")
+    // Sanity: string id is allowed.
+    const okStr = await probe({ jsonrpc: "2.0", id: "abc", method: "eth_chainId" })
+    assert.equal(okStr.error, undefined, "id as string must be allowed")
   })
 
   if (prevDevAccounts === undefined) {
