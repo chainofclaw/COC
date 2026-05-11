@@ -552,6 +552,17 @@ async function handleRpc(
       const includeTx = Boolean((payload.params ?? [])[1])
       const number = await resolveBlockNumber(tag, chain)
       const block = await Promise.resolve(chain.getBlockByNumber(number))
+      // #112: synthesise a genesis block when block 0 is missing. The
+      // chain starts producing at height 1, so resolveBlockNumber("earliest")
+      // → 0n → null. Standard Ethereum tooling expects "earliest" to return
+      // *something*. Match block-1's parentHash (all zeros) + timestamp 0,
+      // matching the convention already on the wire.
+      if (!block && number === 0n) {
+        const height = await Promise.resolve(chain.getHeight())
+        if (height >= 1n) {
+          return formatGenesisBlock(includeTx)
+        }
+      }
       return formatBlock(block, includeTx, chain, evm)
     }
     case "eth_getBlockByHash": {
@@ -2805,6 +2816,41 @@ async function formatPersistentReceipt(
     effectiveGasPrice: String((parsed as Record<string, unknown>).gasPrice ?? "0x0"),
     contractAddress,
     type: String((parsed as Record<string, unknown>).type ?? "0x0"),
+  }
+}
+
+/**
+ * #112: synthesise a genesis block (block 0) for `eth_getBlockByNumber("earliest")`
+ * when the chain didn't store block 0 explicitly. Match the convention block 1
+ * already uses on the wire (parentHash = 0x000…000, timestamp = 0). Empty txs,
+ * empty proposer, default 30M gasLimit. Hash is all-zeros — the same value
+ * block 1 carries as parentHash, so chain integrity checks line up.
+ */
+function formatGenesisBlock(includeTx: boolean) {
+  const ZERO_HASH = `0x${"0".repeat(64)}`
+  const ZERO_ADDR = `0x${"0".repeat(40)}`
+  return {
+    number: "0x0",
+    hash: ZERO_HASH,
+    parentHash: ZERO_HASH,
+    nonce: "0x0000000000000000",
+    sha3Uncles: ZERO_HASH,
+    logsBloom: `0x${"0".repeat(512)}`,
+    transactionsRoot: ZERO_HASH,
+    stateRoot: ZERO_HASH,
+    receiptsRoot: ZERO_HASH,
+    miner: ZERO_ADDR,
+    difficulty: "0x0",
+    totalDifficulty: "0x0",
+    extraData: "0x",
+    size: "0x0",
+    gasLimit: "0x1c9c380",
+    gasUsed: "0x0",
+    timestamp: "0x0",
+    transactions: includeTx ? [] : [],
+    uncles: [],
+    mixHash: ZERO_HASH,
+    baseFeePerGas: "0x0",
   }
 }
 

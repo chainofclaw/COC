@@ -154,10 +154,15 @@ describe("RPC semantic compatibility: block tags + pending nonce", () => {
       await engine.addRawTx(tx as Hex)
       await engine.proposeNextBlock()
 
-      // PersistentChainEngine starts at block 1, no block 0 exists.
-      // "earliest" should resolve to block 0, which returns null (no genesis block in persistent engine).
+      // PersistentChainEngine starts at block 1, no real block 0 exists.
+      // Per #112, "earliest" now returns a synthesised genesis block (number=0x0,
+      // hash=0x000…000) matching block-1's parentHash, so standard tooling
+      // (ethers/viem/hardhat fork detection) sees a non-null response.
       const earliest = await rpcCall(rpcPort, "eth_getBlockByNumber", ["earliest", false]) as any
-      assert.equal(earliest, null, "earliest (block 0) returns null when chain starts at block 1")
+      assert.ok(earliest, "earliest must not be null (synthesised genesis block)")
+      assert.equal(earliest.number, "0x0", "earliest.number must be 0x0")
+      assert.equal(earliest.hash, "0x" + "0".repeat(64), "synthesised genesis has all-zero hash")
+      assert.deepEqual(earliest.transactions, [], "synthesised genesis has no transactions")
 
       // Verify block 1 exists
       const block1 = await rpcCall(rpcPort, "eth_getBlockByNumber", ["0x1", false]) as any
@@ -199,10 +204,13 @@ describe("RPC semantic compatibility: block tags + pending nonce", () => {
         await engine.proposeNextBlock()
       }
 
-      // Finalized height resolves to 0 when height < finalityDepth.
-      // Block 0 does not exist in PersistentChainEngine (starts at block 1), so returns null.
+      // Finalized height resolves to 0 when height < finalityDepth. Per #112,
+      // block 0 now returns the synthesised genesis (not null) so clients
+      // querying the finalized tag in a very young chain still get a header.
       const finalized = await rpcCall(rpcPort, "eth_getBlockByNumber", ["finalized", false]) as any
-      assert.equal(finalized, null, "finalized should return null when clamped to block 0 (no genesis)")
+      assert.ok(finalized, "finalized must not be null — clamps to synthesised genesis")
+      assert.equal(finalized.number, "0x0", "clamped genesis has number 0x0")
+      assert.equal(finalized.hash, "0x" + "0".repeat(64))
 
       // With enough blocks, finalized should return a real block
       for (let i = 2; i < 7; i++) {
