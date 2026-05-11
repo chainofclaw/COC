@@ -979,14 +979,23 @@ export class IpfsHttpServer {
           const offsetRaw = url.query?.offset
           const countRaw = url.query?.count
           const opts: { offset?: number; count?: number } = {}
+          // #200: pre-fix offset only checked `!Number.isFinite(n)`, so
+          // negative or fractional values silently flowed to mfs.read and
+          // either surfaced as 500 "internal error" or returned surprising
+          // data. Match the (already correct) handleCat rule so MFS read
+          // and unixfs cat share the same kubo-compatible shape contract.
           if (offsetRaw !== undefined) {
             const n = Number(offsetRaw)
-            if (!Number.isFinite(n)) throw new HttpError(400, "invalid offset")
+            if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) {
+              throw new HttpError(400, "invalid offset")
+            }
             opts.offset = n
           }
           if (countRaw !== undefined) {
             const n = Number(countRaw)
-            if (!Number.isFinite(n) || n < 0) throw new HttpError(400, "invalid count")
+            if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) {
+              throw new HttpError(400, "invalid count")
+            }
             opts.count = n
           }
           const data = await this.mfs.read(arg, opts)
