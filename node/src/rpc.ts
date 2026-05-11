@@ -1918,13 +1918,30 @@ async function handleRpc(
       if (localNodeId && proposalParams.proposer !== localNodeId) {
         throw { code: -32003, message: "unauthorized: can only submit proposals as local node" }
       }
+      // #218: validate stakeAmount shape before `BigInt(...)`. Pre-fix
+      // an object/array/non-digit-string flowed straight into BigInt
+      // and threw a V8 SyntaxError ("Cannot convert [object Object] to
+      // a BigInt"). Same leak class as #212 (pose-http) — currently
+      // dead path because governance is disabled on prod, but fixing
+      // now avoids the leak surfacing once R3.2 (88780) enables it.
+      const stakeRaw = proposalParams.stakeAmount as unknown
+      let stakeAmount: bigint | undefined
+      if (stakeRaw !== undefined && stakeRaw !== null && stakeRaw !== "") {
+        const ok =
+          (typeof stakeRaw === "number" && Number.isInteger(stakeRaw) && stakeRaw >= 0) ||
+          (typeof stakeRaw === "string" && /^([0-9]+|0x[0-9a-fA-F]+)$/.test(stakeRaw))
+        if (!ok) {
+          throw { code: -32602, message: "invalid stakeAmount: must be a non-negative integer or 0x-hex" }
+        }
+        stakeAmount = BigInt(stakeRaw as string | number)
+      }
       const proposal = chain.governance.submitProposal(
         proposalParams.type,
         proposalParams.targetId,
         proposalParams.proposer,
         {
           targetAddress: proposalParams.targetAddress,
-          stakeAmount: proposalParams.stakeAmount ? BigInt(proposalParams.stakeAmount) : undefined,
+          stakeAmount,
         },
       )
       return {
