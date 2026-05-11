@@ -209,6 +209,95 @@ test("PR-1A: notifyBftProgress clears unreachable mark for stuck proposer", () =
   )
 })
 
+test("PR-1H: markProposerUnreachable is a no-op during startup grace", () => {
+  const c = new ConsensusEngine(
+    mkMockChain(VALIDATORS_5),
+    mkMockP2p(),
+    { blockTimeMs: 1000, syncIntervalMs: 300_000 },
+    { bft: mkMockBft(), nodeId: "node-2" },
+  )
+
+  // Simulate that consensus has been running for only 1 s (well inside grace).
+  ;(c as any).startedAtMs = Date.now() - 1_000
+
+  c.markProposerUnreachable("node-1")
+  assert.equal(
+    (c as any).unreachableProposers.size,
+    0,
+    "grace period prevents mark from being recorded",
+  )
+  assert.equal(
+    (c as any).isProposerUnreachable("node-1"),
+    false,
+    "grace period prevents isProposerUnreachable from reporting true",
+  )
+})
+
+test("PR-1H: markProposerUnreachable activates after startup grace expires", () => {
+  const c = new ConsensusEngine(
+    mkMockChain(VALIDATORS_5),
+    mkMockP2p(),
+    { blockTimeMs: 1000, syncIntervalMs: 300_000 },
+    { bft: mkMockBft(), nodeId: "node-2" },
+  )
+
+  // Simulate that consensus has been running for 90 s (past 60 s grace).
+  ;(c as any).startedAtMs = Date.now() - 90_000
+
+  c.markProposerUnreachable("node-1")
+  assert.equal((c as any).unreachableProposers.size, 1, "mark recorded after grace")
+  assert.equal((c as any).isProposerUnreachable("node-1"), true, "reachability check active after grace")
+})
+
+test("PR-1H: isProposerUnreachable always false during grace, ignoring reachabilityProvider", () => {
+  const c = new ConsensusEngine(
+    mkMockChain(VALIDATORS_5),
+    mkMockP2p(),
+    { blockTimeMs: 1000, syncIntervalMs: 300_000 },
+    {
+      bft: mkMockBft(),
+      nodeId: "node-2",
+      reachabilityProvider: () => new Set(["node-2"]), // excludes everyone else
+    },
+  )
+
+  // During grace, reachabilityProvider should be ignored.
+  ;(c as any).startedAtMs = Date.now() - 5_000
+  assert.equal(
+    (c as any).isProposerUnreachable("node-1"),
+    false,
+    "reachabilityProvider ignored during grace",
+  )
+
+  // After grace, reachabilityProvider takes effect.
+  ;(c as any).startedAtMs = Date.now() - 90_000
+  assert.equal(
+    (c as any).isProposerUnreachable("node-1"),
+    true,
+    "reachabilityProvider reports node-1 unreachable after grace",
+  )
+})
+
+test("PR-1H: noProgressWatchdog falls back to slow path during grace even when proposer is unreachable", async () => {
+  const c = new ConsensusEngine(
+    mkMockChain(VALIDATORS_5),
+    mkMockP2p(),
+    { blockTimeMs: 1000, syncIntervalMs: 300_000 },
+    { bft: mkMockBft(), nodeId: "node-2" },
+  )
+  ;(c as any).startedAtMs = Date.now() - 5_000
+
+  c.markProposerUnreachable("node-1") // no-op during grace
+  ;(c as any).lastBftProgressAtMs = Date.now() - (PROPOSER_UNREACHABLE_FAST_TIMEOUT_MS + 5_000)
+
+  await (c as any).checkNoProgressWatchdog()
+  assert.equal(
+    (c as any).noProgressProposerOverride,
+    false,
+    "fast path is disarmed during startup grace",
+  )
+})
+
 test("PR-1A: TTL constant is reasonable", () => {
   // Sanity check the constants relate sensibly:
   //   FAST < TTL  (a single round must not expire its own evidence mid-flight)
