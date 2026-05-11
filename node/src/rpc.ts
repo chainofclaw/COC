@@ -620,18 +620,22 @@ async function handleRpc(
       return `0x${estimated.toString(16)}`
     }
     case "eth_getCode": {
-      const codeAddr = requireHexParam(payload.params, 0, "address")
+      const codeAddr = requireAddressParam(payload.params ?? [], 0)
       const stateRoot = await resolveHistoricalStateRoot((payload.params ?? [])[1], chain)
       return await evm.getCode(codeAddr, stateRoot)
     }
     case "eth_call": {
       const callParams = ((payload.params ?? [])[0] ?? {}) as Record<string, string>
       const to = callParams.to ?? ""
-      if (to && !/^0x[0-9a-fA-F]{1,40}$/i.test(to)) {
-        throw { code: -32602, message: "invalid to address" }
+      // #124: pre-fix the regex was /^0x[0-9a-fA-F]{1,40}$/ which
+      // accepted "0x1" or any 1-39 hex chars. An address must be
+      // exactly 20 bytes (40 hex chars). Allow empty `to` for contract
+      // creation calls.
+      if (to && !/^0x[0-9a-fA-F]{40}$/.test(to)) {
+        throw { code: -32602, message: "invalid to address: must match /^0x[0-9a-fA-F]{40}$/" }
       }
-      if (callParams.from && !/^0x[0-9a-fA-F]{1,40}$/i.test(callParams.from)) {
-        throw { code: -32602, message: "invalid from address" }
+      if (callParams.from && !/^0x[0-9a-fA-F]{40}$/.test(callParams.from)) {
+        throw { code: -32602, message: "invalid from address: must match /^0x[0-9a-fA-F]{40}$/" }
       }
       const executionContext = await resolveHistoricalExecutionContext((payload.params ?? [])[1], chain)
       const callResult = await evm.callRaw({
@@ -644,7 +648,7 @@ async function handleRpc(
       return callResult.returnValue
     }
     case "eth_getStorageAt": {
-      const storageAddr = requireHexParam(payload.params, 0, "address")
+      const storageAddr = requireAddressParam(payload.params ?? [], 0)
       // #118: validate the slot before forwarding to evm. Pre-fix, an
       // unsanitised slot like "-1" or unprefixed "1" was concatenated +
       // padded inside the EVM layer, surfacing either as -32603 with a
@@ -662,7 +666,7 @@ async function handleRpc(
       return await evm.getStorageAt(storageAddr, storageSlot, stateRoot)
     }
     case "eth_getProof": {
-      const proofAddr = requireHexParam(payload.params, 0, "address")
+      const proofAddr = requireAddressParam(payload.params ?? [], 0)
       const rawSlots = (payload.params ?? [])[1]
       if (!Array.isArray(rawSlots)) {
         throw { code: -32602, message: "invalid storage keys: expected array" }
