@@ -336,6 +336,29 @@ test("RPC Extended Methods", async (t) => {
     assert.strictEqual(receipts, null)
   })
 
+  await t.test("#120: coc_getTransactionsByAddress rejects malformed addresses with -32602", async () => {
+    // Pre-fix: typo or junk address silently returned [] (it just missed
+    // the per-address index), masking client mistakes as "no transactions".
+    for (const badAddr of ["", "not-an-address", "0x", "0x123", "0x" + "g".repeat(40), "0x" + "f".repeat(41)]) {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0", id: 1, method: "coc_getTransactionsByAddress",
+          params: [badAddr, 50],
+        }),
+      })
+      const json = await r.json() as { error?: { code: number; message: string } }
+      assert.ok(json.error, `expected error for addr=${JSON.stringify(badAddr)}`)
+      assert.equal(json.error!.code, -32602, `addr=${JSON.stringify(badAddr)} must be -32602`)
+    }
+    // Sanity: a valid address still works (and returns an array since the
+    // test fixture chain has no getTransactionsByAddress hook → falls
+    // through to the empty-array path).
+    const ok = await rpcCall(port, "coc_getTransactionsByAddress", ["0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", 50])
+    assert.ok(Array.isArray(ok), "valid address must return an array")
+  })
+
   await t.test("#118: eth_getStorageAt rejects malformed slots with -32602", async () => {
     // Pre-fix: invalid slots either leaked the evm's padded hex back
     // ("0x000…-1") or silently returned zero. Now each malformed shape
