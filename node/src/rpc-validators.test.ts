@@ -106,6 +106,12 @@ describe("safeBigInt", () => {
     assert.match(e.message ?? "", /invalid block number/)
   })
 
+  test("#250: rejects empty string (no silent BigInt('') = 0n)", () => {
+    const e = captureThrow(() => safeBigInt(""))
+    assert.equal(e.code, -32602)
+    assert.match(e.message ?? "", /empty/)
+  })
+
   test("rejects non-string input", () => {
     const e = captureThrow(() => safeBigInt(42 as unknown as string))
     assert.equal(e.code, -32602)
