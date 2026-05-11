@@ -2427,6 +2427,12 @@ function safeBigInt(input: string): bigint {
 }
 
 function parseBlockTag(input: unknown, fallback: bigint, finalizedHeight?: bigint): bigint {
+  // #194: omitting the param (undefined / null) is the canonical
+  // "latest" shorthand and stays a silent fallback. Every other
+  // non-string, non-number shape (array, object, bool) used to fall
+  // through to the same fallback, which silently mapped malformed
+  // input to latest — sibling bug to #188.
+  if (input === undefined || input === null) return fallback
   if (typeof input === "number") {
     // #188: pre-fix `BigInt(Math.floor(input))` silently truncated
     // fractional values (1.5 → 1). On a real chain the user would
@@ -2444,7 +2450,7 @@ function parseBlockTag(input: unknown, fallback: bigint, finalizedHeight?: bigin
     if (n < 0n) throw { code: -32602, message: `invalid block number: ${input}` }
     return n
   }
-  return fallback
+  throw { code: -32602, message: "invalid block tag: must be hex quantity or named tag" }
 }
 
 async function resolveBlockNumber(input: unknown, chain: IChainEngine): Promise<bigint> {
