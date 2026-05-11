@@ -1469,8 +1469,11 @@ export class PersistentChainEngine {
     const currentHeight = await this.getHeight()
     if (incomingTip.number <= currentHeight) return false
 
-    // Verify block hash chain integrity before adopting
-    if (!this.verifyBlockChain(blocks)) {
+    // Verify block hash chain integrity before adopting. Skip parent-hash
+    // continuity check (PR-1O) because PR-1K's phantom prune can leave gaps
+    // in the parent-hash chain on a healthy live chain; per-block hash
+    // integrity is still verified, so tampered blocks are still rejected.
+    if (!this.verifyBlockChain(blocks, { skipParentHashContinuity: true })) {
       return false
     }
 
@@ -1538,7 +1541,14 @@ export class PersistentChainEngine {
 
     // Verify internal chain integrity (hashes, parent links); skip proposer
     // check because historical blocks may reference validators no longer active
-    if (!this.verifyBlockChain(importBlocks, true)) {
+    // and skip parent-hash CONTINUITY because PR-1K's phantom-block prune can
+    // leave gaps in the parent-hash chain on prod (e.g. b:71361.parentHash
+    // points to a pruned phantom b:71360). Per-block hash integrity check is
+    // preserved, and trySnapSync upstream already requires stateRoot+validators
+    // quorum across responding peers before reaching this code path — so
+    // tampering with individual blocks would still be caught by the post-state
+    // mismatch on the next applyBlock cycle.
+    if (!this.verifyBlockChain(importBlocks, { skipProposerCheck: true, skipParentHashContinuity: true })) {
       log.warn("snap block import rejected: verifyBlockChain failed", {
         snapshotStart: importBlocks[0].number.toString(),
         snapshotEnd: String(incomingTip.number),
@@ -1576,10 +1586,25 @@ export class PersistentChainEngine {
 
   /**
    * Verify internal chain integrity: hashes, parent links, timestamps.
-   * @param skipProposerCheck - skip validator-set proposer check (for SnapSync
-   *   where historical blocks may reference validators no longer active)
+   *
+   * Accepts both legacy `skipProposerCheck: boolean` and the new
+   * `{ skipProposerCheck?, skipParentHashContinuity? }` opts form for
+   * backwards compatibility with internal callers.
+   *
+   * - skipProposerCheck: skip validator-set proposer check (SnapSync may
+   *   carry blocks proposed by validators no longer in the active set).
+   * - skipParentHashContinuity: skip the block[i].parentHash === block[i-1].hash
+   *   chain-continuity check. Required after PR-1K's phantom-block prune
+   *   creates intentional gaps in the parent-hash chain (e.g. b:71361.parentHash
+   *   points to a pruned phantom b:71360). Per-block hash integrity is
+   *   preserved by the hashBlockPayload(...) === block.hash check above.
    */
-  private verifyBlockChain(blocks: ChainBlock[], skipProposerCheck = false): boolean {
+  private verifyBlockChain(
+    blocks: ChainBlock[],
+    opts: boolean | { skipProposerCheck?: boolean; skipParentHashContinuity?: boolean } = false,
+  ): boolean {
+    const skipProposerCheck = typeof opts === "boolean" ? opts : (opts.skipProposerCheck ?? false)
+    const skipParentHashContinuity = typeof opts === "boolean" ? false : (opts.skipParentHashContinuity ?? false)
     // Get active validators from governance or config
     const validators = this.governance
       ? this.governance.getActiveValidators().map((v) => v.id)
@@ -1623,13 +1648,26 @@ export class PersistentChainEngine {
       } else {
         const prev = blocks[i - 1]
         if (block.parentHash !== prev.hash) {
-          log.warn("verifyBlockChain failed: parent hash discontinuity", {
-            index: i,
-            number: String(block.number),
-            parentHash: block.parentHash,
-            prevHash: prev.hash,
-          })
-          return false
+          // PR-1O: when skipParentHashContinuity is set, log as info (not warn)
+          // and continue rather than failing the whole verification. Required
+          // because PR-1K's phantom-block prune intentionally leaves gaps in
+          // the parent-hash chain that healthy peers still need to sync.
+          if (skipParentHashContinuity) {
+            log.info("verifyBlockChain: parent hash discontinuity tolerated (PR-1O)", {
+              index: i,
+              number: String(block.number),
+              parentHash: block.parentHash,
+              prevHash: prev.hash,
+            })
+          } else {
+            log.warn("verifyBlockChain failed: parent hash discontinuity", {
+              index: i,
+              number: String(block.number),
+              parentHash: block.parentHash,
+              prevHash: prev.hash,
+            })
+            return false
+          }
         }
         if (BigInt(block.number) !== BigInt(prev.number) + 1n) {
           log.warn("verifyBlockChain failed: block number discontinuity", {
