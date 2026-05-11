@@ -1730,6 +1730,58 @@ test("RPC Extended Methods", async (t) => {
     }
   })
 
+  await t.test("#224: eth_feeHistory rejects non-hex/non-array shapes upfront (no silent coercion)", async () => {
+    // Pre-fix `Number(params[0] ?? 1)` silently mapped null/true/{}/"-0x5"
+    // to the default 1, and `as number[]` was a runtime no-op so non-array
+    // rewardPercentiles silently became "[]". Spec violation; clients
+    // never learned their input was bad.
+    const probe = async (params: unknown[]) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_feeHistory", params }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    }
+    const malformedBlockCount: unknown[][] = [
+      [true, "latest", []],
+      [false, "latest", []],
+      [{}, "latest", []],
+      [[1, 2], "latest", []],
+      ["not-hex", "latest", []],
+      ["-0x5", "latest", []],
+      ["0x", "latest", []],
+      [-1, "latest", []],
+      [0, "latest", []],
+      [1.5, "latest", []],
+    ]
+    for (const params of malformedBlockCount) {
+      const r = await probe(params)
+      assert.equal(r.error?.code, -32602,
+        `eth_feeHistory(${JSON.stringify(params)}) must be -32602, got ${JSON.stringify(r)}`)
+      assert.match(r.error!.message, /blockCount/i, "error must name blockCount")
+    }
+
+    const malformedPercentiles: unknown[][] = [
+      ["0x2", "latest", {}],
+      ["0x2", "latest", "fifty"],
+      ["0x2", "latest", 50],
+      ["0x2", "latest", true],
+    ]
+    for (const params of malformedPercentiles) {
+      const r = await probe(params)
+      assert.equal(r.error?.code, -32602,
+        `eth_feeHistory(${JSON.stringify(params)}) must be -32602, got ${JSON.stringify(r)}`)
+      assert.match(r.error!.message, /rewardPercentiles/i, "error must name rewardPercentiles")
+    }
+
+    // null/undefined for blockCount/percentiles still defaults (omission semantics)
+    const ok1 = await probe([null, "latest", null])
+    assert.equal(ok1.error, undefined, "null blockCount + null percentiles must default cleanly")
+    const ok2 = await probe(["0x2", "latest", [25, 75]])
+    assert.equal(ok2.error, undefined, "well-shaped call must succeed")
+  })
+
   if (prevDevAccounts === undefined) {
     delete process.env.COC_DEV_ACCOUNTS
   } else {
