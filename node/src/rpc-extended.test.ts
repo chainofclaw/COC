@@ -1087,6 +1087,29 @@ test("RPC Extended Methods", async (t) => {
     assert.equal(json.result, null, "valid-shape but non-existent hash returns null")
   })
 
+  await t.test("#154: eth_sign / eth_signTypedData_v4 validate address + message shape upfront", async () => {
+    // Pre-fix bogus address → -32603 "account not found: <raw>" leaking
+    // the typo. Now validates shape first → -32602; only the
+    // resource-not-found case yields -32004.
+    // (Kept to 2 probes to stay under the per-IP rate-limit shared with
+    // other tests in this fixture.)
+    const probe = async (method: string, params: unknown[]) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    }
+    // (a) eth_sign with bogus address → -32602 (pre-fix was -32603)
+    const r1 = await probe("eth_sign", ["bogus", "0x0"])
+    assert.equal(r1.error?.code, -32602, `bogus address must be -32602, got ${r1.error?.code}`)
+    // (b) eth_signTypedData_v4 with valid address but non-object typedData → -32602
+    const unknownAddr = "0x" + "9".repeat(40)
+    const r2 = await probe("eth_signTypedData_v4", [unknownAddr, "not-an-object"])
+    assert.equal(r2.error?.code, -32602, `non-object typedData must be -32602, got ${r2.error?.code}`)
+  })
+
   if (prevDevAccounts === undefined) {
     delete process.env.COC_DEV_ACCOUNTS
   } else {
