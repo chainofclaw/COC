@@ -22,6 +22,12 @@ async function rpcCall(port: number, method: string, params?: unknown[]) {
 test("RPC Extended Methods", async (t) => {
   const prevDevAccounts = process.env.COC_DEV_ACCOUNTS
   process.env.COC_DEV_ACCOUNTS = "1"
+  // The module-level rate limiter is shared across all tests in this
+  // fixture. With ~65 subtests each making several requests, the 200/60s
+  // budget is exhausted before later tests run, masking real assertion
+  // failures behind opaque -32005. Bypass for the duration of the suite.
+  const prevRateLimitDisabled = process.env.COC_RPC_RATE_LIMIT_DISABLED
+  process.env.COC_RPC_RATE_LIMIT_DISABLED = "1"
   const chainId = 18780
   const dataDir = "/tmp/coc-rpc-ext-test-" + Date.now()
   const rewardManifestDir = join(dataDir, "reward-manifests")
@@ -1136,9 +1142,37 @@ test("RPC Extended Methods", async (t) => {
     assert.doesNotMatch(r2.error!.message, /version=|BUFFER_OVERRUN|INVALID_ARGUMENT|UNSUPPORTED_OPERATION/, "must not leak ethers internals")
   })
 
+  await t.test("#160: eth_feeHistory validates rewardPercentile range + monotonic order", async () => {
+    // Pre-fix percentiles outside [0,100], non-numeric, or non-monotonic
+    // silently flowed into feeOracle.computeFeeHistoryRewards and returned
+    // "0x0" rewards. Spec requires monotonic [0,100]; geth rejects with
+    // explicit error. (Kept to 2 probes to stay under the rate-limit.)
+    const probe = async (percentiles: unknown[]) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_feeHistory", params: ["0x2", "latest", percentiles] }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    }
+    // (a) Out-of-range (>100) → -32602
+    const r1 = await probe([150])
+    assert.equal(r1.error?.code, -32602, `out-of-range must be -32602, got ${r1.error?.code}`)
+    assert.match(r1.error!.message, /out of range|rewardPercentile/i, "error must name the field")
+    // (b) Non-monotonic order → -32602
+    const r2 = await probe([75, 25, 50])
+    assert.equal(r2.error?.code, -32602, `non-monotonic must be -32602, got ${r2.error?.code}`)
+    assert.match(r2.error!.message, /monotonic|ascending|non-decreasing/i, "error must mention ordering")
+  })
+
   if (prevDevAccounts === undefined) {
     delete process.env.COC_DEV_ACCOUNTS
   } else {
     process.env.COC_DEV_ACCOUNTS = prevDevAccounts
+  }
+  if (prevRateLimitDisabled === undefined) {
+    delete process.env.COC_RPC_RATE_LIMIT_DISABLED
+  } else {
+    process.env.COC_RPC_RATE_LIMIT_DISABLED = prevRateLimitDisabled
   }
 })
