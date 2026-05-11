@@ -1832,6 +1832,36 @@ test("RPC Extended Methods", async (t) => {
       `must not leak ReferenceError on bool, got ${r3.error!.message}`)
   })
 
+  await t.test("#234: coc_submit/vote/getDaoProposal return -32601 when governance disabled (not -32603)", async () => {
+    // Pre-fix the plain `new Error("governance not enabled")` fell through
+    // the outer catch's generic -32603 path. JSON-RPC §5.1 reserves
+    // -32603 for genuine server faults; "feature not enabled on this
+    // node" is a method-availability concern → -32601. Same class as
+    // #132 (unknown-method fallback).
+    // The test fixture builds a ChainEngine WITHOUT governance, so all
+    // three methods hit the !hasGovernance branch.
+    const probe = async (method: string, params: unknown[]) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    }
+    const methods: Array<[string, unknown[]]> = [
+      ["coc_submitProposal", [{ type: "add_validator", targetId: "v1", proposer: "n1" }]],
+      ["coc_voteProposal", [{ proposalId: "p1", voterId: "n1", approve: true }]],
+      ["coc_getDaoProposal", ["p1"]],
+    ]
+    for (const [method, params] of methods) {
+      const r = await probe(method, params)
+      assert.equal(r.error?.code, -32601,
+        `${method} must be -32601 when governance disabled, got ${JSON.stringify(r)}`)
+      assert.match(r.error!.message, /governance.*not enabled/i,
+        `${method} error must reference governance, got ${r.error!.message}`)
+    }
+  })
+
   if (prevDevAccounts === undefined) {
     delete process.env.COC_DEV_ACCOUNTS
   } else {
