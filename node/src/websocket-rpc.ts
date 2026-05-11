@@ -23,6 +23,11 @@ import { formatNewHeadsNotification, formatLogNotification } from "./chain-event
 import type { Hex } from "./blockchain-types.ts"
 import type { IndexedLog } from "./storage/block-index.ts"
 import { createLogger } from "./logger.ts"
+import {
+  invalidParams,
+  internalError,
+  limitExceeded,
+} from "./rpc-validators.ts"
 
 const log = createLogger("ws-rpc")
 
@@ -440,16 +445,16 @@ export class WsRpcServer {
     // a confusing "unsupported subscription type: null". Reject
     // non-string upfront.
     if (typeof params[0] !== "string") {
-      throw { code: -32602, message: "invalid subscription type: expected string" }
+      invalidParams("invalid subscription type: expected string")
     }
     const type = params[0]
     const subId = generateSubscriptionId()
 
     const client = this.clients.get(ws)
-    if (!client) throw { code: -32603, message: "client not found" }
+    if (!client) internalError("client not found")
 
     if (client.subscriptions.size >= MAX_SUBSCRIPTIONS_PER_CLIENT) {
-      throw { code: -32005, message: `max subscriptions per client reached (${MAX_SUBSCRIPTIONS_PER_CLIENT})` }
+      limitExceeded(`max subscriptions per client reached (${MAX_SUBSCRIPTIONS_PER_CLIENT})`)
     }
 
     switch (type) {
@@ -491,7 +496,7 @@ export class WsRpcServer {
         let filterParam: Record<string, unknown> = {}
         if (rawFilter !== undefined && rawFilter !== null) {
           if (typeof rawFilter !== "object" || Array.isArray(rawFilter)) {
-            throw { code: -32602, message: `invalid filter: expected object, got ${Array.isArray(rawFilter) ? "array" : typeof rawFilter}` }
+            invalidParams(`invalid filter: expected object, got ${Array.isArray(rawFilter) ? "array" : typeof rawFilter}`)
           }
           filterParam = rawFilter as Record<string, unknown>
         }
@@ -512,7 +517,7 @@ export class WsRpcServer {
       default:
         // #130: invalid params → -32602 per JSON-RPC §5.1 instead of
         // the previous -32603 internal-error fallback.
-        throw { code: -32602, message: `unsupported subscription type: ${type}` }
+        invalidParams(`unsupported subscription type: ${type}`)
     }
 
     log.info("subscription created", { type, subId })
@@ -526,7 +531,7 @@ export class WsRpcServer {
     // removed." Subscription IDs are minted as 0x + 32 hex chars
     // (see generateSubscriptionId); validate that shape upfront.
     if (typeof params[0] !== "string" || !/^0x[0-9a-fA-F]{32}$/.test(params[0])) {
-      throw { code: -32602, message: "invalid subscription id: must match /^0x[0-9a-fA-F]{32}$/" }
+      invalidParams("invalid subscription id: must match /^0x[0-9a-fA-F]{32}$/")
     }
     const subId = params[0]
     const client = this.clients.get(ws)
