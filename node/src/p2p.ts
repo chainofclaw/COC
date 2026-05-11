@@ -1032,6 +1032,11 @@ export class P2PNode {
       : payloadRecord
     const payloadSize = serializeJson(signedPayload).length
 
+    // PR-1M (2026-05-11): observability — collect per-peer outcomes and log
+    // them at WARN when any peer rejects. The previous silent-catch hid the
+    // 2026-05-11 18780 prod symptom where server-3 broadcasts to server-1/2
+    // were rejected (401/429/etc) but neither side surfaced a diagnostic.
+    const failures: Array<{ peerId: string; url: string; reason: string }> = []
     for (let i = 0; i < allPeers.length; i += BROADCAST_CONCURRENCY) {
       const batch = allPeers.slice(i, i + BROADCAST_CONCURRENCY)
       await Promise.all(batch.map(async (peer) => {
@@ -1039,10 +1044,25 @@ export class P2PNode {
           await requestJson(`${peer.url}/p2p/bft-message`, "POST", signedPayload)
           this.scoring.recordSuccess(peer.id)
           this.bytesSent += payloadSize
-        } catch {
+        } catch (err) {
           this.scoring.recordFailure(peer.id)
+          failures.push({
+            peerId: peer.id,
+            url: peer.url,
+            reason: String(err ?? "unknown").slice(0, 200),
+          })
         }
       }))
+    }
+    if (failures.length > 0) {
+      log.warn("broadcastBft: peer failures", {
+        msgType: msg.type,
+        height: String(msg.height ?? "?"),
+        attempted: allPeers.length,
+        failed: failures.length,
+        // Cap to first 5 to keep log entry bounded
+        sample: failures.slice(0, 5),
+      })
     }
   }
 
