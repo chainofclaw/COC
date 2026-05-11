@@ -903,6 +903,55 @@ test("RPC Extended Methods", async (t) => {
     assert.equal(strJson.error!.code, -32600, `string-payload must include code -32600, got ${strJson.error?.code}`)
   })
 
+  await t.test("#140: JSON-RPC 2.0 §4.1 notifications get no response; §6 empty batch errors", async () => {
+    // (a) Single notification (no `id` field) → HTTP 204 no-body
+    const notify = await fetch(`http://127.0.0.1:${port}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", method: "eth_chainId", params: [] }),
+    })
+    assert.equal(notify.status, 204, `notification must HTTP 204 no-body, got ${notify.status}`)
+    const notifyBody = await notify.text()
+    assert.equal(notifyBody, "", "notification body must be empty")
+
+    // (b) Empty batch [] → single Invalid Request -32600 (not [])
+    const emptyBatch = await fetch(`http://127.0.0.1:${port}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "[]",
+    })
+    assert.equal(emptyBatch.status, 200)
+    const emptyJson = await emptyBatch.json() as { error?: { code: number; message: string } } | unknown[]
+    assert.ok(!Array.isArray(emptyJson), "empty batch must return single object, not []")
+    assert.equal((emptyJson as { error: { code: number } }).error.code, -32600, "empty batch error must be -32600")
+
+    // (c) Batch of all notifications → 204 no-body
+    const batchNotify = await fetch(`http://127.0.0.1:${port}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify([
+        { jsonrpc: "2.0", method: "eth_chainId", params: [] },
+        { jsonrpc: "2.0", method: "eth_blockNumber", params: [] },
+      ]),
+    })
+    assert.equal(batchNotify.status, 204, `batch of notifications must HTTP 204, got ${batchNotify.status}`)
+
+    // (d) Mixed batch (1 notification + 1 request) → array with only the request's response
+    const mixed = await fetch(`http://127.0.0.1:${port}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify([
+        { jsonrpc: "2.0", method: "eth_chainId", params: [] }, // notification (no id)
+        { jsonrpc: "2.0", id: 42, method: "eth_blockNumber", params: [] },
+      ]),
+    })
+    assert.equal(mixed.status, 200)
+    const mixedJson = await mixed.json() as Array<{ id: number; result: string }>
+    assert.ok(Array.isArray(mixedJson))
+    assert.equal(mixedJson.length, 1, "notification must be filtered out, leaving only the request's response")
+    assert.equal(mixedJson[0].id, 42)
+  })
+
   if (prevDevAccounts === undefined) {
     delete process.env.COC_DEV_ACCOUNTS
   } else {
