@@ -1686,6 +1686,50 @@ test("RPC Extended Methods", async (t) => {
     }
   })
 
+  await t.test("#220: coc_submitProposal / coc_voteProposal reject null/undefined params[0] (no V8 NPE leak)", async () => {
+    // Pre-fix `(payload.params ?? [])[0] as Record<...>` was a no-op
+    // cast. With params=[] / [null] the next line accessed .proposer /
+    // .voterId on undefined/null and threw V8 "Cannot read properties
+    // of null/undefined (reading 'X')" — leaked through the outer
+    // catch. Same NPE-leak class as the BigInt V8 leaks in #212/#218.
+    // Reuse the governance stub from #218 to make the path reachable.
+    const governanceStub220 = {
+      submitProposal: () => ({ id: "p1", type: "x", targetId: "v4", status: "pending" }),
+      vote: () => {},
+      getProposal: () => ({ id: "p1", status: "pending", votes: new Map() }),
+    } as Record<string, unknown>
+    ;(chain as unknown as Record<string, unknown>).governance = governanceStub220
+    try {
+      const probe = async (method: string, params: unknown[]) => {
+        const r = await fetch(`http://127.0.0.1:${port}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+        })
+        return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+      }
+      const methods = ["coc_submitProposal", "coc_voteProposal"]
+      const badPayloads: unknown[][] = [[], [null], [undefined], ["string-not-object"], [42], [[1, 2]]]
+      for (const method of methods) {
+        for (const params of badPayloads) {
+          const r = await probe(method, params)
+          assert.equal(r.error?.code, -32602,
+            `${method}(${JSON.stringify(params)}) must be -32602, got ${JSON.stringify(r)}`)
+          assert.match(r.error!.message, /params/i, "error must name params")
+          assert.doesNotMatch(r.error!.message, /Cannot read properties|TypeError/i,
+            `must not leak V8 NPE wording, got ${r.error!.message}`)
+        }
+      }
+      // Sanity: a well-shaped object still reaches the stub (no error).
+      const ok1 = await probe("coc_submitProposal", [{ type: "x", targetId: "y", proposer: "node-1" }])
+      assert.equal(ok1.error, undefined, "well-shaped submit must NOT error")
+      const ok2 = await probe("coc_voteProposal", [{ proposalId: "p1", voterId: "node-1", approve: true }])
+      assert.equal(ok2.error, undefined, "well-shaped vote must NOT error")
+    } finally {
+      delete (chain as unknown as Record<string, unknown>).governance
+    }
+  })
+
   if (prevDevAccounts === undefined) {
     delete process.env.COC_DEV_ACCOUNTS
   } else {

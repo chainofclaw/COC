@@ -1912,7 +1912,16 @@ async function handleRpc(
     }
     case "coc_submitProposal": {
       if (!hasGovernance(chain)) throw new Error("governance not enabled")
-      const proposalParams = (payload.params ?? [])[0] as Record<string, string>
+      // #220: pre-fix `(payload.params ?? [])[0] as Record<string,string>`
+      // was a no-op cast. With params=[] or params=[null] the first param
+      // was undefined/null; the next line then accessed `.proposer` and
+      // threw a V8 TypeError ("Cannot read properties of undefined/null
+      // (reading 'proposer')") which leaked through the outer catch.
+      const rawParams = (payload.params ?? [])[0]
+      if (!rawParams || typeof rawParams !== "object" || Array.isArray(rawParams)) {
+        throw { code: -32602, message: "invalid params: expected non-null object as first param" }
+      }
+      const proposalParams = rawParams as Record<string, string>
       // Only the local node can submit proposals via RPC
       const localNodeId = (opts as Record<string, unknown>)?.nodeId as string | undefined
       if (localNodeId && proposalParams.proposer !== localNodeId) {
@@ -1953,7 +1962,14 @@ async function handleRpc(
     }
     case "coc_voteProposal": {
       if (!hasGovernance(chain)) throw new Error("governance not enabled")
-      const voteParams = (payload.params ?? [])[0] as Record<string, unknown>
+      // #220: same null-check as coc_submitProposal — params=[] / [null]
+      // pre-fix bubbled "Cannot read properties of null (reading 'voterId')"
+      // through the outer catch as a -32603 V8 leak.
+      const voteRaw = (payload.params ?? [])[0]
+      if (!voteRaw || typeof voteRaw !== "object" || Array.isArray(voteRaw)) {
+        throw { code: -32602, message: "invalid params: expected non-null object as first param" }
+      }
+      const voteParams = voteRaw as Record<string, unknown>
       // Only the local node can vote via RPC
       const localVoterId = (opts as Record<string, unknown>)?.nodeId as string | undefined
       if (localVoterId && String(voteParams.voterId) !== localVoterId) {
