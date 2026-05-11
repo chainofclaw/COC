@@ -1032,7 +1032,12 @@ describe("WireClient backpressure (#71 Bug A)", () => {
     })
     clients.push(client)
     client.connect()
-    for (let i = 0; i < 50; i++) {
+    // #152: 50 × 40ms = 2s was too tight under GitHub Actions load,
+    // causing the "disconnect drops queued frames cleanly" test to
+    // intermittently fail with "handshake did not complete". 5s gives
+    // slow runners headroom without slowing the happy path (still
+    // breaks out on the first isConnected() check).
+    for (let i = 0; i < 125; i++) {
       if (client.isConnected()) break
       await new Promise((r) => setTimeout(r, 40))
     }
