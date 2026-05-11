@@ -2518,7 +2518,16 @@ async function handleRpc(
     }
     // --- Rollup RPC namespace ---
     case "rollup_getOutputAtBlock": {
-      const blockNumber = parseBlockTag(params[0], await Promise.resolve(chain.getHeight()))
+      // #228: pre-fix this referenced bare `params[0]` instead of
+      // `payload.params[0]`. Since `params` is not a defined variable
+      // in scope, every call threw `ReferenceError: params is not
+      // defined` BEFORE any handler logic ran. The rollup endpoint
+      // was completely broken from inception and the V8 wording
+      // leaked through the outer catch as -32603. No test caught it.
+      const blockNumber = parseBlockTag(
+        (payload.params ?? [])[0],
+        await Promise.resolve(chain.getHeight()),
+      )
       const block = await Promise.resolve(chain.getBlockByNumber(blockNumber))
       if (!block || !block.stateRoot) return null
       const { solidityPackedKeccak256 } = await import("ethers")
