@@ -336,6 +336,47 @@ test("RPC Extended Methods", async (t) => {
     assert.strictEqual(receipts, null)
   })
 
+  await t.test("#114: eth_getBlockReceipts shape matches eth_getTransactionReceipt", async () => {
+    // Pre-fix bug: getBlockReceipts returned a stripped-down 9-field shape
+    // (no contractAddress / cumulativeGasUsed / effectiveGasPrice / logsBloom
+    // / type), incompatible with the per-tx receipt format. Indexers that
+    // batched via this RPC silently lost contract-creation tracking and gas
+    // accounting.
+    //
+    // Send a real tx, mine the block, then compare the key sets of both
+    // receipt RPC responses for the same tx.
+    const accounts = await rpcCall(port, "eth_accounts") as string[]
+    const txHash = await rpcCall(port, "eth_sendTransaction", [{
+      from: accounts[0],
+      to: accounts[1],
+      value: "0x1",
+      gas: "0x5208",
+    }]) as string
+    await chain.proposeNextBlock()
+    const single = await rpcCall(port, "eth_getTransactionReceipt", [txHash]) as Record<string, unknown>
+    assert.ok(single, "single-tx receipt must exist")
+    const blockNum = single.blockNumber as string
+    const batch = await rpcCall(port, "eth_getBlockReceipts", [blockNum]) as Array<Record<string, unknown>>
+    assert.ok(Array.isArray(batch), "batch receipts must be an array")
+    const fromBatch = batch.find(r => r.transactionHash === txHash)
+    assert.ok(fromBatch, "tx must appear in batch receipts")
+    // Key set must match exactly between the two methods so any client
+    // switching between them doesn't silently lose fields. This is the
+    // regression assertion: pre-fix the batch method dropped 5 fields
+    // (contractAddress / cumulativeGasUsed / effectiveGasPrice / logsBloom /
+    // type), and this key-equality check fails on that drift even when
+    // contractAddress itself is null/undefined for a plain transfer.
+    const singleKeys = Object.keys(single).sort()
+    const batchKeys = Object.keys(fromBatch!).sort()
+    assert.deepEqual(batchKeys, singleKeys, "batch receipt keys must match single receipt keys")
+    // Sanity-check the previously-missing fields exist as keys (values may
+    // be null for non-contract-creation txs, but the key itself must be
+    // present so clients can rely on it).
+    for (const required of ["cumulativeGasUsed", "effectiveGasPrice", "logsBloom"]) {
+      assert.ok(required in fromBatch!, `batch receipt must contain ${required}`)
+    }
+  })
+
   await t.test("txpool_status returns pool stats", async () => {
     const status = await rpcCall(port, "txpool_status")
     assert.ok(typeof status === "object")
