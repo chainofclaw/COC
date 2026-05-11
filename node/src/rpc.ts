@@ -128,6 +128,17 @@ function requireTxHashParam(params: unknown[], index: number, name = "transactio
   return value as Hex
 }
 
+/**
+ * Validate a 32-byte block hash (#166). Pre-fix the *byHash variants
+ * silently accepted any input (undefined, null, short hex, non-hex) and
+ * returned null indistinguishable from "valid hash, no such block".
+ * Same shape rules as transaction hash; the separate name keeps error
+ * messages readable for the caller's surface.
+ */
+function requireBlockHashParam(params: unknown[], index: number): Hex {
+  return requireTxHashParam(params, index, "block hash")
+}
+
 function optionalHexParam(params: unknown[], index: number): Hex | undefined {
   const value = (params ?? [])[index]
   if (value === undefined || value === null) return undefined
@@ -704,7 +715,11 @@ async function handleRpc(
       return formatBlock(block, includeTx, chain, evm)
     }
     case "eth_getBlockByHash": {
-      const hash = String((payload.params ?? [])[0] ?? "") as Hex
+      // #166: pre-fix loose String() conversion accepted any input —
+      // undefined, null, short hex, non-hex — and returned null,
+      // indistinguishable from "valid hash, no such block". Symmetric
+      // with #150's eth_getTransactionByHash fix.
+      const hash = requireBlockHashParam(payload.params ?? [], 0)
       const includeTx = Boolean((payload.params ?? [])[1])
       const block = await Promise.resolve(chain.getBlockByHash(hash))
       return formatBlock(block, includeTx, chain, evm)
@@ -1330,7 +1345,8 @@ async function handleRpc(
       return "0x" + Buffer.from(JSON.stringify(blockData)).toString("hex")
     }
     case "eth_getBlockTransactionCountByHash": {
-      const hash = String((payload.params ?? [])[0] ?? "") as Hex
+      // #166: same hash-shape validation as eth_getBlockByHash.
+      const hash = requireBlockHashParam(payload.params ?? [], 0)
       const block = await Promise.resolve(chain.getBlockByHash(hash))
       return block ? `0x${block.txs.length.toString(16)}` : null
     }
@@ -1342,7 +1358,8 @@ async function handleRpc(
       return block ? `0x${block.txs.length.toString(16)}` : null
     }
     case "eth_getTransactionByBlockHashAndIndex": {
-      const blockHash = String((payload.params ?? [])[0] ?? "") as Hex
+      // #166: same hash-shape validation as eth_getBlockByHash.
+      const blockHash = requireBlockHashParam(payload.params ?? [], 0)
       const txIndex = Number((payload.params ?? [])[1] ?? 0)
       if (!Number.isInteger(txIndex) || txIndex < 0) return null
       const block = await Promise.resolve(chain.getBlockByHash(blockHash))

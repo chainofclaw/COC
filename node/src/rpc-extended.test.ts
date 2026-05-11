@@ -1217,6 +1217,35 @@ test("RPC Extended Methods", async (t) => {
     assert.match(j.error!.message, /batch too large|max/i, "error must explain the cap")
   })
 
+  await t.test("#166: eth_getBlockByHash + siblings validate hash shape upfront (parity with #150)", async () => {
+    // Pre-fix the *byHash variants silently accepted any input
+    // (undefined, null, short hex, non-hex) and returned null —
+    // indistinguishable from "valid hash, no such block". PR #150
+    // fixed this for eth_getTransactionByHash; #166 extends the same
+    // pattern to eth_getBlockByHash, eth_getBlockTransactionCountByHash,
+    // and eth_getTransactionByBlockHashAndIndex.
+    const probe = async (method: string, params: unknown[]) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    }
+    // (a) eth_getBlockByHash with short hash → -32602
+    const r1 = await probe("eth_getBlockByHash", ["0x123", false])
+    assert.equal(r1.error?.code, -32602, `short hash must be -32602, got ${r1.error?.code}`)
+    assert.match(r1.error!.message, /block hash/i, "error must name the field")
+    // (b) eth_getBlockTransactionCountByHash with non-hex → -32602
+    const r2 = await probe("eth_getBlockTransactionCountByHash", ["not-hex"])
+    assert.equal(r2.error?.code, -32602, `non-hex must be -32602, got ${r2.error?.code}`)
+    // Sanity: valid 32-byte hex (but non-existent block) returns null, not error.
+    const validButMissing = "0x" + "a".repeat(64)
+    const ok = await probe("eth_getBlockByHash", [validButMissing, false])
+    assert.equal(ok.error, undefined, `valid-shape but non-existent must NOT error: ${JSON.stringify(ok.error)}`)
+    assert.equal(ok.result, null, "valid-shape but non-existent returns null")
+  })
+
   if (prevDevAccounts === undefined) {
     delete process.env.COC_DEV_ACCOUNTS
   } else {
