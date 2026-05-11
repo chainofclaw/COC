@@ -336,6 +336,37 @@ test("RPC Extended Methods", async (t) => {
     assert.strictEqual(receipts, null)
   })
 
+  await t.test("#122: eth_getBalance / eth_getTransactionCount / coc_getContractInfo reject malformed addresses with -32602", async () => {
+    // Pre-fix bugs:
+    //   - eth_getBalance returned -32603 with the raw input echoed back
+    //     ("Invalid address input=not-an-address")
+    //   - eth_getTransactionCount accepted short-hex like "0x123" and
+    //     forwarded to evm (similar input leak)
+    //   - coc_getContractInfo returned null for any malformed input,
+    //     indistinguishable from "no deployed contract"
+    const bads = ["not-an-address", "0x", "0x123", "0x" + "g".repeat(40), "0x" + "f".repeat(41)]
+    for (const method of ["eth_getBalance", "eth_getTransactionCount", "coc_getContractInfo"]) {
+      for (const badAddr of bads) {
+        const params = method.startsWith("eth_") ? [badAddr, "latest"] : [badAddr]
+        const r = await fetch(`http://127.0.0.1:${port}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+        })
+        const json = await r.json() as { error?: { code: number; message: string } }
+        assert.ok(json.error, `expected error for ${method}(${JSON.stringify(badAddr)})`)
+        assert.equal(json.error!.code, -32602, `${method}(${JSON.stringify(badAddr)}) must be -32602, got ${json.error!.code}`)
+        assert.match(json.error!.message, /invalid address/i, `error message for ${method} should mention "invalid address"`)
+      }
+    }
+    // Sanity: valid address still works for getBalance/getTransactionCount.
+    const validAddr = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+    const bal = await rpcCall(port, "eth_getBalance", [validAddr, "latest"])
+    assert.match(bal as string, /^0x[0-9a-f]+$/i, "valid eth_getBalance must return hex")
+    const nonce = await rpcCall(port, "eth_getTransactionCount", [validAddr, "latest"])
+    assert.match(nonce as string, /^0x[0-9a-f]+$/i, "valid eth_getTransactionCount must return hex")
+  })
+
   await t.test("#120: coc_getTransactionsByAddress rejects malformed addresses with -32602", async () => {
     // Pre-fix: typo or junk address silently returned [] (it just missed
     // the per-address index), masking client mistakes as "no transactions".

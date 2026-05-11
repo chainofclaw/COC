@@ -92,6 +92,24 @@ function requireHexParam(params: unknown[], index: number, name: string): Hex {
   return value as Hex
 }
 
+/**
+ * #122: strict 20-byte address validator. requireHexParam accepts any
+ * hex up to 66 chars, so "0x123" slipped through and downstream code
+ * either echoed back the raw input (eth_getBalance) or silently missed
+ * the index (coc_getContractInfo). Use this at the RPC boundary for
+ * methods whose param is documented as an Ethereum address.
+ */
+function requireAddressParam(params: unknown[], index: number, name = "address"): Hex {
+  const value = (params ?? [])[index]
+  if (typeof value !== "string") {
+    throw { code: -32602, message: `invalid ${name}: expected string` }
+  }
+  if (!/^0x[0-9a-fA-F]{40}$/.test(value)) {
+    throw { code: -32602, message: `invalid ${name}: must match /^0x[0-9a-fA-F]{40}$/` }
+  }
+  return value as Hex
+}
+
 function optionalHexParam(params: unknown[], index: number): Hex | undefined {
   const value = (params ?? [])[index]
   if (value === undefined || value === null) return undefined
@@ -490,13 +508,17 @@ async function handleRpc(
       return `0x${height.toString(16)}`
     }
     case "eth_getBalance": {
-      const address = String((payload.params ?? [])[0] ?? "")
+      // #122: validate at the boundary so a typo gives -32602 instead of
+      // -32603 with the raw input echoed back from the EVM.
+      const address = requireAddressParam(payload.params ?? [], 0)
       const stateRoot = await resolveHistoricalStateRoot((payload.params ?? [])[1], chain)
       const balance = await evm.getBalance(address, stateRoot)
       return `0x${balance.toString(16)}`
     }
     case "eth_getTransactionCount": {
-      const address = String((payload.params ?? [])[0] ?? "")
+      // #122: same boundary check as eth_getBalance so address typos
+      // surface consistently across read-state RPCs.
+      const address = requireAddressParam(payload.params ?? [], 0)
       const tag = (payload.params ?? [])[1]
       if (tag === "pending") {
         const onchainNonce = await evm.getNonce(address)
@@ -1815,8 +1837,10 @@ async function handleRpc(
       return { enabled: hasBlockIndex(chain) }
     }
     case "coc_getContractInfo": {
-      const addr = (payload.params ?? [])[0] as string
-      if (!addr) throw new Error("address required")
+      // #122: stricter validation so typos return -32602 instead of
+      // silently null (indistinguishable from "this address has no
+      // deployed contract"). Mirrors the #120 fix for getTransactionsByAddress.
+      const addr = requireAddressParam(payload.params ?? [], 0)
       if (hasBlockIndex(chain)) {
         const info = await chain.blockIndex.getContractInfo(addr as Hex)
         if (!info) return null
