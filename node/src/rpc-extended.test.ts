@@ -19,6 +19,20 @@ async function rpcCall(port: number, method: string, params?: unknown[]) {
   return json.result
 }
 
+// Returns the full JSON-RPC envelope (does NOT throw on .error). Use this
+// when the test asserts on error code/message rather than success result.
+async function rpcCallRaw(port: number, method: string, params?: unknown[]): Promise<{
+  result?: unknown
+  error?: { code: number; message: string }
+}> {
+  const response = await fetch(`http://127.0.0.1:${port}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: params ?? [] }),
+  })
+  return await response.json() as { result?: unknown; error?: { code: number; message: string } }
+}
+
 test("RPC Extended Methods", async (t) => {
   const prevDevAccounts = process.env.COC_DEV_ACCOUNTS
   process.env.COC_DEV_ACCOUNTS = "1"
@@ -1441,6 +1455,30 @@ test("RPC Extended Methods", async (t) => {
     assert.equal(okUndef.error, undefined, "undefined tag must NOT error")
     const okNull = await probe(null)
     assert.equal(okNull.error, undefined, "null tag must NOT error")
+  })
+
+  await t.test("#190: eth_getLogs rejects non-array topics field (no silent bypass)", async () => {
+    // Pre-fix `validateLogFilter` only validated when Array.isArray(topics).
+    // A client passing topics as a string/object got the same empty-result
+    // response as a syntactically-valid filter — no signal that the query
+    // was malformed. Probes pin the shape contract.
+    const cases: Array<{ topics: unknown; label: string }> = [
+      { topics: "not-array", label: "string" },
+      { topics: { weird: "shape" }, label: "object" },
+      { topics: 12345, label: "number" },
+      { topics: true, label: "bool" },
+    ]
+    for (const { topics, label } of cases) {
+      const resp = await rpcCallRaw(port, "eth_getLogs", [{ fromBlock: "0x0", toBlock: "0x0", topics }])
+      assert.equal(resp.error?.code, -32602, `topics=${label} must be -32602, got ${JSON.stringify(resp)}`)
+      assert.match(resp.error!.message, /invalid filter topics/i, `error must explain shape: ${resp.error!.message}`)
+    }
+    // Sanity: valid empty topics array still returns result.
+    const ok = await rpcCall(port, "eth_getLogs", [{ fromBlock: "0x0", toBlock: "0x0", topics: [] }])
+    assert.ok(Array.isArray(ok), "valid empty topics array must return results array")
+    // Sanity: omitted topics still returns result.
+    const ok2 = await rpcCall(port, "eth_getLogs", [{ fromBlock: "0x0", toBlock: "0x0" }])
+    assert.ok(Array.isArray(ok2), "omitted topics must return results array")
   })
 
   if (prevDevAccounts === undefined) {
