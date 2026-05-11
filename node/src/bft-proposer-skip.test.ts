@@ -298,6 +298,81 @@ test("PR-1H: noProgressWatchdog falls back to slow path during grace even when p
   )
 })
 
+test("PR-1J: markProposerUnreachable disabled on N<4 clusters", () => {
+  const c = new ConsensusEngine(
+    mkMockChain(VALIDATORS_5),
+    mkMockP2p(),
+    { blockTimeMs: 1000, syncIntervalMs: 300_000 },
+    {
+      bft: mkMockBft(),
+      nodeId: "node-2",
+      validatorCountProvider: () => 3, // N=3 below threshold
+    },
+  )
+  ;(c as any).startedAtMs = Date.now() - 90_000 // past grace
+
+  c.markProposerUnreachable("node-1")
+  assert.equal((c as any).unreachableProposers.size, 0, "mark suppressed on N=3")
+  assert.equal((c as any).isProposerUnreachable("node-1"), false, "check returns false on N=3")
+})
+
+test("PR-1J: PR-1A active when N>=4", () => {
+  const c = new ConsensusEngine(
+    mkMockChain(VALIDATORS_5),
+    mkMockP2p(),
+    { blockTimeMs: 1000, syncIntervalMs: 300_000 },
+    {
+      bft: mkMockBft(),
+      nodeId: "node-2",
+      validatorCountProvider: () => 4,
+    },
+  )
+  ;(c as any).startedAtMs = Date.now() - 90_000
+
+  c.markProposerUnreachable("node-1")
+  assert.equal((c as any).unreachableProposers.size, 1, "mark applied at N=4")
+  assert.equal((c as any).isProposerUnreachable("node-1"), true, "check returns true at N=4")
+})
+
+test("PR-1J: missing validatorCountProvider preserves legacy enabled behavior", () => {
+  // Tests that pre-PR-1J callers that don't wire the provider continue to work
+  // exactly as before — fast-path engages.
+  const c = new ConsensusEngine(
+    mkMockChain(VALIDATORS_5),
+    mkMockP2p(),
+    { blockTimeMs: 1000, syncIntervalMs: 300_000 },
+    { bft: mkMockBft(), nodeId: "node-2" }, // no validatorCountProvider
+  )
+  ;(c as any).startedAtMs = Date.now() - 90_000
+
+  c.markProposerUnreachable("node-1")
+  assert.equal((c as any).unreachableProposers.size, 1, "legacy behavior preserved when no provider")
+  assert.equal((c as any).isProposerUnreachable("node-1"), true)
+})
+
+test("PR-1J: noProgressWatchdog stays on slow path when N<4", async () => {
+  const c = new ConsensusEngine(
+    mkMockChain(VALIDATORS_5),
+    mkMockP2p(),
+    { blockTimeMs: 1000, syncIntervalMs: 300_000 },
+    {
+      bft: mkMockBft(),
+      nodeId: "node-2",
+      validatorCountProvider: () => 3,
+    },
+  )
+  ;(c as any).startedAtMs = Date.now() - 90_000
+  c.markProposerUnreachable("node-1") // no-op on N=3
+  ;(c as any).lastBftProgressAtMs = Date.now() - (PROPOSER_UNREACHABLE_FAST_TIMEOUT_MS + 5_000)
+
+  await (c as any).checkNoProgressWatchdog()
+  assert.equal(
+    (c as any).noProgressProposerOverride,
+    false,
+    "fast path stays disarmed on N=3 regardless of grace/mark state",
+  )
+})
+
 test("PR-1A: TTL constant is reasonable", () => {
   // Sanity check the constants relate sensibly:
   //   FAST < TTL  (a single round must not expire its own evidence mid-flight)
