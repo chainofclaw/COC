@@ -818,4 +818,107 @@ describe("BftCoordinator", () => {
     await coord.startRound(block)
     assert.equal(broadcasted.length, 1, "fallback path still broadcasts prepare")
   })
+
+  it("PR-1F: onProposerStuck fires only on prepare-phase timeout with NO peer prepares", async () => {
+    // 88780 Day 1 drill fingerprint: a force-proposer's round reaches commit
+    // phase with 4-of-5 prepares but only 3-of-5 commits → round times out.
+    // Old PR-1A marked the proposer as unreachable, leading to a different
+    // fallback re-proposing a fresh block hash, which Phase R then refused
+    // as self-equivocation → chain deadlock.
+    //
+    // PR-1F: only signal proposer-stuck when round timed out in PREPARE
+    // phase AND no peer prepare votes arrived (only our self-vote).
+    const stuckCalls: Array<{ proposerId: string; height: bigint }> = []
+    const coord = new BftCoordinator({
+      localId: "v1",
+      validators,
+      broadcastMessage: async () => {},
+      onFinalized: async () => {},
+      prepareTimeoutMs: 50, // short so test doesn't hang
+      commitTimeoutMs: 50,
+      onProposerStuck: (proposerId, height) => stuckCalls.push({ proposerId, height }),
+    })
+
+    // Round proposed by v2 (peer). Local v1 broadcasts its own prepare.
+    const block = makeBlock(1n, "v2")
+    await coord.startRound(block)
+
+    // Drive the round to commit phase: receive prepares from v2 + v3 →
+    // quorum-of-prepares reached. Local v1 then broadcasts commit.
+    await coord.handleMessage(bftMsg("prepare", 1n, block.hash, "v2"))
+    await coord.handleMessage(bftMsg("prepare", 1n, block.hash, "v3"))
+
+    // Confirm we're in commit phase (round didn't finalize yet — need a peer commit).
+    assert.equal(coord.getRoundState().phase, "commit", "round transitioned to commit")
+
+    // Now let the round time out without further commit votes.
+    await new Promise<void>((resolve) => setTimeout(resolve, 120))
+
+    // PR-1F: should NOT have marked v2 unreachable — the round was in commit
+    // phase, meaning v2 successfully proposed and collected peer prepares.
+    assert.equal(stuckCalls.length, 0, "no onProposerStuck on commit-phase timeout")
+    assert.equal(coord.getRoundState().active, false, "round was cleared")
+  })
+
+  it("PR-1F: onProposerStuck DOES fire on prepare-phase timeout with no peer prepares (regression)", async () => {
+    // The "proposer is silent" case: local node received the proposed block
+    // (likely via gossip relay) and broadcast its own prepare, but no peer
+    // prepares arrived → round times out in prepare phase with only the
+    // self-vote. This is the original PR-1A signal we DO want to preserve.
+    const stuckCalls: Array<{ proposerId: string; height: bigint }> = []
+    const coord = new BftCoordinator({
+      localId: "v1",
+      validators,
+      broadcastMessage: async () => {},
+      onFinalized: async () => {},
+      prepareTimeoutMs: 50,
+      commitTimeoutMs: 50,
+      onProposerStuck: (proposerId, height) => stuckCalls.push({ proposerId, height }),
+    })
+
+    const block = makeBlock(1n, "v2")
+    await coord.startRound(block)
+
+    // No peer prepares — let the round time out in prepare phase.
+    await new Promise<void>((resolve) => setTimeout(resolve, 120))
+
+    assert.equal(stuckCalls.length, 1, "onProposerStuck fired for silent proposer")
+    assert.equal(stuckCalls[0].proposerId, "v2")
+    assert.equal(stuckCalls[0].height, 1n)
+  })
+
+  it("PR-1F: prepare-phase timeout with PEER prepare (but quorum miss) does NOT mark stuck", async () => {
+    // Adjacent case: 1 peer prepare arrived (so the proposer IS talking to
+    // someone), but quorum wasn't reached before timeout. Proposer is alive
+    // and broadcasting — should not be marked unreachable.
+    const stuckCalls: Array<{ proposerId: string; height: bigint }> = []
+    const coord = new BftCoordinator({
+      localId: "v1",
+      validators: [
+        { id: "v1", stake: 100n },
+        { id: "v2", stake: 100n },
+        { id: "v3", stake: 100n },
+        { id: "v4", stake: 100n },
+        { id: "v5", stake: 100n },
+      ],
+      broadcastMessage: async () => {},
+      onFinalized: async () => {},
+      prepareTimeoutMs: 50,
+      commitTimeoutMs: 50,
+      onProposerStuck: (proposerId, height) => stuckCalls.push({ proposerId, height }),
+    })
+
+    const block = makeBlock(1n, "v2")
+    await coord.startRound(block)
+
+    // 1 peer prepare from v3 (proposer's reach is partial) — total 2-of-5,
+    // below quorum (needs 4 with N=5, strict 2/3+1).
+    await coord.handleMessage(bftMsg("prepare", 1n, block.hash, "v3"))
+    assert.equal(coord.getRoundState().phase, "prepare", "still in prepare phase")
+
+    // Time out.
+    await new Promise<void>((resolve) => setTimeout(resolve, 120))
+
+    assert.equal(stuckCalls.length, 0, "proposer with at least 1 peer prepare is NOT stuck")
+  })
 })
