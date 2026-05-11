@@ -1341,7 +1341,15 @@ async function handleRpc(
       return { pending, queued: {} }
     }
     case "coc_getTransactionsByAddress": {
-      const addr = String((payload.params ?? [])[0] ?? "").toLowerCase() as Hex
+      // #120: validate address shape so typos surface as -32602 instead
+      // of silently missing the index → empty result. Pre-fix, "not-an-address"
+      // and "0x123" both returned [] indistinguishable from a real empty
+      // address.
+      const rawAddr = String((payload.params ?? [])[0] ?? "")
+      if (!/^0x[0-9a-fA-F]{40}$/.test(rawAddr)) {
+        throw { code: -32602, message: "invalid address: must match /^0x[0-9a-fA-F]{40}$/" }
+      }
+      const addr = rawAddr.toLowerCase() as Hex
       const rawLimit = Number((payload.params ?? [])[1] ?? 50)
       const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 10_000) : 50
       const reverse = (payload.params ?? [])[2] !== false
