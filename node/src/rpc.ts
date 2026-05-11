@@ -402,8 +402,17 @@ async function handleOne(
   } catch (error: unknown) {
     // Support structured RPC errors (e.g. { code, message } from param validation)
     if (error && typeof error === "object" && "code" in error && "message" in error) {
-      const rpcErr = error as { code: number; message: string }
-      return { jsonrpc: "2.0", id: payload.id ?? null, error: { code: rpcErr.code, message: rpcErr.message } }
+      const rpcErr = error as { code: unknown; message: unknown }
+      // JSON-RPC 2.0 §5.1 requires error.code to be a number. Our internal
+      // handlers throw { code: -32xxx, ... } objects (legitimate), but
+      // downstream libraries like ethers throw errors with string codes
+      // ("INVALID_ARGUMENT", "BUFFER_OVERRUN"). Coerce non-integer codes
+      // to -32603 (Internal error) so the response stays spec-compliant
+      // and clients aren't forced to handle the union type.
+      const numericCode =
+        typeof rpcErr.code === "number" && Number.isInteger(rpcErr.code) ? rpcErr.code : -32603
+      const message = typeof rpcErr.message === "string" ? rpcErr.message : "internal error"
+      return { jsonrpc: "2.0", id: payload.id ?? null, error: { code: numericCode, message } }
     }
     return { jsonrpc: "2.0", id: payload.id ?? null, error: { code: -32603, message: error instanceof Error ? error.message : "internal error" } }
   }

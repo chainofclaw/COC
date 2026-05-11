@@ -457,6 +457,42 @@ test("RPC Extended Methods", async (t) => {
     assert.equal(result, false)
   })
 
+  await t.test("#104: malformed eth_sendRawTransaction returns integer error.code (not ethers string code)", async () => {
+    // Pre-fix bug: ethers errors thrown from the rawtx parse path carried
+    // `code: "INVALID_ARGUMENT"` (a string), which the RPC catch passed
+    // through verbatim — violating JSON-RPC 2.0 §5.1 (error.code MUST be
+    // an integer) and leaking the ethers library version on every
+    // response.
+    for (const badRaw of ["0xnothex", "", "0xdeadbeef"]) {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_sendRawTransaction", params: [badRaw] }),
+      })
+      const json = await r.json() as { error?: { code: unknown; message: unknown } }
+      assert.ok(json.error, `expected error for raw="${badRaw}"`)
+      assert.equal(typeof json.error!.code, "number", `error.code must be a number for raw="${badRaw}", got ${typeof json.error!.code}: ${String(json.error!.code)}`)
+      assert.ok(Number.isInteger(json.error!.code as number), `error.code must be integer, got ${json.error!.code}`)
+      assert.equal(typeof json.error!.message, "string", "error.message must be a string")
+    }
+  })
+
+  await t.test("#104: structured RPC errors with numeric code are preserved", async () => {
+    // Regression check: legitimate handlers throw { code: -32602, message }
+    // for invalid params. Those should NOT be coerced to -32603; only
+    // non-numeric codes are coerced. eth_estimateGas with an invalid `to`
+    // address throws { code: -32602, message: "invalid to address" }.
+    const r = await fetch(`http://127.0.0.1:${port}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_estimateGas", params: [{ to: "not-a-hex-address" }] }),
+    })
+    const json = await r.json() as { error?: { code: unknown; message: unknown } }
+    assert.ok(json.error)
+    assert.equal(json.error!.code, -32602, "structured -32602 must be preserved verbatim")
+    assert.equal(json.error!.message, "invalid to address")
+  })
+
   await t.test("#100: coc_getValidators returns an array (not a single string) without governance", async () => {
     // This RPC test fixture builds a ChainEngine without on-chain governance,
     // so we exercise the fallback path. Pre-fix, the fallback returned
