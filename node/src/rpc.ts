@@ -607,11 +607,33 @@ async function handleOne(
   bftCoordinator?: BftCoordinator,
   opts?: Record<string, unknown>,
 ): Promise<JsonRpcResponse | null> {
-  if (!payload || typeof payload !== "object" || !payload.method) {
+  if (!payload || typeof payload !== "object") {
     // #138: per JSON-RPC §5.1 invalid-request must carry code -32600.
     // Pre-fix this returned only { message }, which clients couldn't
     // distinguish from a malformed response.
-    return { jsonrpc: "2.0", id: payload?.id ?? null, error: { code: -32600, message: "invalid request" } }
+    return { jsonrpc: "2.0", id: null, error: { code: -32600, message: "invalid request" } }
+  }
+  // #202: §1 — `jsonrpc` MUST be exactly "2.0". Pre-fix any value (or
+  // omission) flowed through and the server happily echoed back a 2.0
+  // response, masking buggy clients sending "1.0" / "1.1" / numeric 2.
+  if (payload.jsonrpc !== "2.0") {
+    return { jsonrpc: "2.0", id: null, error: { code: -32600, message: "invalid request: jsonrpc must be exactly '2.0'" } }
+  }
+  if (typeof payload.method !== "string" || payload.method.length === 0) {
+    // Pre-fix only rejected `!payload.method`, accepting `0` and `""`
+    // via JS truthy semantics. Method MUST be a non-empty string.
+    return { jsonrpc: "2.0", id: null, error: { code: -32600, message: "invalid request: method must be a non-empty string" } }
+  }
+  // #202: §4.1 — id MUST be String, Number, or NULL when present.
+  // Pre-fix objects, arrays, bools were silently echoed back, which
+  // either crashed strict-typed client response parsers or masked
+  // bugs on the caller side.
+  if ("id" in payload) {
+    const id = (payload as JsonRpcRequest).id
+    const idOk = id === null || typeof id === "string" || (typeof id === "number" && Number.isFinite(id))
+    if (!idOk) {
+      return { jsonrpc: "2.0", id: null, error: { code: -32600, message: "invalid request: id must be string, number, or null" } }
+    }
   }
 
   // #204: §4.2 — params, when present, MUST be a Structured value
