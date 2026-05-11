@@ -822,12 +822,50 @@ async function handleRpc(
       return `0x${keccak256Hex(bytes)}`
     }
     case "eth_sendRawTransaction": {
-      const raw = String((payload.params ?? [])[0] ?? "") as Hex
-      // Reject oversized raw transactions to prevent CPU abuse (128 KB ~= Ethereum mainnet limit)
-      if (raw.length > 262_144) {
-        throw { code: -32602, message: `raw transaction too large: ${raw.length} chars` }
+      // #156: pre-fix bogus/short/non-hex inputs flowed straight into
+      // ethers.Transaction.from() and surfaced as -32603 with messages
+      // like "data short segment too short (buffer=0xff, length=1,
+      // offset=9, code=BUFFER_OVERRUN, version=6.16.0)" — leaking the
+      // ethers.js version + internal error class to any unauthenticated
+      // caller. Validate shape upfront so clients get -32602 with a
+      // clean message; only post-parse errors (signature, nonce, gas
+      // pricing) bubble through as -32603.
+      const rawInput = (payload.params ?? [])[0]
+      if (typeof rawInput !== "string") {
+        throw { code: -32602, message: "invalid raw transaction: expected hex string" }
       }
-      const tx = await chain.addRawTx(raw)
+      if (!rawInput.startsWith("0x")) {
+        throw { code: -32602, message: "invalid raw transaction: must be 0x-prefixed" }
+      }
+      const body = rawInput.slice(2)
+      if (body.length === 0 || body.length % 2 !== 0 || !/^[0-9a-fA-F]+$/.test(body)) {
+        throw { code: -32602, message: "invalid raw transaction: must be even-length hex" }
+      }
+      // Smallest legitimate signed legacy tx is ~50 bytes (100 hex chars).
+      // Reject anything obviously below the floor to avoid handing ethers
+      // a truncated buffer it'll panic on.
+      if (body.length < 100) {
+        throw { code: -32602, message: "invalid raw transaction: too short to be a signed transaction" }
+      }
+      // Reject oversized raw transactions to prevent CPU abuse (128 KB ~= Ethereum mainnet limit)
+      if (rawInput.length > 262_144) {
+        throw { code: -32602, message: `raw transaction too large: ${rawInput.length} chars` }
+      }
+      const raw = rawInput as Hex
+      let tx
+      try {
+        tx = await chain.addRawTx(raw)
+      } catch (parseErr) {
+        // ethers errors carry .code as a string ("BUFFER_OVERRUN" etc.)
+        // and embed the library version in .message. Rethrow as a clean
+        // -32602 so we don't leak that surface.
+        const isEthersShapeError =
+          parseErr && typeof parseErr === "object" && typeof (parseErr as { code?: unknown }).code === "string"
+        if (isEthersShapeError) {
+          throw { code: -32602, message: "invalid raw transaction: failed to decode" }
+        }
+        throw parseErr
+      }
       await p2p.receiveTx(raw)
       return tx.hash
     }
