@@ -1411,6 +1411,17 @@ async function handleRpc(
       }
       return { latestBlock: 0, pruningHeight: 0, retainedBlocks: 0 }
     }
+    case "coc_getPeers": {
+      // #108: doc-referenced in docs/runbooks/phase-q-erasure-coding.md:204
+      // ("peers should appear in `coc_getPeers` output"). Public (non-admin)
+      // peer list — only exposes the per-peer { id, url } fields already
+      // visible in P2P gossip traffic; no sensitive routing/auth state.
+      const peers = p2p.getPeers?.() ?? p2p.discovery?.getActivePeers?.() ?? []
+      return peers.map((peer: { id: string; url?: string; advertisedUrl?: string }) => ({
+        id: peer.id,
+        url: peer.advertisedUrl ?? peer.url ?? "unknown",
+      }))
+    }
     case "coc_getValidators": {
       if (hasGovernance(chain)) {
         const validators = chain.governance.getActiveValidators()
