@@ -414,4 +414,51 @@ describe("WebSocket RPC", () => {
       ws.close()
     }
   })
+
+  it("#208: eth_subscribe/eth_unsubscribe reject malformed params (no silent String() coercion)", async () => {
+    // Pre-fix `String(params[0] ?? "")` silently coerced any input.
+    // For subscribe: `[["newHeads"]]` joined the single-element array
+    // to "newHeads" and got a working subscription with the wrong
+    // shape; `[42]`/`[null]` got confusing "unsupported type: null"
+    // messages echoing the coerced string. For unsubscribe: any
+    // non-matching coercion silently returned false, indistinguishable
+    // from "subscription already removed."
+    const ws = await connectWs(WS_PORT)
+    try {
+      const sendAndWait = (method: string, params: unknown[]): Promise<{ error?: { code: number; message: string }; result?: unknown }> =>
+        new Promise((resolve, reject) => {
+          const id = Math.floor(Math.random() * 1e9)
+          const timer = setTimeout(() => reject(new Error("probe timeout")), 2000)
+          const handler = (data: Buffer | string) => {
+            const msg = JSON.parse(data.toString())
+            if (msg.id === id) {
+              clearTimeout(timer)
+              ws.removeListener("message", handler)
+              resolve(msg)
+            }
+          }
+          ws.on("message", handler)
+          ws.send(JSON.stringify({ jsonrpc: "2.0", id, method, params }))
+        })
+      // eth_subscribe: non-string subscription type must be -32602.
+      for (const p of [42, null, true, ["newHeads"], { type: "newHeads" }]) {
+        const r = await sendAndWait("eth_subscribe", [p])
+        assert.equal(r.error?.code, -32602, `eth_subscribe([${JSON.stringify(p)}]) must be -32602, got ${JSON.stringify(r)}`)
+        assert.match(r.error!.message, /subscription type/i, "error must name the field")
+      }
+      // eth_unsubscribe: malformed subscription id must be -32602.
+      for (const p of [42, null, true, "not-a-sub-id", "0x123", ["0x" + "a".repeat(32)]]) {
+        const r = await sendAndWait("eth_unsubscribe", [p])
+        assert.equal(r.error?.code, -32602, `eth_unsubscribe([${JSON.stringify(p)}]) must be -32602, got ${JSON.stringify(r)}`)
+        assert.match(r.error!.message, /subscription id/i, "error must name the field")
+      }
+      // Sanity: well-formed subscribe + unsubscribe round-trips.
+      const subId = await sendRpc(ws, "eth_subscribe", ["newHeads"])
+      assert.match(subId as string, /^0x[0-9a-fA-F]{32}$/, "subId must be shape-correct")
+      const unsubResult = await sendRpc(ws, "eth_unsubscribe", [subId as string])
+      assert.equal(unsubResult, true, "valid subscribe → unsubscribe must return true")
+    } finally {
+      ws.close()
+    }
+  })
 })
