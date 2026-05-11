@@ -553,6 +553,41 @@ describe("IpfsHttpServer", () => {
       )
     }
   })
+
+  it("#200: /api/v0/files/read rejects negative/fractional offset (parity with handleCat)", async () => {
+    // Pre-fix MFS read validated offset only with !Number.isFinite,
+    // so `offset=-1` and `offset=1.5` slipped through to mfs.read and
+    // surfaced as 500 "internal error" or surprising data. handleCat
+    // (the UnixFS cat path) already rejects these with 400; this test
+    // pins the parity rule.
+    const { IpfsMfs } = await import("./ipfs-mfs.ts")
+    const mfs = new IpfsMfs(store, unixfs)
+    server.attachSubsystems({ mfs })
+    // Seed a file so the read call has a real path.
+    await fetch("/api/v0/files/write?arg=/probe&create=true", {
+      method: "POST",
+      headers: { "content-type": "application/octet-stream" },
+      body: new TextEncoder().encode("hello mfs"),
+    })
+    const cases: Array<{ qs: string; expectField: "offset" | "count" }> = [
+      { qs: "offset=-1", expectField: "offset" },
+      { qs: "offset=1.5", expectField: "offset" },
+      { qs: "offset=abc", expectField: "offset" },
+      { qs: "count=-1", expectField: "count" },
+      { qs: "count=1.5", expectField: "count" },
+      { qs: "count=abc", expectField: "count" },
+    ]
+    for (const { qs, expectField } of cases) {
+      const res = await fetch(`/api/v0/files/read?arg=/probe&${qs}`, { method: "POST" })
+      assert.equal(res.status, 400, `${qs}: must be 400, got ${res.status}`)
+      const body = await res.json() as { error?: string }
+      assert.match(body.error ?? "", new RegExp(`invalid ${expectField}`, "i"),
+        `${qs}: error must name the ${expectField} field, got ${JSON.stringify(body)}`)
+    }
+    // Sanity: valid offset + count still works.
+    const ok = await fetch("/api/v0/files/read?arg=/probe&offset=0&count=5", { method: "POST" })
+    assert.equal(ok.status, 200, "valid offset/count must succeed")
+  })
 })
 
 // Phase Q.4 — Reed-Solomon erasure coding integration tests.
