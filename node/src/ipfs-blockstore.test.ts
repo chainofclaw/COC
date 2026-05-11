@@ -77,6 +77,19 @@ describe("IpfsBlockstore", () => {
     assert.equal(pins.length, 1)
   })
 
+  it("concurrent pins are serialized without ENOENT or lost-updates", async () => {
+    // Pre-fix bug: pins.json used a shared `pins.json.tmp` path + no lock,
+    // so N parallel pin() calls raced the rename — second rename hit
+    // ENOENT, and the read-modify-write window lost some adds.
+    const N = 20
+    const cids: CidString[] = Array.from({ length: N }, (_, i) => `QmConc${i.toString().padStart(2, "0")}` as CidString)
+    const results = await Promise.allSettled(cids.map((c) => store.pin(c)))
+    for (const r of results) assert.equal(r.status, "fulfilled", `pin rejected: ${(r as PromiseRejectedResult).reason}`)
+    const pins = await store.listPins()
+    assert.equal(pins.length, N, "every concurrent pin should be persisted")
+    for (const c of cids) assert.ok(pins.includes(c), `missing pin ${c}`)
+  })
+
   it("stat returns correct counts and size", async () => {
     await store.put(makeBlock("QmS1", "abc"))
     await store.put(makeBlock("QmS2", "defgh"))
