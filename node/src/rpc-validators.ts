@@ -457,6 +457,10 @@ const FILTER_ADDR_RE = /^0x[0-9a-fA-F]{40}$/
 const FILTER_TOPIC_RE = /^0x[0-9a-fA-F]{64}$/
 const MAX_FILTER_ADDRESSES = 100
 const MAX_FILTER_TOPICS = 4
+// #266: cap the inner (per-position) topic OR-set so a single query
+// can't amplify into O(blocks × logs × inner_topics) work. Sibling of
+// MAX_FILTER_ADDRESSES — geth caps total inner topics at ~32 too.
+const MAX_INNER_TOPIC_VALUES = 32
 
 /**
  * Validate + normalize the address/topic/blockHash fields of a log
@@ -520,6 +524,14 @@ export function validateLogFilter(query: Record<string, unknown>): {
     topics = (query.topics as unknown[]).map((t, i) => {
       if (t === null || t === undefined) return null
       if (Array.isArray(t)) {
+        // #266: cap inner OR-set so a single query can't amplify into
+        // worst-case O(blocks × logs × inner_topics) work. Same family
+        // as MAX_FILTER_ADDRESSES — without this cap, a 10K-entry inner
+        // array is accepted and per-log matching iterates it for every
+        // log in the (up to 10K-block) range. Symmetric with #264.
+        if (t.length > MAX_INNER_TOPIC_VALUES) {
+          invalidParams(`inner topic array at index ${i} too large: ${t.length} > ${MAX_INNER_TOPIC_VALUES}`)
+        }
         return t.map((tt, j) => {
           if (typeof tt !== "string" || !FILTER_TOPIC_RE.test(tt)) {
             invalidParams(`invalid filter topic at index ${i}[${j}]: must match /^0x[0-9a-fA-F]{64}$/ or null`)
