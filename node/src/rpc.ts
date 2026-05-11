@@ -666,9 +666,13 @@ async function handleRpc(
       return null
     }
     case "eth_getBlockByNumber": {
-      const tag = String((payload.params ?? [])[0] ?? "latest")
+      // #250: pre-fix `String((payload.params ?? [])[0] ?? "latest")` coerced
+      // arrays/objects to "" → parseBlockTag("") → safeBigInt("") → BigInt("")
+      // → 0n → silently returned the genesis block. Sibling of #188 / #194.
+      // resolveBlockNumber accepts unknown and dispatches through parseBlockTag,
+      // which rejects non-string / non-number shapes at -32602.
       const includeTx = Boolean((payload.params ?? [])[1])
-      const number = await resolveBlockNumber(tag, chain)
+      const number = await resolveBlockNumber((payload.params ?? [])[0], chain)
       const block = await Promise.resolve(chain.getBlockByNumber(number))
       // #112: synthesise a genesis block when block 0 is missing. The
       // chain starts producing at height 1, so resolveBlockNumber("earliest")

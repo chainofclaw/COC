@@ -82,6 +82,13 @@ export function safeBigInt(input: string): bigint {
   if (typeof input !== "string" || input.length > 78) {
     invalidParams("invalid block number: input too large")
   }
+  // #250: pre-fix `BigInt("")` returned 0n silently. The bug surfaced
+  // upstream when eth_getBlockByNumber's `String(params[0] ?? "latest")`
+  // coerced arrays/objects to "" — parseBlockTag fell through to here
+  // and quietly returned the genesis block. Sibling of #188 / #194.
+  if (input === "") {
+    invalidParams("invalid block number: empty string")
+  }
   try {
     return BigInt(input)
   } catch {
