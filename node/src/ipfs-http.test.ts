@@ -511,6 +511,48 @@ describe("IpfsHttpServer", () => {
     const buf = await res.buffer()
     assert.deepEqual(new Uint8Array(buf), data)
   })
+
+  it("#192: duplicate ?arg=<x>&arg=<y> never leaks 500 \"internal error\"", async () => {
+    // Pre-fix every IPFS HTTP route cast `url.query.arg` to string,
+    // but Node's url parser returns string|string[]|undefined and dup
+    // arg= arrives as an array. The cast was a runtime no-op, the
+    // array hit downstream handlers expecting strings, and crashed
+    // through the catch-all as `500 "internal error"` across 9
+    // endpoints. After the fix the dispatcher coalesces to the first
+    // occurrence, so per-handler validation can reject empty/invalid
+    // values with 400/404 like it was designed to.
+    const data = new TextEncoder().encode("dup-arg-stress")
+    const meta = await unixfs.addFile("dup.txt", data)
+    const validCid = meta.cid
+    // The invariant: dup arg= MUST NOT surface 500 "internal error".
+    // 200, 400 (shape rejection), and 404 (handler-specific not-supported
+    // or not-found) are all acceptable — they signal the request was
+    // routed correctly and the per-handler validation ran. Status 500
+    // is the failure mode this fix targets.
+    const paths = [
+      `/api/v0/cat?arg=${validCid}&arg=second`,
+      `/api/v0/get?arg=${validCid}&arg=second`,
+      `/api/v0/ls?arg=${validCid}&arg=second`,
+      `/api/v0/object/stat?arg=${validCid}&arg=second`,
+      `/api/v0/block/get?arg=${validCid}&arg=second`,
+      `/api/v0/block/stat?arg=${validCid}&arg=second`,
+      `/api/v0/pin/add?arg=${validCid}&arg=second`,
+      `/api/v0/pin/rm?arg=${validCid}&arg=second`,
+      `/api/v0/pin/ls?arg=${validCid}&arg=second`,
+      `/api/v0/cat?arg=bogus&arg=second`,
+      `/api/v0/pin/add?arg=bogus&arg=second`,
+      `/api/v0/block/get?arg=bogus&arg=second`,
+    ]
+    const cases = paths.map((path) => ({ path, expect: [200, 400, 404] }))
+    for (const { path, expect } of cases) {
+      const res = await fetch(path, { method: "POST" })
+      assert.notEqual(res.status, 500, `${path}: must not leak 500, got ${res.status}`)
+      assert.ok(
+        expect.includes(res.status),
+        `${path}: expected one of [${expect.join(", ")}], got ${res.status}`,
+      )
+    }
+  })
 })
 
 // Phase Q.4 — Reed-Solomon erasure coding integration tests.
