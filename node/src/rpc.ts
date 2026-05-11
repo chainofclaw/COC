@@ -337,10 +337,21 @@ export function startRpcServer(
       if (aborted) return
       try {
         if (!body || body.trim().length === 0) {
-          return sendError(res, null, "empty request")
+          // #138: empty body is "Invalid Request" per JSON-RPC §5.1.
+          // Pre-fix this fell through to -32603 internal error.
+          return sendError(res, null, "empty request", -32600)
         }
 
-        const payload = JSON.parse(body)
+        let payload: JsonRpcRequest | JsonRpcRequest[]
+        try {
+          payload = JSON.parse(body)
+        } catch {
+          // #138: malformed JSON is "Parse error" -32700 per §5.1.
+          // Pre-fix the V8 JSON.parse message ("Expected property name
+          // or '}' in JSON at position 1...") leaked through as -32603,
+          // coupling clients to internal Node phrasing.
+          return sendError(res, null, "parse error: invalid JSON", -32700)
+        }
         const rpcOpts: Record<string, unknown> = {}
         if (rpcAuthOptions?.enableAdminRpc) {
           rpcOpts.enableAdminRpc = true
@@ -435,7 +446,10 @@ async function handleOne(
   opts?: Record<string, unknown>,
 ): Promise<JsonRpcResponse> {
   if (!payload || typeof payload !== "object" || !payload.method) {
-    return { jsonrpc: "2.0", id: payload?.id ?? null, error: { message: "invalid request" } }
+    // #138: per JSON-RPC §5.1 invalid-request must carry code -32600.
+    // Pre-fix this returned only { message }, which clients couldn't
+    // distinguish from a malformed response.
+    return { jsonrpc: "2.0", id: payload?.id ?? null, error: { code: -32600, message: "invalid request" } }
   }
 
   try {
