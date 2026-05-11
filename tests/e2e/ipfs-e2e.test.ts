@@ -359,6 +359,34 @@ describe("IPFS E2E", () => {
       assert.equal(json.error, "not found")
     })
 
+    it("#98: stat/cp/mv/rm/ls of missing paths return 404 uniformly", async () => {
+      // All MFS routes previously collapsed user-error throws to opaque 500.
+      // Verify each route now emits a structured 404.
+      for (const path of [
+        "/api/v0/files/stat?arg=/no-such-stat.txt",
+        "/api/v0/files/cp?arg=/no-such-cp.txt&dest=/x.txt",
+        "/api/v0/files/mv?arg=/no-such-mv.txt&dest=/y.txt",
+        "/api/v0/files/rm?arg=/no-such-rm.txt",
+        "/api/v0/files/ls?arg=/no-such-dir",
+      ]) {
+        const res = await fetch(`${base}${path}`, { method: "POST" })
+        assert.equal(res.status, 404, `expected 404 for ${path}, got ${res.status}`)
+        const json = (await res.json()) as { error: string }
+        assert.equal(json.error, "not found", `error code mismatch for ${path}`)
+      }
+    })
+
+    it("#98: cp with missing dest returns 400 (not 500)", async () => {
+      // Pre-fix: cp without ?dest threw a plain Error → 500.
+      const res = await fetch(
+        `${base}/api/v0/files/cp?arg=/test-dir/hello.txt`,
+        { method: "POST" },
+      )
+      assert.equal(res.status, 400)
+      const json = (await res.json()) as { error: string }
+      assert.equal(json.error, "bad request")
+    })
+
     it("#92: files/write extracts file bytes from kubo-style multipart upload", async () => {
       // Pre-fix bug: the entire multipart envelope (boundary, headers,
       // file content, closing boundary) was stored as the file content.
