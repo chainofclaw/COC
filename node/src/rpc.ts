@@ -1744,7 +1744,22 @@ async function handleRpc(
     case "eth_getCompilers":
       return ["solidity"]
     case "eth_compileSolidity": {
-      const source = String((payload.params ?? [])[0] ?? "")
+      // #246: pre-fix `String((payload.params ?? [])[0] ?? "")` silently
+      // coerced bool/number/object via JS String() to "true"/"123"/
+      // "[object Object]", which then passed the empty check and got
+      // sent to solc. solc returned a -32000 ParserError that LEAKED
+      // the coerced input ("1 | [object Object]") back to the caller.
+      // Wrong error code (-32000 = execution failure, not shape error)
+      // and observability leak. Same anti-pattern as #120/#220/#226/
+      // #240/#242.
+      const rawSource = (payload.params ?? [])[0]
+      if (rawSource === undefined || rawSource === null || rawSource === "") {
+        throw { code: -32602, message: "invalid Solidity source: expected non-empty source string" }
+      }
+      if (typeof rawSource !== "string") {
+        throw { code: -32602, message: `invalid Solidity source: expected string, got ${typeof rawSource}` }
+      }
+      const source = rawSource
       if (source.trim().length === 0) {
         throw { code: -32602, message: "invalid Solidity source: expected non-empty source string" }
       }
