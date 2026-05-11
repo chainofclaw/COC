@@ -601,11 +601,16 @@ async function handleRpc(
     }
     case "eth_estimateGas": {
       const estParams = ((payload.params ?? [])[0] ?? {}) as Record<string, string>
-      if (estParams.to && !/^0x[0-9a-fA-F]{1,40}$/i.test(estParams.to)) {
-        throw { code: -32602, message: "invalid to address" }
+      // #128: pre-fix the regex was /^0x[0-9a-fA-F]{1,40}$/ which
+      // accepted "0x1" or any 1-39 hex chars. Same class as #124 fix
+      // for eth_call but eth_estimateGas was missed in that pass.
+      // Address must be exactly 20 bytes (40 hex chars). Empty `to`
+      // still permitted for contract-creation gas estimates.
+      if (estParams.to && !/^0x[0-9a-fA-F]{40}$/.test(estParams.to)) {
+        throw { code: -32602, message: "invalid to address: must match /^0x[0-9a-fA-F]{40}$/" }
       }
-      if (estParams.from && !/^0x[0-9a-fA-F]{1,40}$/i.test(estParams.from)) {
-        throw { code: -32602, message: "invalid from address" }
+      if (estParams.from && !/^0x[0-9a-fA-F]{40}$/.test(estParams.from)) {
+        throw { code: -32602, message: "invalid from address: must match /^0x[0-9a-fA-F]{40}$/" }
       }
       // Default gas cap to block gas limit (30M) to prevent DoS via unbounded execution
       const gasForEstimate = estParams.gas ?? "0x1c9c380"
