@@ -850,8 +850,24 @@ async function handleRpc(
       if (!isDevAccountsEnabled()) return []
       return Array.from(testAccounts.keys())
     case "web3_sha3": {
-      const hex = String((payload.params ?? [])[0] ?? "0x")
-      const bytes = Buffer.from(hex.startsWith("0x") ? hex.slice(2) : hex, "hex")
+      // #170: pre-fix `Buffer.from("not-hex", "hex")` silently dropped
+      // every invalid char and produced an empty buffer — so every
+      // garbage input ("not-hex", "", null, undefined) returned the
+      // same keccak256("") hash. Worse, `Buffer.from("ff0g", "hex")`
+      // truncates at the first bad char and returns keccak256(0xff).
+      // Validate shape upfront; only well-formed hex hashes.
+      const raw = (payload.params ?? [])[0]
+      if (typeof raw !== "string") {
+        throw { code: -32602, message: "invalid input: expected hex string" }
+      }
+      if (!raw.startsWith("0x")) {
+        throw { code: -32602, message: "invalid input: must be 0x-prefixed" }
+      }
+      const body = raw.slice(2)
+      if (body.length % 2 !== 0 || (body.length > 0 && !/^[0-9a-fA-F]+$/.test(body))) {
+        throw { code: -32602, message: "invalid input: must be even-length hex" }
+      }
+      const bytes = Buffer.from(body, "hex")
       return `0x${keccak256Hex(bytes)}`
     }
     case "eth_sendRawTransaction": {
