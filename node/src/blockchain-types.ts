@@ -60,6 +60,11 @@ export interface NodePeer {
 
 export interface PendingFilter {
   id: string
+  // Which RPC method created this filter — drives the eth_getFilterChanges
+  // dispatch. Older snapshots may omit the field; callers should treat
+  // undefined as "log" to preserve the original behaviour for any persisted
+  // filters created before this field existed.
+  kind?: "log" | "block" | "pendingTx"
   fromBlock: bigint
   toBlock?: bigint
   address?: Hex
@@ -67,4 +72,8 @@ export interface PendingFilter {
   topics?: Array<Hex | null>
   lastCursor: bigint
   createdAtMs?: number
+  // pendingTx-only: set of tx hashes already returned to this filter, so
+  // a second poll only sees newly-arrived hashes. Kept per filter so two
+  // independent pendingTx subscribers each get their own diff.
+  seenPendingTxs?: Set<Hex>
 }
