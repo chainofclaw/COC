@@ -10,6 +10,14 @@ import { UnixFsBuilder } from "./ipfs-unixfs.ts"
 import { IpfsHttpServer } from "./ipfs-http.ts"
 import type { CidString } from "./ipfs-types.ts"
 
+// The IPFS HTTP server uses a module-level rate limiter (100 req/min/IP).
+// With 47+ tests in this file all probing 127.0.0.1, the budget gets
+// thin — adding even one new test can push the C3.1 suite into 429.
+// Bypass for the whole test run; the limiter's own unit tests cover its
+// behaviour, and the IPFS HTTP routes don't change behaviour based on
+// whether the limiter is enabled.
+process.env.COC_RPC_RATE_LIMIT_DISABLED = "1"
+
 let tmpDir: string
 let store: IpfsBlockstore
 let unixfs: UnixFsBuilder
@@ -623,6 +631,21 @@ describe("IpfsHttpServer", () => {
     const res = await fetch(`/api/v0/erasure/status?arg=${meta.cid}`, { method: "POST" })
     assert.notEqual(res.status, 500, "unixfs CID erasure/status must not leak 500")
     assert.equal(res.status, 415, `unixfs CID must be 415 not_a_manifest, got ${res.status}`)
+  })
+
+  it("#216: gateway rejects valid-shape CID > 100 chars (no ENAMETOOLONG 500 leak)", async () => {
+    // Pre-fix isValidCid accepted CIDs up to 512 chars. Real CIDs are
+    // ≤ ~80 chars (Qm v0 = 46, bafy v1 ≤ ~80). A 512-char synthetic
+    // CID slipped through to store.get(cid) → open() → ENAMETOOLONG
+    // (Linux NAME_MAX = 255 bytes per path component) → 500 "internal
+    // error" with stack trace logged. Single probe to stay within
+    // the module-shared rate limiter budget (100 req/min/IP).
+    const overlongQm = "Qm" + "1".repeat(510) // 512 chars
+    const r = await fetch(`/ipfs/${overlongQm}`, { method: "GET" })
+    assert.notEqual(r.status, 500, `cid len=${overlongQm.length}: must not leak 500, got ${r.status}`)
+    assert.equal(r.status, 400, `cid len=${overlongQm.length}: must be 400 invalid CID, got ${r.status}`)
+    const body = await r.json() as { error?: string }
+    assert.match(body.error ?? "", /invalid CID/i, "error must explain shape")
   })
 })
 
