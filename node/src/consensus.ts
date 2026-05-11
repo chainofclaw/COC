@@ -69,8 +69,18 @@ const SYNC_INFLIGHT_WATCHDOG_MS = 90_000
 // silently when these tune — historical bug: 558b697 raised the timeout
 // from 120s → 600s but consensus.test.ts kept asserting at 125s, leaving
 // three stale failures until the next proactive sweep caught them).
-export const NO_PROGRESS_TIMEOUT_MS = 600_000
-export const NO_PROGRESS_STAGGER_MS = 30_000
+// PR-1I (2026-05-11): env-overridable so prod operators can shorten the
+// slow-path fallback window when an environment cannot afford 10 minutes of
+// missed liveness per stuck round. Default stays at 600 s for test/dev
+// parity; set `COC_NO_PROGRESS_TIMEOUT_MS=30000` (or similar) on prod nodes
+// when single-fault recovery latency is the dominant cost. Stagger stays
+// fixed (rotational ordering protection — equivocation storm guard).
+export const NO_PROGRESS_TIMEOUT_MS = Number(
+  process.env.COC_NO_PROGRESS_TIMEOUT_MS ?? 600_000,
+)
+export const NO_PROGRESS_STAGGER_MS = Number(
+  process.env.COC_NO_PROGRESS_STAGGER_MS ?? 30_000,
+)
 const NO_PROGRESS_MAX_VALIDATORS = 10
 
 // PR-1A (2026-05-10): fast-path fallback when we have *direct evidence* the
