@@ -1764,9 +1764,22 @@ async function handleRpc(
         invalidParams("invalid cid: contains illegal characters or exceeds 512 chars")
       }
       const cid = rawCid
-      const excludePeerId = String((payload.params ?? [])[1] ?? "")
+      // #250: pre-fix `String((payload.params ?? [])[1] ?? "")` silently
+      // coerced numbers/bools to ad-hoc peer IDs ("123", "true"), passing
+      // bogus exclude-filters to fetchBlockFromPeer. Same anti-pattern as
+      // #120/#220/#226/#240/#242/#248. excludePeerId is optional, so
+      // accept omitted (undefined/null/""); reject only when caller
+      // passed a non-string non-empty shape.
+      const rawExclude = (payload.params ?? [])[1]
+      let excludePeerId: string | undefined
+      if (rawExclude !== undefined && rawExclude !== null && rawExclude !== "") {
+        if (typeof rawExclude !== "string") {
+          throw { code: -32602, message: `invalid excludePeerId: expected string, got ${Array.isArray(rawExclude) ? "array" : typeof rawExclude}` }
+        }
+        excludePeerId = rawExclude
+      }
       const fetchBlockFromPeer = opts?.fetchBlockFromPeer as ((cid: string, exclude?: string) => Promise<Uint8Array | null>) | undefined
-      const bytes = await fetchBlockFromPeer?.(cid, excludePeerId || undefined)
+      const bytes = await fetchBlockFromPeer?.(cid, excludePeerId)
       return { bytes: bytes ? Buffer.from(bytes).toString("base64") : null }
     }
     case "coc_nodeInfo": {

@@ -1928,33 +1928,39 @@ test("RPC Extended Methods", async (t) => {
       `valid CID must pass shape validation, got ${JSON.stringify(ok)}`)
   })
 
-  await t.test("#249: coc_getContracts rejects non-object pagination param (no silent all-return)", async () => {
-    // Pre-fix `(payload.params ?? [])[0] as Record<string, unknown>`
-    // was a TS runtime no-op. coc_getContracts(true) etc. silently fell
-    // through with .limit/.offset/.reverse as undefined → default pagination
-    // → returned all contracts. Same anti-pattern as #238/#239.
+  await t.test("#250: coc_ipfsFetchBlockFromPeer rejects non-string excludePeerId (preserves omitted)", async () => {
+    // Pre-fix `String((payload.params ?? [])[1] ?? "")` silently coerced
+    // numbers/bools to ad-hoc peer IDs ("123", "true"), making the
+    // exclude filter match nothing useful. Same anti-pattern as
+    // #120/#220/#226/#240/#242/#248. excludePeerId is optional —
+    // omit/null/"" pass through unchanged; non-string with content rejects.
     const probe = async (params: unknown[]) => {
       const r = await fetch(`http://127.0.0.1:${port}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "coc_getContracts", params }),
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "coc_ipfsFetchBlockFromPeer", params }),
       })
       return await r.json() as { error?: { code: number; message: string }; result?: unknown }
     }
-    for (const bad of [true, false, "str", 42, [1, 2]]) {
-      const r = await probe([bad])
+    const validCid = "bafy-some-real-cid"
+    // Non-string excludePeerId → -32602
+    for (const bad of [123, true, false, 1.5, {}, [1, 2]]) {
+      const r = await probe([validCid, bad])
       assert.equal(r.error?.code, -32602,
-        `coc_getContracts(${JSON.stringify(bad)}) must be -32602, got ${JSON.stringify(r)}`)
-      assert.match(r.error!.message, /invalid filter|expected object/i)
+        `excludePeerId=${JSON.stringify(bad)} must be -32602, got ${JSON.stringify(r)}`)
+      assert.match(r.error!.message, /excludePeerId|expected string/i)
     }
-    // Sanity: omitted / null / empty object treated as default pagination.
-    // (The fixture chain might not have blockIndex, so we just verify
-    // no -32602 shape error.)
-    for (const ok of [[], [null], [{}], [{ limit: 10 }]]) {
+    // Omitted / null / empty string → no shape error; the fixture has
+    // no fetchBlockFromPeer wired so result is just { bytes: null }.
+    for (const ok of [[validCid], [validCid, null], [validCid, ""]]) {
       const r = await probe(ok)
       assert.notEqual(r.error?.code, -32602,
-        `coc_getContracts(${JSON.stringify(ok)}) must pass shape, got ${JSON.stringify(r)}`)
+        `excludePeerId omitted/null/"" must pass shape, got ${JSON.stringify(r)}`)
     }
+    // Sanity: well-shaped string excludePeerId passes shape
+    const okStr = await probe([validCid, "peer-123"])
+    assert.notEqual(okStr.error?.code, -32602,
+      `valid excludePeerId string must pass shape, got ${JSON.stringify(okStr)}`)
   })
 
   await t.test("#240: admin_addPeer / admin_removePeer reject non-string shape (no silent coercion)", async () => {
