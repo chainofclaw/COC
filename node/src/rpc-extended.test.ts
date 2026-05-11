@@ -528,6 +528,16 @@ test("RPC Extended Methods", async (t) => {
     ])
   })
 
+  await t.test("#106: coc_getEquivocationsTotal returns the count of all evidence entries", async () => {
+    // The operator runbook tells operators to alert on this metric, but
+    // pre-fix the method threw "method not supported". The fixture
+    // injects one mock equivocation via getBftEquivocations, so the count
+    // should be 1.
+    const result = await rpcCall(port, "coc_getEquivocationsTotal")
+    assert.equal(typeof result, "number", `coc_getEquivocationsTotal must return a number, got ${typeof result}`)
+    assert.equal(result, 1, "fixture has exactly one mock equivocation, so total must be 1")
+  })
+
   if (prevDevAccounts === undefined) {
     delete process.env.COC_DEV_ACCOUNTS
   } else {
