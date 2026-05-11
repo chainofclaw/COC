@@ -1481,6 +1481,43 @@ test("RPC Extended Methods", async (t) => {
     assert.ok(Array.isArray(ok2), "omitted topics must return results array")
   })
 
+  await t.test("#198: eth_getTransactionByBlock*AndIndex reject malformed index (no silent null)", async () => {
+    // Pre-fix `Number((payload.params ?? [])[1] ?? 0)` coerced any
+    // input — non-hex → NaN → null, "-0x1" → -1 → null, true → 1
+    // (treated as a valid index). Callers got `null` for both
+    // "valid index, no such tx" and "I sent garbage" — indistinguishable.
+    const validBlockHash = "0x" + "1".repeat(64)
+    const cases: Array<{ method: string; params: unknown[]; label: string }> = [
+      { method: "eth_getTransactionByBlockNumberAndIndex", params: ["latest", "-0x1"], label: "negative" },
+      { method: "eth_getTransactionByBlockNumberAndIndex", params: ["latest", "not-hex"], label: "non-hex" },
+      { method: "eth_getTransactionByBlockNumberAndIndex", params: ["latest", true], label: "bool" },
+      { method: "eth_getTransactionByBlockNumberAndIndex", params: ["latest", 0], label: "number-not-string" },
+      { method: "eth_getTransactionByBlockNumberAndIndex", params: ["latest", null], label: "null" },
+      { method: "eth_getTransactionByBlockHashAndIndex", params: [validBlockHash, "-0x1"], label: "byHash negative" },
+      { method: "eth_getTransactionByBlockHashAndIndex", params: [validBlockHash, "not-hex"], label: "byHash non-hex" },
+    ]
+    for (const { method, params, label } of cases) {
+      const resp = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+      })
+      const json = await resp.json() as { error?: { code: number; message: string }; result?: unknown }
+      assert.equal(json.error?.code, -32602, `${method}(${label}) must be -32602, got ${JSON.stringify(json)}`)
+      assert.match(json.error!.message, /transaction index/i, `${method}: error must name the field`)
+    }
+    // Sanity: valid hex index does not error (returns null only if the
+    // tx doesn't exist — but that's the expected behaviour, not a
+    // shape rejection).
+    const sanity = await fetch(`http://127.0.0.1:${port}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getTransactionByBlockNumberAndIndex", params: ["latest", "0x0"] }),
+    })
+    const sanityJson = await sanity.json() as { error?: unknown; result: unknown }
+    assert.equal(sanityJson.error, undefined, "valid hex index must NOT error")
+  })
+
   if (prevDevAccounts === undefined) {
     delete process.env.COC_DEV_ACCOUNTS
   } else {

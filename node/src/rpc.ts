@@ -140,6 +140,26 @@ function requireBlockHashParam(params: unknown[], index: number): Hex {
 }
 
 /**
+ * Validate a JSON-RPC QUANTITY index parameter (#198). EIP-1474
+ * requires indexes to be `0x`-prefixed hex strings. Pre-fix
+ * `Number((payload.params ?? [])[idx] ?? 0)` accepted everything
+ * (NaN for non-hex, negatives for `-0x1`, `1` for `true`) and the
+ * downstream null-return silently masked the malformed cases —
+ * caller couldn't distinguish a real not-found from a buggy query.
+ */
+function requireIndexParam(params: unknown[], index: number, name = "index"): number {
+  const raw = (params ?? [])[index]
+  if (typeof raw !== "string" || !/^0x[0-9a-fA-F]+$/.test(raw)) {
+    throw { code: -32602, message: `invalid ${name} at param ${index}: must match /^0x[0-9a-fA-F]+$/` }
+  }
+  const n = Number(raw)
+  if (!Number.isInteger(n) || n < 0) {
+    throw { code: -32602, message: `invalid ${name} at param ${index}: must be non-negative integer` }
+  }
+  return n
+}
+
+/**
  * Validate that the first param of eth_call / eth_estimateGas /
  * eth_sendTransaction / eth_createAccessList is an object — not a
  * string, number, array, or boolean. #172: pre-fix the type assertion
@@ -1434,8 +1454,10 @@ async function handleRpc(
     case "eth_getTransactionByBlockHashAndIndex": {
       // #166: same hash-shape validation as eth_getBlockByHash.
       const blockHash = requireBlockHashParam(payload.params ?? [], 0)
-      const txIndex = Number((payload.params ?? [])[1] ?? 0)
-      if (!Number.isInteger(txIndex) || txIndex < 0) return null
+      // #198: validate index shape before Number() so non-hex / negative
+      // surfaces as -32602 instead of silently returning null (which
+      // mimics "valid index, no such tx" — a real not-found).
+      const txIndex = requireIndexParam(payload.params ?? [], 1, "transaction index")
       const block = await Promise.resolve(chain.getBlockByHash(blockHash))
       if (!block || txIndex >= block.txs.length) return null
       return formatRawTransaction(block.txs[txIndex], {
@@ -1445,9 +1467,9 @@ async function handleRpc(
       })
     }
     case "eth_getTransactionByBlockNumberAndIndex": {
-      const tag = String((payload.params ?? [])[0] ?? "latest")
-      const txIdx = Number((payload.params ?? [])[1] ?? 0)
-      if (!Number.isInteger(txIdx) || txIdx < 0) return null
+      const tag = (payload.params ?? [])[0]
+      // #198: validate index shape — same rationale as the *byHash sibling.
+      const txIdx = requireIndexParam(payload.params ?? [], 1, "transaction index")
       const height = await Promise.resolve(chain.getHeight())
       const num = parseBlockTag(tag, height)
       const block = await Promise.resolve(chain.getBlockByNumber(num))
