@@ -1240,7 +1240,13 @@ export class IpfsHttpServer {
  * "bogus" / "b" while allowing the fake-shape CIDs used in fixtures.
  */
 function isValidCid(cid: string): boolean {
-  if (!cid || cid.length < 10 || cid.length > 512) return false
+  // #216: real-world CID max is ~80 chars (Qm v0 = 46, bafy v1 ≤ ~80).
+  // 100 leaves comfortable headroom for any future codec without
+  // exceeding the OS path-component limit (Linux NAME_MAX = 255).
+  // Pre-fix the cap of 512 let synthetic over-long CIDs reach
+  // store.get(cid) which then failed `open()` with ENAMETOOLONG —
+  // leaking as `500 "internal error"` instead of a clean 400.
+  if (!cid || cid.length < 10 || cid.length > 100) return false
   const trimmed = cid.trim()
   if (trimmed !== cid) return false
   if (/[\/\\]|\.\.|\0|\s/.test(cid)) return false
