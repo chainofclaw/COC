@@ -123,6 +123,34 @@ export const PROPOSER_REACHABILITY_STARTUP_GRACE_MS = Number(
   process.env.COC_PR1A_STARTUP_GRACE_MS ?? 60_000,
 )
 
+/**
+ * PR-1J (2026-05-11): minimum validator count for PR-1A fast-path to engage.
+ *
+ * BFT-lite with stake-weighted relaxedQuorum (totalStake * 2 / 3) requires
+ * 2 of 3 affirmative votes when N=3. If PR-1A skips one validator, only
+ * 2 remain to form quorum — but those 2 must both agree on the SAME block
+ * proposal at the SAME height. When the "skipped" validator simultaneously
+ * proposes for that height (because its local PR-1A view doesn't yet agree
+ * it should skip itself), the cluster splits into two competing hashes
+ * at the same height that BFT cannot reconcile in a single round.
+ *
+ * Observed 2026-05-11 18780 prod redeploy: N=3 with PR-1A enabled
+ * caused chain to advance 10-15 blocks per restart then freeze at a
+ * height where two validators each held a different propose.
+ *
+ * Fix: require ≥ COC_PR1A_MIN_VALIDATORS (default 4) for PR-1A to engage.
+ * On N=3 clusters the chain falls back to H15's slow path (600 s default,
+ * tunable via COC_NO_PROGRESS_TIMEOUT_MS — see PR-1I). The trade-off is
+ * acceptable: N=3 is single-fault-fragile by design, so 30 s slow-path
+ * latency on a single-validator stall is no worse than what the original
+ * BFT contract promised before PR-1A.
+ *
+ * Set `COC_PR1A_MIN_VALIDATORS=0` to force-enable on any N (debug only).
+ */
+export const PR1A_MIN_VALIDATORS = Number(
+  process.env.COC_PR1A_MIN_VALIDATORS ?? 4,
+)
+
 /** Race a promise against a timeout. Throws on timeout, otherwise returns the value. */
 async function withSyncTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -282,6 +310,10 @@ export class ConsensusEngine {
   // treated as unreachable for fast-fallback purposes.
   private readonly reachabilityProvider: (() => Set<string>) | null
 
+  // PR-1J: returns the current active validator count. When < PR1A_MIN_VALIDATORS,
+  // the PR-1A fast-path is permanently disabled (not just during grace).
+  private readonly validatorCountProvider: (() => number) | null
+
   constructor(
     chain: IChainEngine,
     p2p: P2PNode,
@@ -292,6 +324,7 @@ export class ConsensusEngine {
       wireBroadcast?: (block: ChainBlock) => void
       nodeId?: string
       reachabilityProvider?: () => Set<string>
+      validatorCountProvider?: () => number
     },
   ) {
     this.chain = chain
@@ -302,6 +335,25 @@ export class ConsensusEngine {
     this.wireBroadcast = opts?.wireBroadcast ?? null
     this.nodeId = opts?.nodeId ?? null
     this.reachabilityProvider = opts?.reachabilityProvider ?? null
+    this.validatorCountProvider = opts?.validatorCountProvider ?? null
+  }
+
+  /**
+   * PR-1J: check whether PR-1A fast-path is enabled in the current cluster.
+   * Returns false when validatorCountProvider reports fewer than
+   * PR1A_MIN_VALIDATORS — disables both marking and reporting.
+   * Defaults to true (enabled) when no provider is set, preserving legacy
+   * behavior for tests and any caller that doesn't wire the provider.
+   */
+  private isPr1aEnabled(): boolean {
+    if (!this.validatorCountProvider) return true
+    if (PR1A_MIN_VALIDATORS <= 0) return true
+    try {
+      const count = this.validatorCountProvider()
+      return count >= PR1A_MIN_VALIDATORS
+    } catch {
+      return true // fail open to preserve legacy behavior
+    }
   }
 
   /**
@@ -316,6 +368,9 @@ export class ConsensusEngine {
   markProposerUnreachable(proposerId: string, ttlMs: number = PROPOSER_UNREACHABLE_TTL_MS): void {
     const id = proposerId.toLowerCase()
     if (id === (this.nodeId?.toLowerCase() ?? "")) return // never mark self
+    // PR-1J: permanently disable fast-path on tiny clusters where the
+    // skip-then-quorum-of-remaining math breaks down (see PR1A_MIN_VALIDATORS).
+    if (!this.isPr1aEnabled()) return
     // PR-1H: suppress during startup grace so wire mesh has time to converge
     // before fast-path arms. See PROPOSER_REACHABILITY_STARTUP_GRACE_MS docs.
     if (
@@ -338,6 +393,9 @@ export class ConsensusEngine {
   private isProposerUnreachable(proposerId: string): boolean {
     const id = proposerId.toLowerCase()
     if (id === (this.nodeId?.toLowerCase() ?? "")) return false
+
+    // PR-1J: permanently disabled on tiny clusters (N < PR1A_MIN_VALIDATORS).
+    if (!this.isPr1aEnabled()) return false
 
     // PR-1H: during startup grace, always claim proposers reachable so PR-1A
     // fast-path stays disarmed while the wire mesh is still converging. The

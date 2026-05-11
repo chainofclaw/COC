@@ -1178,6 +1178,17 @@ const consensus = new ConsensusEngine(chain, p2p, {
     }
     return set
   },
+  // PR-1J (2026-05-11): provide live active-validator count so consensus
+  // can disable PR-1A on small clusters (N < PR1A_MIN_VALIDATORS, default 4).
+  // Prefers on-chain governance set when active, otherwise the hardcoded
+  // validators array from config (post-init it reflects ValidatorRegistry).
+  validatorCountProvider: (): number => {
+    if (hasGovernance(chain)) {
+      const active = chain.governance.getActiveValidators()
+      if (active.length > 0) return active.length
+    }
+    return config.validators?.length ?? 0
+  },
 })
 consensus.start()
 

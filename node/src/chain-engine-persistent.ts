@@ -273,6 +273,92 @@ export class PersistentChainEngine {
   }
 
   /**
+   * PR-1K (2026-05-11): scan leveldb for "phantom" blocks and remove them.
+   *
+   * A phantom block is one of:
+   *   - stored at b:N for N > LATEST_BLOCK_KEY tip (PR-1G already prunes
+   *     these via `pruneStaleBlocksAfterTip` after a peer-verified demote,
+   *     but blocks accumulated by other paths — e.g. a now-finalized cluster
+   *     view differing from local pre-finalize state — are not caught).
+   *   - stored at any height with a `proposer` field that is not present in
+   *     the current active validator set. This catches blocks left behind
+   *     from prior cluster configurations (e.g. N=5 attempt #2 leftover
+   *     2026-05-10) that still parse as valid leveldb entries but make
+   *     `verifyBlockChain` reject any snapshot containing them.
+   *
+   * Called via admin_pruneStalePhantoms RPC. Returns counts for visibility.
+   * Idempotent — safe to call repeatedly.
+   */
+  async pruneStalePhantoms(): Promise<{
+    scanned: number
+    prunedAboveTip: number
+    prunedInvalidProposer: number
+    tipHeight: bigint | null
+    activeValidators: string[]
+  }> {
+    const tip = await this.blockIndex.getLatestBlock()
+    const tipHeight = tip?.number ?? null
+
+    // Current active validator set (lowercase). Prefer governance, fall back to config.
+    const validatorSet = new Set<string>()
+    if (this.governance) {
+      for (const v of this.governance.getActiveValidators()) {
+        if (v.id) validatorSet.add(v.id.toLowerCase())
+        if (v.address) validatorSet.add(v.address.toLowerCase())
+      }
+    }
+    for (const id of this.cfg.validators) {
+      if (id) validatorSet.add(id.toLowerCase())
+    }
+
+    const keys = await this.db.getKeysWithPrefix("b:", { limit: -1 })
+    const ops: BatchOp[] = []
+    let prunedAboveTip = 0
+    let prunedInvalidProposer = 0
+    let scanned = 0
+
+    for (const key of keys) {
+      const suffix = key.slice(2)
+      let n: bigint
+      try { n = BigInt(suffix) } catch { continue }
+      scanned += 1
+
+      const block = await this.blockIndex.getBlockByNumber(n)
+      if (!block) continue
+
+      const aboveTip = tipHeight !== null && n > tipHeight
+      const proposer = block.proposer?.toLowerCase() ?? ""
+      const invalidProposer = proposer !== "" && !validatorSet.has(proposer)
+
+      if (aboveTip || invalidProposer) {
+        ops.push({ type: "del", key })
+        if (block.hash) ops.push({ type: "del", key: "h:" + block.hash })
+        if (aboveTip) prunedAboveTip += 1
+        else prunedInvalidProposer += 1
+      }
+    }
+
+    if (ops.length > 0) {
+      await this.db.batch(ops)
+      log.warn("PR-1K: pruned stale phantom blocks", {
+        scanned,
+        prunedAboveTip,
+        prunedInvalidProposer,
+        tipHeight: tipHeight?.toString() ?? "<none>",
+        activeValidators: [...validatorSet].slice(0, 8),
+      })
+    }
+
+    return {
+      scanned,
+      prunedAboveTip,
+      prunedInvalidProposer,
+      tipHeight,
+      activeValidators: [...validatorSet],
+    }
+  }
+
+  /**
    * PR-1G (2026-05-11): verify the local tip against peer snapshots and
    * demote LATEST_BLOCK_KEY backward to the deepest peer-confirmed height if
    * the tip turns out to be a self-finalized phantom.

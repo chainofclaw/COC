@@ -1778,6 +1778,36 @@ async function handleRpc(
         url: peer.url ?? "unknown",
       }))
     }
+    /**
+     * PR-1K (2026-05-11): admin_pruneStalePhantoms — scan leveldb for blocks
+     * with invalid proposers or stored above the current tip, and delete
+     * them. Use this to clean up phantom block residue left behind by
+     * failed validator-set transitions (e.g. the 2026-05-10 N=5 attempt that
+     * left 0x0ba51e... proposer at h=71359 on server-1).
+     */
+    case "admin_pruneStalePhantoms": {
+      if (!(opts as Record<string, unknown>)?.enableAdminRpc) {
+        throw { code: -32601, message: "admin methods disabled" }
+      }
+      const persistentChain = chain as unknown as { pruneStalePhantoms?: () => Promise<{
+        scanned: number
+        prunedAboveTip: number
+        prunedInvalidProposer: number
+        tipHeight: bigint | null
+        activeValidators: string[]
+      }> }
+      if (typeof persistentChain.pruneStalePhantoms !== "function") {
+        throw { code: -32601, message: "engine does not support phantom pruning" }
+      }
+      const result = await persistentChain.pruneStalePhantoms()
+      return {
+        scanned: result.scanned,
+        prunedAboveTip: result.prunedAboveTip,
+        prunedInvalidProposer: result.prunedInvalidProposer,
+        tipHeight: result.tipHeight !== null ? `0x${result.tipHeight.toString(16)}` : null,
+        activeValidators: result.activeValidators,
+      }
+    }
     // --- Rollup RPC namespace ---
     case "rollup_getOutputAtBlock": {
       const blockNumber = parseBlockTag(params[0], await Promise.resolve(chain.getHeight()))

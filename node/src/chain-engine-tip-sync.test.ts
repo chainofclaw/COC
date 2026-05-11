@@ -363,6 +363,102 @@ test("PR-1G: verifyAndPromoteTipWithPeers — fetchSnapshots throws falls back t
   await engine.close()
 })
 
+test("PR-1K: pruneStalePhantoms removes blocks above tip and with invalid proposer", async () => {
+  const { PersistentChainEngine } = await import("./chain-engine-persistent.ts")
+  const { EvmChain } = await import("./evm.ts")
+
+  const dataDir = "/tmp/coc-test-pr1k-" + Math.random().toString(36).slice(2)
+  const evm = new EvmChain({ chainId: 18780 })
+  const engine = new PersistentChainEngine(
+    {
+      dataDir,
+      nodeId: "0xtest",
+      chainId: 18780,
+      validators: ["0xa", "0xb", "0xc"],
+      finalityDepth: 3,
+      maxTxPerBlock: 100,
+      minGasPriceWei: 0n,
+    },
+    evm,
+  )
+  await engine.init()
+
+  // Healthy blocks 1-5 with valid proposers
+  const validBlock = (n: number, proposer: string) => ({
+    number: BigInt(n),
+    hash: ("0x" + n.toString(16).padStart(64, "0")) as Hex,
+    parentHash: ("0x" + (n - 1).toString(16).padStart(64, "0")) as Hex,
+    proposer,
+    timestampMs: Date.now(),
+    txs: [],
+  })
+  await engine.blockIndex.putBlock(validBlock(1, "0xa") as unknown as ChainBlock)
+  await engine.blockIndex.putBlock(validBlock(2, "0xb") as unknown as ChainBlock)
+  await engine.blockIndex.putBlock(validBlock(3, "0xc") as unknown as ChainBlock)
+  // Phantom 1: above tip (LATEST is 3 after these three puts? actually 3 after the 3rd putBlock).
+  // Wait - putBlock updates LATEST, so LATEST=3. Add b:4 + b:5 above tip:
+  // We need to keep LATEST=3 while having b:4 and b:5. Use direct db writes.
+  // Easier: putBlock all and then demoteLatestTo(3).
+  await engine.blockIndex.putBlock(validBlock(4, "0xa") as unknown as ChainBlock)
+  await engine.blockIndex.putBlock(validBlock(5, "0xb") as unknown as ChainBlock)
+  await engine.blockIndex.demoteLatestTo(3n)
+  // Phantom 2: at height 2 but proposer not in validator set
+  // (overwrites b:2 with the same number but invalid proposer)
+  await engine.blockIndex.putBlock(validBlock(2, "0xphantom") as unknown as ChainBlock)
+  // putBlock updates LATEST to 2, demote again to 3 so we have proper state:
+  // But b:2 was overwritten to invalid proposer. Re-demote LATEST to 3:
+  // Actually LATEST=2 with invalid proposer now after the overwrite.
+  // Demote to 3 won't work since b:3 still exists - test it.
+  await engine.blockIndex.demoteLatestTo(3n)
+
+  const result = await engine.pruneStalePhantoms()
+  // After demoteLatestTo(3), tip = 3. b:4 and b:5 should be prunedAboveTip.
+  assert.equal(result.tipHeight, 3n)
+  assert.equal(result.prunedAboveTip, 2, "b:4 and b:5 pruned as above-tip")
+  assert.equal(result.prunedInvalidProposer, 1, "b:2 with 0xphantom proposer pruned")
+  assert.ok(result.activeValidators.includes("0xa"))
+  assert.ok(result.activeValidators.includes("0xb"))
+  assert.ok(result.activeValidators.includes("0xc"))
+
+  // Verify pruning actually removed entries
+  assert.equal(await engine.getBlockByNumber(4n), null)
+  assert.equal(await engine.getBlockByNumber(5n), null)
+  assert.equal(await engine.getBlockByNumber(2n), null)
+
+  await engine.close()
+})
+
+test("PR-1K: pruneStalePhantoms is idempotent (second call prunes 0)", async () => {
+  const { PersistentChainEngine } = await import("./chain-engine-persistent.ts")
+  const { EvmChain } = await import("./evm.ts")
+
+  const dataDir = "/tmp/coc-test-pr1k-" + Math.random().toString(36).slice(2)
+  const evm = new EvmChain({ chainId: 18780 })
+  const engine = new PersistentChainEngine(
+    {
+      dataDir,
+      nodeId: "0xtest",
+      chainId: 18780,
+      validators: ["0xa"],
+      finalityDepth: 3,
+      maxTxPerBlock: 100,
+      minGasPriceWei: 0n,
+    },
+    evm,
+  )
+  await engine.init()
+
+  const r1 = await engine.pruneStalePhantoms()
+  const r2 = await engine.pruneStalePhantoms()
+  assert.equal(r2.prunedAboveTip, 0)
+  assert.equal(r2.prunedInvalidProposer, 0)
+  // r1 may have pruned the genesis (proposer 0xa is in set so likely not)
+  // Just check idempotency.
+  assert.equal(r2.scanned, r1.scanned - r1.prunedAboveTip - r1.prunedInvalidProposer)
+
+  await engine.close()
+})
+
 test("PR-1G: verifyAndPromoteTipWithPeers — no local tip is a no-op", async () => {
   const { PersistentChainEngine } = await import("./chain-engine-persistent.ts")
   const { EvmChain } = await import("./evm.ts")
