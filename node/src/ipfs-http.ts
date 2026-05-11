@@ -753,7 +753,34 @@ export class IpfsHttpServer {
           break
         }
         case "read": {
-          const data = await this.mfs.read(arg)
+          // Forward offset/count to IpfsMfs.read so partial reads work as
+          // kubo CLI + js-ipfs expect. Pre-fix the params were silently
+          // dropped and every read returned the whole file.
+          const offsetRaw = url.query?.offset
+          const countRaw = url.query?.count
+          const opts: { offset?: number; count?: number } = {}
+          if (offsetRaw !== undefined) {
+            const n = Number(offsetRaw)
+            if (!Number.isFinite(n)) throw new HttpError(400, "invalid offset")
+            opts.offset = n
+          }
+          if (countRaw !== undefined) {
+            const n = Number(countRaw)
+            if (!Number.isFinite(n) || n < 0) throw new HttpError(400, "invalid count")
+            opts.count = n
+          }
+          let data: Uint8Array
+          try {
+            data = await this.mfs.read(arg, opts)
+          } catch (err) {
+            // Map MFS "not found" / "is a directory" errors to the
+            // structured 404 / 400 shape clients expect, instead of the
+            // generic 500 the catch-all would otherwise emit.
+            const msg = err instanceof Error ? err.message : String(err)
+            if (/^not found/.test(msg)) throw new HttpError(404, "not found", msg)
+            if (/^is a directory/.test(msg)) throw new HttpError(400, "is a directory", msg)
+            throw err
+          }
           res.writeHead(200)
           res.end(data)
           break
@@ -811,9 +838,22 @@ export class IpfsHttpServer {
           res.end(JSON.stringify({ error: `unknown MFS command: ${route}` }))
       }
     } catch (err) {
-      log.error("MFS route failed", { error: String(err) })
-      res.writeHead(500, { "content-type": "application/json" })
-      res.end(JSON.stringify({ error: "internal error" }))
+      // Mirror the main catch's HttpError handling so routes can opt into
+      // structured 4xx responses (e.g. read of a missing path → 404).
+      const status = err instanceof HttpError ? err.status : 500
+      const code = err instanceof HttpError ? err.code : "internal error"
+      const message = err instanceof HttpError && err.message !== code ? err.message : undefined
+      if (status >= 500) {
+        log.error("MFS route failed", { error: String(err) })
+      } else {
+        log.warn("MFS request rejected", { status, code })
+      }
+      if (!res.headersSent) {
+        res.writeHead(status, { "content-type": "application/json" })
+      }
+      try {
+        res.end(JSON.stringify(message ? { error: code, message } : { error: code }))
+      } catch { /* connection already closed */ }
     }
   }
 
