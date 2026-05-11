@@ -1367,6 +1367,31 @@ test("RPC Extended Methods", async (t) => {
     assert.doesNotMatch(JSON.stringify(stats), /Cannot read properties|undefined.*reading/, "must not leak TypeError")
   })
 
+  await t.test("#186: eth_getLogs validates blockHash field shape (parity with address+topics #162)", async () => {
+    // Pre-fix the blockHash field was accepted as anything — "0x123",
+    // "bogus", null, 42 all returned `result: []` indistinguishable
+    // from "no logs in that block". Now validates 32-byte hex shape
+    // matching the eth_getBlockByHash (#166) rule.
+    const probe = async (filter: unknown) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getLogs", params: [filter] }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    }
+    // (a) Short blockHash → -32602
+    const r1 = await probe({ blockHash: "0x123" })
+    assert.equal(r1.error?.code, -32602, `short blockHash must be -32602, got ${r1.error?.code}`)
+    assert.match(r1.error!.message, /blockHash/i, "error must name the field")
+    // (b) Non-hex blockHash → -32602
+    const r2 = await probe({ blockHash: "bogus" })
+    assert.equal(r2.error?.code, -32602, `non-hex blockHash must be -32602, got ${r2.error?.code}`)
+    // Sanity: omitted / explicit-null blockHash still works (returns []).
+    const ok = await probe({})
+    assert.equal(ok.error, undefined, "omitted blockHash must NOT error")
+  })
+
   if (prevDevAccounts === undefined) {
     delete process.env.COC_DEV_ACCOUNTS
   } else {
