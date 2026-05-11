@@ -110,6 +110,24 @@ function requireAddressParam(params: unknown[], index: number, name = "address")
   return value as Hex
 }
 
+/**
+ * #150: strict 32-byte (64 hex chars) tx-hash validator. The loose
+ * requireHexParam accepts 0x-prefixed hex up to 66 chars, so a typo
+ * like "0x123" slipped through and the downstream tx lookup returned
+ * null ("tx not found"). Clients couldn't distinguish a typo from a
+ * tx that doesn't exist on-chain.
+ */
+function requireTxHashParam(params: unknown[], index: number, name = "transaction hash"): Hex {
+  const value = (params ?? [])[index]
+  if (typeof value !== "string") {
+    throw { code: -32602, message: `invalid ${name}: expected string` }
+  }
+  if (!/^0x[0-9a-fA-F]{64}$/.test(value)) {
+    throw { code: -32602, message: `invalid ${name}: must match /^0x[0-9a-fA-F]{64}$/` }
+  }
+  return value as Hex
+}
+
 function optionalHexParam(params: unknown[], index: number): Hex | undefined {
   const value = (params ?? [])[index]
   if (value === undefined || value === null) return undefined
@@ -610,7 +628,7 @@ async function handleRpc(
       return `0x${nonce.toString(16)}`
     }
     case "eth_getTransactionReceipt": {
-      const hash = requireHexParam(payload.params ?? [], 0, "transaction hash")
+      const hash = requireTxHashParam(payload.params ?? [], 0)
       // Try persistent index first, then fall back to EVM memory
       if (typeof chain.getTransactionByHash === "function") {
         const tx = await chain.getTransactionByHash(hash as Hex)
@@ -621,7 +639,7 @@ async function handleRpc(
       return evm.getReceipt(hash)
     }
     case "eth_getTransactionByHash": {
-      const hash = requireHexParam(payload.params ?? [], 0, "transaction hash")
+      const hash = requireTxHashParam(payload.params ?? [], 0)
       // Try persistent index first, then fall back to EVM memory
       if (typeof chain.getTransactionByHash === "function") {
         const tx = await chain.getTransactionByHash(hash as Hex)
