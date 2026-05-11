@@ -372,16 +372,18 @@ export class WsRpcServer {
 
   private handleSubscribe(ws: WebSocket, params: unknown[]): string {
     if (ws.readyState !== WebSocket.OPEN) {
-      throw new Error("connection not open")
+      // #130: prefer JSON-RPC structured errors so the dispatcher
+      // returns the right code instead of falling back to -32603.
+      throw { code: -32004, message: "connection not open" }
     }
     const type = String(params[0] ?? "")
     const subId = generateSubscriptionId()
 
     const client = this.clients.get(ws)
-    if (!client) throw new Error("client not found")
+    if (!client) throw { code: -32603, message: "client not found" }
 
     if (client.subscriptions.size >= MAX_SUBSCRIPTIONS_PER_CLIENT) {
-      throw new Error(`max subscriptions per client reached (${MAX_SUBSCRIPTIONS_PER_CLIENT})`)
+      throw { code: -32005, message: `max subscriptions per client reached (${MAX_SUBSCRIPTIONS_PER_CLIENT})` }
     }
 
     switch (type) {
@@ -429,7 +431,9 @@ export class WsRpcServer {
         break
       }
       default:
-        throw new Error(`unsupported subscription type: ${type}`)
+        // #130: invalid params → -32602 per JSON-RPC §5.1 instead of
+        // the previous -32603 internal-error fallback.
+        throw { code: -32602, message: `unsupported subscription type: ${type}` }
     }
 
     log.info("subscription created", { type, subId })
