@@ -1265,41 +1265,32 @@ async function handleRpc(
     case "eth_compileSerpent":
       throw new Error(`${payload.method} is not supported`)
     case "eth_getBlockReceipts": {
+      // #114: per-receipt shape must match eth_getTransactionReceipt exactly.
+      // Pre-fix this returned a custom subset missing contractAddress,
+      // cumulativeGasUsed, effectiveGasPrice, logsBloom, and type — breaking
+      // indexers that batch via this method.
+      //
+      // Strategy: walk block.txs, parse each to derive its hash, then route
+      // through the same persistent / evm fallback as eth_getTransactionReceipt
+      // so a single receipt formatter is used for both methods.
       const tag = String((payload.params ?? [])[0] ?? "latest")
       const num = await resolveBlockNumber(tag, chain)
       const block = await Promise.resolve(chain.getBlockByNumber(num))
       if (!block) return null
       const receipts: unknown[] = []
-      for (let i = 0; i < block.txs.length; i++) {
+      for (const rawTx of block.txs) {
         try {
-          const parsed = Transaction.from(block.txs[i])
+          const parsed = Transaction.from(rawTx)
+          const hash = parsed.hash as Hex
+          let receipt: unknown = null
           if (typeof chain.getTransactionByHash === "function") {
-            const tx = await chain.getTransactionByHash(parsed.hash as Hex)
-            if (tx?.receipt) {
-              const r = tx.receipt
-              receipts.push({
-                transactionHash: r.transactionHash,
-                transactionIndex: `0x${i.toString(16)}`,
-                blockNumber: `0x${block.number.toString(16)}`,
-                blockHash: block.hash,
-                from: r.from,
-                to: r.to,
-                gasUsed: `0x${r.gasUsed.toString(16)}`,
-                status: r.status === 1n ? "0x1" : "0x0",
-                logs: (r.logs ?? []).map((log: any, idx: number) => ({
-                  address: log.address,
-                  topics: log.topics,
-                  data: log.data,
-                  blockNumber: `0x${block.number.toString(16)}`,
-                  blockHash: block.hash,
-                  transactionHash: r.transactionHash,
-                  transactionIndex: `0x${i.toString(16)}`,
-                  logIndex: `0x${idx.toString(16)}`,
-                  removed: false,
-                })),
-              })
-            }
+            const tx = await chain.getTransactionByHash(hash)
+            if (tx?.receipt) receipt = await formatPersistentReceipt(tx, chain)
           }
+          // Fallback to in-memory EVM receipt for chain engines without
+          // a persistent tx index (matches eth_getTransactionReceipt fallback).
+          if (!receipt) receipt = evm.getReceipt(hash)
+          if (receipt) receipts.push(receipt)
         } catch { /* skip unparseable */ }
       }
       return receipts
