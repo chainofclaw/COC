@@ -290,6 +290,38 @@ test("POST /pose/challenge rejects signer when dynamic challenger authorizer den
   }
 })
 
+test("#176: malformed JSON body returns generic error without V8 SyntaxError leak", async () => {
+  // Pre-fix `String(error)` on JSON.parse failure surfaced the V8
+  // SyntaxError class name + source position to clients — information
+  // disclosure analogous to #156 (ethers leak) and #170 (Buffer.from
+  // silent drop). Now sanitized to "invalid request".
+  const pose = createTestEngine()
+  const { port, close } = await startTestServer(pose)
+  try {
+    const raw = await new Promise<{ status: number; body: string }>((resolve, reject) => {
+      const req = http.request(
+        { hostname: "127.0.0.1", port, path: "/pose/challenge", method: "POST", headers: { "content-type": "application/json" } },
+        (res) => {
+          let data = ""
+          res.on("data", (chunk) => (data += chunk))
+          res.on("end", () => resolve({ status: res.statusCode ?? 500, body: data }))
+        },
+      )
+      req.on("error", reject)
+      req.write("not-json")
+      req.end()
+    })
+    assert.equal(raw.status, 400)
+    // The response body must NOT leak V8 internals — no "SyntaxError",
+    // no source position offset, no Error class name.
+    assert.doesNotMatch(raw.body, /SyntaxError|Unexpected token|position|Error:/, "must not leak V8 / Error class details")
+    const json = JSON.parse(raw.body) as { error: string }
+    assert.equal(json.error, "invalid request")
+  } finally {
+    close()
+  }
+})
+
 function hashStable(value: unknown): `0x${string}` {
   return `0x${keccak256Hex(Buffer.from(stableStringify(value), "utf8"))}` as `0x${string}`
 }
