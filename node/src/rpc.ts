@@ -28,7 +28,7 @@ const log = createLogger("rpc")
 const sendTxLocks = new Map<string, Promise<unknown>>()
 
 const MAX_FILTERS = 1000
-const FILTER_TTL_MS = 5 * 60 * 1000 // 5 minutes
+export const FILTER_TTL_MS = 5 * 60 * 1000 // 5 minutes
 const CHAIN_STATS_CACHE_TTL_MS = 5_000
 let chainStatsCache: { result: unknown; height: bigint; cachedAtMs: number } | null = null
 let chainStatsComputing: Promise<unknown> | null = null
@@ -39,12 +39,18 @@ let lastFilterCleanupMs = 0
 
 const feeOracle = new FeeOracle()
 
-function cleanupExpiredFilters(filters: Map<string, PendingFilter>): void {
+export function cleanupExpiredFilters(filters: Map<string, PendingFilter>, opts?: { force?: boolean }): void {
   const now = Date.now()
-  if (now - lastFilterCleanupMs < FILTER_CLEANUP_THROTTLE_MS) return
+  if (!opts?.force && now - lastFilterCleanupMs < FILTER_CLEANUP_THROTTLE_MS) return
   lastFilterCleanupMs = now
   for (const [id, filter] of filters) {
-    if (filter.createdAtMs && now - filter.createdAtMs > FILTER_TTL_MS) {
+    // Use last-poll time (falling back to creation time) so actively
+    // polled filters don't get reaped from under their subscribers.
+    // Polling-based clients (the standard fallback when WebSocket isn't
+    // available) often live for hours and call getFilterChanges every
+    // few seconds; using createdAtMs killed those after 5 min.
+    const lastSeen = filter.lastAccessedAtMs ?? filter.createdAtMs
+    if (lastSeen && now - lastSeen > FILTER_TTL_MS) {
       filters.delete(id)
     }
   }
@@ -680,6 +686,9 @@ async function handleRpc(
       const id = String((payload.params ?? [])[0] ?? "")
       const filter = filters.get(id)
       if (!filter) return []
+      // Refresh the filter's last-access timestamp so cleanupExpiredFilters
+      // doesn't reap an actively polled subscriber.
+      filter.lastAccessedAtMs = Date.now()
       // pendingTx filter: return mempool tx hashes that haven't been
       // returned to this filter yet, then record them so the next poll
       // only sees newly-arrived hashes.
@@ -1163,6 +1172,8 @@ async function handleRpc(
       const id = String((payload.params ?? [])[0] ?? "")
       const filter = filters.get(id)
       if (!filter) return []
+      // Refresh last-access time so active polls keep the filter alive.
+      filter.lastAccessedAtMs = Date.now()
       // getFilterLogs is a log-filter-only method: block and pendingTx
       // filters have no historical "logs" to return. Match the kubo/geth
       // behaviour of returning [] rather than confusing the caller with

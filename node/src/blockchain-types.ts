@@ -72,6 +72,12 @@ export interface PendingFilter {
   topics?: Array<Hex | null>
   lastCursor: bigint
   createdAtMs?: number
+  // Last time the filter was polled via eth_getFilterChanges /
+  // eth_getFilterLogs. The cleanup pass uses this (not createdAtMs) to
+  // decide whether a filter has been idle long enough to reap, so
+  // long-lived polling subscribers don't get GC'd out from under
+  // themselves after FILTER_TTL_MS since creation.
+  lastAccessedAtMs?: number
   // pendingTx-only: set of tx hashes already returned to this filter, so
   // a second poll only sees newly-arrived hashes. Kept per filter so two
   // independent pendingTx subscribers each get their own diff.
