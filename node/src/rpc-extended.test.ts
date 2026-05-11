@@ -867,6 +867,42 @@ test("RPC Extended Methods", async (t) => {
     assert.equal(compileLllJson.error!.code, -32601, `eth_compileLLL must be -32601`)
   })
 
+  await t.test("#138: JSON-RPC §5.1 spec codes for parse-error / empty-body / invalid-request", async () => {
+    // Probed live testnet — each of these returned -32603 (internal error)
+    // pre-fix. The parse path additionally leaked the raw V8 JSON.parse
+    // message ("Expected property name or '}' in JSON at position 1...").
+
+    // (a) Malformed JSON body → -32700 Parse error
+    const parseErr = await fetch(`http://127.0.0.1:${port}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "not valid json",
+    })
+    const parseJson = await parseErr.json() as { error?: { code: number; message: string } }
+    assert.equal(parseJson.error!.code, -32700, `malformed JSON must be -32700, got ${parseJson.error!.code}`)
+    assert.match(parseJson.error!.message, /parse error/i)
+    // Crucially, the V8 internal phrasing must NOT leak.
+    assert.doesNotMatch(parseJson.error!.message, /position \d+|line \d+ column/i, "V8 JSON.parse internals must not leak")
+
+    // (b) Empty body → -32600 Invalid Request
+    const emptyErr = await fetch(`http://127.0.0.1:${port}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "",
+    })
+    const emptyJson = await emptyErr.json() as { error?: { code: number; message: string } }
+    assert.equal(emptyJson.error!.code, -32600, `empty body must be -32600, got ${emptyJson.error!.code}`)
+
+    // (c) String payload (valid JSON, invalid request) → -32600 with code field
+    const strPayload = await fetch(`http://127.0.0.1:${port}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: '"just a string"',
+    })
+    const strJson = await strPayload.json() as { error?: { code: number; message: string } }
+    assert.equal(strJson.error!.code, -32600, `string-payload must include code -32600, got ${strJson.error?.code}`)
+  })
+
   if (prevDevAccounts === undefined) {
     delete process.env.COC_DEV_ACCOUNTS
   } else {
