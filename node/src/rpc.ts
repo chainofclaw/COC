@@ -3371,7 +3371,14 @@ function validateLogFilter(query: Record<string, unknown>): {
     query.address = addresses ?? address
   }
   let topics: Array<Hex | Hex[] | null> | undefined
-  if (Array.isArray(query.topics)) {
+  if (query.topics !== undefined && query.topics !== null) {
+    // #190: pre-fix, a non-array `topics` (string, object, number) silently
+    // bypassed the entire validation block — clients got the same empty-result
+    // response as a syntactically-valid query and never learned their filter
+    // was malformed.
+    if (!Array.isArray(query.topics)) {
+      throw { code: -32602, message: "invalid filter topics: must be array or omitted" }
+    }
     if (query.topics.length > MAX_FILTER_TOPICS) {
       throw { code: -32602, message: `topics array too large: ${query.topics.length} > ${MAX_FILTER_TOPICS} (max indexed log topics)` }
     }
