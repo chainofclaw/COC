@@ -306,13 +306,28 @@ export class IpfsHttpServer {
         let code = err instanceof HttpError ? err.code : "internal error"
         let message = err instanceof HttpError && err.message !== code ? err.message : undefined
         if (status === 500 && err instanceof ErasureError) {
+          // #210: extend the original two-code mapping (invalid_params /
+          // not_found) to the other ErasureError codes that resolveCid
+          // can throw — pre-fix invalid_cid / not_a_manifest /
+          // unsupported_codec fell through as 500 "internal error" even
+          // though they're all client-input problems.
           if (err.code === "invalid_params") {
             status = 400
             code = "invalid erasure params"
             message = err.message
+          } else if (err.code === "invalid_cid") {
+            status = 400
+            code = "invalid CID"
+            message = err.message
           } else if (err.code === "not_found") {
             status = 404
             code = "not found"
+            message = err.message
+          } else if (err.code === "not_a_manifest" || err.code === "unsupported_codec") {
+            // 415 Unsupported Media Type: server received a resource it
+            // can't process — closer to the kubo semantic than 500.
+            status = 415
+            code = err.code
             message = err.message
           }
         }

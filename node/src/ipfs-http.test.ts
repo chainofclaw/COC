@@ -588,6 +588,42 @@ describe("IpfsHttpServer", () => {
     const ok = await fetch("/api/v0/files/read?arg=/probe&offset=0&count=5", { method: "POST" })
     assert.equal(ok.status, 200, "valid offset/count must succeed")
   })
+
+  it("#210: /api/v0/erasure/status maps ErasureError codes to 4xx (no 500 leak)", async () => {
+    // Pre-fix the outer catch in IpfsHttpServer only mapped
+    // ErasureError "invalid_params" → 400 and "not_found" → 404. The
+    // three other codes (invalid_cid, not_a_manifest, unsupported_codec)
+    // fell through as `500 "internal error"` even though all three
+    // come from caller-supplied input. Real CIDs:
+    //   - Qm-shape but unparseable bytes → invalid_cid → 400
+    //   - bafy dag-pb (unixfs file) → not_a_manifest → 415
+    // Other codecs and codec-decoder failures get the same treatment.
+    const cases: Array<{ qs: string; allowed: number[]; expectKeyword: RegExp }> = [
+      // Qm regex-valid but unparseable base58 → CID.parse throws →
+      // ErasureError("invalid_cid") → must be 400, not 500.
+      { qs: "?arg=Qm" + "1".repeat(44), allowed: [400], expectKeyword: /invalid CID|invalid_cid/i },
+      // A UnixFS file CID (dag-pb) is "kind: unixfs", which the
+      // handler rejects with HttpError(415, "not_a_manifest").
+      // Inject via the seeded fixture below.
+    ]
+    for (const { qs, allowed, expectKeyword } of cases) {
+      const res = await fetch(`/api/v0/erasure/status${qs}`, { method: "POST" })
+      assert.notEqual(res.status, 500, `${qs}: must not leak 500, got ${res.status}`)
+      assert.ok(
+        allowed.includes(res.status),
+        `${qs}: expected one of [${allowed.join(", ")}], got ${res.status}`,
+      )
+      const body = await res.json() as { error?: string; message?: string }
+      const text = JSON.stringify(body)
+      assert.match(text, expectKeyword, `${qs}: error must explain the failure, got ${text}`)
+    }
+    // Seed a real UnixFS file and confirm erasure/status maps it to 415.
+    const data = new TextEncoder().encode("not-an-erasure-manifest")
+    const meta = await unixfs.addFile("plain.txt", data)
+    const res = await fetch(`/api/v0/erasure/status?arg=${meta.cid}`, { method: "POST" })
+    assert.notEqual(res.status, 500, "unixfs CID erasure/status must not leak 500")
+    assert.equal(res.status, 415, `unixfs CID must be 415 not_a_manifest, got ${res.status}`)
+  })
 })
 
 // Phase Q.4 — Reed-Solomon erasure coding integration tests.
