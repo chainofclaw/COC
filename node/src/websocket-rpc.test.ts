@@ -337,6 +337,32 @@ describe("WebSocket RPC", () => {
     }
   })
 
+  it("#244: eth_subscribe('logs', non-object) returns -32602 (no silent no-filter)", async () => {
+    // Pre-fix `(params[1] ?? {}) as Record<string, unknown>` was a
+    // TS-only runtime no-op. eth_subscribe("logs", true) etc. fell
+    // through to validateLogFilter which read only undefined fields
+    // and returned an empty filter — silent "match ALL logs"
+    // subscription, leaking subscription handles to bad clients.
+    // Same anti-pattern as #238 (HTTP-side sibling).
+    const ws = await connectWs(WS_PORT)
+    try {
+      for (const bad of [true, false, "string", 42, [1, 2]]) {
+        const err = await sendRpcExpectError(ws, "eth_subscribe", ["logs", bad])
+        assert.equal(err.code, -32602,
+          `eth_subscribe("logs", ${JSON.stringify(bad)}) must be -32602, got ${err.code} (${err.message})`)
+        assert.match(err.message, /invalid filter|expected object/i)
+      }
+      // Sanity: omitted filter or empty object still creates a valid
+      // subscription (default range, match all — by design).
+      const sub1 = await sendRpc(ws, "eth_subscribe", ["logs"])
+      assert.match(sub1, /^0x[0-9a-f]+$/, `omitted filter must create subscription, got ${sub1}`)
+      const sub2 = await sendRpc(ws, "eth_subscribe", ["logs", {}])
+      assert.match(sub2, /^0x[0-9a-f]+$/, `empty-object filter must create subscription, got ${sub2}`)
+    } finally {
+      ws.close()
+    }
+  })
+
   it("#130: 11th subscription on one client returns -32005 (not -32603)", async () => {
     const ws = await connectWs(WS_PORT)
     try {
