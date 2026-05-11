@@ -1324,6 +1324,32 @@ test("RPC Extended Methods", async (t) => {
     assert.equal(r2.error?.code, -32602, `non-hex nonce must be -32602, got ${r2.error?.code}`)
   })
 
+  await t.test("#182: eth_signTypedData_v4 sanitizes ethers errors (no version + INVALID_ARGUMENT leak)", async () => {
+    // Pre-fix structural errors from TypedDataEncoder.hash (missing
+    // primaryType, primaryType not in types, circular references)
+    // bubbled up as -32603 with ethers' raw message including
+    // version=6.16.0 and code=INVALID_ARGUMENT. Same class of leak
+    // as #156 (Transaction.from) and #176 (V8 SyntaxError).
+    const accounts = await rpcCall(port, "eth_accounts") as string[]
+    const probe = async (typedData: unknown) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_signTypedData_v4", params: [accounts[0], typedData] }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    }
+    // (a) empty typed data — missing primaryType + types → -32602, no leak
+    const r1 = await probe({})
+    assert.equal(r1.error?.code, -32602, `empty typedData must be -32602, got ${r1.error?.code}`)
+    assert.doesNotMatch(r1.error!.message, /version=|INVALID_ARGUMENT|code=/, "must not leak ethers internals")
+    // (b) circular type reference → -32602, no leak
+    const circ = { types: { EIP712Domain: [], A: [{ name: "a", type: "A" }] }, primaryType: "A", domain: {}, message: { a: {} } }
+    const r2 = await probe(circ)
+    assert.equal(r2.error?.code, -32602, `circular ref must be -32602, got ${r2.error?.code}`)
+    assert.doesNotMatch(r2.error!.message, /version=|INVALID_ARGUMENT|code=/, "must not leak ethers internals")
+  })
+
   if (prevDevAccounts === undefined) {
     delete process.env.COC_DEV_ACCOUNTS
   } else {

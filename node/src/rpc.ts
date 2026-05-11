@@ -1147,7 +1147,22 @@ async function handleRpc(
       // Remove EIP712Domain from types (TypedDataEncoder handles it internally)
       const filteredTypes = { ...types }
       delete filteredTypes.EIP712Domain
-      const dataHash = TypedDataEncoder.hash(domain, filteredTypes, message)
+      // #182: pre-fix structural errors from TypedDataEncoder.hash
+      // (missing primaryType, primaryType not in types, circular type
+      // references) bubbled up as -32603 with ethers' raw message
+      // including version=6.16.0 and code=INVALID_ARGUMENT. Same class
+      // of leak as #156 (Transaction.from) and #176 (V8 SyntaxError).
+      let dataHash: string
+      try {
+        dataHash = TypedDataEncoder.hash(domain, filteredTypes, message)
+      } catch (encErr) {
+        const isEthersShapeError =
+          encErr && typeof encErr === "object" && typeof (encErr as { code?: unknown }).code === "string"
+        if (isEthersShapeError) {
+          throw { code: -32602, message: "invalid typedData: failed to encode" }
+        }
+        throw encErr
+      }
       const signature = account.signingKey.sign(dataHash)
       return signature.serialized
     }
