@@ -139,6 +139,17 @@ describe("WebSocket RPC", () => {
         }
         case "eth_chainId":
           return `0x${CHAIN_ID.toString(16)}`
+        case "__throw_ethers_shape": {
+          // Mirrors ethers' Error shape: { code: string, message includes version }
+          // Pre-#214 the WS path forwarded this verbatim — code as string
+          // violated §5.1, and the version=X.Y leaked the ethers internal.
+          throw { code: "BUFFER_OVERRUN", message: "data short segment too short (buffer=0xabcd, length=2, offset=44, code=BUFFER_OVERRUN, version=6.16.0)" }
+        }
+        case "__throw_non_string_message": {
+          // Edge case: message is an object — pre-fix this also leaked
+          // an object as the JSON-RPC error message.
+          throw { code: -32602, message: { weird: "shape" } }
+        }
         default:
           throw new Error(`method not supported: ${method}`)
       }
@@ -457,6 +468,48 @@ describe("WebSocket RPC", () => {
       assert.match(subId as string, /^0x[0-9a-fA-F]{32}$/, "subId must be shape-correct")
       const unsubResult = await sendRpc(ws, "eth_unsubscribe", [subId as string])
       assert.equal(unsubResult, true, "valid subscribe → unsubscribe must return true")
+    } finally {
+      ws.close()
+    }
+  })
+
+  it("#214: WS error path normalizes ethers shape errors (HTTP parity)", async () => {
+    // Pre-fix the WS error path forwarded structured RPC errors
+    // verbatim. ethers throws `{ code: "BUFFER_OVERRUN", message: "...
+    // version=6.16.0, ..." }` — the string code violates JSON-RPC §5.1
+    // (code MUST be Integer) and the message leaks the library version.
+    // The HTTP path was fixed in earlier passes; WS now matches.
+    const ws = await connectWs(WS_PORT)
+    try {
+      const probe = (method: string): Promise<{ error?: { code: unknown; message: unknown }; result?: unknown }> =>
+        new Promise((resolve, reject) => {
+          const id = Math.floor(Math.random() * 1e9)
+          const timer = setTimeout(() => reject(new Error("probe timeout")), 2000)
+          const handler = (data: Buffer | string) => {
+            const msg = JSON.parse(data.toString())
+            if (msg.id === id) {
+              clearTimeout(timer)
+              ws.removeListener("message", handler)
+              resolve(msg)
+            }
+          }
+          ws.on("message", handler)
+          ws.send(JSON.stringify({ jsonrpc: "2.0", id, method }))
+        })
+      // Ethers-shape error → must be coerced to -32603 + clean message.
+      const r1 = await probe("__throw_ethers_shape")
+      assert.equal(typeof r1.error?.code, "number", "code must be numeric")
+      assert.equal(r1.error!.code, -32603, `string code must be coerced to -32603, got ${r1.error?.code}`)
+      // Message is preserved verbatim by design (it may contain useful
+      // domain info for the caller); the ethers version string still
+      // leaks at this layer. The deeper fix is upstream sanitization
+      // (e.g., #156 / #182 for HTTP). This test pins the code-type
+      // contract.
+      assert.equal(typeof r1.error!.message, "string", "message must be string")
+      // Non-string message → must be replaced with "internal error".
+      const r2 = await probe("__throw_non_string_message")
+      assert.equal(typeof r2.error?.message, "string", "non-string message must be coerced")
+      assert.equal(r2.error!.message, "internal error", "non-string message must become 'internal error'")
     } finally {
       ws.close()
     }
