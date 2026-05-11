@@ -315,14 +315,20 @@ export class WsRpcServer {
       return
     }
 
+    // #144: §4.1 — a request without an `id` field is a Notification;
+    // server MUST NOT reply. Same fix as #140 for HTTP RPC.
+    const isNotification = !("id" in payload)
+
     try {
       const result = await this.dispatch(ws, payload.method, payload.params ?? [])
+      if (isNotification) return
       this.send(ws, {
         jsonrpc: "2.0",
         id: payload.id ?? null,
         result,
       })
     } catch (err) {
+      if (isNotification) return
       // Support structured RPC errors (e.g. { code, message } from dispatch/handleRpcMethod)
       if (err && typeof err === "object" && "code" in err && "message" in err) {
         const rpcErr = err as { code: number; message: string }
