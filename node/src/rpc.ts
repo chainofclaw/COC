@@ -1412,6 +1412,26 @@ async function handleRpc(
       if (rewardPercentiles.length > 100) {
         throw { code: -32602, message: `rewardPercentiles array too large: ${rewardPercentiles.length} (max 100)` }
       }
+      // #160: pre-fix percentiles outside [0,100], non-numeric, or
+      // non-monotonic silently flowed into feeOracle.computeFeeHistoryRewards
+      // and returned "0x0" rewards. Spec requires a monotonically increasing
+      // list of values in [0,100]; geth rejects with explicit error. Match
+      // that so buggy clients learn about their misuse instead of getting
+      // misleading zero rewards.
+      let prevPercentile = -Infinity
+      for (let i = 0; i < rewardPercentiles.length; i++) {
+        const p = rewardPercentiles[i]
+        if (typeof p !== "number" || !Number.isFinite(p)) {
+          throw { code: -32602, message: `rewardPercentile at index ${i} must be a finite number` }
+        }
+        if (p < 0 || p > 100) {
+          throw { code: -32602, message: `rewardPercentile at index ${i} out of range: ${p} (must be in [0,100])` }
+        }
+        if (p < prevPercentile) {
+          throw { code: -32602, message: `rewardPercentiles must be monotonically non-decreasing: index ${i} (${p}) < index ${i - 1} (${prevPercentile})` }
+        }
+        prevPercentile = p
+      }
       const newest = await resolveBlockNumber(newestBlock, chain)
       const count = Math.min(blockCount, Number(newest), 1024)
       const baseFees: string[] = []

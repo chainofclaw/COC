@@ -17,8 +17,14 @@ export class RateLimiter {
   /**
    * Check if a request from the given IP should be allowed.
    * Returns true if allowed, false if rate-limited.
+   *
+   * Tests that stand up many RPC fixtures in one file share the
+   * module-level singleton and exhaust the budget — set
+   * COC_RPC_RATE_LIMIT_DISABLED=1 to bypass. Production never sets this
+   * env var; CI test runners do.
    */
   allow(ip: string): boolean {
+    if (process.env.COC_RPC_RATE_LIMIT_DISABLED === "1") return true
     const now = Date.now()
     const bucket = this.buckets.get(ip)
 
