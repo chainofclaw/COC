@@ -469,6 +469,18 @@ describe("IpfsHttpServer", () => {
     }
   })
 
+  it("#230: /api/v0/object/stat returns 404 for missing shape-valid CID (not 500)", async () => {
+    // Pre-fix `handleObjectStat` called `store.get(cid)` directly and let
+    // the ENOENT propagate as 500 "internal error" — the sibling
+    // handleCat already mapped this to 404 but object/stat was missed.
+    // Use a syntactically-valid Qm v0 CID that's NOT been added.
+    const missingCid = "QmZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZA"
+    const res = await fetch(`/api/v0/object/stat?arg=${missingCid}`, { method: "POST" })
+    assert.equal(res.status, 404, `must be 404 for missing block, got ${res.status}`)
+    const body = await res.json() as { error?: string }
+    assert.match(body.error ?? "", /not found/i, "must not surface 'internal error'")
+  })
+
   it("#134: /api/v0/object/stat exposes DataSize (not hardcoded 0)", async () => {
     const totalSize = 5000
     const content = Buffer.alloc(totalSize, 0x42)
