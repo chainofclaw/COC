@@ -1897,6 +1897,45 @@ test("RPC Extended Methods", async (t) => {
     assert.equal(ok3.error, undefined, "empty object filter must succeed")
   })
 
+  await t.test("#246: eth_compileSolidity rejects non-string source (no silent coercion, no solc leak)", async () => {
+    // Pre-fix `String((payload.params ?? [])[0] ?? "")` silently coerced
+    // bool/number/object via JS String() to "true"/"123"/"[object Object]",
+    // which passed the empty check and reached solc. solc returned a
+    // -32000 ParserError whose message LEAKED the coerced input back
+    // ("1 | [object Object]"). Same anti-pattern as #240/#242 but the
+    // leak surface is the solc compiler error.
+    const probe = async (params: unknown[]) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_compileSolidity", params }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    }
+    for (const bad of [true, false, 123, {}, [1, 2]]) {
+      const r = await probe([bad])
+      assert.equal(r.error?.code, -32602,
+        `eth_compileSolidity(${JSON.stringify(bad)}) must be -32602, got ${JSON.stringify(r)}`)
+      assert.match(r.error!.message, /expected string|expected non-empty/i)
+      // The leak surface: solc's ParserError would surface "[object Object]"
+      // / "true" / "123" in the message. Pre-fix this leaked; post-fix
+      // we reject before solc runs.
+      assert.doesNotMatch(r.error!.message, /ParserError|object Object|input\.sol/i,
+        `must not leak solc wording, got ${r.error!.message}`)
+    }
+    // Missing/null/empty source → -32602 "missing" message
+    for (const empty of [[], [null], [""]]) {
+      const r = await probe(empty)
+      assert.equal(r.error?.code, -32602,
+        `eth_compileSolidity(${JSON.stringify(empty)}) must be -32602, got ${JSON.stringify(r)}`)
+    }
+    // Sanity: real source compiles (existing test #263 covers this; just
+    // verify the new validation doesn't break it).
+    const ok = await probe(["pragma solidity ^0.8.0; contract Empty {}"])
+    assert.notEqual(ok.error?.code, -32602,
+      `valid source must pass shape validation, got ${JSON.stringify(ok)}`)
+  })
+
   await t.test("#240: admin_addPeer / admin_removePeer reject non-string shape (no silent coercion)", async () => {
     // Pre-fix `String((payload.params ?? [])[1] ?? ...)` silently coerced
     // numbers/bools to plausible peerIds ("123", "true"). Pre-fix
