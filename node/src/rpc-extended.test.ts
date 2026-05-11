@@ -819,6 +819,54 @@ test("RPC Extended Methods", async (t) => {
     assert.match(result as string, /^0x[0-9a-f]+$/i)
   })
 
+  await t.test("#132: structured error codes for block range, unknown method, legacy compile", async () => {
+    // (a) eth_getLogs over a range > MAX_LOG_BLOCK_RANGE (=10000) → -32602
+    const tooWide = await fetch(`http://127.0.0.1:${port}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0", id: 1, method: "eth_getLogs",
+        params: [{ fromBlock: "0x0", toBlock: "0x4000" }],
+      }),
+    })
+    const tooWideJson = await tooWide.json() as { error?: { code: number; message: string } }
+    assert.ok(tooWideJson.error)
+    assert.equal(tooWideJson.error!.code, -32602, `too-wide range must be -32602, got ${tooWideJson.error!.code}`)
+    assert.match(tooWideJson.error!.message, /block range too large/)
+
+    // (b) eth_getLogs with fromBlock > toBlock → -32602
+    const swapped = await fetch(`http://127.0.0.1:${port}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0", id: 1, method: "eth_getLogs",
+        params: [{ fromBlock: "0xa", toBlock: "0x5" }],
+      }),
+    })
+    const swappedJson = await swapped.json() as { error?: { code: number; message: string } }
+    assert.equal(swappedJson.error!.code, -32602, `swapped range must be -32602, got ${swappedJson.error!.code}`)
+    assert.match(swappedJson.error!.message, /invalid block range/)
+
+    // (c) unknown method → -32601 method not found
+    const unknown = await fetch(`http://127.0.0.1:${port}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "foo_bar_baz", params: [] }),
+    })
+    const unknownJson = await unknown.json() as { error?: { code: number; message: string } }
+    assert.equal(unknownJson.error!.code, -32601, `unknown method must be -32601, got ${unknownJson.error!.code}`)
+    assert.match(unknownJson.error!.message, /method not supported/)
+
+    // (d) eth_compileLLL / eth_compileSerpent → -32601 (legacy)
+    const compileLll = await fetch(`http://127.0.0.1:${port}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_compileLLL", params: ["foo"] }),
+    })
+    const compileLllJson = await compileLll.json() as { error?: { code: number; message: string } }
+    assert.equal(compileLllJson.error!.code, -32601, `eth_compileLLL must be -32601`)
+  })
+
   if (prevDevAccounts === undefined) {
     delete process.env.COC_DEV_ACCOUNTS
   } else {
