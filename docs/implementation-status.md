@@ -364,7 +364,7 @@ Implemented:
 - **Phase 25**: Global search bar (address/tx hash/block number)
 - **Phase 25**: Address-to-transaction index in BlockIndex (backend)
 - **Phase 25**: `coc_getTransactionsByAddress` custom RPC method
-- **Phase 27**: Contract registry index with `coc_getContractsByPage` RPC
+- **Phase 27**: Contract registry index with `coc_getContracts` RPC (paginated via `{offset, limit, reverse}`)
 - **Phase 27**: Contract call history component (incoming transactions to contract)
 - **Phase 27**: Address tx history with operation type classification (transfer/contract_call/contract_creation/token_transfer)
 - **Phase 27**: Contract deployment metadata on address page
@@ -671,7 +671,7 @@ Tests (49 new tests):
 - Snapshot JSON import validation (rejects malformed/missing-field JSON)
 
 ### 27.5 Explorer Enhancement
-- Contract registry index with `coc_getContractsByPage` RPC method
+- Contract registry index with `coc_getContracts` RPC (paginated via `{offset, limit, reverse}`) method
 - Contract call history component
 - Address tx history with operation type classification
 - Contract deployment metadata display
