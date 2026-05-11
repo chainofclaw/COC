@@ -415,14 +415,48 @@ export function startRpcServer(
             }
           }
         }
+        // #140: §6 says an empty batch must return a single Invalid
+        // Request error (NOT an empty array).
+        if (Array.isArray(payload) && payload.length === 0) {
+          if (!res.headersSent) {
+            res.writeHead(200, { "content-type": "application/json" })
+          }
+          res.end(JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "invalid request: empty batch" } }))
+          return
+        }
+
         const response = Array.isArray(payload)
           ? await Promise.all(payload.slice(0, MAX_BATCH_SIZE).map((item) => handleOne(item, chainId, evm, chain, p2p, filters, bftCoordinator, scopedOpts)))
           : await handleOne(payload, chainId, evm, chain, p2p, filters, bftCoordinator, scopedOpts)
 
+        // #140: §4.1 server MUST NOT reply to notifications (requests
+        // without "id"). handleOne returns null for notifications;
+        // strip nulls here. If everything was a notification (single
+        // or batch), respond with HTTP 204 no-body.
+        if (response === null) {
+          if (!res.headersSent) {
+            res.writeHead(204)
+          }
+          res.end()
+          return
+        }
+        let finalResponse: unknown = response
+        if (Array.isArray(response)) {
+          const filtered = response.filter((r) => r !== null)
+          if (filtered.length === 0) {
+            if (!res.headersSent) {
+              res.writeHead(204)
+            }
+            res.end()
+            return
+          }
+          finalResponse = filtered
+        }
+
         if (!res.headersSent) {
           res.writeHead(200, { "content-type": "application/json" })
         }
-        res.end(jsonStringify(response))
+        res.end(jsonStringify(finalResponse))
       } catch (error) {
         sendError(res, null, error instanceof Error ? error.message : "internal error")
       }
@@ -444,7 +478,7 @@ async function handleOne(
   filters: Map<string, PendingFilter>,
   bftCoordinator?: BftCoordinator,
   opts?: Record<string, unknown>,
-): Promise<JsonRpcResponse> {
+): Promise<JsonRpcResponse | null> {
   if (!payload || typeof payload !== "object" || !payload.method) {
     // #138: per JSON-RPC §5.1 invalid-request must carry code -32600.
     // Pre-fix this returned only { message }, which clients couldn't
@@ -452,10 +486,17 @@ async function handleOne(
     return { jsonrpc: "2.0", id: payload?.id ?? null, error: { code: -32600, message: "invalid request" } }
   }
 
+  // #140: §4.1 — a request without an `id` field is a Notification.
+  // The server processes it but MUST NOT respond. Return null and let
+  // the dispatcher omit the response from the wire.
+  const isNotification = !("id" in payload)
+
   try {
     const result = await handleRpc(payload, chainId, evm, chain, p2p, filters, bftCoordinator, opts)
+    if (isNotification) return null
     return { jsonrpc: "2.0", id: payload.id ?? null, result }
   } catch (error: unknown) {
+    if (isNotification) return null
     // Support structured RPC errors (e.g. { code, message } from param validation)
     if (error && typeof error === "object" && "code" in error && "message" in error) {
       const rpcErr = error as { code: unknown; message: unknown }
