@@ -488,6 +488,16 @@ export class IpfsHttpServer {
       res.end(JSON.stringify({ error: "file not found" }))
       return
     }
+    // #134: kubo's /api/v0/ls Size field is the cumulative byte size
+    // of the linked DAG. For terminal leaves that's the chunk's data
+    // size, derivable from file.blockSize without extra block IO:
+    //   leaves[0..n-1) each have `blockSize` bytes
+    //   leaves[n-1] (last) has the remainder: size - blockSize*(n-1)
+    // Pre-fix every leaf was hardcoded Size:0, breaking kubo client
+    // progress accounting and Pinata/Web3.storage SDK size summation.
+    const totalSize = file.size
+    const chunkSize = file.blockSize
+    const leafCount = file.leaves.length
     res.writeHead(200, { "content-type": "application/json" })
     res.end(JSON.stringify({
       Objects: [
@@ -496,7 +506,9 @@ export class IpfsHttpServer {
           Links: file.leaves.map((leaf, index) => ({
             Name: String(index),
             Hash: leaf,
-            Size: 0,
+            Size: leafCount > 0 && index === leafCount - 1
+              ? totalSize - chunkSize * (leafCount - 1)
+              : chunkSize,
             Type: 2,
           })),
         }
@@ -513,13 +525,20 @@ export class IpfsHttpServer {
     const block = await this.store.get(cid)
     const meta = await this.readFileMeta()
     const file = meta[cid]
+    // #134: DataSize and LinksSize were hardcoded to 0. For UnixFS
+    // files, DataSize is the user-data byte count exposed by `ls`;
+    // LinksSize is a rough estimate of CID-reference bytes. The
+    // important field for clients summing file sizes is DataSize.
+    const numLinks = file?.leaves.length ?? 0
+    const linksSize = numLinks > 0 ? Math.min(numLinks * 36, block.bytes.length) : 0
+    const dataSize = file?.size ?? Math.max(block.bytes.length - linksSize, 0)
     res.writeHead(200, { "content-type": "application/json" })
     res.end(JSON.stringify({
       Hash: cid,
-      NumLinks: file?.leaves.length ?? 0,
+      NumLinks: numLinks,
       BlockSize: block.bytes.length,
-      LinksSize: 0,
-      DataSize: 0,
+      LinksSize: linksSize,
+      DataSize: dataSize,
       CumulativeSize: file?.size ?? block.bytes.length,
     }))
   }
