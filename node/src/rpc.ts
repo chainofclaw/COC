@@ -1379,9 +1379,17 @@ async function handleRpc(
           joinedAtEpoch: `0x${v.joinedAtEpoch.toString(16)}`,
         }))
       }
-      // Fallback: return basic validator info from round-robin
-      const height = await Promise.resolve(chain.getHeight())
-      return chain.expectedProposer(height + 1n)
+      // Fallback (no on-chain governance): expose the hardcoded validator
+      // set as an array so the return type stays a collection, consistent
+      // with the governance-enabled branch above. Pre-fix this returned a
+      // single string (the next-block proposer), which contradicted the
+      // method name and broke any client treating it as an array.
+      const cfgValidators = hasConfig(chain) ? chain.cfg.validators : []
+      return cfgValidators.map((v) => ({
+        id: v,
+        address: v,
+        active: true,
+      }))
     }
     case "coc_submitProposal": {
       if (!hasGovernance(chain)) throw new Error("governance not enabled")
