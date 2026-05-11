@@ -15,6 +15,22 @@ setInterval(() => poseRateLimiter.cleanup(), 300_000).unref()
 const DEFAULT_POSE_AUTH_MAX_CLOCK_SKEW_MS = 120_000
 const HEX32_RE = /^0x[0-9a-fA-F]{64}$/
 
+/**
+ * #212: validate a value is safely coercible to a non-negative BigInt
+ * via `BigInt(String(v ?? 0))`. Returns true for undefined/null
+ * (the `?? 0` default kicks in), non-negative integer numbers, and
+ * non-empty digit-only strings. Returns false for object/array/
+ * non-digit strings/fractional numbers — all of which would
+ * otherwise produce a V8 SyntaxError ("Cannot convert X to a
+ * BigInt") that leaked through the outer catch.
+ */
+function isBigIntCoercible(v: unknown): boolean {
+  if (v === undefined || v === null) return true
+  if (typeof v === "number") return Number.isInteger(v) && v >= 0
+  if (typeof v === "string") return /^[0-9]+$/.test(v)
+  return false
+}
+
 export interface PoseAuthEnvelope {
   senderId: string
   timestampMs: number
@@ -219,18 +235,36 @@ export function registerPoseRoutes(
           return jsonResponse(res, 400, { error: "invalid challengeId" })
         }
 
+        // #212: validate BigInt-bound fields upfront. Pre-fix
+        // `BigInt(String(rc.responseAtMs ?? 0))` threw a V8
+        // SyntaxError ("Cannot convert [object Object] to a BigInt",
+        // "Cannot convert 12.5 to a BigInt") for object/array/non-
+        // digit-string inputs. The outer catch carried the V8 wording
+        // through to clients — same leak class as #176.
+        const responseAtMsRaw = rc.responseAtMs
+        if (!isBigIntCoercible(responseAtMsRaw)) {
+          return jsonResponse(res, 400, { error: "invalid responseAtMs: must be a non-negative integer" })
+        }
+        if (payload.challenge) {
+          const ch = payload.challenge as Record<string, unknown>
+          if (!ch.epochId || !ch.nodeId) {
+            return jsonResponse(res, 400, { error: "invalid challenge: missing epochId or nodeId" })
+          }
+          if (!isBigIntCoercible(ch.epochId)) {
+            return jsonResponse(res, 400, { error: "invalid challenge: epochId must be a non-negative integer" })
+          }
+          if (!isBigIntCoercible(ch.issuedAtMs)) {
+            return jsonResponse(res, 400, { error: "invalid challenge: issuedAtMs must be a non-negative integer" })
+          }
+        }
         try {
           const receipt: ReceiptMessage = {
             ...rc,
-            responseAtMs: BigInt(String(rc.responseAtMs ?? 0)),
+            responseAtMs: BigInt(String(responseAtMsRaw ?? 0)),
             responseBody: (rc.responseBody ?? {}) as Record<string, unknown>,
           } as ReceiptMessage
           if (payload.challenge) {
-            // If caller sends a full challenge object, enforce it matches the issued one.
             const ch = payload.challenge as Record<string, unknown>
-            if (!ch.epochId || !ch.nodeId) {
-              return jsonResponse(res, 400, { error: "invalid challenge: missing epochId or nodeId" })
-            }
             const challenge: ChallengeMessage = {
               ...ch,
               challengeId: challengeId as `0x${string}`,
