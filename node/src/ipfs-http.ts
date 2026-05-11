@@ -210,7 +210,10 @@ export class IpfsHttpServer {
         return
       }
       if (url.pathname === "/api/v0/cat") {
-        await this.handleCat(req, res, url.query.arg as string)
+        await this.handleCat(req, res, url.query.arg as string, {
+          offset: url.query.offset as string | undefined,
+          length: (url.query.length ?? url.query.count) as string | undefined,
+        })
         return
       }
       if (url.pathname === "/api/v0/get") {
@@ -566,15 +569,46 @@ export class IpfsHttpServer {
     }))
   }
 
-  private async handleCat(req: http.IncomingMessage, res: http.ServerResponse, cid?: string): Promise<void> {
+  private async handleCat(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    cid?: string,
+    range?: { offset?: string; length?: string },
+  ): Promise<void> {
     if (!cid || !isValidCid(cid)) {
       res.writeHead(400)
       res.end(JSON.stringify({ error: !cid ? "missing cid" : "invalid cid" }))
       return
     }
+    // #174: pre-fix the offset/length/count query params were accepted
+    // by kubo's spec but the handler ignored them, returning the full
+    // file regardless. Worse, malformed values (negative, non-numeric)
+    // silently passed through. Validate + slice now.
+    let offset = 0
+    let length: number | undefined
+    if (range?.offset !== undefined) {
+      const n = Number(range.offset)
+      if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) {
+        res.writeHead(400, { "content-type": "application/json" })
+        res.end(JSON.stringify({ error: "invalid offset: must be a non-negative integer" }))
+        return
+      }
+      offset = n
+    }
+    if (range?.length !== undefined) {
+      const n = Number(range.length)
+      if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) {
+        res.writeHead(400, { "content-type": "application/json" })
+        res.end(JSON.stringify({ error: "invalid length: must be a non-negative integer" }))
+        return
+      }
+      length = n
+    }
     const data = await this.readByCid(cid)
+    const buf = Buffer.from(data)
+    const slice = length !== undefined ? buf.subarray(offset, offset + length) : buf.subarray(offset)
     res.writeHead(200)
-    res.end(data)
+    res.end(slice)
   }
 
   private async handleGet(res: http.ServerResponse, cid?: string): Promise<void> {
