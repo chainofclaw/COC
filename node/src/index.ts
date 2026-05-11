@@ -1330,6 +1330,26 @@ startRpcServer(
     getBftEquivocations: (sinceMs: number) => bftEvidenceStore.peek().filter(
       (e) => (e.rawEvidence?.detectedAtMs ?? 0) > sinceMs
     ),
+    getErasureStatus: async (cid: string) => {
+      // #108: RPC bridge for the existing /api/v0/erasure/status handler.
+      // Resolve the CID into an ErasureManifest (throws if it's not one
+      // or the blocks are missing), then compute per-stripe availability.
+      const { resolveCid, erasureStatus, ErasureError } = await import("./ipfs-erasure-reader.ts")
+      try {
+        const resolved = await resolveCid(cid, ipfsStore)
+        if (resolved.kind !== "erasure" || !resolved.manifest) {
+          throw { code: -32604, message: `CID ${cid} is not an erasure manifest` }
+        }
+        return await erasureStatus(resolved.manifest, ipfsStore)
+      } catch (err) {
+        if (err instanceof ErasureError) {
+          if (err.code === "invalid_cid") throw { code: -32602, message: err.message }
+          if (err.code === "not_found") throw { code: -32604, message: err.message }
+          throw { code: -32603, message: err.message }
+        }
+        throw err
+      }
+    },
     didResolver: didResolverInstance,
     didDataProvider: didDataProviderInstance,
   },
