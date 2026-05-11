@@ -648,7 +648,10 @@ test("RPC Extended Methods", async (t) => {
     const json = await r.json() as { error?: { code: unknown; message: unknown } }
     assert.ok(json.error)
     assert.equal(json.error!.code, -32602, "structured -32602 must be preserved verbatim")
-    assert.equal(json.error!.message, "invalid to address")
+    // #128 widened this message to "invalid to address: must match ..."
+    // — assert the prefix instead of an exact match so future refinements
+    // don't keep breaking this regression test.
+    assert.match(json.error!.message as string, /^invalid to address/)
   })
 
   await t.test("#100: coc_getValidators returns an array (not a single string) without governance", async () => {
@@ -787,6 +790,33 @@ test("RPC Extended Methods", async (t) => {
     assert.match(code as string, /^0x[0-9a-f]*$/i)
     const slot = await rpcCall(port, "eth_getStorageAt", [validAddr, "0x0", "latest"])
     assert.match(slot as string, /^0x[0-9a-f]+$/i)
+  })
+
+  await t.test("#128: eth_estimateGas rejects malformed to/from addresses with -32602", async () => {
+    // Follow-up to #124: that PR fixed eth_call's regex but missed
+    // eth_estimateGas which had the same /^0x[0-9a-fA-F]{1,40}$/
+    // copy-paste. An address must be exactly 40 hex chars.
+    const validAddr = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+    const badAddrs = ["0x", "0x1", "0x" + "f".repeat(39), "0x" + "f".repeat(41), "0x" + "g".repeat(40)]
+    for (const bad of badAddrs) {
+      for (const field of ["to", "from"]) {
+        const r = await fetch(`http://127.0.0.1:${port}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0", id: 1, method: "eth_estimateGas",
+            params: [{ [field]: bad, ...(field === "to" ? { from: validAddr } : { to: validAddr }) }],
+          }),
+        })
+        const json = await r.json() as { error?: { code: number; message: string } }
+        assert.ok(json.error, `expected error for ${field}=${JSON.stringify(bad)}`)
+        assert.equal(json.error!.code, -32602, `${field}=${JSON.stringify(bad)} must be -32602, got ${json.error!.code}`)
+        assert.match(json.error!.message, new RegExp(`invalid ${field} address`, "i"))
+      }
+    }
+    // Sanity: a valid call still returns a hex gas estimate.
+    const result = await rpcCall(port, "eth_estimateGas", [{ from: validAddr, to: validAddr, value: "0x0" }])
+    assert.match(result as string, /^0x[0-9a-f]+$/i)
   })
 
   if (prevDevAccounts === undefined) {
