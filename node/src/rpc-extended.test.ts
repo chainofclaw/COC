@@ -1392,6 +1392,29 @@ test("RPC Extended Methods", async (t) => {
     assert.equal(ok.error, undefined, "omitted blockHash must NOT error")
   })
 
+  await t.test("#188: parseBlockTag rejects fractional block numbers (no silent floor)", async () => {
+    // Pre-fix `BigInt(Math.floor(input))` silently truncated fractional
+    // values: a client passing `1.5` got block 1 with no error. On a
+    // chain where block 1 exists, they'd get the wrong block's data
+    // without any signal that their input was malformed.
+    const probe = async (tag: unknown) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getStorageAt",
+          params: ["0x" + "1".repeat(40), "0x" + "2".repeat(64), tag] }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    }
+    // (a) Fractional positive → -32602
+    const r1 = await probe(1.5)
+    assert.equal(r1.error?.code, -32602, `1.5 must be -32602, got ${r1.error?.code}`)
+    assert.match(r1.error!.message, /block number/i, "error must name the field")
+    // (b) Fractional sub-1 → -32602
+    const r2 = await probe(0.5)
+    assert.equal(r2.error?.code, -32602, `0.5 must be -32602, got ${r2.error?.code}`)
+  })
+
   if (prevDevAccounts === undefined) {
     delete process.env.COC_DEV_ACCOUNTS
   } else {
