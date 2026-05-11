@@ -373,11 +373,20 @@ export class WsRpcServer {
       if (isNotification) return
       // Support structured RPC errors (e.g. { code, message } from dispatch/handleRpcMethod)
       if (err && typeof err === "object" && "code" in err && "message" in err) {
-        const rpcErr = err as { code: number; message: string }
+        const rpcErr = err as { code: unknown; message: unknown }
+        // #214: parity with HTTP `handleOne` normalization. Pre-fix this
+        // path forwarded ethers/V8 errors with `code: string`
+        // ("BUFFER_OVERRUN", "INVALID_ARGUMENT") which violates §5.1
+        // (code MUST be Integer) and leaks the library version in
+        // `.message` ("version=6.16.0"). Coerce non-integer codes to
+        // -32603 and require message to be a string.
+        const numericCode =
+          typeof rpcErr.code === "number" && Number.isInteger(rpcErr.code) ? rpcErr.code : -32603
+        const message = typeof rpcErr.message === "string" ? rpcErr.message : "internal error"
         this.send(ws, {
           jsonrpc: "2.0",
           id: payload.id ?? null,
-          error: { code: rpcErr.code, message: rpcErr.message },
+          error: { code: numericCode, message },
         })
       } else {
         this.send(ws, {
