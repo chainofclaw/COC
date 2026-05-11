@@ -1053,11 +1053,24 @@ async function handleRpc(
       const account = testAccounts.get(from)
       if (!account) throw { code: -32004, message: `account not found: ${from}. Use eth_accounts to list available test accounts.` }
 
+      // #178: pre-fix the user's `nonce` field was silently dropped —
+      // every call used the next sequential mempool nonce regardless.
+      // Negative, NaN, far-future, or "not-hex" all "worked" with the
+      // user's value ignored. Validate shape and honor it when present
+      // (matches the Ethereum JSON-RPC spec).
+      let userNonce: bigint | undefined
+      if (txParams.nonce !== undefined && txParams.nonce !== null && txParams.nonce !== "") {
+        if (typeof txParams.nonce !== "string" || !/^0x[0-9a-fA-F]+$/.test(txParams.nonce)) {
+          throw { code: -32602, message: "invalid nonce: must match /^0x[0-9a-fA-F]+$/" }
+        }
+        userNonce = BigInt(txParams.nonce)
+      }
+
       // Serialize per-account to prevent concurrent nonce collision
       const prev = sendTxLocks.get(from) ?? Promise.resolve()
       const work = prev.catch(() => {}).then(async () => {
         const onchainNonce = await evm.getNonce(from)
-        const nonce = chain.mempool.getPendingNonce(from as Hex, onchainNonce)
+        const nonce = userNonce ?? chain.mempool.getPendingNonce(from as Hex, onchainNonce)
         const gasPrice = txParams.gasPrice ?? "0x3b9aca00" // 1 gwei
         const gasLimitRaw = txParams.gas ?? "0x" + (await evm.estimateGas({
           from: txParams.from,

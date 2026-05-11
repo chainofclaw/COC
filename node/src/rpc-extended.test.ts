@@ -1298,6 +1298,32 @@ test("RPC Extended Methods", async (t) => {
     assert.equal(ok.error, undefined, `null tx must NOT error: ${JSON.stringify(ok.error)}`)
   })
 
+  await t.test("#178: eth_sendTransaction validates + honors user-provided nonce", async () => {
+    // Pre-fix txParams.nonce was silently dropped — every call used
+    // the next sequential mempool nonce regardless of what the user
+    // passed. Negative / non-hex / NaN nonces all "worked" with the
+    // value ignored. Now: validate shape, honor when present.
+    const accounts = await rpcCall(port, "eth_accounts") as string[]
+    const probe = async (nonce: unknown) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0", id: 1, method: "eth_sendTransaction",
+          params: [{ from: accounts[0], to: accounts[1], value: "0x1000", gas: "0x5208", nonce }],
+        }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    }
+    // (a) negative nonce → -32602 (pre-fix was silently accepted)
+    const r1 = await probe("-1")
+    assert.equal(r1.error?.code, -32602, `negative nonce must be -32602, got ${r1.error?.code}`)
+    assert.match(r1.error!.message, /nonce/i, "error must name the field")
+    // (b) non-hex nonce → -32602
+    const r2 = await probe("not-hex")
+    assert.equal(r2.error?.code, -32602, `non-hex nonce must be -32602, got ${r2.error?.code}`)
+  })
+
   if (prevDevAccounts === undefined) {
     delete process.env.COC_DEV_ACCOUNTS
   } else {
