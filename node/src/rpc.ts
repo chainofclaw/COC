@@ -1943,7 +1943,14 @@ async function handleRpc(
       }))
     }
     case "coc_submitProposal": {
-      if (!hasGovernance(chain)) throw new Error("governance not enabled")
+      // #234: pre-fix the plain `new Error(...)` fell through to the
+      // outer catch's `-32603 internal error` default. Per JSON-RPC
+      // §5.1, -32603 is for server faults; "feature not enabled on
+      // this node" is a method-availability concern → -32601. Same
+      // class as #132 (unknown-method fallback fix).
+      if (!hasGovernance(chain)) {
+        throw { code: -32601, message: "coc_submitProposal: governance module not enabled on this node" }
+      }
       // #220: pre-fix `(payload.params ?? [])[0] as Record<string,string>`
       // was a no-op cast. With params=[] or params=[null] the first param
       // was undefined/null; the next line then accessed `.proposer` and
@@ -1993,7 +2000,10 @@ async function handleRpc(
       }
     }
     case "coc_voteProposal": {
-      if (!hasGovernance(chain)) throw new Error("governance not enabled")
+      // #234: same -32601 mapping as coc_submitProposal.
+      if (!hasGovernance(chain)) {
+        throw { code: -32601, message: "coc_voteProposal: governance module not enabled on this node" }
+      }
       // #220: same null-check as coc_submitProposal — params=[] / [null]
       // pre-fix bubbled "Cannot read properties of null (reading 'voterId')"
       // through the outer catch as a -32603 V8 leak.
@@ -2063,7 +2073,10 @@ async function handleRpc(
       }))
     }
     case "coc_getDaoProposal": {
-      if (!hasGovernance(chain)) throw new Error("governance not enabled")
+      // #234: same -32601 mapping as coc_submitProposal.
+      if (!hasGovernance(chain)) {
+        throw { code: -32601, message: "coc_getDaoProposal: governance module not enabled on this node" }
+      }
       const proposalId = (payload.params ?? [])[0]
       if (typeof proposalId !== "string" || !proposalId) {
         throw { code: -32602, message: "invalid proposal id: expected non-empty string" }
