@@ -1033,9 +1033,34 @@ export class BftCoordinator {
         // PR-1A: notify parent that this round's proposer is likely unreachable.
         // Skip when the proposer was local — `onProposerStuck` is for *peer*
         // unreachability evidence; self-stuck has its own J2.2 path.
+        //
+        // PR-1F (2026-05-11): tighten the unreachability signal. 88780 Day 1
+        // drill exposed a false positive: when a force-proposer's round
+        // reaches commit-phase with quorum-of-prepares but only 3/4 commits,
+        // the round still times out — yet the proposer was clearly working
+        // (it proposed AND collected peer prepare votes). Marking it
+        // unreachable here means the NEXT force-propose attempt picks a
+        // different fallback, which generates a fresh block hash, which
+        // Phase R then correctly refuses as self-equivocation → chain
+        // deadlocks at that height.
+        //
+        // Fix: only signal unreachable when (a) round timed out in PREPARE
+        // phase AND (b) no peer prepare votes arrived (only our own self-
+        // vote). That matches the original intent — "the proposer isn't
+        // talking to us" — and excludes the commit-phase case where the
+        // proposer demonstrably did its job.
         if (this.cfg.onProposerStuck && this.activeRound) {
           const proposerId = this.activeRound.state.proposedBlock?.proposer
-          if (proposerId && proposerId.toLowerCase() !== this.cfg.localId.toLowerCase()) {
+          const phase = this.activeRound.state.phase
+          const localIdLower = this.cfg.localId.toLowerCase()
+          const peerPrepareCount = [...this.activeRound.state.prepareVotes.keys()]
+            .filter(id => id !== localIdLower).length
+          const isPrepareTimeoutWithSilentProposer = phase === "prepare" && peerPrepareCount === 0
+          if (
+            proposerId
+            && proposerId.toLowerCase() !== localIdLower
+            && isPrepareTimeoutWithSilentProposer
+          ) {
             try {
               this.cfg.onProposerStuck(proposerId, this.activeRound.state.height)
             } catch (err) {
