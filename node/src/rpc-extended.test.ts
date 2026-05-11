@@ -549,6 +549,23 @@ test("RPC Extended Methods", async (t) => {
     ])
   })
 
+  await t.test("#112: eth_getBlockByNumber(\"earliest\") returns a synthesised genesis block (not null)", async () => {
+    // Pre-fix: returned null because chain.getBlockByNumber(0n) was missing.
+    // Required for ethers/viem/hardhat fork-detection code paths.
+    const proposed = await chain.proposeNextBlock()
+    assert.ok(proposed, "need at least one real block on the chain so height ≥ 1")
+    const earliest = await rpcCall(port, "eth_getBlockByNumber", ["earliest", false]) as Record<string, unknown> | null
+    assert.ok(earliest !== null, "earliest must not be null")
+    assert.equal(earliest!.number, "0x0", "earliest.number must be 0x0")
+    assert.equal(earliest!.hash, "0x" + "0".repeat(64), "earliest.hash must be all zeros (block-1's parentHash)")
+    assert.equal(earliest!.parentHash, "0x" + "0".repeat(64))
+    assert.equal(earliest!.timestamp, "0x0")
+    assert.deepEqual(earliest!.transactions, [])
+    // Same response for the explicit "0x0" tag
+    const zeroTag = await rpcCall(port, "eth_getBlockByNumber", ["0x0", false]) as Record<string, unknown>
+    assert.equal(zeroTag.hash, earliest!.hash)
+  })
+
   await t.test("#108 part-2: coc_getPeers exposes the public peer list (id + url)", async () => {
     const peers = await rpcCall(port, "coc_getPeers") as Array<{ id: string; url: string }>
     assert.ok(Array.isArray(peers), "must return an array")
