@@ -210,6 +210,37 @@ describe("IpfsHttpServer", () => {
     assert.deepEqual(body.Pins, [meta.cid])
   })
 
+  it("#280: POST /api/v0/pin/add rejects CIDs not present in local store (404, no pins.json pollution)", async () => {
+    // Pre-fix handlePinAdd only checked isValidCid format then unconditionally
+    // called store.pin(cid), so any well-formed-but-non-existent CID got added
+    // to pins.json. Attackers could mass-submit valid-format CIDs to grow
+    // pins.json unboundedly (each pin add rewrites the whole file →
+    // disk-fill + write-amplification DoS). Kubo's offline pin/add returns
+    // "block not found locally" in this scenario; mirror that semantic.
+    const fakeCid = "bafkreieeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    // Sanity: well-formed CID passes the format gate (so we're testing the
+    // new existence gate, not the pre-existing #168 format gate).
+    const pinsBefore = await store.listPins()
+    assert.equal(pinsBefore.includes(fakeCid as CidString), false,
+      "fakeCid must not be pinned at start of test")
+    const res = await fetch(`/api/v0/pin/add?arg=${fakeCid}`, { method: "POST" })
+    assert.equal(res.status, 404,
+      `pin/add for non-existent CID must 404, got ${res.status}`)
+    const body = await res.json() as Record<string, unknown>
+    assert.match(String(body.error ?? ""), /not found locally/i)
+    // The critical invariant: pins.json must NOT have been polluted.
+    const pinsAfter = await store.listPins()
+    assert.equal(pinsAfter.includes(fakeCid as CidString), false,
+      "fakeCid must NOT have been added to pins.json — that is the DoS surface")
+    // Sanity: pinning a real (stored) block still works after the fix.
+    const data2 = new TextEncoder().encode("pin me too")
+    const meta2 = await unixfs.addFile("pin2.txt", data2)
+    const ok = await fetch(`/api/v0/pin/add?arg=${meta2.cid}`, { method: "POST" })
+    assert.equal(ok.status, 200, "pin/add for stored block must still succeed")
+    const okBody = await ok.json() as Record<string, unknown>
+    assert.deepEqual(okBody.Pins, [meta2.cid])
+  })
+
   it("#126: POST /api/v0/pin/rm removes a pin, returns 404 on second call", async () => {
     const data = new TextEncoder().encode("pin then unpin")
     const meta = await unixfs.addFile("p.txt", data)
