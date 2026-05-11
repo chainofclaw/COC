@@ -1017,13 +1017,27 @@ export class P2PNode {
     const discoveredPeers = this.cfg.enableDiscovery !== false
       ? this.discovery.getActivePeers()
       : []
+    // PR-1N (2026-05-11): case-insensitive id dedup + URL dedup.
+    // 18780 prod symptom (2026-05-11): server-3 broadcast to 2 peers was
+    // counted as 5 attempts because static peers used checksummed addresses
+    // ("0xf39Fd6...") while discovery exchanged them as lowercase
+    // ("0xf39fd6..."). `Set.has(p.id)` treated them as distinct → every
+    // real peer received the same BFT message 2-3× per round → server-1/2
+    // inbound rate-limiter (60 req/min default) tripped → 429 reject →
+    // chain freeze because prepare/commit votes never reached the proposer.
+    // Dedup by both lowercased id AND lowercased URL so legitimate retries
+    // (different ids, same URL) also collapse.
     const seenIds = new Set<string>()
+    const seenUrls = new Set<string>()
     const allPeers: NodePeer[] = []
     for (const p of [...staticPeers, ...discoveredPeers]) {
-      if (!seenIds.has(p.id)) {
-        seenIds.add(p.id)
-        allPeers.push(p)
-      }
+      const idLower = (p.id ?? "").toLowerCase()
+      const urlLower = (p.url ?? "").toLowerCase()
+      if (idLower && seenIds.has(idLower)) continue
+      if (urlLower && seenUrls.has(urlLower)) continue
+      if (idLower) seenIds.add(idLower)
+      if (urlLower) seenUrls.add(urlLower)
+      allPeers.push(p)
     }
 
     const payloadRecord = ensurePayloadObject(msg as unknown as Record<string, unknown>)
