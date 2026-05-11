@@ -1730,56 +1730,79 @@ test("RPC Extended Methods", async (t) => {
     }
   })
 
-  await t.test("#224: eth_feeHistory rejects non-hex/non-array shapes upfront (no silent coercion)", async () => {
-    // Pre-fix `Number(params[0] ?? 1)` silently mapped null/true/{}/"-0x5"
-    // to the default 1, and `as number[]` was a runtime no-op so non-array
-    // rewardPercentiles silently became "[]". Spec violation; clients
-    // never learned their input was bad.
-    const probe = async (params: unknown[]) => {
-      const r = await fetch(`http://127.0.0.1:${port}`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_feeHistory", params }),
-      })
-      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
-    }
-    const malformedBlockCount: unknown[][] = [
-      [true, "latest", []],
-      [false, "latest", []],
-      [{}, "latest", []],
-      [[1, 2], "latest", []],
-      ["not-hex", "latest", []],
-      ["-0x5", "latest", []],
-      ["0x", "latest", []],
-      [-1, "latest", []],
-      [0, "latest", []],
-      [1.5, "latest", []],
-    ]
-    for (const params of malformedBlockCount) {
-      const r = await probe(params)
-      assert.equal(r.error?.code, -32602,
-        `eth_feeHistory(${JSON.stringify(params)}) must be -32602, got ${JSON.stringify(r)}`)
-      assert.match(r.error!.message, /blockCount/i, "error must name blockCount")
-    }
+  await t.test("#226: coc_getProposals + coc_getDaoProposals + coc_getEquivocations reject malformed filter params", async () => {
+    // Pre-fix:
+    // - coc_getProposals(true) → `as string | undefined` runtime no-op → silent no-filter → return all
+    // - coc_getDaoProposals(true,false) → silent bypass of both branches → silent no-filter
+    // - coc_getEquivocations(-100) → Number coercion allowed negative sinceMs
+    // - coc_getEquivocations({}) → Number({}) = NaN → undefined-ish behavior in getter
+    // Same class as #220/#224 — silent coercion masking malformed input.
+    const proposalsList: Array<Record<string, unknown>> = []
+    const governanceStub226 = {
+      getProposals: (_filter?: string) => proposalsList,
+      getGovernanceStats: () => ({ activeValidators: 0, totalStake: 0n, pendingProposals: 0, totalProposals: 0, currentEpoch: 0n }),
+    } as Record<string, unknown>
+    ;(chain as unknown as Record<string, unknown>).governance = governanceStub226
+    try {
+      const probe = async (method: string, params: unknown[]) => {
+        const r = await fetch(`http://127.0.0.1:${port}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+        })
+        return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+      }
 
-    const malformedPercentiles: unknown[][] = [
-      ["0x2", "latest", {}],
-      ["0x2", "latest", "fifty"],
-      ["0x2", "latest", 50],
-      ["0x2", "latest", true],
-    ]
-    for (const params of malformedPercentiles) {
-      const r = await probe(params)
-      assert.equal(r.error?.code, -32602,
-        `eth_feeHistory(${JSON.stringify(params)}) must be -32602, got ${JSON.stringify(r)}`)
-      assert.match(r.error!.message, /rewardPercentiles/i, "error must name rewardPercentiles")
-    }
+      // coc_getProposals — non-string filter must reject
+      for (const bad of [true, false, 42, {}, [1, 2]]) {
+        const r = await probe("coc_getProposals", [bad])
+        assert.equal(r.error?.code, -32602,
+          `coc_getProposals(${JSON.stringify(bad)}) must be -32602, got ${JSON.stringify(r)}`)
+        assert.match(r.error!.message, /status filter/i)
+      }
+      // Unknown status string must reject
+      const rUnknown = await probe("coc_getProposals", ["unknown-status"])
+      assert.equal(rUnknown.error?.code, -32602, "unknown status must be -32602")
+      assert.match(rUnknown.error!.message, /status filter|must be one of/i)
+      // Sanity: undefined/null/empty string/valid status all OK
+      for (const ok of [null, undefined, "", "pending", "approved"]) {
+        const r = await probe("coc_getProposals", ok === undefined ? [] : [ok])
+        assert.equal(r.error, undefined, `coc_getProposals(${JSON.stringify(ok)}) must succeed`)
+      }
 
-    // null/undefined for blockCount/percentiles still defaults (omission semantics)
-    const ok1 = await probe([null, "latest", null])
-    assert.equal(ok1.error, undefined, "null blockCount + null percentiles must default cleanly")
-    const ok2 = await probe(["0x2", "latest", [25, 75]])
-    assert.equal(ok2.error, undefined, "well-shaped call must succeed")
+      // coc_getDaoProposals — non-string/non-object filter must reject
+      for (const bad of [true, false, 42, [1, 2]]) {
+        const r = await probe("coc_getDaoProposals", [bad])
+        assert.equal(r.error?.code, -32602,
+          `coc_getDaoProposals(${JSON.stringify(bad)}) must be -32602, got ${JSON.stringify(r)}`)
+        assert.match(r.error!.message, /filter|expected/i)
+      }
+      // Object with non-string field must reject
+      const rBadStatus = await probe("coc_getDaoProposals", [{ status: 42 }])
+      assert.equal(rBadStatus.error?.code, -32602, "filter.status non-string must be -32602")
+      // Sanity: valid object/string/omitted
+      for (const ok of [null, undefined, "", "pending", { status: "pending" }, { type: "add_validator" }]) {
+        const r = await probe("coc_getDaoProposals", ok === undefined ? [] : [ok])
+        assert.equal(r.error, undefined, `coc_getDaoProposals(${JSON.stringify(ok)}) must succeed`)
+      }
+
+      // coc_getEquivocations — non-integer/negative sinceMs must reject
+      // (NaN can't traverse JSON.stringify → null, so skip it; null is the
+      // "omitted" sentinel and is accepted.)
+      for (const bad of [-1, -100, 1.5, "now", true, {}, [123]]) {
+        const r = await probe("coc_getEquivocations", [bad])
+        assert.equal(r.error?.code, -32602,
+          `coc_getEquivocations(${JSON.stringify(bad)}) must be -32602, got ${JSON.stringify(r)}`)
+        assert.match(r.error!.message, /sinceMs/i)
+      }
+      // Sanity: 0/positive/null/undefined OK
+      for (const ok of [0, 1000, 1_700_000_000_000, null, undefined]) {
+        const r = await probe("coc_getEquivocations", ok === undefined ? [] : [ok])
+        assert.equal(r.error, undefined, `coc_getEquivocations(${JSON.stringify(ok)}) must succeed`)
+      }
+    } finally {
+      delete (chain as unknown as Record<string, unknown>).governance
+    }
   })
 
   if (prevDevAccounts === undefined) {

@@ -2035,9 +2035,19 @@ async function handleRpc(
     }
     case "coc_getProposals": {
       if (!hasGovernance(chain)) return []
-      const statusFilter = ((payload.params ?? [])[0] as string | undefined) ?? undefined
+      // #226: pre-fix `as string | undefined` was a runtime no-op so
+      // bool/number/object/array silently slipped through and the
+      // `validStatuses.includes(...)` always returned false → silent
+      // "no filter applied, return all" path. Same class as #220 / #224.
+      const rawStatusFilter = (payload.params ?? [])[0]
+      if (rawStatusFilter !== undefined && rawStatusFilter !== null && typeof rawStatusFilter !== "string") {
+        throw { code: -32602, message: "invalid status filter: expected string or omitted" }
+      }
       const validStatuses = ["pending", "approved", "rejected", "expired"]
-      const filter = statusFilter && validStatuses.includes(statusFilter) ? statusFilter as "pending" | "approved" | "rejected" | "expired" : undefined
+      if (typeof rawStatusFilter === "string" && rawStatusFilter !== "" && !validStatuses.includes(rawStatusFilter)) {
+        throw { code: -32602, message: `invalid status filter: must be one of ${validStatuses.join(", ")}` }
+      }
+      const filter = typeof rawStatusFilter === "string" && rawStatusFilter !== "" ? rawStatusFilter as "pending" | "approved" | "rejected" | "expired" : undefined
       const proposals = chain.governance.getProposals(filter)
       return proposals.map((p) => ({
         id: p.id,
@@ -2084,18 +2094,42 @@ async function handleRpc(
       if (!hasGovernance(chain)) return []
       const gov2 = chain.governance
       if (!gov2.getProposals) return []
-      const filterParam = (payload.params ?? [])[0] as Record<string, unknown> | string | undefined
+      // #226: pre-fix the `as` cast was a runtime no-op so booleans,
+      // numbers, and arrays silently bypassed both string/object
+      // branches → all filters undefined → silent "return all" path.
+      const filterParam = (payload.params ?? [])[0]
+      if (
+        filterParam !== undefined &&
+        filterParam !== null &&
+        typeof filterParam !== "string" &&
+        !(typeof filterParam === "object" && !Array.isArray(filterParam))
+      ) {
+        throw { code: -32602, message: "invalid filter: expected string or object" }
+      }
       let statusFilter2: string | undefined
       let typeFilter: string | undefined
       let proposerFilter: string | undefined
       if (typeof filterParam === "string") {
         statusFilter2 = filterParam
       } else if (filterParam && typeof filterParam === "object") {
-        statusFilter2 = filterParam.status as string | undefined
-        typeFilter = filterParam.type as string | undefined
-        proposerFilter = filterParam.proposer as string | undefined
+        const obj = filterParam as Record<string, unknown>
+        if (obj.status !== undefined && typeof obj.status !== "string") {
+          throw { code: -32602, message: "invalid filter.status: expected string" }
+        }
+        if (obj.type !== undefined && typeof obj.type !== "string") {
+          throw { code: -32602, message: "invalid filter.type: expected string" }
+        }
+        if (obj.proposer !== undefined && typeof obj.proposer !== "string") {
+          throw { code: -32602, message: "invalid filter.proposer: expected string" }
+        }
+        statusFilter2 = obj.status as string | undefined
+        typeFilter = obj.type as string | undefined
+        proposerFilter = obj.proposer as string | undefined
       }
       const validStatuses2 = ["pending", "approved", "rejected", "expired"]
+      if (statusFilter2 && !validStatuses2.includes(statusFilter2)) {
+        throw { code: -32602, message: `invalid status filter: must be one of ${validStatuses2.join(", ")}` }
+      }
       const sFilter = statusFilter2 && validStatuses2.includes(statusFilter2) ? statusFilter2 : undefined
       let results = gov2.getProposals(sFilter)
       if (typeFilter) results = results.filter((p: { type: string }) => p.type === typeFilter)
@@ -2362,7 +2396,18 @@ async function handleRpc(
       return totalGetter(0).length
     }
     case "coc_getEquivocations": {
-      const sinceMs = Number((payload.params ?? [])[0] ?? 0)
+      // #226: pre-fix `Number(params[0] ?? 0)` silently mapped {}, true,
+      // non-numeric strings, NaN → 0 or NaN, and accepted negative
+      // sinceMs that the getter treats as "from epoch start." Validate
+      // upfront as non-negative finite integer.
+      const rawSince = (payload.params ?? [])[0]
+      let sinceMs = 0
+      if (rawSince !== undefined && rawSince !== null) {
+        if (typeof rawSince !== "number" || !Number.isFinite(rawSince) || !Number.isInteger(rawSince) || rawSince < 0) {
+          throw { code: -32602, message: "invalid sinceMs: expected non-negative integer or omitted" }
+        }
+        sinceMs = rawSince
+      }
       const getter = (opts as RpcRuntimeOptions | undefined)?.getBftEquivocations
       if (!getter) return []
       const evidence = getter(sinceMs)
