@@ -1555,10 +1555,42 @@ async function handleRpc(
     case "eth_protocolVersion":
       return "0x41" // 65
     case "eth_feeHistory": {
-      const rawBlockCount = Number((payload.params ?? [])[0] ?? 1)
-      const blockCount = Number.isFinite(rawBlockCount) && rawBlockCount >= 1 ? Math.floor(rawBlockCount) : 1
+      // #224: pre-fix `Number(params[0] ?? 1)` silently coerced null,
+      // true, {}, "-0x5", etc. to either the default 1 (when `??` fired
+      // on null/undefined) or to NaN → fallback 1. Spec mandates a hex
+      // QUANTITY for blockCount; geth rejects everything else with
+      // -32602. Same class as #188 (parseBlockTag) for the outer slot.
+      const rawBlockCount = (payload.params ?? [])[0]
+      let blockCount: number
+      if (rawBlockCount === undefined || rawBlockCount === null) {
+        blockCount = 1
+      } else if (typeof rawBlockCount === "number") {
+        if (!Number.isInteger(rawBlockCount) || rawBlockCount < 1) {
+          throw { code: -32602, message: "invalid blockCount: must be positive integer" }
+        }
+        blockCount = Math.min(rawBlockCount, 1024)
+      } else if (typeof rawBlockCount === "string") {
+        if (!/^0x[0-9a-fA-F]+$/.test(rawBlockCount)) {
+          throw { code: -32602, message: "invalid blockCount: must match /^0x[0-9a-fA-F]+$/" }
+        }
+        const n = Number(rawBlockCount)
+        if (!Number.isFinite(n) || n < 1) {
+          throw { code: -32602, message: "invalid blockCount: must be >= 1" }
+        }
+        blockCount = Math.min(Math.floor(n), 1024)
+      } else {
+        throw { code: -32602, message: "invalid blockCount: expected hex quantity or positive integer" }
+      }
       const newestBlock = String((payload.params ?? [])[1] ?? "latest")
-      const rewardPercentiles = ((payload.params ?? [])[2] ?? []) as number[]
+      // #224: `as number[]` was a TS runtime no-op so an object/string/
+      // bool silently passed through (`{}.length === undefined`
+      // bypassed the >100 check and the for-loop). Reject non-array
+      // shapes upfront so spec-violating clients get told.
+      const rawPercentiles = (payload.params ?? [])[2]
+      if (rawPercentiles !== undefined && rawPercentiles !== null && !Array.isArray(rawPercentiles)) {
+        throw { code: -32602, message: "invalid rewardPercentiles: expected array" }
+      }
+      const rewardPercentiles = (rawPercentiles ?? []) as number[]
       if (rewardPercentiles.length > 100) {
         throw { code: -32602, message: `rewardPercentiles array too large: ${rewardPercentiles.length} (max 100)` }
       }
