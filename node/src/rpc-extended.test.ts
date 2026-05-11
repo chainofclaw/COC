@@ -1246,6 +1246,34 @@ test("RPC Extended Methods", async (t) => {
     assert.equal(ok.result, null, "valid-shape but non-existent returns null")
   })
 
+  await t.test("#170: web3_sha3 rejects malformed hex (no silent keccak256(\"\") for garbage)", async () => {
+    // Pre-fix Buffer.from("not-hex", "hex") silently dropped invalid
+    // chars and produced empty bytes — so every garbage input returned
+    // the same keccak256("") hash. Validate shape upfront so clients
+    // learn about the typo instead of getting a misleading "valid" hash.
+    const probe = async (raw: unknown) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "web3_sha3", params: [raw] }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    }
+    // (a) non-hex string → -32602
+    const r1 = await probe("not-hex")
+    assert.equal(r1.error?.code, -32602, `non-hex must be -32602, got ${r1.error?.code}`)
+    // (b) missing 0x prefix → -32602
+    const r2 = await probe("deadbeef")
+    assert.equal(r2.error?.code, -32602, `no-0x must be -32602, got ${r2.error?.code}`)
+    // Sanity: explicit empty (0x) hashes correctly to keccak256("").
+    const empty = await probe("0x")
+    assert.equal(empty.error, undefined, `0x must succeed: ${JSON.stringify(empty.error)}`)
+    assert.equal(empty.result, "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470", "0x must hash to keccak256 of empty")
+    // Sanity: real input still hashes correctly.
+    const valid = await probe("0xdeadbeef")
+    assert.equal(valid.result, "0xd4fd4e189132273036449fc9e11198c739161b4c0116a9a2dccdfa1c492006f1")
+  })
+
   if (prevDevAccounts === undefined) {
     delete process.env.COC_DEV_ACCOUNTS
   } else {
