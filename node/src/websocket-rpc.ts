@@ -306,11 +306,53 @@ export class WsRpcServer {
       return
     }
 
-    if (!payload || typeof payload !== "object" || !payload.method) {
+    if (!payload || typeof payload !== "object") {
       this.send(ws, {
         jsonrpc: "2.0",
-        id: payload?.id ?? null,
+        id: null,
         error: { code: -32600, message: "invalid request" },
+      })
+      return
+    }
+    // #206: parity with HTTP RPC handleOne (#202/#204) — validate the
+    // JSON-RPC 2.0 envelope strictly so WS clients see the same -32600
+    // shape errors as HTTP clients. Pre-fix WS only checked
+    // `!payload.method`, missing jsonrpc version, id type, method shape,
+    // and params type checks.
+    if (payload.jsonrpc !== "2.0") {
+      this.send(ws, {
+        jsonrpc: "2.0",
+        id: null,
+        error: { code: -32600, message: "invalid request: jsonrpc must be exactly '2.0'" },
+      })
+      return
+    }
+    if (typeof payload.method !== "string" || payload.method.length === 0) {
+      this.send(ws, {
+        jsonrpc: "2.0",
+        id: null,
+        error: { code: -32600, message: "invalid request: method must be a non-empty string" },
+      })
+      return
+    }
+    if ("id" in payload) {
+      const id = payload.id
+      const idOk = id === null || typeof id === "string" || (typeof id === "number" && Number.isFinite(id))
+      if (!idOk) {
+        this.send(ws, {
+          jsonrpc: "2.0",
+          id: null,
+          error: { code: -32600, message: "invalid request: id must be string, number, or null" },
+        })
+        return
+      }
+    }
+    const rawParams = (payload as { params?: unknown }).params
+    if (rawParams !== undefined && rawParams !== null && typeof rawParams !== "object") {
+      this.send(ws, {
+        jsonrpc: "2.0",
+        id: payload.id ?? null,
+        error: { code: -32600, message: "invalid request: params must be Array or Object" },
       })
       return
     }
