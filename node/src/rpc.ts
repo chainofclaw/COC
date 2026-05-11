@@ -17,6 +17,30 @@ import { traceBlockTransactions, traceTransactionResult } from "./debug-trace.ts
 import type { BftCoordinator } from "./bft-coordinator.ts"
 import { RateLimiter } from "./rate-limiter.ts"
 import { createLogger } from "./logger.ts"
+import {
+  invalidParams,
+  methodNotFound,
+  invalidRequest,
+  parseError,
+  limitExceeded,
+  internalError,
+  safeBigInt,
+  parseBlockTag,
+  requireHexParam,
+  optionalHexParam,
+  requireAddressParam,
+  requireTxHashParam,
+  requireBlockHashParam,
+  requireIndexParam,
+  requireFilterId,
+  requireCallObject,
+  requireFilterObject,
+  requireStringParam,
+  validateTxCallFields,
+  validateLogFilter,
+  sanitizeEthersError,
+  sanitizeJsonParseError,
+} from "./rpc-validators.ts"
 import { buildBlockHeaderView } from "./block-header.ts"
 import { aggregateBlockLogsBloom } from "./block-header.ts"
 import { lookupRewardClaim, readBestRewardManifest } from "../../runtime/lib/reward-manifest.ts"
@@ -79,190 +103,10 @@ export function jsonStringify(obj: unknown): string {
   )
 }
 
-// RPC parameter validation helpers
-function requireHexParam(params: unknown[], index: number, name: string): Hex {
-  const value = (params ?? [])[index]
-  if (typeof value !== "string" || !value.startsWith("0x")) {
-    throw { code: -32602, message: `invalid ${name}: expected hex string` }
-  }
-  // Validate hex content and cap length to prevent injection of arbitrary strings
-  if (value.length > 66 || !/^0x[0-9a-fA-F]*$/.test(value)) {
-    throw { code: -32602, message: `invalid ${name}: malformed hex string` }
-  }
-  return value as Hex
-}
-
-/**
- * #122: strict 20-byte address validator. requireHexParam accepts any
- * hex up to 66 chars, so "0x123" slipped through and downstream code
- * either echoed back the raw input (eth_getBalance) or silently missed
- * the index (coc_getContractInfo). Use this at the RPC boundary for
- * methods whose param is documented as an Ethereum address.
- */
-function requireAddressParam(params: unknown[], index: number, name = "address"): Hex {
-  const value = (params ?? [])[index]
-  if (typeof value !== "string") {
-    throw { code: -32602, message: `invalid ${name}: expected string` }
-  }
-  if (!/^0x[0-9a-fA-F]{40}$/.test(value)) {
-    throw { code: -32602, message: `invalid ${name}: must match /^0x[0-9a-fA-F]{40}$/` }
-  }
-  return value as Hex
-}
-
-/**
- * #150: strict 32-byte (64 hex chars) tx-hash validator. The loose
- * requireHexParam accepts 0x-prefixed hex up to 66 chars, so a typo
- * like "0x123" slipped through and the downstream tx lookup returned
- * null ("tx not found"). Clients couldn't distinguish a typo from a
- * tx that doesn't exist on-chain.
- */
-function requireTxHashParam(params: unknown[], index: number, name = "transaction hash"): Hex {
-  const value = (params ?? [])[index]
-  if (typeof value !== "string") {
-    throw { code: -32602, message: `invalid ${name}: expected string` }
-  }
-  if (!/^0x[0-9a-fA-F]{64}$/.test(value)) {
-    throw { code: -32602, message: `invalid ${name}: must match /^0x[0-9a-fA-F]{64}$/` }
-  }
-  return value as Hex
-}
-
-/**
- * Validate a 32-byte block hash (#166). Pre-fix the *byHash variants
- * silently accepted any input (undefined, null, short hex, non-hex) and
- * returned null indistinguishable from "valid hash, no such block".
- * Same shape rules as transaction hash; the separate name keeps error
- * messages readable for the caller's surface.
- */
-function requireBlockHashParam(params: unknown[], index: number): Hex {
-  return requireTxHashParam(params, index, "block hash")
-}
-
-/**
- * Validate a JSON-RPC QUANTITY index parameter (#198). EIP-1474
- * requires indexes to be `0x`-prefixed hex strings. Pre-fix
- * `Number((payload.params ?? [])[idx] ?? 0)` accepted everything
- * (NaN for non-hex, negatives for `-0x1`, `1` for `true`) and the
- * downstream null-return silently masked the malformed cases —
- * caller couldn't distinguish a real not-found from a buggy query.
- */
-function requireIndexParam(params: unknown[], index: number, name = "index"): number {
-  const raw = (params ?? [])[index]
-  if (typeof raw !== "string" || !/^0x[0-9a-fA-F]+$/.test(raw)) {
-    throw { code: -32602, message: `invalid ${name} at param ${index}: must match /^0x[0-9a-fA-F]+$/` }
-  }
-  const n = Number(raw)
-  if (!Number.isInteger(n) || n < 0) {
-    throw { code: -32602, message: `invalid ${name} at param ${index}: must be non-negative integer` }
-  }
-  return n
-}
-
-/**
- * Validate a 16-byte filter ID (#196). Filter IDs are minted as
- * `0x` + `randomBytes(16).toString("hex")` (32 hex chars). Pre-fix
- * `String((payload.params ?? [])[0] ?? "")` silently coerced any
- * input — numbers, arrays, objects — to a never-matching string, so
- * `eth_getFilterChanges` / `eth_getFilterLogs` / `eth_uninstallFilter`
- * returned `[]` or `false` indistinguishable from "filter expired."
- */
-function requireFilterId(params: unknown[], index: number): string {
-  const value = (params ?? [])[index]
-  if (typeof value !== "string") {
-    throw { code: -32602, message: `invalid filter id at index ${index}: expected string` }
-  }
-  if (!/^0x[0-9a-fA-F]{32}$/.test(value)) {
-    throw { code: -32602, message: `invalid filter id at index ${index}: must match /^0x[0-9a-fA-F]{32}$/` }
-  }
-  return value.toLowerCase()
-}
-
-/**
- * Validate that the first param of eth_call / eth_estimateGas /
- * eth_sendTransaction / eth_createAccessList is an object — not a
- * string, number, array, or boolean. #172: pre-fix the type assertion
- * `as Record<string, string>` was a no-op at runtime; non-object input
- * coerced to an effectively-empty tx and the EVM returned "0x".
- * null/undefined pass through as `undefined` so the caller can still
- * fall back to `{}` (matches geth's `eth_call(null)` ergonomic).
- */
-function requireCallObject(raw: unknown, methodName: string): Record<string, unknown> | undefined {
-  if (raw === null || raw === undefined) return undefined
-  if (typeof raw !== "object" || Array.isArray(raw)) {
-    throw { code: -32602, message: `invalid ${methodName} object: expected object, got ${Array.isArray(raw) ? "array" : typeof raw}` }
-  }
-  return raw as Record<string, unknown>
-}
-
-/**
- * #238: Filter param validator for eth_getLogs / eth_newFilter. Pre-fix
- * `(payload.params[0] ?? {}) as Record<string, unknown>` was a TS-only
- * runtime no-op so booleans, strings, numbers, and arrays slipped through.
- * Every `.fromBlock` / `.address` / `.topics` read returned undefined →
- * validateLogFilter saw nothing to reject → silent "no filter" path.
- * Worse for eth_newFilter: silently created a filter ID for garbage,
- * leaking entries in the MAX_FILTERS-capped map. Returns {} for
- * null/undefined to keep `eth_getLogs(null)` working as "default range".
- */
-function requireFilterObject(raw: unknown): Record<string, unknown> {
-  if (raw === undefined || raw === null) return {}
-  if (typeof raw !== "object" || Array.isArray(raw)) {
-    throw { code: -32602, message: `invalid filter: expected object, got ${Array.isArray(raw) ? "array" : typeof raw}` }
-  }
-  return raw as Record<string, unknown>
-}
-
-/**
- * #242: Generic string-param validator. Pre-fix `String(...)` coercion
- * silently mapped numbers/booleans/objects to bogus identifiers
- * ("123"/"true"/"[object Object]") that downstream lookups couldn't
- * distinguish from real strings. Used for DID/agentId/credentialId
- * params. Same anti-pattern as #120/#220/#226/#240.
- */
-function requireStringParam(params: unknown[], index: number, name: string): string {
-  const raw = params[index]
-  if (raw === undefined || raw === null || raw === "") {
-    throw { code: -32602, message: `missing ${name} parameter` }
-  }
-  if (typeof raw !== "string") {
-    throw { code: -32602, message: `invalid ${name}: expected string, got ${Array.isArray(raw) ? "array" : typeof raw}` }
-  }
-  return raw
-}
-
-function optionalHexParam(params: unknown[], index: number): Hex | undefined {
-  const value = (params ?? [])[index]
-  if (value === undefined || value === null) return undefined
-  if (typeof value !== "string" || !value.startsWith("0x")) return undefined
-  if (value.length > 66 || !/^0x[0-9a-fA-F]*$/.test(value)) return undefined
-  return value as Hex
-}
-
-/**
- * #148: validate the numeric/data fields of an eth_call / estimateGas /
- * sendTransaction-shaped object. Pre-fix, malformed `value`/`gas`/etc
- * either flowed through to the EVM (which silently treated non-hex as
- * 0) or surfaced as -32603 internal-error with the V8 message leaked.
- * Rejects each field at the boundary with -32602.
- */
-const HEX_QUANTITY_RE = /^0x[0-9a-fA-F]+$/
-const HEX_DATA_RE = /^0x([0-9a-fA-F]{2})*$/
-function validateTxCallFields(callParams: Record<string, unknown>): void {
-  for (const field of ["value", "gas", "gasPrice", "maxFeePerGas", "maxPriorityFeePerGas"] as const) {
-    const v = callParams[field]
-    if (v === undefined || v === null || v === "") continue
-    if (typeof v !== "string" || !HEX_QUANTITY_RE.test(v)) {
-      throw { code: -32602, message: `invalid ${field}: must match /^0x[0-9a-fA-F]+$/` }
-    }
-  }
-  const data = callParams.data
-  if (data !== undefined && data !== null && data !== "") {
-    if (typeof data !== "string" || !HEX_DATA_RE.test(data)) {
-      throw { code: -32602, message: "invalid data: must match /^0x([0-9a-fA-F]{2})*$/" }
-    }
-  }
-}
+// RPC parameter validation helpers — extracted to ./rpc-validators.ts (PR-1Q, 2026-05-12).
+// All shape/hex/address/hash/tag/filter validation now lives in the shared layer
+// so ipfs-http.ts, pose-http.ts, websocket-rpc.ts, and runtime/coc-node.ts can
+// reuse the same predicates without copy-paste drift.
 
 const MAX_RPC_BODY = 1024 * 1024 // 1 MB max request body for RPC
 const rateLimiter = new RateLimiter()
@@ -867,10 +711,10 @@ async function handleRpc(
       // Address must be exactly 20 bytes (40 hex chars). Empty `to`
       // still permitted for contract-creation gas estimates.
       if (estParams.to && !/^0x[0-9a-fA-F]{40}$/.test(estParams.to)) {
-        throw { code: -32602, message: "invalid to address: must match /^0x[0-9a-fA-F]{40}$/" }
+        invalidParams("invalid to address: must match /^0x[0-9a-fA-F]{40}$/")
       }
       if (estParams.from && !/^0x[0-9a-fA-F]{40}$/.test(estParams.from)) {
-        throw { code: -32602, message: "invalid from address: must match /^0x[0-9a-fA-F]{40}$/" }
+        invalidParams("invalid from address: must match /^0x[0-9a-fA-F]{40}$/")
       }
       // #148: validate value/gas/data shape — pre-fix the EVM silently
       // treated non-hex as 0, so {value:"not-hex"} gave a clean gas
@@ -904,10 +748,10 @@ async function handleRpc(
       // exactly 20 bytes (40 hex chars). Allow empty `to` for contract
       // creation calls.
       if (to && !/^0x[0-9a-fA-F]{40}$/.test(to)) {
-        throw { code: -32602, message: "invalid to address: must match /^0x[0-9a-fA-F]{40}$/" }
+        invalidParams("invalid to address: must match /^0x[0-9a-fA-F]{40}$/")
       }
       if (callParams.from && !/^0x[0-9a-fA-F]{40}$/.test(callParams.from)) {
-        throw { code: -32602, message: "invalid from address: must match /^0x[0-9a-fA-F]{40}$/" }
+        invalidParams("invalid from address: must match /^0x[0-9a-fA-F]{40}$/")
       }
       // #148: validate value/gas/data shape before reaching the EVM,
       // where malformed input either silently becomes 0 (value) or
@@ -932,11 +776,11 @@ async function handleRpc(
       // that masked the underlying input bug.
       const slotRaw = (payload.params ?? [])[1]
       if (typeof slotRaw !== "string" || slotRaw.length === 0) {
-        throw { code: -32602, message: "invalid storage slot: expected non-empty 0x-prefixed hex string" }
+        invalidParams("invalid storage slot: expected non-empty 0x-prefixed hex string")
       }
       const storageSlot = slotRaw
       if (!/^0x[0-9a-fA-F]{1,64}$/.test(storageSlot)) {
-        throw { code: -32602, message: `invalid storage slot: must match /^0x[0-9a-fA-F]{1,64}$/` }
+        invalidParams(`invalid storage slot: must match /^0x[0-9a-fA-F]{1,64}$/`)
       }
       const stateRoot = await resolveHistoricalStateRoot((payload.params ?? [])[2], chain)
       return await evm.getStorageAt(storageAddr, storageSlot, stateRoot)
@@ -945,15 +789,15 @@ async function handleRpc(
       const proofAddr = requireAddressParam(payload.params ?? [], 0)
       const rawSlots = (payload.params ?? [])[1]
       if (!Array.isArray(rawSlots)) {
-        throw { code: -32602, message: "invalid storage keys: expected array" }
+        invalidParams("invalid storage keys: expected array")
       }
       const proofSlots = rawSlots.map((slot, index) => {
         if (typeof slot !== "string" || !slot.startsWith("0x")) {
-          throw { code: -32602, message: `invalid storage key at index ${index}` }
+          invalidParams(`invalid storage key at index ${index}`)
         }
         const normalized = slot.replace(/^0x/, "")
         if (!/^[0-9a-fA-F]*$/.test(normalized) || normalized.length > 64) {
-          throw { code: -32602, message: `invalid storage key at index ${index}` }
+          invalidParams(`invalid storage key at index ${index}`)
         }
         return `0x${normalized.padStart(64, "0")}`
       })
@@ -990,14 +834,14 @@ async function handleRpc(
       // Validate shape upfront; only well-formed hex hashes.
       const raw = (payload.params ?? [])[0]
       if (typeof raw !== "string") {
-        throw { code: -32602, message: "invalid input: expected hex string" }
+        invalidParams("invalid input: expected hex string")
       }
       if (!raw.startsWith("0x")) {
-        throw { code: -32602, message: "invalid input: must be 0x-prefixed" }
+        invalidParams("invalid input: must be 0x-prefixed")
       }
       const body = raw.slice(2)
       if (body.length % 2 !== 0 || (body.length > 0 && !/^[0-9a-fA-F]+$/.test(body))) {
-        throw { code: -32602, message: "invalid input: must be even-length hex" }
+        invalidParams("invalid input: must be even-length hex")
       }
       const bytes = Buffer.from(body, "hex")
       return `0x${keccak256Hex(bytes)}`
@@ -1013,24 +857,24 @@ async function handleRpc(
       // pricing) bubble through as -32603.
       const rawInput = (payload.params ?? [])[0]
       if (typeof rawInput !== "string") {
-        throw { code: -32602, message: "invalid raw transaction: expected hex string" }
+        invalidParams("invalid raw transaction: expected hex string")
       }
       if (!rawInput.startsWith("0x")) {
-        throw { code: -32602, message: "invalid raw transaction: must be 0x-prefixed" }
+        invalidParams("invalid raw transaction: must be 0x-prefixed")
       }
       const body = rawInput.slice(2)
       if (body.length === 0 || body.length % 2 !== 0 || !/^[0-9a-fA-F]+$/.test(body)) {
-        throw { code: -32602, message: "invalid raw transaction: must be even-length hex" }
+        invalidParams("invalid raw transaction: must be even-length hex")
       }
       // Smallest legitimate signed legacy tx is ~50 bytes (100 hex chars).
       // Reject anything obviously below the floor to avoid handing ethers
       // a truncated buffer it'll panic on.
       if (body.length < 100) {
-        throw { code: -32602, message: "invalid raw transaction: too short to be a signed transaction" }
+        invalidParams("invalid raw transaction: too short to be a signed transaction")
       }
       // Reject oversized raw transactions to prevent CPU abuse (128 KB ~= Ethereum mainnet limit)
       if (rawInput.length > 262_144) {
-        throw { code: -32602, message: `raw transaction too large: ${rawInput.length} chars` }
+        invalidParams(`raw transaction too large: ${rawInput.length} chars`)
       }
       const raw = rawInput as Hex
       let tx
@@ -1043,7 +887,7 @@ async function handleRpc(
         const isEthersShapeError =
           parseErr && typeof parseErr === "object" && typeof (parseErr as { code?: unknown }).code === "string"
         if (isEthersShapeError) {
-          throw { code: -32602, message: "invalid raw transaction: failed to decode" }
+          invalidParams("invalid raw transaction: failed to decode")
         }
         throw parseErr
       }
@@ -1056,7 +900,7 @@ async function handleRpc(
       // Pre-fix this silently processed the range and surfaced a confusing
       // "block range too large" error referencing the full chain height.
       if (query.blockHash !== undefined && (query.fromBlock !== undefined || query.toBlock !== undefined)) {
-        throw { code: -32602, message: "eth_getLogs: blockHash is mutually exclusive with fromBlock/toBlock" }
+        invalidParams("eth_getLogs: blockHash is mutually exclusive with fromBlock/toBlock")
       }
       // #162: validate filter address/topic shape so malformed inputs
       // surface as -32602 instead of silently matching nothing. PR #142
@@ -1069,7 +913,7 @@ async function handleRpc(
     case "eth_newFilter": {
       if (filters.size >= MAX_FILTERS) {
         cleanupExpiredFilters(filters)
-        if (filters.size >= MAX_FILTERS) throw { code: -32005, message: "filter limit exceeded" }
+        if (filters.size >= MAX_FILTERS) limitExceeded("filter limit exceeded")
       }
       const query = requireFilterObject((payload.params ?? [])[0])
       const id = `0x${randomBytes(16).toString("hex")}`
@@ -1155,12 +999,12 @@ async function handleRpc(
       // "missing from address" was the only thing that caught it.
       const txParams = (requireCallObject((payload.params ?? [])[0], "eth_sendTransaction") ?? {}) as Record<string, string>
       const from = txParams.from?.toLowerCase()
-      if (!from) throw { code: -32602, message: "missing from address" }
+      if (!from) invalidParams("missing from address")
       if (!/^0x[0-9a-fA-F]{40}$/.test(from)) {
-        throw { code: -32602, message: "invalid from address: must match /^0x[0-9a-fA-F]{40}$/" }
+        invalidParams("invalid from address: must match /^0x[0-9a-fA-F]{40}$/")
       }
       if (txParams.to && !/^0x[0-9a-fA-F]{40}$/.test(txParams.to)) {
-        throw { code: -32602, message: "invalid to address: must match /^0x[0-9a-fA-F]{40}$/" }
+        invalidParams("invalid to address: must match /^0x[0-9a-fA-F]{40}$/")
       }
       // #148: validate value/gas/data shape before reaching the mempool.
       validateTxCallFields(txParams)
@@ -1176,7 +1020,7 @@ async function handleRpc(
       let userNonce: bigint | undefined
       if (txParams.nonce !== undefined && txParams.nonce !== null && txParams.nonce !== "") {
         if (typeof txParams.nonce !== "string" || !/^0x[0-9a-fA-F]+$/.test(txParams.nonce)) {
-          throw { code: -32602, message: "invalid nonce: must match /^0x[0-9a-fA-F]+$/" }
+          invalidParams("invalid nonce: must match /^0x[0-9a-fA-F]+$/")
         }
         userNonce = BigInt(txParams.nonce)
       }
@@ -1228,11 +1072,11 @@ async function handleRpc(
       const address = requireAddressParam(payload.params ?? [], 0).toLowerCase() as Hex
       const rawMessage = (payload.params ?? [])[1]
       if (typeof rawMessage !== "string") {
-        throw { code: -32602, message: "invalid message: expected hex string" }
+        invalidParams("invalid message: expected hex string")
       }
       const messageBody = rawMessage.startsWith("0x") ? rawMessage.slice(2) : rawMessage
       if (messageBody.length % 2 !== 0 || (messageBody.length > 0 && !/^[0-9a-fA-F]+$/.test(messageBody))) {
-        throw { code: -32602, message: "invalid message: must be even-length hex (with optional 0x prefix)" }
+        invalidParams("invalid message: must be even-length hex (with optional 0x prefix)")
       }
 
       const account = testAccounts.get(address)
@@ -1248,7 +1092,7 @@ async function handleRpc(
       const address = requireAddressParam(payload.params ?? [], 0).toLowerCase() as Hex
       const typedData = (payload.params ?? [])[1]
       if (typedData === null || typeof typedData !== "object" || Array.isArray(typedData)) {
-        throw { code: -32602, message: "invalid typedData: expected object" }
+        invalidParams("invalid typedData: expected object")
       }
 
       const account = testAccounts.get(address)
@@ -1274,7 +1118,7 @@ async function handleRpc(
         const isEthersShapeError =
           encErr && typeof encErr === "object" && typeof (encErr as { code?: unknown }).code === "string"
         if (isEthersShapeError) {
-          throw { code: -32602, message: "invalid typedData: failed to encode" }
+          invalidParams("invalid typedData: failed to encode")
         }
         throw encErr
       }
@@ -1286,10 +1130,10 @@ async function handleRpc(
       const callParams = (requireCallObject((payload.params ?? [])[0], "eth_createAccessList") ?? {}) as Record<string, string>
       // #148: validate address + value/gas/data shape upfront.
       if (callParams.to && !/^0x[0-9a-fA-F]{40}$/.test(callParams.to)) {
-        throw { code: -32602, message: "invalid to address: must match /^0x[0-9a-fA-F]{40}$/" }
+        invalidParams("invalid to address: must match /^0x[0-9a-fA-F]{40}$/")
       }
       if (callParams.from && !/^0x[0-9a-fA-F]{40}$/.test(callParams.from)) {
-        throw { code: -32602, message: "invalid from address: must match /^0x[0-9a-fA-F]{40}$/" }
+        invalidParams("invalid from address: must match /^0x[0-9a-fA-F]{40}$/")
       }
       validateTxCallFields(callParams)
       const executionContext = await resolveHistoricalExecutionContext((payload.params ?? [])[1], chain)
@@ -1306,15 +1150,15 @@ async function handleRpc(
       }
     }
     case "debug_traceCall": {
-      if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
+      if (!DEBUG_RPC_ENABLED) methodNotFound("debug methods disabled (set COC_DEBUG_RPC=1)")
       // #172: shape validation symmetric with eth_call.
       const callParams = (requireCallObject((payload.params ?? [])[0], "debug_traceCall") ?? {}) as Record<string, string>
       // #148: validate shape — same as eth_call.
       if (callParams.to && !/^0x[0-9a-fA-F]{40}$/.test(callParams.to)) {
-        throw { code: -32602, message: "invalid to address: must match /^0x[0-9a-fA-F]{40}$/" }
+        invalidParams("invalid to address: must match /^0x[0-9a-fA-F]{40}$/")
       }
       if (callParams.from && !/^0x[0-9a-fA-F]{40}$/.test(callParams.from)) {
-        throw { code: -32602, message: "invalid from address: must match /^0x[0-9a-fA-F]{40}$/" }
+        invalidParams("invalid from address: must match /^0x[0-9a-fA-F]{40}$/")
       }
       validateTxCallFields(callParams)
       const executionContext = await resolveHistoricalExecutionContext((payload.params ?? [])[1], chain)
@@ -1334,7 +1178,7 @@ async function handleRpc(
       return formatDebugTraceResult(result, traceOpts)
     }
     case "debug_traceTransaction": {
-      if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
+      if (!DEBUG_RPC_ENABLED) methodNotFound("debug methods disabled (set COC_DEBUG_RPC=1)")
       const txHash = String((payload.params ?? [])[0] ?? "") as Hex
       const traceOpts = ((payload.params ?? [])[1] ?? {}) as Record<string, unknown>
       const traceResult = await traceTransactionResult(txHash, chain, evm, {
@@ -1346,7 +1190,7 @@ async function handleRpc(
       return formatDebugTraceResult(traceResult, traceOpts)
     }
     case "debug_traceBlockByNumber": {
-      if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
+      if (!DEBUG_RPC_ENABLED) methodNotFound("debug methods disabled (set COC_DEBUG_RPC=1)")
       const blockTag = String((payload.params ?? [])[0] ?? "latest")
       const traceBlockNum = await resolveBlockNumber(blockTag, chain)
       const traceOpts2 = ((payload.params ?? [])[1] ?? {}) as Record<string, unknown>
@@ -1362,7 +1206,7 @@ async function handleRpc(
       }))
     }
     case "trace_transaction": {
-      if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
+      if (!DEBUG_RPC_ENABLED) methodNotFound("debug methods disabled (set COC_DEBUG_RPC=1)")
       const txHash = String((payload.params ?? [])[0] ?? "") as Hex
       const txContext = await locateTraceTransactionContext(chain, txHash)
       if (!txContext) {
@@ -1372,7 +1216,7 @@ async function handleRpc(
       return formatLocalizedOpenEthereumCallTraces(result.callTraces, txContext)
     }
     case "trace_call": {
-      if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
+      if (!DEBUG_RPC_ENABLED) methodNotFound("debug methods disabled (set COC_DEBUG_RPC=1)")
       // #172: shape validation symmetric with eth_call.
       const callParams = (requireCallObject((payload.params ?? [])[0], "trace_call") ?? {}) as Record<string, string>
       const traceTypes = normalizeReplayTraceTypes((payload.params ?? [])[1])
@@ -1387,7 +1231,7 @@ async function handleRpc(
       return formatTraceReplayResult(result, traceTypes)
     }
     case "trace_callMany": {
-      if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
+      if (!DEBUG_RPC_ENABLED) methodNotFound("debug methods disabled (set COC_DEBUG_RPC=1)")
       const callRequests = normalizeTraceCallManyRequests((payload.params ?? [])[0])
       const executionContext = await resolveHistoricalExecutionContext((payload.params ?? [])[1], chain)
       const results = await evm.traceCallMany(
@@ -1399,14 +1243,14 @@ async function handleRpc(
       return results.map((result, index) => formatTraceReplayResult(result, callRequests[index].traceTypes))
     }
     case "trace_replayTransaction": {
-      if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
+      if (!DEBUG_RPC_ENABLED) methodNotFound("debug methods disabled (set COC_DEBUG_RPC=1)")
       const txHash = String((payload.params ?? [])[0] ?? "") as Hex
       const traceTypes = normalizeReplayTraceTypes((payload.params ?? [])[1])
       const result = await traceTransactionResult(txHash, chain, evm)
       return formatTraceReplayResult(result, traceTypes)
     }
     case "trace_replayBlockTransactions": {
-      if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
+      if (!DEBUG_RPC_ENABLED) methodNotFound("debug methods disabled (set COC_DEBUG_RPC=1)")
       const blockTag = String((payload.params ?? [])[0] ?? "latest")
       const traceTypes = normalizeReplayTraceTypes((payload.params ?? [])[1])
       const blockNumber = await resolveBlockNumber(blockTag, chain)
@@ -1414,14 +1258,14 @@ async function handleRpc(
       return results.map((result) => formatTraceReplayResult(result, traceTypes))
     }
     case "trace_rawTransaction": {
-      if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
+      if (!DEBUG_RPC_ENABLED) methodNotFound("debug methods disabled (set COC_DEBUG_RPC=1)")
       const rawTx = String((payload.params ?? [])[0] ?? "")
       const traceTypes = normalizeReplayTraceTypes((payload.params ?? [])[1])
       const result = await evm.traceRawTxOnState(rawTx)
       return formatTraceReplayResult(result, traceTypes)
     }
     case "trace_block": {
-      if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
+      if (!DEBUG_RPC_ENABLED) methodNotFound("debug methods disabled (set COC_DEBUG_RPC=1)")
       const blockTag = String((payload.params ?? [])[0] ?? "latest")
       const blockNumber = await resolveBlockNumber(blockTag, chain)
       const block = await Promise.resolve(chain.getBlockByNumber(blockNumber))
@@ -1439,12 +1283,12 @@ async function handleRpc(
       )
     }
     case "trace_filter": {
-      if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
+      if (!DEBUG_RPC_ENABLED) methodNotFound("debug methods disabled (set COC_DEBUG_RPC=1)")
       const query = requireFilterObject((payload.params ?? [])[0])
       return await queryTraceFilter(chain, evm, query)
     }
     case "trace_get": {
-      if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
+      if (!DEBUG_RPC_ENABLED) methodNotFound("debug methods disabled (set COC_DEBUG_RPC=1)")
       const txHash = String((payload.params ?? [])[0] ?? "") as Hex
       const traceAddress = normalizeTraceAddressPath((payload.params ?? [])[1])
       const txContext = await locateTraceTransactionContext(chain, txHash)
@@ -1468,7 +1312,7 @@ async function handleRpc(
         coc: "1.0",
       }
     case "debug_getRawTransaction": {
-      if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
+      if (!DEBUG_RPC_ENABLED) methodNotFound("debug methods disabled (set COC_DEBUG_RPC=1)")
       const rawTxHash = String((payload.params ?? [])[0] ?? "") as Hex
       // Find block containing the transaction
       if (typeof chain.getTransactionByHash === "function") {
@@ -1491,7 +1335,7 @@ async function handleRpc(
       return null
     }
     case "debug_getRawReceipts": {
-      if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
+      if (!DEBUG_RPC_ENABLED) methodNotFound("debug methods disabled (set COC_DEBUG_RPC=1)")
       const rawReceiptTag = String((payload.params ?? [])[0] ?? "latest")
       const rawReceiptHeight = await Promise.resolve(chain.getHeight())
       const rawReceiptNum = parseBlockTag(rawReceiptTag, rawReceiptHeight)
@@ -1501,7 +1345,7 @@ async function handleRpc(
     }
     case "debug_getRawHeader":
     case "debug_getRawBlock": {
-      if (!DEBUG_RPC_ENABLED) throw { code: -32601, message: "debug methods disabled (set COC_DEBUG_RPC=1)" }
+      if (!DEBUG_RPC_ENABLED) methodNotFound("debug methods disabled (set COC_DEBUG_RPC=1)")
       // Simplified: return JSON-encoded block data as hex (not RLP)
       // Full RLP encoding deferred to future phase
       const rawBlockTag = String((payload.params ?? [])[0] ?? "latest")
@@ -1602,20 +1446,20 @@ async function handleRpc(
         blockCount = 1
       } else if (typeof rawBlockCount === "number") {
         if (!Number.isInteger(rawBlockCount) || rawBlockCount < 1) {
-          throw { code: -32602, message: "invalid blockCount: must be positive integer" }
+          invalidParams("invalid blockCount: must be positive integer")
         }
         blockCount = Math.min(rawBlockCount, 1024)
       } else if (typeof rawBlockCount === "string") {
         if (!/^0x[0-9a-fA-F]+$/.test(rawBlockCount)) {
-          throw { code: -32602, message: "invalid blockCount: must match /^0x[0-9a-fA-F]+$/" }
+          invalidParams("invalid blockCount: must match /^0x[0-9a-fA-F]+$/")
         }
         const n = Number(rawBlockCount)
         if (!Number.isFinite(n) || n < 1) {
-          throw { code: -32602, message: "invalid blockCount: must be >= 1" }
+          invalidParams("invalid blockCount: must be >= 1")
         }
         blockCount = Math.min(Math.floor(n), 1024)
       } else {
-        throw { code: -32602, message: "invalid blockCount: expected hex quantity or positive integer" }
+        invalidParams("invalid blockCount: expected hex quantity or positive integer")
       }
       const newestBlock = String((payload.params ?? [])[1] ?? "latest")
       // #224: `as number[]` was a TS runtime no-op so an object/string/
@@ -1624,11 +1468,11 @@ async function handleRpc(
       // shapes upfront so spec-violating clients get told.
       const rawPercentiles = (payload.params ?? [])[2]
       if (rawPercentiles !== undefined && rawPercentiles !== null && !Array.isArray(rawPercentiles)) {
-        throw { code: -32602, message: "invalid rewardPercentiles: expected array" }
+        invalidParams("invalid rewardPercentiles: expected array")
       }
       const rewardPercentiles = (rawPercentiles ?? []) as number[]
       if (rewardPercentiles.length > 100) {
-        throw { code: -32602, message: `rewardPercentiles array too large: ${rewardPercentiles.length} (max 100)` }
+        invalidParams(`rewardPercentiles array too large: ${rewardPercentiles.length} (max 100)`)
       }
       // #160: pre-fix percentiles outside [0,100], non-numeric, or
       // non-monotonic silently flowed into feeOracle.computeFeeHistoryRewards
@@ -1640,13 +1484,13 @@ async function handleRpc(
       for (let i = 0; i < rewardPercentiles.length; i++) {
         const p = rewardPercentiles[i]
         if (typeof p !== "number" || !Number.isFinite(p)) {
-          throw { code: -32602, message: `rewardPercentile at index ${i} must be a finite number` }
+          invalidParams(`rewardPercentile at index ${i} must be a finite number`)
         }
         if (p < 0 || p > 100) {
-          throw { code: -32602, message: `rewardPercentile at index ${i} out of range: ${p} (must be in [0,100])` }
+          invalidParams(`rewardPercentile at index ${i} out of range: ${p} (must be in [0,100])`)
         }
         if (p < prevPercentile) {
-          throw { code: -32602, message: `rewardPercentiles must be monotonically non-decreasing: index ${i} (${p}) < index ${i - 1} (${prevPercentile})` }
+          invalidParams(`rewardPercentiles must be monotonically non-decreasing: index ${i} (${p}) < index ${i - 1} (${prevPercentile})`)
         }
         prevPercentile = p
       }
@@ -1681,7 +1525,7 @@ async function handleRpc(
     case "eth_newBlockFilter": {
       if (filters.size >= MAX_FILTERS) {
         cleanupExpiredFilters(filters)
-        if (filters.size >= MAX_FILTERS) throw { code: -32005, message: "filter limit exceeded" }
+        if (filters.size >= MAX_FILTERS) limitExceeded("filter limit exceeded")
       }
       const id = `0x${randomBytes(16).toString("hex")}`
       const height = await Promise.resolve(chain.getHeight())
@@ -1698,7 +1542,7 @@ async function handleRpc(
     case "eth_newPendingTransactionFilter": {
       if (filters.size >= MAX_FILTERS) {
         cleanupExpiredFilters(filters)
-        if (filters.size >= MAX_FILTERS) throw { code: -32005, message: "filter limit exceeded" }
+        if (filters.size >= MAX_FILTERS) limitExceeded("filter limit exceeded")
       }
       const id = `0x${randomBytes(16).toString("hex")}`
       // Pre-populate seenPendingTxs with everything already in the mempool
@@ -1733,7 +1577,7 @@ async function handleRpc(
       const height = await Promise.resolve(chain.getHeight())
       const end = filter.toBlock ?? height
       if (end - filter.fromBlock > MAX_LOG_BLOCK_RANGE) {
-        throw { code: -32602, message: `block range too large: max ${MAX_LOG_BLOCK_RANGE} blocks` }
+        invalidParams(`block range too large: max ${MAX_LOG_BLOCK_RANGE} blocks`)
       }
       return collectLogs(chain, filter.fromBlock, end, filter)
     }
@@ -1772,14 +1616,14 @@ async function handleRpc(
       // #240/#242.
       const rawSource = (payload.params ?? [])[0]
       if (rawSource === undefined || rawSource === null || rawSource === "") {
-        throw { code: -32602, message: "invalid Solidity source: expected non-empty source string" }
+        invalidParams("invalid Solidity source: expected non-empty source string")
       }
       if (typeof rawSource !== "string") {
-        throw { code: -32602, message: `invalid Solidity source: expected string, got ${typeof rawSource}` }
+        invalidParams(`invalid Solidity source: expected string, got ${typeof rawSource}`)
       }
       const source = rawSource
       if (source.trim().length === 0) {
-        throw { code: -32602, message: "invalid Solidity source: expected non-empty source string" }
+        invalidParams("invalid Solidity source: expected non-empty source string")
       }
       return await compileSoliditySource(source)
     }
@@ -1788,7 +1632,7 @@ async function handleRpc(
       // #132: -32601 method not found per JSON-RPC §5.1 (these were
       // deprecated in geth long ago; clients should treat as "doesn't
       // exist" rather than a generic internal failure).
-      throw { code: -32601, message: `${payload.method} is not supported` }
+      methodNotFound(`${payload.method} is not supported`)
     case "eth_getBlockReceipts": {
       // #114: per-receipt shape must match eth_getTransactionReceipt exactly.
       // Pre-fix this returned a custom subset missing contractAddress,
@@ -1854,7 +1698,7 @@ async function handleRpc(
       // address.
       const rawAddr = String((payload.params ?? [])[0] ?? "")
       if (!/^0x[0-9a-fA-F]{40}$/.test(rawAddr)) {
-        throw { code: -32602, message: "invalid address: must match /^0x[0-9a-fA-F]{40}$/" }
+        invalidParams("invalid address: must match /^0x[0-9a-fA-F]{40}$/")
       }
       const addr = rawAddr.toLowerCase() as Hex
       const rawLimit = Number((payload.params ?? [])[1] ?? 50)
@@ -1889,10 +1733,10 @@ async function handleRpc(
       // isValidCid policy as the IPFS HTTP layer).
       const rawCid = (payload.params ?? [])[0]
       if (typeof rawCid !== "string" || rawCid.length === 0) {
-        throw { code: -32602, message: "cid must be a non-empty string" }
+        invalidParams("cid must be a non-empty string")
       }
       if (rawCid.length > 512 || /[\/\\]|\.\.|\0|\s/.test(rawCid)) {
-        throw { code: -32602, message: "invalid cid: contains illegal characters or exceeds 512 chars" }
+        invalidParams("invalid cid: contains illegal characters or exceeds 512 chars")
       }
       const cid = rawCid
       const rawMaxK = Number((payload.params ?? [])[1] ?? 3)
@@ -1910,10 +1754,10 @@ async function handleRpc(
       // the `error` field, not embedded in `result`.
       const rawCid = (payload.params ?? [])[0]
       if (typeof rawCid !== "string" || rawCid.length === 0) {
-        throw { code: -32602, message: "cid must be a non-empty string" }
+        invalidParams("cid must be a non-empty string")
       }
       if (rawCid.length > 512 || /[\/\\]|\.\.|\0|\s/.test(rawCid)) {
-        throw { code: -32602, message: "invalid cid: contains illegal characters or exceeds 512 chars" }
+        invalidParams("invalid cid: contains illegal characters or exceeds 512 chars")
       }
       const cid = rawCid
       const excludePeerId = String((payload.params ?? [])[1] ?? "")
@@ -2000,7 +1844,7 @@ async function handleRpc(
       // this node" is a method-availability concern → -32601. Same
       // class as #132 (unknown-method fallback fix).
       if (!hasGovernance(chain)) {
-        throw { code: -32601, message: "coc_submitProposal: governance module not enabled on this node" }
+        methodNotFound("coc_submitProposal: governance module not enabled on this node")
       }
       // #220: pre-fix `(payload.params ?? [])[0] as Record<string,string>`
       // was a no-op cast. With params=[] or params=[null] the first param
@@ -2009,7 +1853,7 @@ async function handleRpc(
       // (reading 'proposer')") which leaked through the outer catch.
       const rawParams = (payload.params ?? [])[0]
       if (!rawParams || typeof rawParams !== "object" || Array.isArray(rawParams)) {
-        throw { code: -32602, message: "invalid params: expected non-null object as first param" }
+        invalidParams("invalid params: expected non-null object as first param")
       }
       const proposalParams = rawParams as Record<string, string>
       // Only the local node can submit proposals via RPC
@@ -2030,7 +1874,7 @@ async function handleRpc(
           (typeof stakeRaw === "number" && Number.isInteger(stakeRaw) && stakeRaw >= 0) ||
           (typeof stakeRaw === "string" && /^([0-9]+|0x[0-9a-fA-F]+)$/.test(stakeRaw))
         if (!ok) {
-          throw { code: -32602, message: "invalid stakeAmount: must be a non-negative integer or 0x-hex" }
+          invalidParams("invalid stakeAmount: must be a non-negative integer or 0x-hex")
         }
         stakeAmount = BigInt(stakeRaw as string | number)
       }
@@ -2053,14 +1897,14 @@ async function handleRpc(
     case "coc_voteProposal": {
       // #234: same -32601 mapping as coc_submitProposal.
       if (!hasGovernance(chain)) {
-        throw { code: -32601, message: "coc_voteProposal: governance module not enabled on this node" }
+        methodNotFound("coc_voteProposal: governance module not enabled on this node")
       }
       // #220: same null-check as coc_submitProposal — params=[] / [null]
       // pre-fix bubbled "Cannot read properties of null (reading 'voterId')"
       // through the outer catch as a -32603 V8 leak.
       const voteRaw = (payload.params ?? [])[0]
       if (!voteRaw || typeof voteRaw !== "object" || Array.isArray(voteRaw)) {
-        throw { code: -32602, message: "invalid params: expected non-null object as first param" }
+        invalidParams("invalid params: expected non-null object as first param")
       }
       const voteParams = voteRaw as Record<string, unknown>
       // Only the local node can vote via RPC
@@ -2102,11 +1946,11 @@ async function handleRpc(
       // "no filter applied, return all" path. Same class as #220 / #224.
       const rawStatusFilter = (payload.params ?? [])[0]
       if (rawStatusFilter !== undefined && rawStatusFilter !== null && typeof rawStatusFilter !== "string") {
-        throw { code: -32602, message: "invalid status filter: expected string or omitted" }
+        invalidParams("invalid status filter: expected string or omitted")
       }
       const validStatuses = ["pending", "approved", "rejected", "expired"]
       if (typeof rawStatusFilter === "string" && rawStatusFilter !== "" && !validStatuses.includes(rawStatusFilter)) {
-        throw { code: -32602, message: `invalid status filter: must be one of ${validStatuses.join(", ")}` }
+        invalidParams(`invalid status filter: must be one of ${validStatuses.join(", ")}`)
       }
       const filter = typeof rawStatusFilter === "string" && rawStatusFilter !== "" ? rawStatusFilter as "pending" | "approved" | "rejected" | "expired" : undefined
       const proposals = chain.governance.getProposals(filter)
@@ -2126,15 +1970,15 @@ async function handleRpc(
     case "coc_getDaoProposal": {
       // #234: same -32601 mapping as coc_submitProposal.
       if (!hasGovernance(chain)) {
-        throw { code: -32601, message: "coc_getDaoProposal: governance module not enabled on this node" }
+        methodNotFound("coc_getDaoProposal: governance module not enabled on this node")
       }
       const proposalId = (payload.params ?? [])[0]
       if (typeof proposalId !== "string" || !proposalId) {
-        throw { code: -32602, message: "invalid proposal id: expected non-empty string" }
+        invalidParams("invalid proposal id: expected non-empty string")
       }
       const gov = chain.governance
       const proposal = gov.getProposal(proposalId)
-      if (!proposal) throw { code: -32602, message: `proposal not found: ${proposalId}` }
+      if (!proposal) invalidParams(`proposal not found: ${proposalId}`)
       // Return full proposal with vote details
       const fullProposal = gov.getProposals?.()?.find((p: { id: string }) => p.id === proposalId)
       if (fullProposal) {
@@ -2168,7 +2012,7 @@ async function handleRpc(
         typeof filterParam !== "string" &&
         !(typeof filterParam === "object" && !Array.isArray(filterParam))
       ) {
-        throw { code: -32602, message: "invalid filter: expected string or object" }
+        invalidParams("invalid filter: expected string or object")
       }
       let statusFilter2: string | undefined
       let typeFilter: string | undefined
@@ -2178,13 +2022,13 @@ async function handleRpc(
       } else if (filterParam && typeof filterParam === "object") {
         const obj = filterParam as Record<string, unknown>
         if (obj.status !== undefined && typeof obj.status !== "string") {
-          throw { code: -32602, message: "invalid filter.status: expected string" }
+          invalidParams("invalid filter.status: expected string")
         }
         if (obj.type !== undefined && typeof obj.type !== "string") {
-          throw { code: -32602, message: "invalid filter.type: expected string" }
+          invalidParams("invalid filter.type: expected string")
         }
         if (obj.proposer !== undefined && typeof obj.proposer !== "string") {
-          throw { code: -32602, message: "invalid filter.proposer: expected string" }
+          invalidParams("invalid filter.proposer: expected string")
         }
         statusFilter2 = obj.status as string | undefined
         typeFilter = obj.type as string | undefined
@@ -2192,7 +2036,7 @@ async function handleRpc(
       }
       const validStatuses2 = ["pending", "approved", "rejected", "expired"]
       if (statusFilter2 && !validStatuses2.includes(statusFilter2)) {
-        throw { code: -32602, message: `invalid status filter: must be one of ${validStatuses2.join(", ")}` }
+        invalidParams(`invalid status filter: must be one of ${validStatuses2.join(", ")}`)
       }
       const sFilter = statusFilter2 && validStatuses2.includes(statusFilter2) ? statusFilter2 : undefined
       let results = gov2.getProposals(sFilter)
@@ -2237,7 +2081,7 @@ async function handleRpc(
       if (!hasGovernance(chain)) return null
       const address = (payload.params ?? [])[0]
       if (typeof address !== "string" || !address.startsWith("0x")) {
-        throw { code: -32602, message: "invalid address: expected hex string" }
+        invalidParams("invalid address: expected hex string")
       }
       const factionInfo = chain.governance.getFaction?.(address)
       if (!factionInfo) return null
@@ -2308,7 +2152,7 @@ async function handleRpc(
       if (!rewardManifestDir) return null
       const epochId = Number((payload.params ?? [])[0] ?? -1)
       if (!Number.isInteger(epochId) || epochId < 0) {
-        throw { code: -32602, message: "invalid epochId" }
+        invalidParams("invalid epochId")
       }
       const manifest = readBestRewardManifest(rewardManifestDir, epochId)
       if (!manifest) return null
@@ -2330,10 +2174,10 @@ async function handleRpc(
       const epochId = Number((payload.params ?? [])[0] ?? -1)
       const nodeId = String((payload.params ?? [])[1] ?? "")
       if (!Number.isInteger(epochId) || epochId < 0) {
-        throw { code: -32602, message: "invalid epochId" }
+        invalidParams("invalid epochId")
       }
       if (!/^0x[0-9a-fA-F]+$/.test(nodeId)) {
-        throw { code: -32602, message: "invalid nodeId" }
+        invalidParams("invalid nodeId")
       }
       const manifest = readBestRewardManifest(rewardManifestDir, epochId)
       if (!manifest) return null
@@ -2451,7 +2295,7 @@ async function handleRpc(
       // manifest CID. The runtime hook is wired from index.ts using
       // resolveCid + erasureStatus.
       const getter = (opts as RpcRuntimeOptions | undefined)?.getErasureStatus
-      if (!getter) throw { code: -32601, message: "erasure status not available on this node" }
+      if (!getter) methodNotFound("erasure status not available on this node")
       // #248: pre-fix `String((payload.params ?? [])[0] ?? "")` silently
       // coerced non-string CIDs (123 → "123", {} → "[object Object]")
       // and fed bogus identifiers to the erasure getter. Same anti-pattern
@@ -2478,7 +2322,7 @@ async function handleRpc(
       let sinceMs = 0
       if (rawSince !== undefined && rawSince !== null) {
         if (typeof rawSince !== "number" || !Number.isFinite(rawSince) || !Number.isInteger(rawSince) || rawSince < 0) {
-          throw { code: -32602, message: "invalid sinceMs: expected non-negative integer or omitted" }
+          invalidParams("invalid sinceMs: expected non-negative integer or omitted")
         }
         sinceMs = rawSince
       }
@@ -2503,7 +2347,7 @@ async function handleRpc(
     // --- Admin RPC namespace ---
     case "admin_nodeInfo": {
       if (!(opts as Record<string, unknown>)?.enableAdminRpc) {
-        throw { code: -32601, message: "admin methods disabled (set enableAdminRpc=true)" }
+        methodNotFound("admin methods disabled (set enableAdminRpc=true)")
       }
       const height = await Promise.resolve(chain.getHeight())
       const mempoolStats = chain.mempool.stats()
@@ -2526,7 +2370,7 @@ async function handleRpc(
     }
     case "admin_addPeer": {
       if (!(opts as Record<string, unknown>)?.enableAdminRpc) {
-        throw { code: -32601, message: "admin methods disabled" }
+        methodNotFound("admin methods disabled")
       }
       // #240: pre-fix `String(...)` silently coerced numbers/bools to
       // plausible-looking strings ("123", "true"), bypassing the
@@ -2534,26 +2378,26 @@ async function handleRpc(
       // non-string shapes upfront. Same class as #120/#220/#226/#238.
       const peerUrlRaw = (payload.params ?? [])[0]
       if (typeof peerUrlRaw !== "string" || peerUrlRaw.length === 0) {
-        throw { code: -32602, message: "invalid peer URL: expected non-empty string" }
+        invalidParams("invalid peer URL: expected non-empty string")
       }
       const peerIdRaw = (payload.params ?? [])[1]
       if (peerIdRaw !== undefined && peerIdRaw !== null && typeof peerIdRaw !== "string") {
-        throw { code: -32602, message: "invalid peer ID: expected string" }
+        invalidParams("invalid peer ID: expected string")
       }
       const peerUrl = peerUrlRaw
       const peerId = (peerIdRaw ?? `peer-${Date.now()}`) as string
       try { new URL(peerUrl) } catch {
-        throw { code: -32602, message: "invalid peer URL" }
+        invalidParams("invalid peer URL")
       }
       if (!/^[a-zA-Z0-9\-_.:]+$/.test(peerId)) {
-        throw { code: -32602, message: "invalid peer ID: only alphanumeric, hyphens, underscores, dots, colons allowed" }
+        invalidParams("invalid peer ID: only alphanumeric, hyphens, underscores, dots, colons allowed")
       }
       p2p.discovery.addDiscoveredPeers([{ id: peerId, url: peerUrl }])
       return true
     }
     case "admin_removePeer": {
       if (!(opts as Record<string, unknown>)?.enableAdminRpc) {
-        throw { code: -32601, message: "admin methods disabled" }
+        methodNotFound("admin methods disabled")
       }
       // #240: same shape guard as admin_addPeer — pre-fix `String(true)`
       // = "true" silently masqueraded as a peerId and the removePeer
@@ -2561,10 +2405,10 @@ async function handleRpc(
       // caller about whether the action took effect.
       const removePeerRaw = (payload.params ?? [])[0]
       if (removePeerRaw === undefined || removePeerRaw === null || removePeerRaw === "") {
-        throw { code: -32602, message: "peer id required" }
+        invalidParams("peer id required")
       }
       if (typeof removePeerRaw !== "string") {
-        throw { code: -32602, message: "invalid peer ID: expected string" }
+        invalidParams("invalid peer ID: expected string")
       }
       const removePeerId = removePeerRaw
       p2p.discovery.removePeer(removePeerId)
@@ -2572,7 +2416,7 @@ async function handleRpc(
     }
     case "admin_peers": {
       if (!(opts as Record<string, unknown>)?.enableAdminRpc) {
-        throw { code: -32601, message: "admin methods disabled" }
+        methodNotFound("admin methods disabled")
       }
       const peers = p2p.getPeers?.() ?? p2p.discovery.getActivePeers()
       return peers.map((peer: { id: string; url?: string }) => ({
@@ -2589,7 +2433,7 @@ async function handleRpc(
      */
     case "admin_pruneStalePhantoms": {
       if (!(opts as Record<string, unknown>)?.enableAdminRpc) {
-        throw { code: -32601, message: "admin methods disabled" }
+        methodNotFound("admin methods disabled")
       }
       const persistentChain = chain as unknown as { pruneStalePhantoms?: () => Promise<{
         scanned: number
@@ -2599,7 +2443,7 @@ async function handleRpc(
         activeValidators: string[]
       }> }
       if (typeof persistentChain.pruneStalePhantoms !== "function") {
-        throw { code: -32601, message: "engine does not support phantom pruning" }
+        methodNotFound("engine does not support phantom pruning")
       }
       const result = await persistentChain.pruneStalePhantoms()
       return {
@@ -2647,7 +2491,7 @@ async function handleRpc(
     // ── DID Identity Layer ──────────────────────────────────────
     case "coc_resolveDid": {
       const didResolver = opts?.didResolver as { resolve: (did: string) => Promise<{ didDocument: unknown; didResolutionMetadata: unknown }> } | undefined
-      if (!didResolver) throw { code: -32601, message: "DID resolver not configured on this node (requires soulRegistryAddress + didRegistryAddress)" }
+      if (!didResolver) methodNotFound("DID resolver not configured on this node (requires soulRegistryAddress + didRegistryAddress)")
       // #242: pre-fix `String(... ?? "")` silently coerced numbers/bools/
       // objects to "123"/"true"/"[object Object]" — bogus identifiers
       // that downstream resolvers couldn't tell apart from real DIDs.
@@ -2657,14 +2501,14 @@ async function handleRpc(
     }
     case "coc_getDIDDocument": {
       const didResolver = opts?.didResolver as { resolve: (did: string) => Promise<{ didDocument: unknown }> } | undefined
-      if (!didResolver) throw { code: -32601, message: "DID resolver not configured on this node" }
+      if (!didResolver) methodNotFound("DID resolver not configured on this node")
       const agentId = requireStringParam(payload.params ?? [], 0, "agentId")
       const result = await didResolver.resolve(`did:coc:${agentId}`)
       return result.didDocument ?? null
     }
     case "coc_getAgentCapabilities": {
       const didProvider = opts?.didDataProvider
-      if (!didProvider) throw { code: -32601, message: "DID data provider not configured on this node" }
+      if (!didProvider) methodNotFound("DID data provider not configured on this node")
       const agentId = requireStringParam(payload.params ?? [], 0, "agentId")
       const bitmask = await didProvider.getCapabilities(agentId)
       // Import inline to avoid top-level dependency
@@ -2673,19 +2517,19 @@ async function handleRpc(
     }
     case "coc_getDelegations": {
       const didProvider = opts?.didDataProvider
-      if (!didProvider) throw { code: -32601, message: "DID data provider not configured on this node" }
+      if (!didProvider) methodNotFound("DID data provider not configured on this node")
       const agentId = requireStringParam(payload.params ?? [], 0, "agentId")
       return didProvider.getFullDelegations(agentId)
     }
     case "coc_getAgentLineage": {
       const didProvider = opts?.didDataProvider
-      if (!didProvider?.getLineage) throw { code: -32601, message: "DID data provider not configured on this node" }
+      if (!didProvider?.getLineage) methodNotFound("DID data provider not configured on this node")
       const agentId = requireStringParam(payload.params ?? [], 0, "agentId")
       return didProvider.getLineage(agentId)
     }
     case "coc_getVerificationMethods": {
       const didProvider = opts?.didDataProvider
-      if (!didProvider?.getVerificationMethods) throw { code: -32601, message: "DID data provider not configured on this node" }
+      if (!didProvider?.getVerificationMethods) methodNotFound("DID data provider not configured on this node")
       const agentId = requireStringParam(payload.params ?? [], 0, "agentId")
       return didProvider.getVerificationMethods(agentId)
     }
@@ -2694,7 +2538,7 @@ async function handleRpc(
       // Does NOT verify VC content, signatures, or proofs — use verifiable-credentials.ts
       // for full credential verification.
       const didProvider = opts?.didDataProvider
-      if (!didProvider?.getCredentialAnchor) throw { code: -32601, message: "DID data provider not configured on this node" }
+      if (!didProvider?.getCredentialAnchor) methodNotFound("DID data provider not configured on this node")
       const credentialId = requireStringParam(payload.params ?? [], 0, "credentialId")
       return didProvider.getCredentialAnchor(credentialId)
     }
@@ -2702,48 +2546,11 @@ async function handleRpc(
       // #132: -32601 method not found per JSON-RPC §5.1. Pre-fix this
       // surfaced as -32603 internal-error, which made unknown-method
       // probes look like server-side faults to monitoring tools.
-      throw { code: -32601, message: `method not supported: ${payload.method}` }
+      methodNotFound(`method not supported: ${payload.method}`)
   }
 }
 
-function safeBigInt(input: string): bigint {
-  // Reject oversized inputs to prevent BigInt parsing DoS (O(n²) for huge decimal strings)
-  if (typeof input !== "string" || input.length > 78) {
-    throw { code: -32602, message: "invalid block number: input too large" }
-  }
-  try {
-    return BigInt(input)
-  } catch {
-    throw { code: -32602, message: `invalid block number: ${input.slice(0, 40)}` }
-  }
-}
-
-function parseBlockTag(input: unknown, fallback: bigint, finalizedHeight?: bigint): bigint {
-  // #194: omitting the param (undefined / null) is the canonical
-  // "latest" shorthand and stays a silent fallback. Every other
-  // non-string, non-number shape (array, object, bool) used to fall
-  // through to the same fallback, which silently mapped malformed
-  // input to latest — sibling bug to #188.
-  if (input === undefined || input === null) return fallback
-  if (typeof input === "number") {
-    // #188: pre-fix `BigInt(Math.floor(input))` silently truncated
-    // fractional values (1.5 → 1). On a real chain the user would
-    // get block 1's data without realizing their input was wrong.
-    if (!Number.isFinite(input) || input < 0 || !Number.isInteger(input)) {
-      throw { code: -32602, message: `invalid block number: ${input}` }
-    }
-    return BigInt(input)
-  }
-  if (typeof input === "string") {
-    if (input === "latest" || input === "pending") return fallback
-    if (input === "safe" || input === "finalized") return finalizedHeight ?? fallback
-    if (input === "earliest") return 0n
-    const n = safeBigInt(input)
-    if (n < 0n) throw { code: -32602, message: `invalid block number: ${input}` }
-    return n
-  }
-  throw { code: -32602, message: "invalid block tag: must be hex quantity or named tag" }
-}
+// safeBigInt + parseBlockTag — extracted to ./rpc-validators.ts (PR-1Q, 2026-05-12).
 
 async function resolveBlockNumber(input: unknown, chain: IChainEngine): Promise<bigint> {
   const height = await Promise.resolve(chain.getHeight())
@@ -2850,7 +2657,7 @@ function formatDebugTraceResult(
       (traceOpts.tracerConfig ?? {}) as Record<string, unknown>,
     )
   }
-  throw { code: -32602, message: `unsupported tracer: ${tracer}` }
+  invalidParams(`unsupported tracer: ${tracer}`)
 }
 
 function normalizeReplayTraceTypes(input: unknown): ReplayTraceType[] {
@@ -2859,7 +2666,7 @@ function normalizeReplayTraceTypes(input: unknown): ReplayTraceType[] {
   const normalized: ReplayTraceType[] = []
   for (const rawType of input) {
     if (rawType !== "trace" && rawType !== "vmTrace" && rawType !== "stateDiff") {
-      throw { code: -32602, message: `invalid trace type: ${String(rawType)}` }
+      invalidParams(`invalid trace type: ${String(rawType)}`)
     }
     normalized.push(rawType)
   }
@@ -2871,16 +2678,16 @@ function normalizeTraceCallManyRequests(input: unknown): Array<{
   traceTypes: ReplayTraceType[]
 }> {
   if (!Array.isArray(input)) {
-    throw { code: -32602, message: "invalid trace_callMany payload: expected array" }
+    invalidParams("invalid trace_callMany payload: expected array")
   }
   return input.map((entry, index) => {
     if (!Array.isArray(entry) || entry.length < 2) {
-      throw { code: -32602, message: `invalid trace_callMany entry at index ${index}` }
+      invalidParams(`invalid trace_callMany entry at index ${index}`)
     }
     const [call, traceTypes] = entry
     const callParams = (call ?? {}) as Record<string, string>
     if (typeof callParams !== "object" || callParams === null) {
-      throw { code: -32602, message: `invalid trace_callMany call at index ${index}` }
+      invalidParams(`invalid trace_callMany call at index ${index}`)
     }
     return {
       call: {
@@ -3612,87 +3419,7 @@ const MAX_LOG_RESULTS = 10_000
 const MAX_TRACE_BLOCK_RANGE = 1_024n
 const MAX_TRACE_RESULTS = 1_000
 
-/**
- * Validate + normalize the address/topic fields of a log filter shape
- * (the object accepted by `eth_getLogs`, `eth_newFilter`, and downstream
- * subscription paths). Mutates `query` in place with normalized lowercase
- * hex so downstream consumers don't need to re-validate. Throws -32602
- * on malformed input; PR #142 added these rules for `eth_newFilter`;
- * PR #162 extends them to `eth_getLogs`.
- */
-function validateLogFilter(query: Record<string, unknown>): {
-  address: Hex | undefined
-  addresses: Hex[] | undefined
-  topics: Array<Hex | Hex[] | null> | undefined
-} {
-  const FILTER_ADDR_RE = /^0x[0-9a-fA-F]{40}$/
-  const FILTER_TOPIC_RE = /^0x[0-9a-fA-F]{64}$/
-  const MAX_FILTER_ADDRESSES = 100
-  const MAX_FILTER_TOPICS = 4
-  // #186: blockHash field shape validation was missed by #162's
-  // address+topics work. Pre-fix `{blockHash: "0x123"}` silently
-  // returned `result: []` indistinguishable from "no logs". Match
-  // the 32-byte hex shape of eth_getBlockByHash (#166).
-  if (query.blockHash !== undefined && query.blockHash !== null) {
-    if (typeof query.blockHash !== "string" || !FILTER_TOPIC_RE.test(query.blockHash)) {
-      throw { code: -32602, message: "invalid blockHash: must match /^0x[0-9a-fA-F]{64}$/" }
-    }
-    // Normalize for downstream consumers (lowercase canonical form).
-    query.blockHash = query.blockHash.toLowerCase()
-  }
-  const validateFilterAddr = (raw: unknown, idx: number): Hex => {
-    if (typeof raw !== "string" || !FILTER_ADDR_RE.test(raw)) {
-      throw { code: -32602, message: `invalid filter address at index ${idx}: must match /^0x[0-9a-fA-F]{40}$/` }
-    }
-    return raw.toLowerCase() as Hex
-  }
-  let address: Hex | undefined
-  let addresses: Hex[] | undefined
-  if (query.address !== undefined && query.address !== null) {
-    if (Array.isArray(query.address)) {
-      if (query.address.length > MAX_FILTER_ADDRESSES) {
-        throw { code: -32602, message: `address array too large: ${query.address.length} > ${MAX_FILTER_ADDRESSES}` }
-      }
-      addresses = (query.address as unknown[]).map((a, i) => validateFilterAddr(a, i))
-      address = addresses.length > 0 ? addresses[0] : undefined
-    } else {
-      address = validateFilterAddr(query.address, 0)
-    }
-    // Mutate the query in-place so downstream collectLogs / chain.getLogs
-    // see the lowercased canonical form and don't need to re-validate.
-    query.address = addresses ?? address
-  }
-  let topics: Array<Hex | Hex[] | null> | undefined
-  if (query.topics !== undefined && query.topics !== null) {
-    // #190: pre-fix, a non-array `topics` (string, object, number) silently
-    // bypassed the entire validation block — clients got the same empty-result
-    // response as a syntactically-valid query and never learned their filter
-    // was malformed.
-    if (!Array.isArray(query.topics)) {
-      throw { code: -32602, message: "invalid filter topics: must be array or omitted" }
-    }
-    if (query.topics.length > MAX_FILTER_TOPICS) {
-      throw { code: -32602, message: `topics array too large: ${query.topics.length} > ${MAX_FILTER_TOPICS} (max indexed log topics)` }
-    }
-    topics = query.topics.map((t, i) => {
-      if (t === null || t === undefined) return null
-      if (Array.isArray(t)) {
-        return t.map((tt, j) => {
-          if (typeof tt !== "string" || !FILTER_TOPIC_RE.test(tt)) {
-            throw { code: -32602, message: `invalid filter topic at index ${i}[${j}]: must match /^0x[0-9a-fA-F]{64}$/ or null` }
-          }
-          return tt.toLowerCase() as Hex
-        })
-      }
-      if (typeof t !== "string" || !FILTER_TOPIC_RE.test(t)) {
-        throw { code: -32602, message: `invalid filter topic at index ${i}: must match /^0x[0-9a-fA-F]{64}$/ or null` }
-      }
-      return t.toLowerCase() as Hex
-    })
-    query.topics = topics
-  }
-  return { address, addresses, topics }
-}
+// validateLogFilter — extracted to ./rpc-validators.ts (PR-1Q, 2026-05-12).
 
 async function queryLogs(chain: IChainEngine, query: Record<string, unknown>, resolvedHeight?: bigint): Promise<unknown[]> {
   const height = resolvedHeight ?? await Promise.resolve(chain.getHeight())
@@ -3702,11 +3429,11 @@ async function queryLogs(chain: IChainEngine, query: Record<string, unknown>, re
 
   // Reject invalid range where fromBlock > toBlock
   if (fromBlock > toBlock) {
-    throw { code: -32602, message: `invalid block range: fromBlock ${fromBlock} > toBlock ${toBlock}` }
+    invalidParams(`invalid block range: fromBlock ${fromBlock} > toBlock ${toBlock}`)
   }
   // Enforce block range limit to prevent resource exhaustion
   if (toBlock - fromBlock > MAX_LOG_BLOCK_RANGE) {
-    throw { code: -32602, message: `block range too large: max ${MAX_LOG_BLOCK_RANGE} blocks, got ${toBlock - fromBlock}` }
+    invalidParams(`block range too large: max ${MAX_LOG_BLOCK_RANGE} blocks, got ${toBlock - fromBlock}`)
   }
 
   // Normalize address filter: single string or array of strings
@@ -3759,10 +3486,10 @@ async function queryTraceFilter(chain: IChainEngine, evm: EvmChain, query: Recor
   const fromBlock = parseBlockTag(query.fromBlock ?? "earliest", height, finalizedHeight)
   const toBlock = parseBlockTag(query.toBlock ?? "latest", height, finalizedHeight)
   if (fromBlock > toBlock) {
-    throw { code: -32602, message: `invalid block range: fromBlock ${fromBlock} > toBlock ${toBlock}` }
+    invalidParams(`invalid block range: fromBlock ${fromBlock} > toBlock ${toBlock}`)
   }
   if (toBlock - fromBlock > MAX_TRACE_BLOCK_RANGE) {
-    throw { code: -32602, message: `trace block range too large: max ${MAX_TRACE_BLOCK_RANGE} blocks, got ${toBlock - fromBlock}` }
+    invalidParams(`trace block range too large: max ${MAX_TRACE_BLOCK_RANGE} blocks, got ${toBlock - fromBlock}`)
   }
 
   const fromAddresses = normalizeTraceAddressFilter(query.fromAddress)
@@ -3824,7 +3551,7 @@ function normalizeTraceAddressPath(input: unknown): number[] {
     return []
   }
   if (!Array.isArray(input)) {
-    throw { code: -32602, message: "invalid traceAddress path: expected array" }
+    invalidParams("invalid traceAddress path: expected array")
   }
   return input.map((value, index) => {
     let normalized: number
@@ -3833,10 +3560,10 @@ function normalizeTraceAddressPath(input: unknown): number[] {
     } else if (typeof value === "string") {
       normalized = value.startsWith("0x") ? Number(BigInt(value)) : Number(value)
     } else {
-      throw { code: -32602, message: `invalid traceAddress[${index}]: expected integer` }
+      invalidParams(`invalid traceAddress[${index}]: expected integer`)
     }
     if (!Number.isSafeInteger(normalized) || normalized < 0) {
-      throw { code: -32602, message: `invalid traceAddress[${index}]: expected non-negative integer` }
+      invalidParams(`invalid traceAddress[${index}]: expected non-negative integer`)
     }
     return normalized
   })
@@ -3930,7 +3657,7 @@ function normalizeTraceAddressFilter(input: unknown): string[] | undefined {
   const normalized = values.map((value) => String(value).toLowerCase())
   for (const address of normalized) {
     if (!/^0x[0-9a-f]{40}$/.test(address)) {
-      throw { code: -32602, message: `invalid trace address filter: ${address}` }
+      invalidParams(`invalid trace address filter: ${address}`)
     }
   }
   return normalized
@@ -3942,18 +3669,18 @@ function parseTracePaginationValue(input: unknown, fallback: number): number {
   }
   if (typeof input === "number") {
     if (!Number.isFinite(input) || input < 0) {
-      throw { code: -32602, message: "invalid trace pagination value" }
+      invalidParams("invalid trace pagination value")
     }
     return Math.floor(input)
   }
   if (typeof input === "string") {
     const value = safeBigInt(input)
     if (value < 0n || value > BigInt(Number.MAX_SAFE_INTEGER)) {
-      throw { code: -32602, message: `invalid trace pagination value: ${input}` }
+      invalidParams(`invalid trace pagination value: ${input}`)
     }
     return Number(value)
   }
-  throw { code: -32602, message: "invalid trace pagination value" }
+  invalidParams("invalid trace pagination value")
 }
 
 function matchesTraceAddressFilter(
