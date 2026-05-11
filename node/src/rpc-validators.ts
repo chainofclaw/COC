@@ -300,6 +300,24 @@ export function requireStringParam(params: unknown[], index: number, name: strin
   return raw as string
 }
 
+/**
+ * #252: Generic non-negative integer-param validator. Pre-fix
+ * `Number((params)[idx] ?? -1)` silently coerced `true`→1, `[1]`→1,
+ * `"1"`→1, `null`→0 so callers got hits for non-integer inputs.
+ * Used for epochId in `coc_getRewardManifest` / `coc_getRewardClaim`.
+ * Same anti-pattern as #120/#220/#226/#240/#242.
+ */
+export function requireIntegerParam(params: unknown[], index: number, name: string): number {
+  const raw = (params ?? [])[index]
+  if (raw === undefined || raw === null) {
+    invalidParams(`missing ${name} parameter`)
+  }
+  if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 0) {
+    invalidParams(`invalid ${name}: expected non-negative integer, got ${Array.isArray(raw) ? "array" : typeof raw}`)
+  }
+  return raw as number
+}
+
 // ---------------------------------------------------------------------------
 // Tx-call field validators
 // ---------------------------------------------------------------------------

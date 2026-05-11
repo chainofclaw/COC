@@ -2114,6 +2114,50 @@ test("RPC Extended Methods", async (t) => {
     }
   })
 
+  await t.test("#252: coc_getRewardManifest / coc_getRewardClaim reject non-integer epochId (no Number() coercion)", async () => {
+    // Pre-fix `Number((payload.params ?? [])[0] ?? -1)` silently coerced
+    // `true`→1, `[1]`→1, `"1"`→1, `null`→0 — every non-integer that JS
+    // happens to know how to coerce became a real epochId lookup. Same
+    // anti-pattern family as #120/#220/#226/#240/#242. Use the new
+    // `requireIntegerParam` validator.
+    const probe = async (method: string, params: unknown[]) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    }
+    // Non-integer epochId shapes must be rejected with -32602
+    for (const bad of [true, false, "1", "5", [1], [1, 2], {}, 1.5, -1, -0.5]) {
+      const m = await probe("coc_getRewardManifest", [bad])
+      assert.equal(m.error?.code, -32602,
+        `coc_getRewardManifest(${JSON.stringify(bad)}) must be -32602, got ${JSON.stringify(m)}`)
+      const c = await probe("coc_getRewardClaim", [bad, `0x${"22".repeat(32)}`])
+      assert.equal(c.error?.code, -32602,
+        `coc_getRewardClaim(${JSON.stringify(bad)}, ...) must be -32602, got ${JSON.stringify(c)}`)
+    }
+    // Missing param → -32602 missing
+    const missing = await probe("coc_getRewardManifest", [])
+    assert.equal(missing.error?.code, -32602)
+    assert.match(missing.error!.message, /missing|epochId/i)
+    // null param → -32602 missing
+    const nullCase = await probe("coc_getRewardManifest", [null])
+    assert.equal(nullCase.error?.code, -32602)
+    // coc_getRewardClaim with non-string nodeId
+    for (const bad of [123, true, {}, [1]]) {
+      const r = await probe("coc_getRewardClaim", [7, bad])
+      assert.equal(r.error?.code, -32602,
+        `coc_getRewardClaim(7, ${JSON.stringify(bad)}) must be -32602, got ${JSON.stringify(r)}`)
+    }
+    // Sanity: well-shaped lookups still resolve (epoch 7 manifest is pre-loaded)
+    const okM = await probe("coc_getRewardManifest", [7])
+    assert.equal(okM.error, undefined, `well-shaped getRewardManifest must succeed: ${JSON.stringify(okM)}`)
+    assert.equal((okM.result as { epochId: number }).epochId, 7)
+    const okC = await probe("coc_getRewardClaim", [7, `0x${"22".repeat(32)}`])
+    assert.equal(okC.error, undefined, `well-shaped getRewardClaim must succeed: ${JSON.stringify(okC)}`)
+  })
+
   if (prevDevAccounts === undefined) {
     delete process.env.COC_DEV_ACCOUNTS
   } else {

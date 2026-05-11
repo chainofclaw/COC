@@ -36,6 +36,7 @@ import {
   requireCallObject,
   requireFilterObject,
   requireStringParam,
+  requireIntegerParam,
   validateTxCallFields,
   validateLogFilter,
   sanitizeEthersError,
@@ -2178,10 +2179,8 @@ async function handleRpc(
     case "coc_getRewardManifest": {
       const rewardManifestDir = typeof opts?.rewardManifestDir === "string" ? opts.rewardManifestDir : ""
       if (!rewardManifestDir) return null
-      const epochId = Number((payload.params ?? [])[0] ?? -1)
-      if (!Number.isInteger(epochId) || epochId < 0) {
-        invalidParams("invalid epochId")
-      }
+      // #252: reject non-integer epochId (was: Number(true)→1, Number([1])→1, Number("1")→1)
+      const epochId = requireIntegerParam(payload.params ?? [], 0, "epochId")
       const manifest = readBestRewardManifest(rewardManifestDir, epochId)
       if (!manifest) return null
       return {
@@ -2199,11 +2198,9 @@ async function handleRpc(
     case "coc_getRewardClaim": {
       const rewardManifestDir = typeof opts?.rewardManifestDir === "string" ? opts.rewardManifestDir : ""
       if (!rewardManifestDir) return null
-      const epochId = Number((payload.params ?? [])[0] ?? -1)
-      const nodeId = String((payload.params ?? [])[1] ?? "")
-      if (!Number.isInteger(epochId) || epochId < 0) {
-        invalidParams("invalid epochId")
-      }
+      // #252: reject non-integer epochId and non-string nodeId
+      const epochId = requireIntegerParam(payload.params ?? [], 0, "epochId")
+      const nodeId = requireStringParam(payload.params ?? [], 1, "nodeId")
       if (!/^0x[0-9a-fA-F]+$/.test(nodeId)) {
         invalidParams("invalid nodeId")
       }
