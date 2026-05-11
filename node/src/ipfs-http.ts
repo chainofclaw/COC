@@ -922,9 +922,21 @@ export class IpfsHttpServer {
           break
         }
         case "stat": {
+          // #158: pre-fix this serialized the internal MfsStat shape
+          // (hash/size/cumulativeSize/type/blocks — camelCase) directly,
+          // breaking kubo-compat clients like ipfs-http-client which
+          // expect PascalCase Hash/Size/CumulativeSize/Type/Blocks. The
+          // sibling `files/ls` handler already does the right mapping;
+          // align stat with that convention.
           const stat = await this.mfs.stat(arg || "/")
           res.writeHead(200, { "content-type": "application/json" })
-          res.end(JSON.stringify(stat))
+          res.end(JSON.stringify({
+            Hash: stat.hash,
+            Size: stat.size,
+            CumulativeSize: stat.cumulativeSize,
+            Type: stat.type,
+            Blocks: stat.blocks,
+          }))
           break
         }
         case "flush": {
