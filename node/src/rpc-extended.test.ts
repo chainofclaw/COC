@@ -1782,6 +1782,33 @@ test("RPC Extended Methods", async (t) => {
     assert.equal(ok2.error, undefined, "well-shaped call must succeed")
   })
 
+  await t.test("#228: rollup_getOutputAtBlock handler uses payload.params (no ReferenceError)", async () => {
+    // Pre-fix the handler referenced bare `params[0]` which is undefined,
+    // so EVERY call threw `ReferenceError: params is not defined` before
+    // any input validation. The rollup endpoint was completely broken
+    // from inception. V8 wording leaked through outer catch as -32603.
+    const probe = async (params: unknown[]) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "rollup_getOutputAtBlock", params }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    }
+    const r1 = await probe(["0x0"])
+    assert.doesNotMatch(JSON.stringify(r1), /params is not defined|ReferenceError/i,
+      `must not leak ReferenceError on "0x0", got ${JSON.stringify(r1)}`)
+    const r2 = await probe(["latest"])
+    assert.doesNotMatch(JSON.stringify(r2), /params is not defined|ReferenceError/i,
+      `must not leak ReferenceError on "latest", got ${JSON.stringify(r2)}`)
+    // Malformed input should now hit parseBlockTag's -32602, not -32603
+    const r3 = await probe([true])
+    assert.equal(r3.error?.code, -32602,
+      `rollup_getOutputAtBlock(true) must be -32602, got ${JSON.stringify(r3)}`)
+    assert.doesNotMatch(r3.error!.message, /params is not defined|ReferenceError/i,
+      `must not leak ReferenceError on bool, got ${r3.error!.message}`)
+  })
+
   if (prevDevAccounts === undefined) {
     delete process.env.COC_DEV_ACCOUNTS
   } else {
