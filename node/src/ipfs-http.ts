@@ -1108,6 +1108,12 @@ export class IpfsHttpServer {
           /^max mfs depth/i.test(msg) ||
           /^path too long/i.test(msg) ||
           /^null byte in path/i.test(msg) ||
+          // #232: pre-fix normalizePath threw `Error("path traversal not
+          // allowed: ...")` for any input containing `..`, but the
+          // catch had no regex for it → 500 "internal error" instead of
+          // the 400 that path-too-long / null-byte / max-depth siblings
+          // already emit. Treat as client-input error.
+          /^path traversal/i.test(msg) ||
           /^invalid /i.test(msg)
         ) {
           httpErr = new HttpError(400, "bad request", msg)
