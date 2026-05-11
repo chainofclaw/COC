@@ -1954,6 +1954,70 @@ test("RPC Extended Methods", async (t) => {
     }
   })
 
+  await t.test("#242: DID handlers reject non-string DID/agentId/credentialId (no silent coercion)", async () => {
+    // Pre-fix 7 DID/identity handlers used `String((payload.params ?? [])[0] ?? "")`.
+    // String(123)="123", String(true)="true", String({})="[object Object]" — all
+    // bogus identifiers passed downstream. Same anti-pattern as #120/#220/#226/#240.
+    // Stub the resolver + provider so the path reaches shape validation.
+    const didResolverStub = {
+      resolve: async (did: string) => ({ didDocument: { id: did }, didResolutionMetadata: {} }),
+    }
+    const didProviderStub = {
+      getCapabilities: async () => 0n,
+      getFullDelegations: async () => [],
+      getLineage: async () => ({ parents: [], children: [] }),
+      getVerificationMethods: async () => [],
+      getCredentialAnchor: async () => null,
+    }
+    const didPort = port + 2000
+    const didServer = startRpcServer(
+      "127.0.0.1", didPort, chainId, evm, chain, p2p,
+      undefined, undefined, "did-test", undefined,
+      { didResolver: didResolverStub, didDataProvider: didProviderStub } as unknown as Parameters<typeof startRpcServer>[10],
+      undefined,
+    )
+    try {
+      const probe = async (method: string, params: unknown[]) => {
+        const r = await fetch(`http://127.0.0.1:${didPort}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+        })
+        return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+      }
+      const methods = [
+        "coc_resolveDid",
+        "coc_getDIDDocument",
+        "coc_getAgentCapabilities",
+        "coc_getDelegations",
+        "coc_getAgentLineage",
+        "coc_getVerificationMethods",
+        "coc_getCredentialAnchor",
+      ]
+      for (const method of methods) {
+        // Non-string shapes → -32602
+        for (const bad of [123, true, false, 1.5, {}, [1, 2]]) {
+          const r = await probe(method, [bad])
+          assert.equal(r.error?.code, -32602,
+            `${method}(${JSON.stringify(bad)}) must be -32602, got ${JSON.stringify(r)}`)
+          assert.match(r.error!.message, /invalid|expected string/i)
+        }
+        // Missing / null / empty → -32602 "missing"
+        for (const empty of [[], [null], [""]]) {
+          const r = await probe(method, empty)
+          assert.equal(r.error?.code, -32602,
+            `${method}(${JSON.stringify(empty)}) must be -32602 missing, got ${JSON.stringify(r)}`)
+        }
+        // Sanity: well-shaped string passes shape validation (no -32602)
+        const ok = await probe(method, ["agent-7"])
+        assert.notEqual(ok.error?.code, -32602,
+          `${method}("agent-7") must pass shape validation, got ${JSON.stringify(ok)}`)
+      }
+    } finally {
+      didServer.close()
+    }
+  })
+
   if (prevDevAccounts === undefined) {
     delete process.env.COC_DEV_ACCOUNTS
   } else {

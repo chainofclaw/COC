@@ -213,6 +213,24 @@ function requireFilterObject(raw: unknown): Record<string, unknown> {
   return raw as Record<string, unknown>
 }
 
+/**
+ * #242: Generic string-param validator. Pre-fix `String(...)` coercion
+ * silently mapped numbers/booleans/objects to bogus identifiers
+ * ("123"/"true"/"[object Object]") that downstream lookups couldn't
+ * distinguish from real strings. Used for DID/agentId/credentialId
+ * params. Same anti-pattern as #120/#220/#226/#240.
+ */
+function requireStringParam(params: unknown[], index: number, name: string): string {
+  const raw = params[index]
+  if (raw === undefined || raw === null || raw === "") {
+    throw { code: -32602, message: `missing ${name} parameter` }
+  }
+  if (typeof raw !== "string") {
+    throw { code: -32602, message: `invalid ${name}: expected string, got ${Array.isArray(raw) ? "array" : typeof raw}` }
+  }
+  return raw
+}
+
 function optionalHexParam(params: unknown[], index: number): Hex | undefined {
   const value = (params ?? [])[index]
   if (value === undefined || value === null) return undefined
@@ -2605,23 +2623,24 @@ async function handleRpc(
     case "coc_resolveDid": {
       const didResolver = opts?.didResolver as { resolve: (did: string) => Promise<{ didDocument: unknown; didResolutionMetadata: unknown }> } | undefined
       if (!didResolver) throw { code: -32601, message: "DID resolver not configured on this node (requires soulRegistryAddress + didRegistryAddress)" }
-      const did = String((payload.params ?? [])[0] ?? "")
-      if (!did) throw { code: -32602, message: "missing DID parameter" }
+      // #242: pre-fix `String(... ?? "")` silently coerced numbers/bools/
+      // objects to "123"/"true"/"[object Object]" — bogus identifiers
+      // that downstream resolvers couldn't tell apart from real DIDs.
+      // Same anti-pattern as #120/#220/#226/#240.
+      const did = requireStringParam(payload.params ?? [], 0, "DID")
       return didResolver.resolve(did)
     }
     case "coc_getDIDDocument": {
       const didResolver = opts?.didResolver as { resolve: (did: string) => Promise<{ didDocument: unknown }> } | undefined
       if (!didResolver) throw { code: -32601, message: "DID resolver not configured on this node" }
-      const agentId = String((payload.params ?? [])[0] ?? "")
-      if (!agentId) throw { code: -32602, message: "missing agentId parameter" }
+      const agentId = requireStringParam(payload.params ?? [], 0, "agentId")
       const result = await didResolver.resolve(`did:coc:${agentId}`)
       return result.didDocument ?? null
     }
     case "coc_getAgentCapabilities": {
       const didProvider = opts?.didDataProvider
       if (!didProvider) throw { code: -32601, message: "DID data provider not configured on this node" }
-      const agentId = String((payload.params ?? [])[0] ?? "")
-      if (!agentId) throw { code: -32602, message: "missing agentId parameter" }
+      const agentId = requireStringParam(payload.params ?? [], 0, "agentId")
       const bitmask = await didProvider.getCapabilities(agentId)
       // Import inline to avoid top-level dependency
       const { capabilityBitmaskToNames } = await import("./did/did-types.ts")
@@ -2630,22 +2649,19 @@ async function handleRpc(
     case "coc_getDelegations": {
       const didProvider = opts?.didDataProvider
       if (!didProvider) throw { code: -32601, message: "DID data provider not configured on this node" }
-      const agentId = String((payload.params ?? [])[0] ?? "")
-      if (!agentId) throw { code: -32602, message: "missing agentId parameter" }
+      const agentId = requireStringParam(payload.params ?? [], 0, "agentId")
       return didProvider.getFullDelegations(agentId)
     }
     case "coc_getAgentLineage": {
       const didProvider = opts?.didDataProvider
       if (!didProvider?.getLineage) throw { code: -32601, message: "DID data provider not configured on this node" }
-      const agentId = String((payload.params ?? [])[0] ?? "")
-      if (!agentId) throw { code: -32602, message: "missing agentId parameter" }
+      const agentId = requireStringParam(payload.params ?? [], 0, "agentId")
       return didProvider.getLineage(agentId)
     }
     case "coc_getVerificationMethods": {
       const didProvider = opts?.didDataProvider
       if (!didProvider?.getVerificationMethods) throw { code: -32601, message: "DID data provider not configured on this node" }
-      const agentId = String((payload.params ?? [])[0] ?? "")
-      if (!agentId) throw { code: -32602, message: "missing agentId parameter" }
+      const agentId = requireStringParam(payload.params ?? [], 0, "agentId")
       return didProvider.getVerificationMethods(agentId)
     }
     case "coc_getCredentialAnchor": {
@@ -2654,8 +2670,7 @@ async function handleRpc(
       // for full credential verification.
       const didProvider = opts?.didDataProvider
       if (!didProvider?.getCredentialAnchor) throw { code: -32601, message: "DID data provider not configured on this node" }
-      const credentialId = String((payload.params ?? [])[0] ?? "")
-      if (!credentialId) throw { code: -32602, message: "missing credentialId parameter" }
+      const credentialId = requireStringParam(payload.params ?? [], 0, "credentialId")
       return didProvider.getCredentialAnchor(credentialId)
     }
     default:
