@@ -326,6 +326,39 @@ describe("IPFS E2E", () => {
       assert.deepEqual(buf, new TextEncoder().encode("hello mfs"))
     })
 
+    it("#96: read respects offset query param", async () => {
+      // Pre-fix bug: HTTP handler ignored offset, always returned full file.
+      // "hello mfs" → offset=6 → "mfs"
+      const res = await fetch(
+        `${base}/api/v0/files/read?arg=/test-dir/hello.txt&offset=6`,
+        { method: "POST" },
+      )
+      assert.equal(res.status, 200)
+      assert.equal(await res.text(), "mfs")
+    })
+
+    it("#96: read respects offset+count query params", async () => {
+      // "hello mfs" → offset=0 count=5 → "hello"
+      const res = await fetch(
+        `${base}/api/v0/files/read?arg=/test-dir/hello.txt&offset=0&count=5`,
+        { method: "POST" },
+      )
+      assert.equal(res.status, 200)
+      assert.equal(await res.text(), "hello")
+    })
+
+    it("#96: read of nonexistent path returns 404 (not 500)", async () => {
+      // Pre-fix bug: MFS "not found" errors leaked through the generic
+      // catch-all as opaque 500 internal-error responses.
+      const res = await fetch(
+        `${base}/api/v0/files/read?arg=/no-such-file.txt`,
+        { method: "POST" },
+      )
+      assert.equal(res.status, 404)
+      const json = (await res.json()) as { error: string }
+      assert.equal(json.error, "not found")
+    })
+
     it("#92: files/write extracts file bytes from kubo-style multipart upload", async () => {
       // Pre-fix bug: the entire multipart envelope (boundary, headers,
       // file content, closing boundary) was stored as the file content.
