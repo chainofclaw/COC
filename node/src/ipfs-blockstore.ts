@@ -89,6 +89,17 @@ export class IpfsBlockstore {
   private currentBytes = 0
   private accessSeqCounter = 0
   private metaLoaded = false
+  // Serializes the read-modify-write cycle on pins.json. Two concurrent
+  // pin() calls would otherwise:
+  //   (a) both write to the same `pins.json.tmp` then race the rename —
+  //       the second rename hits ENOENT because the first already moved
+  //       the tmp file → HTTP 500 surfaces to the caller.
+  //   (b) lost-update each other's added CID, because both read the same
+  //       on-disk snapshot before either write lands.
+  // Chaining writes through this promise gives every pin() a single
+  // serialized critical section.
+  private pinsLock: Promise<unknown> = Promise.resolve()
+  private pinsTmpCounter = 0
 
   constructor(root: string, hooks?: IpfsBlockstoreHooks, opts?: IpfsBlockstoreOpts) {
     this.root = root
@@ -305,9 +316,13 @@ export class IpfsBlockstore {
   }
 
   async pin(cid: CidString): Promise<void> {
-    const pins = await this.readPins()
-    pins.add(cid)
-    await this.writePins(pins)
+    const next = this.pinsLock.then(async () => {
+      const pins = await this.readPins()
+      pins.add(cid)
+      await this.writePins(pins)
+    })
+    this.pinsLock = next.catch(() => {})
+    await next
   }
 
   async listPins(): Promise<CidString[]> {
@@ -379,8 +394,11 @@ export class IpfsBlockstore {
 
   private async writePins(pins: Set<CidString>): Promise<void> {
     await mkdir(this.root, { recursive: true })
-    // Atomic write: write to temp file then rename to prevent corruption on crash
-    const tmpPath = this.pinsPath() + ".tmp"
+    // Atomic write: write to a per-call unique temp file then rename. The
+    // unique suffix is defence-in-depth against any path that bypasses
+    // pinsLock (e.g. multiple IpfsBlockstore instances sharing the same
+    // root, or future call sites that mutate pins.json directly).
+    const tmpPath = `${this.pinsPath()}.${process.pid}.${++this.pinsTmpCounter}.tmp`
     await writeFile(tmpPath, JSON.stringify({ pins: [...pins] }, null, 2))
     await rename(tmpPath, this.pinsPath())
   }
