@@ -247,8 +247,10 @@ describe("IpfsHttpServer", () => {
     // Use single-block put+pin (not unixfs.addFile, which stores
     // chunks at separate CIDs that the root-CID pin does NOT cover —
     // by design, see the flat-GC limitation documented on blockstore.gc).
-    const cidA = "QmGcPinned123456789012345678901234567890ABC"
-    const cidB = "QmGcUnpinned123456789012345678901234567890A"
+    // #168 tightened isValidCid to require real base58 chars (no 0/O/I/l).
+    // Use fake-but-base58-compatible CIDs here.
+    const cidA = "QmGcPinned123456789123456789123456789123456ABC"
+    const cidB = "QmGcUnpinned12345678912345678912345678912345A"
     await store.put({ cid: cidA as CidString, bytes: Buffer.from("pinned content") })
     await store.put({ cid: cidB as CidString, bytes: Buffer.from("unpinned content") })
     await fetch(`/api/v0/pin/add?arg=${cidA}`, { method: "POST" })
@@ -286,6 +288,28 @@ describe("IpfsHttpServer", () => {
     assert.equal(res.status, 404)
     const body = await res.json() as Record<string, string>
     assert.equal(body.error, "block not found")
+  })
+
+  it("#168: /ipfs/<cid> + /api/v0/block/get map malformed→400 and missing→404 (no 500)", async () => {
+    // Pre-fix the gateway and block/get handlers passed any
+    // non-traversal string through isValidCid, then the blockstore
+    // ENOENT propagated as a generic 500 with a stacktrace logged.
+    // Now: malformed CID → 400, valid-shape-missing CID → 404.
+    const missingButValid = "bafybeibbaty5wl7jqgcwyouemb5jerxoisdoxwldqdue5dd6evw6lgalhz"
+    // (a) gateway: malformed → 400
+    const gw1 = await fetch(`/ipfs/bogus`)
+    assert.equal(gw1.status, 400, "gateway must reject 'bogus' with 400 (not 500)")
+    // (b) gateway: valid-shape-missing → 404
+    const gw2 = await fetch(`/ipfs/${missingButValid}`)
+    assert.equal(gw2.status, 404, "gateway must surface missing CID as 404 (not 500)")
+    // (c) block/get: malformed → 400
+    const bg1 = await fetch(`/api/v0/block/get?arg=bogus`, { method: "POST" })
+    assert.equal(bg1.status, 400, "block/get must reject 'bogus' with 400")
+    // (d) block/get: valid-shape-missing → 404
+    const bg2 = await fetch(`/api/v0/block/get?arg=${missingButValid}`, { method: "POST" })
+    assert.equal(bg2.status, 404, "block/get must surface missing CID as 404")
+    const bgBody = await bg2.json() as { error: string }
+    assert.equal(bgBody.error, "block not found")
   })
 
   it("GET /api/v0/pin/ls?arg=<cid> returns only that CID when pinned", async () => {
