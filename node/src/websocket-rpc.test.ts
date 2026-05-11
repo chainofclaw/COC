@@ -364,4 +364,54 @@ describe("WebSocket RPC", () => {
       ws.close()
     }
   })
+
+  it("#206: WS envelope rejects non-conforming jsonrpc/id/method/params (HTTP parity)", async () => {
+    // Parity with HTTP RPC #202/#204. Pre-fix WS only checked
+    // `!payload.method`, so jsonrpc!="2.0", id as object/array/bool,
+    // method as 0/empty, and params as string/bool/number all flowed
+    // through to dispatch — a strict-client inter-op hazard.
+    const ws = await connectWs(WS_PORT)
+    try {
+      // Helper: send a one-shot, get the next message back.
+      const probe = (body: Record<string, unknown>): Promise<{ error?: { code: number; message: string }; result?: unknown }> =>
+        new Promise((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error("probe timeout")), 2000)
+          const handler = (data: Buffer | string) => {
+            clearTimeout(timer)
+            ws.removeListener("message", handler)
+            try { resolve(JSON.parse(data.toString())) } catch (e) { reject(e) }
+          }
+          ws.on("message", handler)
+          ws.send(JSON.stringify(body))
+        })
+      // jsonrpc must be exactly "2.0"
+      for (const v of ["1.0", "1.1", "", 2]) {
+        const r = await probe({ jsonrpc: v, id: 1, method: "eth_chainId" })
+        assert.equal(r.error?.code, -32600, `jsonrpc=${JSON.stringify(v)} must be -32600, got ${JSON.stringify(r)}`)
+        assert.match(r.error!.message, /jsonrpc/i, "error must name the field")
+      }
+      // id must be string|number|null
+      for (const badId of [{ obj: 1 }, [1, 2], true, false]) {
+        const r = await probe({ jsonrpc: "2.0", id: badId, method: "eth_chainId" })
+        assert.equal(r.error?.code, -32600, `id=${JSON.stringify(badId)} must be -32600, got ${JSON.stringify(r)}`)
+      }
+      // method must be non-empty string
+      for (const m of [0, "", null, true]) {
+        const r = await probe({ jsonrpc: "2.0", id: 1, method: m })
+        assert.equal(r.error?.code, -32600, `method=${JSON.stringify(m)} must be -32600, got ${JSON.stringify(r)}`)
+      }
+      // params must be Array|Object|undefined|null
+      for (const p of ["not-array", 42, true]) {
+        const r = await probe({ jsonrpc: "2.0", id: 1, method: "eth_chainId", params: p })
+        assert.equal(r.error?.code, -32600, `params=${JSON.stringify(p)} must be -32600, got ${JSON.stringify(r)}`)
+        assert.match(r.error!.message, /params must be/i, "error must name params")
+      }
+      // Sanity: well-formed request still works.
+      const ok = await probe({ jsonrpc: "2.0", id: 1, method: "eth_chainId" })
+      assert.equal(ok.error, undefined, "well-formed envelope must NOT error")
+      assert.ok(typeof ok.result === "string", "result must be returned")
+    } finally {
+      ws.close()
+    }
+  })
 })
