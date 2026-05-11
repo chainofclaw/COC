@@ -609,6 +609,32 @@ describe("IpfsHttpServer", () => {
     assert.equal(ok.status, 200, "valid offset/count must succeed")
   })
 
+  it("#232: /api/v0/files/* path traversal returns 400 (not 500 'internal error')", async () => {
+    // Pre-fix normalizePath threw `Error("path traversal not allowed: ...")`
+    // for any input with `..`. The route-level catch had regexes for
+    // null-byte / path-too-long / max-depth (all 400) but missed
+    // `^path traversal`, so traversal attempts surfaced as 500.
+    const { IpfsMfs } = await import("./ipfs-mfs.ts")
+    const mfs = new IpfsMfs(store, unixfs)
+    server.attachSubsystems({ mfs })
+    const probes = [
+      `/api/v0/files/mkdir?arg=${encodeURIComponent("/x/../y")}`,
+      `/api/v0/files/mkdir?arg=${encodeURIComponent("/../etc")}`,
+      `/api/v0/files/rm?arg=${encodeURIComponent("/dir/./file")}`,
+      `/api/v0/files/stat?arg=${encodeURIComponent("/foo/../bar")}`,
+      `/api/v0/files/ls?arg=${encodeURIComponent("/x/../y/z")}`,
+    ]
+    for (const path of probes) {
+      const res = await fetch(path, { method: "POST" })
+      assert.equal(res.status, 400, `${path}: must be 400, got ${res.status}`)
+      const body = await res.json() as { error?: string; message?: string }
+      assert.notEqual(body.error, "internal error",
+        `${path}: must not leak 'internal error', got ${JSON.stringify(body)}`)
+      assert.match(`${body.error} ${body.message ?? ""}`, /path traversal|bad request/i,
+        `${path}: error must reference traversal, got ${JSON.stringify(body)}`)
+    }
+  })
+
   it("#210: /api/v0/erasure/status maps ErasureError codes to 4xx (no 500 leak)", async () => {
     // Pre-fix the outer catch in IpfsHttpServer only mapped
     // ErasureError "invalid_params" → 400 and "not_found" → 404. The
