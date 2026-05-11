@@ -325,6 +325,75 @@ export class IpfsBlockstore {
     await next
   }
 
+  /**
+   * #126: Remove a CID from pins.json. Idempotent — returns whether the
+   * CID was previously pinned. The block file itself remains on disk
+   * until a separate `removeBlock` or GC call evicts it. Serialised on
+   * `pinsLock` so it cannot race with pin() or GC.
+   */
+  async unpin(cid: CidString): Promise<boolean> {
+    let wasPinned = false
+    const next = this.pinsLock.then(async () => {
+      const pins = await this.readPins()
+      wasPinned = pins.delete(cid)
+      if (wasPinned) {
+        await this.writePins(pins)
+      }
+    })
+    this.pinsLock = next.catch(() => {})
+    await next
+    return wasPinned
+  }
+
+  /**
+   * #126: Force-evict a single block by CID. Removes both the on-disk
+   * block file and the pin entry (if any). Returns whether anything was
+   * actually removed. Used by the chaos kill-shard drill — kubo exposes
+   * the same semantics via `ipfs block rm --force <cid>`.
+   */
+  async removeBlock(cid: CidString): Promise<{ removedFile: boolean; wasPinned: boolean }> {
+    const wasPinned = await this.unpin(cid)
+    let removedFile = false
+    try {
+      await unlink(this.blockPath(cid))
+      removedFile = true
+    } catch (err: unknown) {
+      const code = (err as NodeJS.ErrnoException)?.code
+      if (code !== "ENOENT") throw err
+    }
+    return { removedFile, wasPinned }
+  }
+
+  /**
+   * #126: Repository garbage collection — remove every on-disk block
+   * whose CID is not in pins.json. Returns the list of CIDs removed.
+   * NOTE: this is a flat (single-CID) GC. Pinning a UnixFS root does
+   * not recursively pin its chunks; callers that store chunked files
+   * must pin each chunk CID explicitly to survive GC. Serialised on
+   * `pinsLock` so concurrent pins/unpins don't race the sweep.
+   */
+  async gc(): Promise<CidString[]> {
+    await this.init()
+    let removed: CidString[] = []
+    const next = this.pinsLock.then(async () => {
+      const pins = await this.readPins()
+      const entries = await readdir(this.blocksDir())
+      const toRemove = entries.filter((cid) => !pins.has(cid))
+      for (const cid of toRemove) {
+        try {
+          await unlink(join(this.blocksDir(), cid))
+          removed.push(cid)
+        } catch (err: unknown) {
+          const code = (err as NodeJS.ErrnoException)?.code
+          if (code !== "ENOENT") throw err
+        }
+      }
+    })
+    this.pinsLock = next.catch(() => {})
+    await next
+    return removed
+  }
+
   async listPins(): Promise<CidString[]> {
     const pins = await this.readPins()
     return [...pins]
