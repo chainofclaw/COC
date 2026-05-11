@@ -71,6 +71,22 @@ test("RPC Extended Methods", async (t) => {
         },
       },
     ],
+    getErasureStatus: async (cid: string) => {
+      // Stub: returns a deterministic manifest summary so the dispatch
+      // path is exercised end-to-end without spinning up a real
+      // blockstore. The real implementation in index.ts delegates to
+      // resolveCid + erasureStatus.
+      if (cid === "bafy-missing") throw { code: -32604, message: "not_found" }
+      return {
+        fileSize: 1_048_576,
+        scheme: "rs(4+2)",
+        n: 4,
+        m: 2,
+        stripes: [
+          { stripeIndex: 0, dataAvailable: 4, parityAvailable: 2, needsRepair: false },
+        ],
+      }
+    },
   })
   t.after(async () => {
     await new Promise<void>((resolve, reject) => {
@@ -526,6 +542,28 @@ test("RPC Extended Methods", async (t) => {
         type: "bft-equivocation",
       },
     ])
+  })
+
+  await t.test("#108: coc_erasureStatus bridges the existing /api/v0/erasure/status path to RPC", async () => {
+    const result = await rpcCall(port, "coc_erasureStatus", ["bafy-mock-manifest"])
+    assert.ok(typeof result === "object" && result !== null)
+    const status = result as { fileSize: number; scheme: string; n: number; m: number; stripes: unknown[] }
+    assert.equal(status.fileSize, 1_048_576)
+    assert.equal(status.scheme, "rs(4+2)")
+    assert.equal(status.n, 4)
+    assert.equal(status.m, 2)
+    assert.ok(Array.isArray(status.stripes) && status.stripes.length === 1)
+  })
+
+  await t.test("#108: coc_erasureStatus rejects missing CID with -32602", async () => {
+    const r = await fetch(`http://127.0.0.1:${port}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "coc_erasureStatus", params: [""] }),
+    })
+    const json = await r.json() as { error?: { code: number; message: string } }
+    assert.ok(json.error)
+    assert.equal(json.error!.code, -32602)
   })
 
   await t.test("#106: coc_getEquivocationsTotal returns the count of all evidence entries", async () => {
