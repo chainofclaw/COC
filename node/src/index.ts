@@ -346,6 +346,54 @@ const p2p = new P2PNode(
 )
 p2p.start()
 
+// PR-1G (2026-05-11): verify the persistent-engine local tip against peer
+// snapshots before consensus joins any BFT round. The T4 dual-stop drill
+// surfaced a failure mode where a validator that propose-then-stops can
+// leave a self-finalized phantom block in leveldb; PR-1D's
+// repairLatestPointer then promotes that phantom to LATEST on restart, and
+// Phase R's self-equivocation guard refuses to re-prepare a different hash
+// at the same height — deadlocking the cluster cluster-wide.
+//
+// This check runs once on startup. We give peers ~6 s to complete wire
+// handshakes (so /p2p/chain-snapshot has a chance of succeeding), then ask
+// peers for their tips. If peer-quorum disagrees with our LATEST, we
+// demote LATEST backward to the deepest peer-confirmed height. Set
+// `COC_PR1G_DISABLE=1` to bypass (escape hatch for operators in case of a
+// pathological peer set). Set `COC_PR1G_PRUNE=1` to additionally drop
+// stale b:N / h:hash rows above the demoted height.
+{
+  const persistentChain = chain as PersistentChainEngine
+  const hasVerify = typeof persistentChain.verifyAndPromoteTipWithPeers === "function"
+  const hasPeers = (config.peers?.length ?? 0) > 0
+  if (process.env.COC_PR1G_DISABLE === "1") {
+    log.warn("PR-1G: disabled via COC_PR1G_DISABLE=1 — skipping tip verification")
+  } else if (hasVerify && hasPeers) {
+    const PR1G_PEER_WAIT_MS = Number(process.env.COC_PR1G_WAIT_MS ?? 6000)
+    await new Promise((resolve) => setTimeout(resolve, PR1G_PEER_WAIT_MS))
+    try {
+      const result = await persistentChain.verifyAndPromoteTipWithPeers(p2p, {
+        quorumFraction: Number(process.env.COC_PR1G_QUORUM_FRACTION ?? 0.5),
+        prune: process.env.COC_PR1G_PRUNE === "1",
+      })
+      log.info("PR-1G: tip verification complete", {
+        verified: result.verified,
+        demoted: result.demoted,
+        from: result.demotedFrom?.toString() ?? "<none>",
+        to: result.demotedTo?.toString() ?? "<none>",
+        reason: result.reason,
+        peerCount: result.peerCount,
+        pruned: result.prunedCount ?? 0,
+      })
+    } catch (err) {
+      log.warn("PR-1G: tip verification threw — proceeding with current LATEST", {
+        error: String(err),
+      })
+    }
+  } else if (hasVerify && !hasPeers) {
+    log.info("PR-1G: skipped — no peers configured (single-node bootstrap)")
+  }
+}
+
 // BFT equivocation evidence store — persists slash evidence for relayer consumption
 const bftEvidenceStore = new EvidenceStore(1000, resolveEvidencePaths(config.dataDir).writePath)
 

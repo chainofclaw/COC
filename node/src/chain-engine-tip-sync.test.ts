@@ -128,3 +128,266 @@ test("PR-1D: repairLatestPointer is idempotent across repeated calls", async () 
   assert.equal(r2.repaired, false, "second call no-op")
   assert.equal((await idx.getLatestBlock())?.number, 10n)
 })
+
+// PR-1G test fixtures: construct a block with a SPECIFIC hash so tests can
+// simulate the phantom case (local has hash X at height H, peers have Y).
+function mkBlockWithHash(number: number, hash: string): ChainBlock {
+  const parent = number > 0
+    ? ("0x" + (number - 1).toString(16).padStart(64, "0"))
+    : "0x" + "0".repeat(64)
+  return {
+    number: BigInt(number),
+    hash: hash as Hex,
+    parentHash: parent as Hex,
+    proposer: "0xproposer",
+    timestampMs: Date.now(),
+    txs: [],
+    stateRoot: ("0xst" + number.toString(16).padStart(62, "0")) as Hex,
+  } as unknown as ChainBlock
+}
+
+test("PR-1G: demoteLatestTo rewrites LATEST to specified height", async () => {
+  const db = new MemoryDatabase()
+  const idx = new BlockIndex(db)
+  for (let n = 1; n <= 5; n++) await idx.putBlock(mkBlock(n))
+
+  const result = await idx.demoteLatestTo(3n)
+  assert.equal(result, 3n)
+  const latest = await idx.getLatestBlock()
+  assert.equal(latest?.number, 3n)
+})
+
+test("PR-1G: demoteLatestTo returns null when target height missing", async () => {
+  const db = new MemoryDatabase()
+  const idx = new BlockIndex(db)
+  for (let n = 1; n <= 3; n++) await idx.putBlock(mkBlock(n))
+
+  const result = await idx.demoteLatestTo(99n)
+  assert.equal(result, null)
+  // LATEST unchanged
+  const latest = await idx.getLatestBlock()
+  assert.equal(latest?.number, 3n)
+})
+
+test("PR-1G: pruneStaleBlocksAfterTip removes b:N and h:hash for N > keepHeight", async () => {
+  const db = new MemoryDatabase()
+  const idx = new BlockIndex(db)
+  for (let n = 1; n <= 5; n++) await idx.putBlock(mkBlock(n))
+
+  const result = await idx.pruneStaleBlocksAfterTip(3n)
+  assert.equal(result.pruned, 2, "blocks 4 and 5 pruned")
+
+  assert.equal(await idx.getBlockByNumber(4n), null)
+  assert.equal(await idx.getBlockByNumber(5n), null)
+  assert.ok(await idx.getBlockByNumber(3n), "blocks <= keepHeight kept")
+
+  // h:hash lookups for pruned blocks should fail too
+  const hash4 = "0x" + (4).toString(16).padStart(64, "0")
+  assert.equal(await idx.getBlockByHash(hash4 as Hex), null)
+})
+
+test("PR-1G: pruneStaleBlocksAfterTip is a no-op when keepHeight >= max", async () => {
+  const db = new MemoryDatabase()
+  const idx = new BlockIndex(db)
+  for (let n = 1; n <= 5; n++) await idx.putBlock(mkBlock(n))
+
+  const result = await idx.pruneStaleBlocksAfterTip(10n)
+  assert.equal(result.pruned, 0)
+  for (let n = 1; n <= 5; n++) {
+    assert.ok(await idx.getBlockByNumber(BigInt(n)))
+  }
+})
+
+test("PR-1G: verifyAndPromoteTipWithPeers — peer-quorum agrees, no demotion", async () => {
+  const { PersistentChainEngine } = await import("./chain-engine-persistent.ts")
+  const { EvmChain } = await import("./evm.ts")
+
+  const dataDir = "/tmp/coc-test-pr1g-" + Math.random().toString(36).slice(2)
+  const evm = new EvmChain({ chainId: 18780 })
+  const engine = new PersistentChainEngine(
+    {
+      dataDir,
+      nodeId: "0xtest",
+      chainId: 18780,
+      validators: ["0xa", "0xb"],
+      finalityDepth: 3,
+      maxTxPerBlock: 100,
+      minGasPriceWei: 0n,
+    },
+    evm,
+  )
+  await engine.init()
+
+  const h1 = "0x" + "1".repeat(64)
+  const h2 = "0x" + "2".repeat(64)
+  const h3 = "0x" + "3".repeat(64)
+  await engine.blockIndex.putBlock(mkBlockWithHash(1, h1))
+  await engine.blockIndex.putBlock(mkBlockWithHash(2, h2))
+  await engine.blockIndex.putBlock(mkBlockWithHash(3, h3))
+
+  // Peers report the same blocks. Provide blocks with matching number+hash.
+  const peerSnapshot = {
+    blocks: [
+      mkBlockWithHash(1, h1),
+      mkBlockWithHash(2, h2),
+      mkBlockWithHash(3, h3),
+    ],
+  }
+  const fakeP2P = { async fetchSnapshots() { return [peerSnapshot, peerSnapshot] } }
+
+  const result = await engine.verifyAndPromoteTipWithPeers(fakeP2P)
+  assert.equal(result.verified, true)
+  assert.equal(result.demoted, false)
+  assert.equal(result.reason, "agreed")
+  assert.equal(result.peerCount, 2)
+  assert.equal((await engine.getTip())?.number, 3n)
+
+  await engine.close()
+})
+
+test("PR-1G: verifyAndPromoteTipWithPeers — phantom mismatch demotes to backward-scan match", async () => {
+  const { PersistentChainEngine } = await import("./chain-engine-persistent.ts")
+  const { EvmChain } = await import("./evm.ts")
+
+  const dataDir = "/tmp/coc-test-pr1g-" + Math.random().toString(36).slice(2)
+  const evm = new EvmChain({ chainId: 18780 })
+  const engine = new PersistentChainEngine(
+    {
+      dataDir,
+      nodeId: "0xtest",
+      chainId: 18780,
+      validators: ["0xa", "0xb"],
+      finalityDepth: 3,
+      maxTxPerBlock: 100,
+      minGasPriceWei: 0n,
+    },
+    evm,
+  )
+  await engine.init()
+
+  // Local has up to height 5 with phantom hash at 5
+  const localH3 = "0x" + "3".repeat(64)
+  const localH4 = "0x" + "4".repeat(64)
+  const localPhantom5 = "0x" + "5".repeat(64) // <- phantom, peers will disagree
+  await engine.blockIndex.putBlock(mkBlockWithHash(3, localH3))
+  await engine.blockIndex.putBlock(mkBlockWithHash(4, localH4))
+  await engine.blockIndex.putBlock(mkBlockWithHash(5, localPhantom5))
+
+  // Peers have height 4 with the same hash, but no height 5 (or different hash)
+  const peerSnapshot = {
+    blocks: [
+      mkBlockWithHash(3, localH3),
+      mkBlockWithHash(4, localH4),
+      // peers don't have 5, simulating phantom case
+    ],
+  }
+  const fakeP2P = { async fetchSnapshots() { return [peerSnapshot, peerSnapshot, peerSnapshot] } }
+
+  const result = await engine.verifyAndPromoteTipWithPeers(fakeP2P, { prune: true })
+  assert.equal(result.demoted, true)
+  assert.equal(result.demotedFrom, 5n)
+  assert.equal(result.demotedTo, 4n)
+  assert.equal(result.reason, "phantom-mismatch")
+  assert.equal(result.peerCount, 3)
+  assert.equal(result.prunedCount, 1, "phantom b:5 pruned")
+  assert.equal((await engine.getTip())?.number, 4n, "LATEST demoted to 4")
+  assert.equal(await engine.getBlockByNumber(5n), null, "phantom block 5 pruned")
+
+  await engine.close()
+})
+
+test("PR-1G: verifyAndPromoteTipWithPeers — no peers responding keeps LATEST", async () => {
+  const { PersistentChainEngine } = await import("./chain-engine-persistent.ts")
+  const { EvmChain } = await import("./evm.ts")
+
+  const dataDir = "/tmp/coc-test-pr1g-" + Math.random().toString(36).slice(2)
+  const evm = new EvmChain({ chainId: 18780 })
+  const engine = new PersistentChainEngine(
+    {
+      dataDir,
+      nodeId: "0xtest",
+      chainId: 18780,
+      validators: ["0xa", "0xb"],
+      finalityDepth: 3,
+      maxTxPerBlock: 100,
+      minGasPriceWei: 0n,
+    },
+    evm,
+  )
+  await engine.init()
+
+  const h7 = "0x" + "7".repeat(64)
+  await engine.blockIndex.putBlock(mkBlockWithHash(7, h7))
+
+  const fakeP2P = { async fetchSnapshots() { return [] } }
+  const result = await engine.verifyAndPromoteTipWithPeers(fakeP2P)
+  assert.equal(result.verified, false)
+  assert.equal(result.demoted, false)
+  assert.equal(result.reason, "peers-unreachable")
+  assert.equal(result.peerCount, 0)
+  assert.equal((await engine.getTip())?.number, 7n, "LATEST kept unchanged")
+
+  await engine.close()
+})
+
+test("PR-1G: verifyAndPromoteTipWithPeers — fetchSnapshots throws falls back to no-op", async () => {
+  const { PersistentChainEngine } = await import("./chain-engine-persistent.ts")
+  const { EvmChain } = await import("./evm.ts")
+
+  const dataDir = "/tmp/coc-test-pr1g-" + Math.random().toString(36).slice(2)
+  const evm = new EvmChain({ chainId: 18780 })
+  const engine = new PersistentChainEngine(
+    {
+      dataDir,
+      nodeId: "0xtest",
+      chainId: 18780,
+      validators: ["0xa", "0xb"],
+      finalityDepth: 3,
+      maxTxPerBlock: 100,
+      minGasPriceWei: 0n,
+    },
+    evm,
+  )
+  await engine.init()
+
+  const h9 = "0x" + "9".repeat(64)
+  await engine.blockIndex.putBlock(mkBlockWithHash(9, h9))
+
+  const fakeP2P = { async fetchSnapshots() { throw new Error("network down") } }
+  const result = await engine.verifyAndPromoteTipWithPeers(fakeP2P)
+  assert.equal(result.verified, false)
+  assert.equal(result.demoted, false)
+  assert.equal(result.peerCount, 0)
+  assert.equal((await engine.getTip())?.number, 9n)
+
+  await engine.close()
+})
+
+test("PR-1G: verifyAndPromoteTipWithPeers — no local tip is a no-op", async () => {
+  const { PersistentChainEngine } = await import("./chain-engine-persistent.ts")
+  const { EvmChain } = await import("./evm.ts")
+
+  const dataDir = "/tmp/coc-test-pr1g-" + Math.random().toString(36).slice(2)
+  const evm = new EvmChain({ chainId: 18780 })
+  const engine = new PersistentChainEngine(
+    {
+      dataDir,
+      nodeId: "0xtest",
+      chainId: 18780,
+      validators: ["0xa"], // single validator skips genesis creation
+      finalityDepth: 3,
+      maxTxPerBlock: 100,
+      minGasPriceWei: 0n,
+    },
+    evm,
+  )
+  await engine.init()
+
+  const fakeP2P = { async fetchSnapshots() { return [{ blocks: [] }] } }
+  const result = await engine.verifyAndPromoteTipWithPeers(fakeP2P)
+  assert.equal(result.verified, false)
+  assert.equal(result.demoted, false)
+  assert.equal(result.reason, "no-local-tip")
+
+  await engine.close()
+})
