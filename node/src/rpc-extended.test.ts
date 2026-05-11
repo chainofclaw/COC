@@ -457,6 +457,25 @@ test("RPC Extended Methods", async (t) => {
     assert.equal(result, false)
   })
 
+  await t.test("#100: coc_getValidators returns an array (not a single string) without governance", async () => {
+    // This RPC test fixture builds a ChainEngine without on-chain governance,
+    // so we exercise the fallback path. Pre-fix, the fallback returned
+    // `chain.expectedProposer(height + 1n)` — a single string — which
+    // contradicted the method's name and broke array-shaped client code.
+    const result = await rpcCall(port, "coc_getValidators") as unknown
+    assert.ok(Array.isArray(result), `coc_getValidators must return an array, got: ${typeof result}`)
+    // Every entry should be an object with at least an `id` field.
+    const arr = result as Array<Record<string, unknown>>
+    for (const v of arr) {
+      assert.equal(typeof v, "object", "validator entry should be an object")
+      assert.ok(typeof v.id === "string" && v.id.length > 0, `validator entry missing id: ${JSON.stringify(v)}`)
+    }
+    // The chain in this test fixture was constructed with `validators: ["node-1"]`,
+    // so the fallback should expose exactly that.
+    assert.equal(arr.length, 1, "fallback should return all hardcoded validators")
+    assert.equal(arr[0].id, "node-1")
+  })
+
   await t.test("coc_getEquivocations maps persisted BFT evidence fields", async () => {
     const result = await rpcCall(port, "coc_getEquivocations", [0])
     assert.ok(Array.isArray(result))
