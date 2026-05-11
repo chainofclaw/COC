@@ -201,6 +201,27 @@ interface RpcRuntimeOptions {
   fetchBlockFromPeer?: (cid: string, excludePeerId?: string) => Promise<Uint8Array | null>
   rewardManifestDir?: string
   getBftEquivocations?: (sinceMs: number) => Array<{ rawEvidence?: Record<string, unknown>; [key: string]: unknown }>
+  /**
+   * Phase Q.4 / #108: expose erasure-coded manifest availability to RPC
+   * clients. The HTTP /api/v0/erasure/status endpoint has had this since
+   * Phase Q but the matching RPC method (which the runbook + skills
+   * spec reference) was never wired. Bridge accepts the manifest CID
+   * and returns per-stripe data/parity availability + total file size.
+   * Throws on invalid_cid / not_a_manifest / not_found so the catch in
+   * handleRpcMethod can surface the appropriate JSON-RPC error.
+   */
+  getErasureStatus?: (cid: string) => Promise<{
+    fileSize: number
+    scheme: string
+    n: number
+    m: number
+    stripes: Array<{
+      stripeIndex: number
+      dataAvailable: number
+      parityAvailable: number
+      needsRepair: boolean
+    }>
+  }>
   getSyncProgress?: () => Promise<{ syncing: boolean; currentHeight: bigint; highestPeerHeight: bigint; startingHeight: bigint }>
   didResolver?: { resolve: (did: string) => Promise<unknown> }
   didDataProvider?: {
@@ -346,6 +367,9 @@ export function startRpcServer(
         }
         if (runtimeOptions?.fetchBlockFromPeer) {
           rpcOpts.fetchBlockFromPeer = runtimeOptions.fetchBlockFromPeer
+        }
+        if (runtimeOptions?.getErasureStatus) {
+          rpcOpts.getErasureStatus = runtimeOptions.getErasureStatus
         }
         const scopedOpts = Object.keys(rpcOpts).length > 0 ? rpcOpts : undefined
         const MAX_BATCH_SIZE = 100
@@ -1766,6 +1790,18 @@ async function handleRpc(
         }
       }
       return null
+    }
+    case "coc_erasureStatus": {
+      // RPC bridge for the existing HTTP /api/v0/erasure/status handler.
+      // Doc-referenced for ops tooling (phase-q-erasure-coding.md:233);
+      // returns per-stripe data/parity availability for a Reed-Solomon
+      // manifest CID. The runtime hook is wired from index.ts using
+      // resolveCid + erasureStatus.
+      const getter = (opts as RpcRuntimeOptions | undefined)?.getErasureStatus
+      if (!getter) throw { code: -32601, message: "erasure status not available on this node" }
+      const cid = String((payload.params ?? [])[0] ?? "")
+      if (!cid) throw { code: -32602, message: "missing manifest CID" }
+      return getter(cid)
     }
     case "coc_getEquivocationsTotal": {
       // Cheap counter for ops monitoring. The operator runbook
