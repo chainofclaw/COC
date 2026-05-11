@@ -1350,6 +1350,23 @@ test("RPC Extended Methods", async (t) => {
     assert.doesNotMatch(r2.error!.message, /version=|INVALID_ARGUMENT|code=/, "must not leak ethers internals")
   })
 
+  await t.test("#184: coc_chainStats does not crash when chain.cfg.chainId is undefined", async () => {
+    // Pre-fix `chain.cfg.chainId.toString(16)` assumed chainId was
+    // always set, but ChainEngineConfig.chainId is optional in the
+    // type. Bare undefined.toString() leaked as
+    // -32603 "Cannot read properties of undefined (reading 'toString')".
+    // This fixture deliberately does NOT pass chainId to ChainEngine
+    // (see line 38-48), so chain.cfg.chainId is undefined here — making
+    // this a direct repro of the bug.
+    const stats = await rpcCall(port, "coc_chainStats") as Record<string, unknown>
+    assert.ok(typeof stats === "object" && stats !== null, "must return an object")
+    assert.equal(stats.chainId, "0x1", `chainId must fall back to "0x1" when cfg.chainId is undefined, got ${stats.chainId}`)
+    assert.ok(typeof stats.blockHeight === "string", "blockHeight must be hex")
+    assert.ok(typeof stats.validatorCount === "number", "validatorCount must be number")
+    // Defend against V8 leak in error path.
+    assert.doesNotMatch(JSON.stringify(stats), /Cannot read properties|undefined.*reading/, "must not leak TypeError")
+  })
+
   if (prevDevAccounts === undefined) {
     delete process.env.COC_DEV_ACCOUNTS
   } else {
