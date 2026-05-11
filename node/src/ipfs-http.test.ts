@@ -635,6 +635,58 @@ describe("IpfsHttpServer", () => {
     }
   })
 
+  it("#236: /api/v0/files/cp + /files/mv read second ?arg= for destination (kubo compat)", async () => {
+    // Pre-fix the handlers read `?dest=<path>` but kubo HTTP RPC sends
+    // dest as a second `?arg=` value. Result: every kubo-CLI / ipfs-http-
+    // client cp/mv silently failed with 500 because dest was "" →
+    // normalizePath("") → splitPath("/") → "cannot operate on root path
+    // directly". Now reads `arg[1]` first, falls back to ?dest= for
+    // legacy callers.
+    const { IpfsMfs } = await import("./ipfs-mfs.ts")
+    const mfs = new IpfsMfs(store, unixfs)
+    server.attachSubsystems({ mfs })
+    // Seed a source file.
+    await fetch("/api/v0/files/write?arg=/src&create=true", {
+      method: "POST",
+      headers: { "content-type": "application/octet-stream" },
+      body: new TextEncoder().encode("hello"),
+    })
+
+    // kubo-style: two ?arg= values — cp should succeed
+    const cpRes = await fetch("/api/v0/files/cp?arg=/src&arg=/dst", { method: "POST" })
+    assert.equal(cpRes.status, 200, `kubo-style cp must succeed, got ${cpRes.status}`)
+    // Verify dst exists
+    const statRes = await fetch("/api/v0/files/stat?arg=/dst", { method: "POST" })
+    assert.equal(statRes.status, 200, "copied file must exist at /dst")
+
+    // Single arg → 400 with explicit "requires two ?arg=" message (not 500)
+    const oneArgRes = await fetch("/api/v0/files/cp?arg=/src", { method: "POST" })
+    assert.equal(oneArgRes.status, 400, `single-arg cp must be 400, got ${oneArgRes.status}`)
+    const oneArgBody = await oneArgRes.json() as { error?: string; message?: string }
+    assert.notEqual(oneArgBody.error, "internal error",
+      `single-arg cp must not leak 'internal error', got ${JSON.stringify(oneArgBody)}`)
+    assert.match(`${oneArgBody.message ?? ""}`, /two .?arg.? values/i,
+      `single-arg cp error must reference two-arg requirement, got ${JSON.stringify(oneArgBody)}`)
+
+    // mv has the same contract — seed another source
+    await fetch("/api/v0/files/write?arg=/src2&create=true", {
+      method: "POST",
+      headers: { "content-type": "application/octet-stream" },
+      body: new TextEncoder().encode("world"),
+    })
+    const mvRes = await fetch("/api/v0/files/mv?arg=/src2&arg=/dst2", { method: "POST" })
+    assert.equal(mvRes.status, 200, `kubo-style mv must succeed, got ${mvRes.status}`)
+
+    // Legacy ?dest= fallback still works for backward-compat
+    await fetch("/api/v0/files/write?arg=/src3&create=true", {
+      method: "POST",
+      headers: { "content-type": "application/octet-stream" },
+      body: new TextEncoder().encode("legacy"),
+    })
+    const legacyRes = await fetch("/api/v0/files/cp?arg=/src3&dest=/dst3", { method: "POST" })
+    assert.equal(legacyRes.status, 200, `legacy ?dest= cp must still succeed, got ${legacyRes.status}`)
+  })
+
   it("#210: /api/v0/erasure/status maps ErasureError codes to 4xx (no 500 leak)", async () => {
     // Pre-fix the outer catch in IpfsHttpServer only mapped
     // ErasureError "invalid_params" → 400 and "not_found" → 404. The

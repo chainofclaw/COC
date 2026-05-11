@@ -57,6 +57,15 @@ function firstQueryValue(raw: string | string[] | undefined): string | undefined
   return raw
 }
 
+// #236: kubo's /files/cp + /files/mv both take destination as a SECOND
+// `?arg=` value. firstQueryValue coalesced everything to [0]; this
+// returns the Nth value so the second arg lands on the dest field.
+function nthQueryValue(raw: string | string[] | undefined, n: number): string | undefined {
+  if (raw === undefined) return undefined
+  if (Array.isArray(raw)) return raw[n]
+  return n === 0 ? raw : undefined
+}
+
 function isNotFoundError(err: unknown): boolean {
   if (err && typeof err === "object" && "code" in err && (err as { code: unknown }).code === "ENOENT") return true
   const msg = String(err instanceof Error ? err.message : err)
@@ -1055,16 +1064,29 @@ export class IpfsHttpServer {
           break
         }
         case "mv": {
+          // #236: kubo HTTP RPC sends two ?arg= values for src + dest.
+          // Pre-fix this read `?dest=` (which kubo never sends) so the
+          // dest was always "" → mfs.mv("/src","") → splitPath("/")
+          // throws "cannot operate on root path directly" → 500 leak.
           const source = arg
-          const dest = firstQueryValue(url.query?.dest) ?? ""
+          const dest = nthQueryValue(url.query?.arg, 1) ?? firstQueryValue(url.query?.dest) ?? ""
+          if (!source || !dest) {
+            throw new HttpError(400, "bad request", "mv requires two ?arg= values: source and destination")
+          }
           await this.mfs.mv(source, dest)
           res.writeHead(200, { "content-type": "application/json" })
           res.end(JSON.stringify({ ok: true }))
           break
         }
         case "cp": {
+          // #236: same kubo HTTP RPC contract as mv — two ?arg= values.
+          // Keep `?dest=` as legacy fallback for any internal caller
+          // still relying on the old shape.
           const source = arg
-          const dest = firstQueryValue(url.query?.dest) ?? ""
+          const dest = nthQueryValue(url.query?.arg, 1) ?? firstQueryValue(url.query?.dest) ?? ""
+          if (!source || !dest) {
+            throw new HttpError(400, "bad request", "cp requires two ?arg= values: source and destination")
+          }
           await this.mfs.cp(source, dest)
           res.writeHead(200, { "content-type": "application/json" })
           res.end(JSON.stringify({ ok: true }))
