@@ -15,6 +15,8 @@ import {
   encodeFile as erasureEncode,
   ErasureError,
   type ErasureManifest,
+  MAX_DATA_SHARDS,
+  MAX_PARITY_SHARDS,
 } from "./ipfs-erasure.ts"
 import {
   resolveCid,
@@ -272,9 +274,25 @@ export class IpfsHttpServer {
       res.writeHead(404)
       res.end(JSON.stringify({ error: "not found" }))
       } catch (err) {
-        const status = err instanceof HttpError ? err.status : 500
-        const code = err instanceof HttpError ? err.code : "internal error"
-        const message = err instanceof HttpError && err.message !== code ? err.message : undefined
+        // #180: defensively map ErasureError to 4xx — the inline
+        // handleCat path already does this for read-side ErasureError,
+        // but handleAdd's `erasureEncode` could also throw with
+        // code="invalid_params" and bubble up as 500 with a useless
+        // "internal error" body if a new ErasureError class slips in.
+        let status = err instanceof HttpError ? err.status : 500
+        let code = err instanceof HttpError ? err.code : "internal error"
+        let message = err instanceof HttpError && err.message !== code ? err.message : undefined
+        if (status === 500 && err instanceof ErasureError) {
+          if (err.code === "invalid_params") {
+            status = 400
+            code = "invalid erasure params"
+            message = err.message
+          } else if (err.code === "not_found") {
+            status = 404
+            code = "not found"
+            message = err.message
+          }
+        }
         if (!res.headersSent) {
           res.writeHead(status, { "content-type": "application/json" })
         }
@@ -1203,6 +1221,17 @@ function parseErasureSpec(spec: string | undefined): { n: number; m: number } | 
   const m = Number(match[2])
   if (!Number.isInteger(n) || !Number.isInteger(m) || n < 1 || m < 1) {
     throw new HttpError(400, "invalid erasure spec", `n and m must be positive integers, got n=${n} m=${m}`)
+  }
+  // #180: pre-fix the upper bound (MAX_DATA_SHARDS / MAX_PARITY_SHARDS)
+  // wasn't enforced here. `erasureEncode` later threw an ErasureError
+  // which handleAdd didn't catch — surfaced as a generic 500 after the
+  // multipart body was fully read and the UnixFS file was already
+  // added. Reject at parse time instead so we don't waste the upload.
+  if (n > MAX_DATA_SHARDS) {
+    throw new HttpError(400, "invalid erasure spec", `n=${n} exceeds MAX_DATA_SHARDS (${MAX_DATA_SHARDS})`)
+  }
+  if (m > MAX_PARITY_SHARDS) {
+    throw new HttpError(400, "invalid erasure spec", `m=${m} exceeds MAX_PARITY_SHARDS (${MAX_PARITY_SHARDS})`)
   }
   return { n, m }
 }

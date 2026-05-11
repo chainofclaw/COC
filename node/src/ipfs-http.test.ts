@@ -347,6 +347,32 @@ describe("IpfsHttpServer", () => {
     assert.deepEqual(new Uint8Array(await r7.buffer()), content)
   })
 
+  it("#180: /api/v0/add?erasure=N+M rejects N or M above MAX_DATA/PARITY_SHARDS with 400 (not 500)", async () => {
+    // Pre-fix parseErasureSpec only checked the lower bound (n>=1,
+    // m>=1). Values above MAX_DATA_SHARDS / MAX_PARITY_SHARDS (24
+    // each) parsed cleanly, the body was fully read + UnixFS'd,
+    // *then* erasureEncode threw and handleAdd didn't catch it —
+    // bubbled up as a generic 500 with "internal error" body and a
+    // stacktrace logged. Reject at parse time now so we don't waste
+    // the upload.
+    const r1 = await fetch(`/api/v0/add?erasure=25%2B1`, {
+      method: "POST",
+      headers: { "content-type": "application/octet-stream" },
+      body: "hello",
+    })
+    assert.equal(r1.status, 400, `n=25 must be 400 (not 500), got ${r1.status}`)
+    const body1 = await r1.json() as { error: string; message?: string }
+    assert.match(body1.error, /erasure/i)
+    assert.match(body1.message ?? body1.error, /MAX_DATA_SHARDS|exceeds/i)
+    // Symmetric: m above limit also rejects.
+    const r2 = await fetch(`/api/v0/add?erasure=1%2B25`, {
+      method: "POST",
+      headers: { "content-type": "application/octet-stream" },
+      body: "hello",
+    })
+    assert.equal(r2.status, 400, `m=25 must be 400, got ${r2.status}`)
+  })
+
   it("GET /api/v0/pin/ls?arg=<cid> returns only that CID when pinned", async () => {
     const dataA = new TextEncoder().encode("pin-A")
     const dataB = new TextEncoder().encode("pin-B")
