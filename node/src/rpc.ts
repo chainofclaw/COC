@@ -739,7 +739,7 @@ async function handleRpc(
     case "eth_newFilter": {
       if (filters.size >= MAX_FILTERS) {
         cleanupExpiredFilters(filters)
-        if (filters.size >= MAX_FILTERS) throw new Error("filter limit exceeded")
+        if (filters.size >= MAX_FILTERS) throw { code: -32005, message: "filter limit exceeded" }
       }
       const query = ((payload.params ?? [])[0] ?? {}) as Record<string, unknown>
       const id = `0x${randomBytes(16).toString("hex")}`
@@ -1224,7 +1224,7 @@ async function handleRpc(
     case "eth_newBlockFilter": {
       if (filters.size >= MAX_FILTERS) {
         cleanupExpiredFilters(filters)
-        if (filters.size >= MAX_FILTERS) throw new Error("filter limit exceeded")
+        if (filters.size >= MAX_FILTERS) throw { code: -32005, message: "filter limit exceeded" }
       }
       const id = `0x${randomBytes(16).toString("hex")}`
       const height = await Promise.resolve(chain.getHeight())
@@ -1241,7 +1241,7 @@ async function handleRpc(
     case "eth_newPendingTransactionFilter": {
       if (filters.size >= MAX_FILTERS) {
         cleanupExpiredFilters(filters)
-        if (filters.size >= MAX_FILTERS) throw new Error("filter limit exceeded")
+        if (filters.size >= MAX_FILTERS) throw { code: -32005, message: "filter limit exceeded" }
       }
       const id = `0x${randomBytes(16).toString("hex")}`
       // Pre-populate seenPendingTxs with everything already in the mempool
@@ -1275,7 +1275,7 @@ async function handleRpc(
       const height = await Promise.resolve(chain.getHeight())
       const end = filter.toBlock ?? height
       if (end - filter.fromBlock > MAX_LOG_BLOCK_RANGE) {
-        throw new Error(`block range too large: max ${MAX_LOG_BLOCK_RANGE} blocks`)
+        throw { code: -32602, message: `block range too large: max ${MAX_LOG_BLOCK_RANGE} blocks` }
       }
       return collectLogs(chain, filter.fromBlock, end, filter)
     }
@@ -1312,7 +1312,10 @@ async function handleRpc(
     }
     case "eth_compileLLL":
     case "eth_compileSerpent":
-      throw new Error(`${payload.method} is not supported`)
+      // #132: -32601 method not found per JSON-RPC §5.1 (these were
+      // deprecated in geth long ago; clients should treat as "doesn't
+      // exist" rather than a generic internal failure).
+      throw { code: -32601, message: `${payload.method} is not supported` }
     case "eth_getBlockReceipts": {
       // #114: per-receipt shape must match eth_getTransactionReceipt exactly.
       // Pre-fix this returned a custom subset missing contractAddress,
@@ -2078,7 +2081,10 @@ async function handleRpc(
       return didProvider.getCredentialAnchor(credentialId)
     }
     default:
-      throw new Error("method not supported")
+      // #132: -32601 method not found per JSON-RPC §5.1. Pre-fix this
+      // surfaced as -32603 internal-error, which made unknown-method
+      // probes look like server-side faults to monitoring tools.
+      throw { code: -32601, message: `method not supported: ${payload.method}` }
   }
 }
 
@@ -2985,11 +2991,11 @@ async function queryLogs(chain: IChainEngine, query: Record<string, unknown>, re
 
   // Reject invalid range where fromBlock > toBlock
   if (fromBlock > toBlock) {
-    throw new Error(`invalid block range: fromBlock ${fromBlock} > toBlock ${toBlock}`)
+    throw { code: -32602, message: `invalid block range: fromBlock ${fromBlock} > toBlock ${toBlock}` }
   }
   // Enforce block range limit to prevent resource exhaustion
   if (toBlock - fromBlock > MAX_LOG_BLOCK_RANGE) {
-    throw new Error(`block range too large: max ${MAX_LOG_BLOCK_RANGE} blocks, got ${toBlock - fromBlock}`)
+    throw { code: -32602, message: `block range too large: max ${MAX_LOG_BLOCK_RANGE} blocks, got ${toBlock - fromBlock}` }
   }
 
   // Normalize address filter: single string or array of strings
@@ -3042,10 +3048,10 @@ async function queryTraceFilter(chain: IChainEngine, evm: EvmChain, query: Recor
   const fromBlock = parseBlockTag(query.fromBlock ?? "earliest", height, finalizedHeight)
   const toBlock = parseBlockTag(query.toBlock ?? "latest", height, finalizedHeight)
   if (fromBlock > toBlock) {
-    throw new Error(`invalid block range: fromBlock ${fromBlock} > toBlock ${toBlock}`)
+    throw { code: -32602, message: `invalid block range: fromBlock ${fromBlock} > toBlock ${toBlock}` }
   }
   if (toBlock - fromBlock > MAX_TRACE_BLOCK_RANGE) {
-    throw new Error(`trace block range too large: max ${MAX_TRACE_BLOCK_RANGE} blocks, got ${toBlock - fromBlock}`)
+    throw { code: -32602, message: `trace block range too large: max ${MAX_TRACE_BLOCK_RANGE} blocks, got ${toBlock - fromBlock}` }
   }
 
   const fromAddresses = normalizeTraceAddressFilter(query.fromAddress)
