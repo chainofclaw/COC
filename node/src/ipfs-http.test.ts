@@ -20,11 +20,14 @@ let baseUrl: string
 function fetch(path: string, opts?: { method?: string; body?: Uint8Array | string; headers?: Record<string, string> }): Promise<{ status: number; headers: http.IncomingHttpHeaders; json: () => Promise<unknown>; text: () => Promise<string>; buffer: () => Promise<Buffer> }> {
   return new Promise((resolve, reject) => {
     const url = new URL(path, baseUrl)
+    // #136: kubo HTTP RPC requires POST for /api/v0/* endpoints to
+    // prevent CSRF. The /ipfs/ gateway path stays GET (read-only).
+    const defaultMethod = url.pathname.startsWith("/api/v0/") ? "POST" : "GET"
     const reqOpts: http.RequestOptions = {
       hostname: url.hostname,
       port: url.port,
       path: url.pathname + url.search,
-      method: opts?.method ?? "GET",
+      method: opts?.method ?? defaultMethod,
       headers: opts?.headers ?? {},
     }
     const req = http.request(reqOpts, (res) => {
@@ -395,6 +398,33 @@ describe("IpfsHttpServer", () => {
     const statBody = await res.json() as Record<string, number>
     assert.equal(statBody.DataSize, totalSize, `DataSize must reflect actual user data, got ${statBody.DataSize}`)
     assert.equal(statBody.CumulativeSize, totalSize, "CumulativeSize must equal file size")
+  })
+
+  it("#136: GET on /api/v0/* must return 405 (CSRF protection)", async () => {
+    // Probed live testnet: GET /api/v0/add returned 200 with an empty
+    // file CID — meaning any web page could pin/evict/gc via <img src>.
+    // kubo spec mandates POST-only on /api/v0/* to block this.
+    const routes = ["/api/v0/version", "/api/v0/id", "/api/v0/stat", "/api/v0/cat?arg=Qm", "/api/v0/add", "/api/v0/pin/add?arg=Qm", "/api/v0/pin/rm?arg=Qm", "/api/v0/block/rm?arg=Qm", "/api/v0/repo/gc"]
+    for (const route of routes) {
+      const res = await fetch(route, { method: "GET" })
+      assert.equal(res.status, 405, `GET ${route} must 405, got ${res.status}`)
+      assert.equal(res.headers.allow, "POST", `Allow header must be "POST", got ${res.headers.allow}`)
+    }
+    // Sanity: POST still works.
+    const post = await fetch("/api/v0/version", { method: "POST" })
+    assert.equal(post.status, 200, "POST /api/v0/version must still work")
+  })
+
+  it("#136: /ipfs/<cid> gateway accepts GET (read-only content addressing)", async () => {
+    // The /ipfs/ gateway is intentionally GET-able — it's read-only
+    // content addressing, no state mutation possible. Only /api/v0/*
+    // is POST-only per kubo spec.
+    const data = new TextEncoder().encode("gateway content")
+    const meta = await unixfs.addFile("g.txt", data)
+    const res = await fetch(`/ipfs/${meta.cid}`, { method: "GET" })
+    assert.equal(res.status, 200, "GET /ipfs/<cid> must work — gateway is read-only and intentionally GET")
+    const buf = await res.buffer()
+    assert.deepEqual(new Uint8Array(buf), data)
   })
 })
 

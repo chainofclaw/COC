@@ -73,7 +73,7 @@ describe("IPFS E2E", () => {
 
   describe("Server Info", () => {
     it("GET /api/v0/version returns version info", async () => {
-      const res = await fetch(`${base}/api/v0/version`)
+      const res = await fetch(`${base}/api/v0/version`, { method: "POST" })
       assert.equal(res.status, 200)
       const body = (await res.json()) as Record<string, string>
       assert.equal(body.Version, "0.1.0-coc")
@@ -84,7 +84,7 @@ describe("IPFS E2E", () => {
     })
 
     it("GET /api/v0/id returns node identity", async () => {
-      const res = await fetch(`${base}/api/v0/id`)
+      const res = await fetch(`${base}/api/v0/id`, { method: "POST" })
       assert.equal(res.status, 200)
       const body = (await res.json()) as Record<string, unknown>
       assert.equal(body.ID, "e2e-node")
@@ -117,7 +117,7 @@ describe("IPFS E2E", () => {
     })
 
     it("reads file via /api/v0/cat", async () => {
-      const res = await fetch(`${base}/api/v0/cat?arg=${smallCid}`)
+      const res = await fetch(`${base}/api/v0/cat?arg=${smallCid}`, { method: "POST" })
       assert.equal(res.status, 200)
       const buf = new Uint8Array(await res.arrayBuffer())
       assert.deepEqual(buf, new TextEncoder().encode("hello ipfs e2e"))
@@ -143,7 +143,7 @@ describe("IPFS E2E", () => {
       largeCid = addJson.Hash
       assert.ok(largeCid)
 
-      const catRes = await fetch(`${base}/api/v0/cat?arg=${largeCid}`)
+      const catRes = await fetch(`${base}/api/v0/cat?arg=${largeCid}`, { method: "POST" })
       assert.equal(catRes.status, 200)
       const catBuf = new Uint8Array(await catRes.arrayBuffer())
       assert.equal(catBuf.length, 300 * 1024)
@@ -162,7 +162,7 @@ describe("IPFS E2E", () => {
       emptyCid = addJson.Hash
       assert.ok(emptyCid)
 
-      const catRes = await fetch(`${base}/api/v0/cat?arg=${emptyCid}`)
+      const catRes = await fetch(`${base}/api/v0/cat?arg=${emptyCid}`, { method: "POST" })
       assert.equal(catRes.status, 200)
       const catBuf = new Uint8Array(await catRes.arrayBuffer())
       assert.equal(catBuf.length, 0)
@@ -186,14 +186,14 @@ describe("IPFS E2E", () => {
       assert.ok(typeof putJson.Size === "number" && putJson.Size > 0)
       blockCid = putJson.Key as string
 
-      const getRes = await fetch(`${base}/api/v0/block/get?arg=${blockCid}`)
+      const getRes = await fetch(`${base}/api/v0/block/get?arg=${blockCid}`, { method: "POST" })
       assert.equal(getRes.status, 200)
       const getBuf = new Uint8Array(await getRes.arrayBuffer())
       assert.deepEqual(getBuf, data)
     })
 
     it("block/stat returns key and size", async () => {
-      const res = await fetch(`${base}/api/v0/block/stat?arg=${blockCid}`)
+      const res = await fetch(`${base}/api/v0/block/stat?arg=${blockCid}`, { method: "POST" })
       assert.equal(res.status, 200)
       const json = (await res.json()) as Record<string, unknown>
       assert.equal(json.Key, blockCid)
@@ -218,7 +218,7 @@ describe("IPFS E2E", () => {
     })
 
     it("ls lists file links for a CID", async () => {
-      const res = await fetch(`${base}/api/v0/ls?arg=${fileCid}`)
+      const res = await fetch(`${base}/api/v0/ls?arg=${fileCid}`, { method: "POST" })
       assert.equal(res.status, 200)
       const json = (await res.json()) as {
         Objects: Array<{ Hash: string; Links: unknown[] }>
@@ -229,7 +229,7 @@ describe("IPFS E2E", () => {
     })
 
     it("object/stat returns block metadata", async () => {
-      const res = await fetch(`${base}/api/v0/object/stat?arg=${fileCid}`)
+      const res = await fetch(`${base}/api/v0/object/stat?arg=${fileCid}`, { method: "POST" })
       assert.equal(res.status, 200)
       const json = (await res.json()) as Record<string, unknown>
       assert.equal(json.Hash, fileCid)
@@ -266,7 +266,7 @@ describe("IPFS E2E", () => {
     })
 
     it("pin/ls includes pinned CID", async () => {
-      const res = await fetch(`${base}/api/v0/pin/ls`)
+      const res = await fetch(`${base}/api/v0/pin/ls`, { method: "POST" })
       assert.equal(res.status, 200)
       const json = (await res.json()) as {
         Keys: Record<string, { Type: string }>
@@ -289,7 +289,7 @@ describe("IPFS E2E", () => {
       const addJson = (await addRes.json()) as Record<string, string>
       const cid = addJson.Hash
 
-      const getRes = await fetch(`${base}/api/v0/get?arg=${cid}`)
+      const getRes = await fetch(`${base}/api/v0/get?arg=${cid}`, { method: "POST" })
       assert.equal(getRes.status, 200)
       assert.equal(getRes.headers.get("content-type"), "application/x-tar")
       const tarBuf = new Uint8Array(await getRes.arrayBuffer())
@@ -495,7 +495,7 @@ describe("IPFS E2E", () => {
       const handler = () => {}
       pubsub.subscribe("ls-test-topic", handler)
       try {
-        const res = await fetch(`${base}/api/v0/pubsub/ls`)
+        const res = await fetch(`${base}/api/v0/pubsub/ls`, { method: "POST" })
         assert.equal(res.status, 200)
         const json = (await res.json()) as { Strings: string[] }
         assert.ok(Array.isArray(json.Strings))
@@ -511,12 +511,12 @@ describe("IPFS E2E", () => {
   describe("Error Cases", () => {
     it("cat with non-existent CID returns error", async () => {
       const fakeCid = "bafkreiaaaaaaaaaaaaaaaaaaaaaa"
-      const res = await fetch(`${base}/api/v0/cat?arg=${fakeCid}`)
+      const res = await fetch(`${base}/api/v0/cat?arg=${fakeCid}`, { method: "POST" })
       assert.ok(res.status >= 400)
     })
 
     it("cat without arg returns 400", async () => {
-      const res = await fetch(`${base}/api/v0/cat`)
+      const res = await fetch(`${base}/api/v0/cat`, { method: "POST" })
       assert.equal(res.status, 400)
     })
   })
@@ -525,7 +525,7 @@ describe("IPFS E2E", () => {
 
   describe("Repo Stats", () => {
     it("stat shows non-zero objects after uploads", async () => {
-      const res = await fetch(`${base}/api/v0/stat`)
+      const res = await fetch(`${base}/api/v0/stat`, { method: "POST" })
       assert.equal(res.status, 200)
       const json = (await res.json()) as Record<string, unknown>
       assert.ok(typeof json.RepoSize === "number")

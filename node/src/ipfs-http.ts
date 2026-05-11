@@ -162,6 +162,17 @@ export class IpfsHttpServer {
         return
       }
 
+      // #136: kubo's HTTP RPC spec requires POST for all /api/v0/*
+      // endpoints to prevent CSRF — browsers fire GET on <img>/<script>
+      // tags without Same-Origin Policy, which would otherwise let any
+      // visited webpage trigger state-changing operations (pin/add,
+      // block/rm, repo/gc) against a victim's local IPFS daemon.
+      if (req.method !== "POST") {
+        res.writeHead(405, { "allow": "POST", "content-type": "application/json" })
+        res.end(JSON.stringify({ error: "method not allowed: /api/v0/* requires POST" }))
+        return
+      }
+
       if (url.pathname === "/api/v0/add") {
         await this.handleAdd(req, res, url.query.erasure as string | undefined)
         return
