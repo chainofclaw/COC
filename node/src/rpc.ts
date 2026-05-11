@@ -1018,22 +1018,39 @@ async function handleRpc(
       return await work
     }
     case "eth_sign": {
-      const address = String((payload.params ?? [])[0] ?? "").toLowerCase()
-      const message = String((payload.params ?? [])[1] ?? "")
+      // #154: pre-fix bogus address + missing params surfaced as
+      // -32603 "account not found: <raw input>" leaking the typo
+      // back. Validate shape upfront so clients get -32602; only
+      // address-not-in-dev-keystore yields -32004 (resource not
+      // available — the address is well-formed, just not loaded).
+      const address = requireAddressParam(payload.params ?? [], 0).toLowerCase() as Hex
+      const rawMessage = (payload.params ?? [])[1]
+      if (typeof rawMessage !== "string") {
+        throw { code: -32602, message: "invalid message: expected hex string" }
+      }
+      const messageBody = rawMessage.startsWith("0x") ? rawMessage.slice(2) : rawMessage
+      if (messageBody.length % 2 !== 0 || (messageBody.length > 0 && !/^[0-9a-fA-F]+$/.test(messageBody))) {
+        throw { code: -32602, message: "invalid message: must be even-length hex (with optional 0x prefix)" }
+      }
 
       const account = testAccounts.get(address)
-      if (!account) throw new Error(`account not found: ${address}`)
+      if (!account) throw { code: -32004, message: `account not in dev keystore: ${address}` }
 
-      const messageHash = hashMessage(Buffer.from(message.startsWith("0x") ? message.slice(2) : message, "hex"))
+      const messageHash = hashMessage(Buffer.from(messageBody, "hex"))
       const signature = account.signingKey.sign(messageHash)
       return signature.serialized
     }
     case "eth_signTypedData_v4": {
-      const address = String((payload.params ?? [])[0] ?? "").toLowerCase()
+      // #154: same fix as eth_sign — validate address and typedData
+      // shape upfront so malformed inputs return -32602 not -32603.
+      const address = requireAddressParam(payload.params ?? [], 0).toLowerCase() as Hex
       const typedData = (payload.params ?? [])[1]
+      if (typedData === null || typeof typedData !== "object" || Array.isArray(typedData)) {
+        throw { code: -32602, message: "invalid typedData: expected object" }
+      }
 
       const account = testAccounts.get(address)
-      if (!account) throw new Error(`account not found: ${address}`)
+      if (!account) throw { code: -32004, message: `account not in dev keystore: ${address}` }
 
       // EIP-712 compliant: use TypedDataEncoder for correct domain-separated hash
       const td = typedData as Record<string, unknown>
