@@ -180,6 +180,50 @@ test("POST /pose/receipt rejects unknown challengeId", async () => {
   }
 })
 
+test("#212: POST /pose/receipt rejects malformed responseAtMs without leaking V8 BigInt error", async () => {
+  // Pre-fix `BigInt(String(rc.responseAtMs ?? 0))` threw a V8
+  // SyntaxError ("Cannot convert [object Object] to a BigInt",
+  // "Cannot convert 12.5 to a BigInt") for non-coercible inputs.
+  // The outer catch carried the V8 wording through to clients —
+  // same leak class as #176 (top-level catch / receipt-rejection
+  // V8 leaks). Validate upfront so clients get a clean -32602-style
+  // shape error instead.
+  const pose = createTestEngine()
+  const { port, close } = await startTestServer(pose)
+  try {
+    const validChId = "0x" + "1".repeat(64)
+    const validNodeId = "0x" + "a".repeat(64)
+    const validSig = "0x" + "f".repeat(130)
+    const baseReceipt = {
+      challengeId: validChId,
+      nodeId: validNodeId,
+      nodeSig: validSig,
+    }
+    const cases: Array<{ value: unknown; label: string }> = [
+      { value: {}, label: "object" },
+      { value: [1, 2], label: "array" },
+      { value: "abc", label: "non-digit string" },
+      { value: "12.5", label: "fractional string" },
+      { value: -1, label: "negative number" },
+      { value: 1.5, label: "fractional number" },
+      { value: true, label: "boolean" },
+    ]
+    for (const { value, label } of cases) {
+      const r = await fetchJson(port, "POST", "/pose/receipt", {
+        challengeId: validChId,
+        receipt: { ...baseReceipt, responseAtMs: value },
+      })
+      assert.equal(r.status, 400, `responseAtMs=${label} must be 400, got ${r.status}`)
+      const errStr = String(r.data.error ?? "")
+      assert.match(errStr, /responseAtMs/i, `${label}: error must name the field, got ${errStr}`)
+      assert.doesNotMatch(errStr, /Cannot convert|BigInt|SyntaxError/i,
+        `${label}: must not leak V8 BigInt error wording, got ${errStr}`)
+    }
+  } finally {
+    close()
+  }
+})
+
 test("unmatched route returns false from handlePoseRequest", () => {
   const pose = createTestEngine()
   const routes = registerPoseRoutes(pose)
