@@ -290,6 +290,56 @@ export class BlockIndex implements IBlockIndex {
     }
   }
 
+  /**
+   * PR-1G (2026-05-11): demote LATEST_BLOCK_KEY to a specific (already-stored)
+   * height. Used after `verifyAndPromoteTipWithPeers` detects that the local
+   * tip is a phantom — a block this node locally finalized via onFinalized
+   * but that the rest of the cluster never collectively finalized.
+   *
+   * The `b:N` entry at `targetHeight` must already exist; this method only
+   * rewrites the LATEST pointer. Returns the height we ended up at, or null
+   * if the target block could not be read.
+   */
+  async demoteLatestTo(targetHeight: bigint): Promise<bigint | null> {
+    const target = await this.getBlockByNumber(targetHeight)
+    if (!target) return null
+    const blockData = encoder.encode(serializeJSON(target))
+    await this.db.batch([{ type: "put", key: LATEST_BLOCK_KEY, value: blockData }])
+    return targetHeight
+  }
+
+  /**
+   * PR-1G (2026-05-11): delete `b:N` and corresponding `h:<hash>` entries
+   * for `N > keepHeight`. Used after a phantom-demote so stale speculative
+   * blocks don't get re-served via `/p2p/chain-snapshot` and re-poison
+   * peers via the wire handshake.
+   *
+   * Returns the number of (b:N, h:hash) entry pairs removed.
+   */
+  async pruneStaleBlocksAfterTip(keepHeight: bigint): Promise<{ pruned: number }> {
+    const keys = await this.db.getKeysWithPrefix(BLOCK_BY_NUMBER_PREFIX, { limit: -1 })
+    const ops: BatchOp[] = []
+    let pruned = 0
+    for (const k of keys) {
+      const suffix = k.slice(BLOCK_BY_NUMBER_PREFIX.length)
+      let n: bigint
+      try {
+        n = BigInt(suffix)
+      } catch {
+        continue
+      }
+      if (n <= keepHeight) continue
+      const block = await this.getBlockByNumber(n)
+      ops.push({ type: "del", key: k })
+      if (block?.hash) {
+        ops.push({ type: "del", key: BLOCK_BY_HASH_PREFIX + block.hash })
+      }
+      pruned += 1
+    }
+    if (ops.length > 0) await this.db.batch(ops)
+    return { pruned }
+  }
+
   buildTransactionOps(txHash: Hex, tx: TxWithReceipt): BatchOp[] {
     const key = TX_BY_HASH_PREFIX + txHash
     const txData = encoder.encode(serializeJSON(tx))

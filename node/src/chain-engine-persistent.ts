@@ -272,6 +272,196 @@ export class PersistentChainEngine {
     return this.blockIndex.getLatestBlock()
   }
 
+  /**
+   * PR-1G (2026-05-11): verify the local tip against peer snapshots and
+   * demote LATEST_BLOCK_KEY backward to the deepest peer-confirmed height if
+   * the tip turns out to be a self-finalized phantom.
+   *
+   * Background — 2026-05-11 T4 dual-stop drill: a validator that locally
+   * finalizes a block (via the onFinalized callback, which sets
+   * bftFinalized=true based on the LOCAL view of quorum) just before being
+   * stopped can persist a block at height H that the rest of the cluster
+   * never collectively finalized. After restart, PR-1D's
+   * `repairLatestPointer` happily promotes that phantom to LATEST, the node
+   * announces phantom-height via the wire handshake, and Phase R's
+   * self-equivocation guard refuses to re-prepare any *different* hash at
+   * H — deadlocking consensus cluster-wide. See
+   * `docs/pr-1g-phantom-block-design-2026-05-11.md` for the full analysis.
+   *
+   * Strategy — verify-on-init:
+   *  1. Call `fetcher.fetchSnapshots()` (typically `p2p.fetchSnapshots()`)
+   *     to collect recent-block manifests from peers.
+   *  2. Build a (height → hash → count) table from peer responses.
+   *  3. If ≥ quorum-of-peers report the same hash as us at our tip height,
+   *     keep LATEST.
+   *  4. Otherwise scan backward (height by height) until we find one where
+   *     our stored hash matches a peer-quorum hash, and demote LATEST there.
+   *  5. If no peers respond (lone bootstrap), keep LATEST as-is and log.
+   *
+   * `opts.quorumFraction` defaults to 0.5 — simple majority of responding
+   * peers. `opts.prune` defaults to false; set true to additionally remove
+   * the stale `b:N` / `h:<hash>` rows for N > demoted height (frees disk
+   * and prevents re-serving phantom blocks via `/p2p/chain-snapshot`).
+   */
+  async verifyAndPromoteTipWithPeers(
+    fetcher: { fetchSnapshots(): Promise<Array<{ blocks: ChainBlock[] }>> },
+    opts: { quorumFraction?: number; prune?: boolean } = {},
+  ): Promise<{
+    verified: boolean
+    demoted: boolean
+    demotedFrom: bigint | null
+    demotedTo: bigint | null
+    reason: "agreed" | "phantom-mismatch" | "peers-unreachable" | "no-local-tip" | "no-quorum-agreement"
+    peerCount: number
+    prunedCount?: number
+  }> {
+    const localTip = await this.blockIndex.getLatestBlock()
+    if (!localTip) {
+      return {
+        verified: false,
+        demoted: false,
+        demotedFrom: null,
+        demotedTo: null,
+        reason: "no-local-tip",
+        peerCount: 0,
+      }
+    }
+
+    const fraction = opts.quorumFraction ?? 0.5
+    const snapshots = await fetcher.fetchSnapshots().catch(() => [])
+    const peerCount = snapshots.length
+    if (peerCount === 0) {
+      log.warn("PR-1G: no peer snapshots available — keeping LATEST as-is", {
+        localTip: localTip.number.toString(),
+        localHash: localTip.hash,
+      })
+      return {
+        verified: false,
+        demoted: false,
+        demotedFrom: localTip.number,
+        demotedTo: localTip.number,
+        reason: "peers-unreachable",
+        peerCount,
+      }
+    }
+
+    // Build (height → hash → vote-count) table from peer snapshots.
+    const heightHashCounts = new Map<string, Map<string, number>>()
+    for (const snap of snapshots) {
+      if (!Array.isArray(snap.blocks)) continue
+      for (const block of snap.blocks) {
+        if (!block || block.number === undefined || !block.hash) continue
+        const heightKey = String(block.number)
+        const hash = String(block.hash).toLowerCase()
+        let inner = heightHashCounts.get(heightKey)
+        if (!inner) {
+          inner = new Map()
+          heightHashCounts.set(heightKey, inner)
+        }
+        inner.set(hash, (inner.get(hash) ?? 0) + 1)
+      }
+    }
+
+    const quorumOf = (total: number) => Math.max(1, Math.ceil(total * fraction))
+    const localHashLower = localTip.hash.toLowerCase()
+
+    // Step 1: confirm local tip with peer-quorum.
+    const tipKey = String(localTip.number)
+    const tipPeers = heightHashCounts.get(tipKey)
+    if (tipPeers) {
+      const total = [...tipPeers.values()].reduce((a, b) => a + b, 0)
+      const agree = tipPeers.get(localHashLower) ?? 0
+      if (agree >= quorumOf(total)) {
+        log.info("PR-1G: peer quorum confirms local tip", {
+          height: localTip.number.toString(),
+          hash: localTip.hash,
+          agreeing: agree,
+          total,
+        })
+        return {
+          verified: true,
+          demoted: false,
+          demotedFrom: localTip.number,
+          demotedTo: localTip.number,
+          reason: "agreed",
+          peerCount,
+        }
+      }
+    }
+
+    log.warn("PR-1G: local tip not confirmed by peer quorum — scanning backwards", {
+      localTip: localTip.number.toString(),
+      localHash: localTip.hash,
+      peersAtTip: tipPeers ? Array.from(tipPeers.entries()) : [],
+    })
+
+    // Step 2: walk backwards until we find a height where our stored hash
+    // matches peer-quorum. Cap the scan to keep startup-time bounded — if
+    // we have to rewind more than 256 blocks, snap-sync will be cheaper.
+    const SCAN_LIMIT = 256n
+    const scanFloor = localTip.number > SCAN_LIMIT ? localTip.number - SCAN_LIMIT : 1n
+    for (let h = localTip.number - 1n; h >= scanFloor; h--) {
+      const localBlock = await this.blockIndex.getBlockByNumber(h)
+      if (!localBlock) continue
+      const peersAt = heightHashCounts.get(String(h))
+      if (!peersAt) continue
+      const total = [...peersAt.values()].reduce((a, b) => a + b, 0)
+      const localHashAtH = localBlock.hash.toLowerCase()
+      const agree = peersAt.get(localHashAtH) ?? 0
+      if (agree >= quorumOf(total)) {
+        const demotedTo = await this.blockIndex.demoteLatestTo(h)
+        if (demotedTo === null) {
+          log.error("PR-1G: demote failed — getBlockByNumber returned null", {
+            height: h.toString(),
+          })
+          continue
+        }
+        log.warn("PR-1G: demoted LATEST to peer-confirmed height", {
+          from: localTip.number.toString(),
+          to: h.toString(),
+          hash: localBlock.hash,
+        })
+
+        let prunedCount: number | undefined
+        if (opts.prune) {
+          const result = await this.blockIndex.pruneStaleBlocksAfterTip(h)
+          prunedCount = result.pruned
+          if (prunedCount > 0) {
+            log.warn("PR-1G: pruned stale blocks after demoted tip", {
+              keepHeight: h.toString(),
+              pruned: prunedCount,
+            })
+          }
+        }
+
+        return {
+          verified: true,
+          demoted: true,
+          demotedFrom: localTip.number,
+          demotedTo: h,
+          reason: "phantom-mismatch",
+          peerCount,
+          prunedCount,
+        }
+      }
+    }
+
+    log.error("PR-1G: no peer-quorum agreement at any height in scan window — manual intervention may be needed", {
+      localTip: localTip.number.toString(),
+      localHash: localTip.hash,
+      scanFloor: scanFloor.toString(),
+      peerCount,
+    })
+    return {
+      verified: false,
+      demoted: false,
+      demotedFrom: localTip.number,
+      demotedTo: localTip.number,
+      reason: "no-quorum-agreement",
+      peerCount,
+    }
+  }
+
   async getHeight(): Promise<bigint> {
     const tip = await this.getTip()
     return tip?.number ?? 0n
