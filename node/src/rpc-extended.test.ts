@@ -1936,6 +1936,35 @@ test("RPC Extended Methods", async (t) => {
       `valid source must pass shape validation, got ${JSON.stringify(ok)}`)
   })
 
+  await t.test("#249: coc_getContracts rejects non-object pagination param (no silent all-return)", async () => {
+    // Pre-fix `(payload.params ?? [])[0] as Record<string, unknown>`
+    // was a TS runtime no-op. coc_getContracts(true) etc. silently fell
+    // through with .limit/.offset/.reverse as undefined → default pagination
+    // → returned all contracts. Same anti-pattern as #238/#239.
+    const probe = async (params: unknown[]) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "coc_getContracts", params }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    }
+    for (const bad of [true, false, "str", 42, [1, 2]]) {
+      const r = await probe([bad])
+      assert.equal(r.error?.code, -32602,
+        `coc_getContracts(${JSON.stringify(bad)}) must be -32602, got ${JSON.stringify(r)}`)
+      assert.match(r.error!.message, /invalid filter|expected object/i)
+    }
+    // Sanity: omitted / null / empty object treated as default pagination.
+    // (The fixture chain might not have blockIndex, so we just verify
+    // no -32602 shape error.)
+    for (const ok of [[], [null], [{}], [{ limit: 10 }]]) {
+      const r = await probe(ok)
+      assert.notEqual(r.error?.code, -32602,
+        `coc_getContracts(${JSON.stringify(ok)}) must pass shape, got ${JSON.stringify(r)}`)
+    }
+  })
+
   await t.test("#240: admin_addPeer / admin_removePeer reject non-string shape (no silent coercion)", async () => {
     // Pre-fix `String((payload.params ?? [])[1] ?? ...)` silently coerced
     // numbers/bools to plausible peerIds ("123", "true"). Pre-fix

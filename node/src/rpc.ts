@@ -2396,12 +2396,19 @@ async function handleRpc(
       return await chainStatsComputing
     }
     case "coc_getContracts": {
+      // #249: pre-fix `(payload.params ?? [])[0] as Record<string,
+      // unknown> | undefined` was a TS runtime no-op. coc_getContracts
+      // with bool/string/number/array silently fell through with
+      // property reads → undefined → "default pagination" → returned
+      // all contracts as if the arg was absent. Same anti-pattern as
+      // #238. Validate shape FIRST so the rejection fires regardless
+      // of whether the node has blockIndex enabled.
+      const opts = requireFilterObject((payload.params ?? [])[0])
       if (hasBlockIndex(chain)) {
-        const opts = (payload.params ?? [])[0] as Record<string, unknown> | undefined
         const contracts = await chain.blockIndex.getContracts({
-          limit: Math.min(Math.max(Number(opts?.limit ?? 50) || 50, 1), 10_000),
-          offset: Math.min(Math.max(Number(opts?.offset ?? 0) || 0, 0), 100_000),
-          reverse: opts?.reverse !== false,
+          limit: Math.min(Math.max(Number(opts.limit ?? 50) || 50, 1), 10_000),
+          offset: Math.min(Math.max(Number(opts.offset ?? 0) || 0, 0), 100_000),
+          reverse: opts.reverse !== false,
         })
         return contracts.map((c) => ({
           address: c.address,
