@@ -424,7 +424,16 @@ export class WsRpcServer {
       // returns the right code instead of falling back to -32603.
       throw { code: -32004, message: "connection not open" }
     }
-    const type = String(params[0] ?? "")
+    // #208: pre-fix `String(params[0] ?? "")` silently coerced any
+    // input — `eth_subscribe([["newHeads"]])` joined the single-element
+    // array to "newHeads" and got a working subscription with the wrong
+    // shape; `eth_subscribe([null])` mapped to "null" and surfaced as
+    // a confusing "unsupported subscription type: null". Reject
+    // non-string upfront.
+    if (typeof params[0] !== "string") {
+      throw { code: -32602, message: "invalid subscription type: expected string" }
+    }
+    const type = params[0]
     const subId = generateSubscriptionId()
 
     const client = this.clients.get(ws)
@@ -489,7 +498,15 @@ export class WsRpcServer {
   }
 
   private handleUnsubscribe(ws: WebSocket, params: unknown[]): boolean {
-    const subId = String(params[0] ?? "")
+    // #208: pre-fix `String(params[0] ?? "")` silently coerced any
+    // shape — number, null, array — to a never-matching string and
+    // returned `false` indistinguishable from "subscription already
+    // removed." Subscription IDs are minted as 0x + 32 hex chars
+    // (see generateSubscriptionId); validate that shape upfront.
+    if (typeof params[0] !== "string" || !/^0x[0-9a-fA-F]{32}$/.test(params[0])) {
+      throw { code: -32602, message: "invalid subscription id: must match /^0x[0-9a-fA-F]{32}$/" }
+    }
+    const subId = params[0]
     const client = this.clients.get(ws)
     if (!client) return false
 
