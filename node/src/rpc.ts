@@ -684,6 +684,12 @@ async function handleRpc(
     }
     case "eth_getLogs": {
       const query = ((payload.params ?? [])[0] ?? {}) as Record<string, unknown>
+      // EIP-234: blockHash is mutually exclusive with fromBlock/toBlock.
+      // Pre-fix this silently processed the range and surfaced a confusing
+      // "block range too large" error referencing the full chain height.
+      if (query.blockHash !== undefined && (query.fromBlock !== undefined || query.toBlock !== undefined)) {
+        throw { code: -32602, message: "eth_getLogs: blockHash is mutually exclusive with fromBlock/toBlock" }
+      }
       const logsHeight = await Promise.resolve(chain.getHeight())
       return await queryLogs(chain, query, logsHeight)
     }

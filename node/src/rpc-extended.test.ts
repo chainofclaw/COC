@@ -336,6 +336,24 @@ test("RPC Extended Methods", async (t) => {
     assert.strictEqual(receipts, null)
   })
 
+  await t.test("#116: eth_getLogs rejects blockHash + fromBlock combo with -32602", async () => {
+    // EIP-234: blockHash is mutually exclusive with fromBlock/toBlock.
+    // Pre-fix the implementation silently processed the range and surfaced
+    // a misleading "block range too large" error referencing the chain height.
+    const r = await fetch(`http://127.0.0.1:${port}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0", id: 1, method: "eth_getLogs",
+        params: [{ blockHash: "0x" + "00".repeat(32), fromBlock: "0x0" }],
+      }),
+    })
+    const json = await r.json() as { error?: { code: number; message: string } }
+    assert.ok(json.error, "must surface an error")
+    assert.equal(json.error!.code, -32602, "must be -32602 invalid params")
+    assert.match(json.error!.message, /mutually exclusive/i, "message must mention the mutual-exclusivity rule")
+  })
+
   await t.test("#114: eth_getBlockReceipts shape matches eth_getTransactionReceipt", async () => {
     // Pre-fix bug: getBlockReceipts returned a stripped-down 9-field shape
     // (no contractAddress / cumulativeGasUsed / effectiveGasPrice / logsBloom
