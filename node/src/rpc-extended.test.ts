@@ -53,7 +53,12 @@ test("RPC Extended Methods", async (t) => {
       discoveryPendingPeers: 0,
       discoveryIdentityFailures: 0,
     }),
-  } as P2PNode
+    // Stub for #108: coc_getPeers exposes the same shape as admin_peers.
+    getPeers: () => [
+      { id: "node-2", url: "http://10.0.0.2:29780" },
+      { id: "node-3", url: "http://10.0.0.3:29780", advertisedUrl: "http://203.0.113.3:29780" },
+    ],
+  } as unknown as P2PNode
   const port = 18790 + Math.floor(Math.random() * 100)
 
   const server: http.Server = startRpcServer("127.0.0.1", port, chainId, evm, chain, p2p, undefined, undefined, undefined, undefined, {
@@ -542,6 +547,19 @@ test("RPC Extended Methods", async (t) => {
         type: "bft-equivocation",
       },
     ])
+  })
+
+  await t.test("#108 part-2: coc_getPeers exposes the public peer list (id + url)", async () => {
+    const peers = await rpcCall(port, "coc_getPeers") as Array<{ id: string; url: string }>
+    assert.ok(Array.isArray(peers), "must return an array")
+    assert.equal(peers.length, 2)
+    // Second peer in the stub has advertisedUrl — it should win over url
+    const node3 = peers.find(p => p.id === "node-3")
+    assert.ok(node3, "node-3 must be present")
+    assert.equal(node3!.url, "http://203.0.113.3:29780", "advertisedUrl must take precedence over internal url")
+    const node2 = peers.find(p => p.id === "node-2")
+    assert.ok(node2, "node-2 must be present")
+    assert.equal(node2!.url, "http://10.0.0.2:29780", "url falls back when no advertisedUrl")
   })
 
   await t.test("#108: coc_erasureStatus bridges the existing /api/v0/erasure/status path to RPC", async () => {
