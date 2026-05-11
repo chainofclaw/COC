@@ -312,6 +312,41 @@ describe("IpfsHttpServer", () => {
     assert.equal(bgBody.error, "block not found")
   })
 
+  it("#174: /api/v0/cat honors offset + length query params", async () => {
+    // Pre-fix the handler accepted offset/length/count via query but
+    // ignored them, returning the full file. Malformed values
+    // (negative, non-numeric) also silently passed.
+    const content = new TextEncoder().encode("ABCDEFGHIJ") // 10 bytes
+    const meta = await unixfs.addFile("range.bin", content)
+    // (a) offset + length slice
+    const r1 = await fetch(`/api/v0/cat?arg=${meta.cid}&offset=2&length=3`, { method: "POST" })
+    assert.equal(r1.status, 200)
+    assert.deepEqual(new Uint8Array(await r1.buffer()), new TextEncoder().encode("CDE"))
+    // (b) offset only — tail from index 5
+    const r2 = await fetch(`/api/v0/cat?arg=${meta.cid}&offset=5`, { method: "POST" })
+    assert.equal(r2.status, 200)
+    assert.deepEqual(new Uint8Array(await r2.buffer()), new TextEncoder().encode("FGHIJ"))
+    // (c) `count` alias for length (js-ipfs compat)
+    const r3 = await fetch(`/api/v0/cat?arg=${meta.cid}&offset=0&count=4`, { method: "POST" })
+    assert.equal(r3.status, 200)
+    assert.deepEqual(new Uint8Array(await r3.buffer()), new TextEncoder().encode("ABCD"))
+    // (d) offset past end → empty (matches kubo)
+    const r4 = await fetch(`/api/v0/cat?arg=${meta.cid}&offset=100`, { method: "POST" })
+    assert.equal(r4.status, 200)
+    assert.equal((await r4.buffer()).length, 0)
+    // (e) negative offset → 400
+    const r5 = await fetch(`/api/v0/cat?arg=${meta.cid}&offset=-1`, { method: "POST" })
+    assert.equal(r5.status, 400)
+    assert.match((await r5.json() as { error: string }).error, /invalid offset/)
+    // (f) non-numeric offset → 400
+    const r6 = await fetch(`/api/v0/cat?arg=${meta.cid}&offset=notnum`, { method: "POST" })
+    assert.equal(r6.status, 400)
+    // (g) no params → full file (unchanged)
+    const r7 = await fetch(`/api/v0/cat?arg=${meta.cid}`, { method: "POST" })
+    assert.equal(r7.status, 200)
+    assert.deepEqual(new Uint8Array(await r7.buffer()), content)
+  })
+
   it("GET /api/v0/pin/ls?arg=<cid> returns only that CID when pinned", async () => {
     const dataA = new TextEncoder().encode("pin-A")
     const dataB = new TextEncoder().encode("pin-B")
