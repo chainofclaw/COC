@@ -243,7 +243,12 @@ export function registerPoseRoutes(
           }
           return jsonResponse(res, 200, { accepted: true })
         } catch (error) {
-          return jsonResponse(res, 400, { error: `receipt rejected: ${String(error)}` })
+          // #176: pre-fix `String(error)` leaked the underlying Error
+          // class name to clients. Keep the readable .message since
+          // it carries domain-specific info (quota state, signature
+          // verification result, etc.) but strip the class-name prefix.
+          const msg = error instanceof Error ? error.message : "unknown error"
+          return jsonResponse(res, 400, { error: `receipt rejected: ${msg}` })
         }
       },
     },
@@ -354,7 +359,12 @@ export function handlePoseRequest(
 
       route.handler(payload, res)
     } catch (error) {
-      jsonResponse(res, 400, { error: String(error) })
+      // #176: pre-fix `String(error)` leaked V8 SyntaxError class +
+      // source position for JSON.parse failures, and stack-class info
+      // for other thrown errors. Sanitize to a generic message — same
+      // pattern as the rest of the codebase (eth_sendRawTransaction
+      // #156, web3_sha3 #170, etc.).
+      jsonResponse(res, 400, { error: "invalid request" })
     }
   })
   return true
