@@ -755,7 +755,9 @@ export class IpfsHttpServer {
         case "read": {
           // Forward offset/count to IpfsMfs.read so partial reads work as
           // kubo CLI + js-ipfs expect. Pre-fix the params were silently
-          // dropped and every read returned the whole file.
+          // dropped and every read returned the whole file. The
+          // route-level catch (below) maps MFS "not found" / "is a
+          // directory" errors to structured 4xx for every MFS endpoint.
           const offsetRaw = url.query?.offset
           const countRaw = url.query?.count
           const opts: { offset?: number; count?: number } = {}
@@ -769,18 +771,7 @@ export class IpfsHttpServer {
             if (!Number.isFinite(n) || n < 0) throw new HttpError(400, "invalid count")
             opts.count = n
           }
-          let data: Uint8Array
-          try {
-            data = await this.mfs.read(arg, opts)
-          } catch (err) {
-            // Map MFS "not found" / "is a directory" errors to the
-            // structured 404 / 400 shape clients expect, instead of the
-            // generic 500 the catch-all would otherwise emit.
-            const msg = err instanceof Error ? err.message : String(err)
-            if (/^not found/.test(msg)) throw new HttpError(404, "not found", msg)
-            if (/^is a directory/.test(msg)) throw new HttpError(400, "is a directory", msg)
-            throw err
-          }
+          const data = await this.mfs.read(arg, opts)
           res.writeHead(200)
           res.end(data)
           break
@@ -840,9 +831,37 @@ export class IpfsHttpServer {
     } catch (err) {
       // Mirror the main catch's HttpError handling so routes can opt into
       // structured 4xx responses (e.g. read of a missing path → 404).
-      const status = err instanceof HttpError ? err.status : 500
-      const code = err instanceof HttpError ? err.code : "internal error"
-      const message = err instanceof HttpError && err.message !== code ? err.message : undefined
+      // For routes that throw a plain Error from IpfsMfs (e.g. "not found:
+      // /x", "is a directory: /y", "parent directory not found: /z"),
+      // promote those well-known message prefixes to 4xx here so every MFS
+      // endpoint is consistent — clients can rely on stat/cp/mv/rm/ls all
+      // emitting 404 for user typos instead of opaque 500s.
+      let httpErr = err instanceof HttpError ? err : null
+      if (!httpErr && err instanceof Error) {
+        const msg = err.message
+        // 404: any error message mentioning "not found" (e.g. "not found:",
+        // "parent directory not found:", "file not found:", "source not
+        // found:", "destination directory not found:").
+        if (/not found/i.test(msg)) {
+          httpErr = new HttpError(404, "not found", msg)
+        } else if (
+          /is a directory/i.test(msg) ||
+          /directory not empty/i.test(msg) ||
+          /^cannot (remove|operate on|copy)/i.test(msg) ||
+          /must be/i.test(msg) ||
+          /^missing /i.test(msg) ||
+          /^write would exceed/i.test(msg) ||
+          /^max mfs depth/i.test(msg) ||
+          /^path too long/i.test(msg) ||
+          /^null byte in path/i.test(msg) ||
+          /^invalid /i.test(msg)
+        ) {
+          httpErr = new HttpError(400, "bad request", msg)
+        }
+      }
+      const status = httpErr ? httpErr.status : 500
+      const code = httpErr ? httpErr.code : "internal error"
+      const message = httpErr && httpErr.message !== code ? httpErr.message : undefined
       if (status >= 500) {
         log.error("MFS route failed", { error: String(err) })
       } else {
