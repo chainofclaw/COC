@@ -1897,6 +1897,63 @@ test("RPC Extended Methods", async (t) => {
     assert.equal(ok3.error, undefined, "empty object filter must succeed")
   })
 
+  await t.test("#240: admin_addPeer / admin_removePeer reject non-string shape (no silent coercion)", async () => {
+    // Pre-fix `String((payload.params ?? [])[1] ?? ...)` silently coerced
+    // numbers/bools to plausible peerIds ("123", "true"). Pre-fix
+    // String({}) = "[object Object]" failed the regex, but bool/number
+    // slipped through. Same anti-pattern as #120/#220/#226/#238.
+    // Need a second server with enableAdminRpc=true since the main test
+    // fixture leaves admin off.
+    const adminPort = port + 1000
+    const adminServer = startRpcServer(
+      "127.0.0.1", adminPort, chainId, evm, chain, p2p,
+      undefined, undefined, "admin-test", undefined,
+      undefined,                            // runtimeOptions
+      { enableAdminRpc: true },             // rpcAuthOptions (12th arg)
+    )
+    try {
+      const probe = async (method: string, params: unknown[]) => {
+        const r = await fetch(`http://127.0.0.1:${adminPort}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+        })
+        return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+      }
+      const validUrl = "http://127.0.0.1:19780"
+      // peerId is non-string → -32602
+      for (const badId of [123, true, false, 1.5]) {
+        const r = await probe("admin_addPeer", [validUrl, badId])
+        assert.equal(r.error?.code, -32602,
+          `admin_addPeer(_, ${JSON.stringify(badId)}) must be -32602, got ${JSON.stringify(r)}`)
+        assert.match(r.error!.message, /peer ID|expected string/i)
+      }
+      // peerUrl is non-string → -32602
+      for (const badUrl of [123, true, {}, [validUrl]]) {
+        const r = await probe("admin_addPeer", [badUrl, "valid-id"])
+        assert.equal(r.error?.code, -32602,
+          `admin_addPeer(${JSON.stringify(badUrl)}, _) must be -32602, got ${JSON.stringify(r)}`)
+        assert.match(r.error!.message, /peer URL|expected.*string/i)
+      }
+      // admin_removePeer with non-string peerId → -32602
+      for (const badId of [123, true, false, {}, []]) {
+        const r = await probe("admin_removePeer", [badId])
+        assert.equal(r.error?.code, -32602,
+          `admin_removePeer(${JSON.stringify(badId)}) must be -32602, got ${JSON.stringify(r)}`)
+      }
+      // Sanity: well-shaped calls clear shape validation. The test
+      // fixture's p2p stub may not provide discovery.addDiscoveredPeers,
+      // so we only assert the response is NOT -32602 (= shape passed).
+      const ok = await probe("admin_addPeer", [validUrl, "valid-id"])
+      assert.notEqual(ok.error?.code, -32602, "well-shaped admin_addPeer must pass shape validation")
+      const okOmit = await probe("admin_addPeer", [validUrl])
+      assert.notEqual(okOmit.error?.code, -32602,
+        "omitted peerId must default to `peer-<timestamp>` (shape passes)")
+    } finally {
+      adminServer.close()
+    }
+  })
+
   if (prevDevAccounts === undefined) {
     delete process.env.COC_DEV_ACCOUNTS
   } else {

@@ -2485,8 +2485,20 @@ async function handleRpc(
       if (!(opts as Record<string, unknown>)?.enableAdminRpc) {
         throw { code: -32601, message: "admin methods disabled" }
       }
-      const peerUrl = String((payload.params ?? [])[0] ?? "")
-      const peerId = String((payload.params ?? [])[1] ?? `peer-${Date.now()}`)
+      // #240: pre-fix `String(...)` silently coerced numbers/bools to
+      // plausible-looking strings ("123", "true"), bypassing the
+      // alphanumeric peerId regex and the URL parse check. Reject
+      // non-string shapes upfront. Same class as #120/#220/#226/#238.
+      const peerUrlRaw = (payload.params ?? [])[0]
+      if (typeof peerUrlRaw !== "string" || peerUrlRaw.length === 0) {
+        throw { code: -32602, message: "invalid peer URL: expected non-empty string" }
+      }
+      const peerIdRaw = (payload.params ?? [])[1]
+      if (peerIdRaw !== undefined && peerIdRaw !== null && typeof peerIdRaw !== "string") {
+        throw { code: -32602, message: "invalid peer ID: expected string" }
+      }
+      const peerUrl = peerUrlRaw
+      const peerId = (peerIdRaw ?? `peer-${Date.now()}`) as string
       try { new URL(peerUrl) } catch {
         throw { code: -32602, message: "invalid peer URL" }
       }
@@ -2500,10 +2512,18 @@ async function handleRpc(
       if (!(opts as Record<string, unknown>)?.enableAdminRpc) {
         throw { code: -32601, message: "admin methods disabled" }
       }
-      const removePeerId = String((payload.params ?? [])[0] ?? "")
-      if (!removePeerId) {
+      // #240: same shape guard as admin_addPeer — pre-fix `String(true)`
+      // = "true" silently masqueraded as a peerId and the removePeer
+      // call no-op'd successfully, returning true and confusing the
+      // caller about whether the action took effect.
+      const removePeerRaw = (payload.params ?? [])[0]
+      if (removePeerRaw === undefined || removePeerRaw === null || removePeerRaw === "") {
         throw { code: -32602, message: "peer id required" }
       }
+      if (typeof removePeerRaw !== "string") {
+        throw { code: -32602, message: "invalid peer ID: expected string" }
+      }
+      const removePeerId = removePeerRaw
       p2p.discovery.removePeer(removePeerId)
       return true
     }
