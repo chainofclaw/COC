@@ -150,9 +150,21 @@ export class IpfsHttpServer {
           res.end(JSON.stringify({ error: "invalid CID" }))
           return
         }
-        const data = await this.unixfs.readFile(cid)
-        res.writeHead(200)
-        res.end(data)
+        // #168: pre-fix ENOENT for valid-shape-missing CIDs propagated
+        // to the outer 500 handler, logging a stacktrace for every probe.
+        // Map to 404 explicitly so missing-block looks like missing-block.
+        try {
+          const data = await this.unixfs.readFile(cid)
+          res.writeHead(200)
+          res.end(data)
+        } catch (err) {
+          if (isNotFoundError(err)) {
+            res.writeHead(404, { "content-type": "application/json" })
+            res.end(JSON.stringify({ error: "not found" }))
+          } else {
+            throw err
+          }
+        }
         return
       }
 
@@ -667,9 +679,20 @@ export class IpfsHttpServer {
       res.end(JSON.stringify({ error: !cid ? "missing cid" : "invalid cid" }))
       return
     }
-    const block = await loadRawBlock(this.store, cid)
-    res.writeHead(200)
-    res.end(block.bytes)
+    // #168: pre-fix ENOENT for missing blocks propagated to the outer
+    // 500 handler. Map to 404 so missing-block looks like missing-block.
+    try {
+      const block = await loadRawBlock(this.store, cid)
+      res.writeHead(200)
+      res.end(block.bytes)
+    } catch (err) {
+      if (isNotFoundError(err)) {
+        res.writeHead(404, { "content-type": "application/json" })
+        res.end(JSON.stringify({ error: "block not found" }))
+      } else {
+        throw err
+      }
+    }
   }
 
   private async handleBlockStat(res: http.ServerResponse, cid?: string): Promise<void> {
@@ -678,9 +701,19 @@ export class IpfsHttpServer {
       res.end(JSON.stringify({ error: !cid ? "missing cid" : "invalid cid" }))
       return
     }
-    const block = await loadRawBlock(this.store, cid)
-    res.writeHead(200, { "content-type": "application/json" })
-    res.end(JSON.stringify({ Key: block.cid, Size: block.bytes.length }))
+    // #168: same ENOENT → 404 mapping as handleBlockGet.
+    try {
+      const block = await loadRawBlock(this.store, cid)
+      res.writeHead(200, { "content-type": "application/json" })
+      res.end(JSON.stringify({ Key: block.cid, Size: block.bytes.length }))
+    } catch (err) {
+      if (isNotFoundError(err)) {
+        res.writeHead(404, { "content-type": "application/json" })
+        res.end(JSON.stringify({ error: "block not found" }))
+      } else {
+        throw err
+      }
+    }
   }
 
   private async handlePinAdd(_req: http.IncomingMessage, res: http.ServerResponse, cid?: string): Promise<void> {
@@ -1097,12 +1130,28 @@ export class IpfsHttpServer {
   }
 }
 
-/** Reject CIDs with path traversal, null bytes, whitespace, or excessive length */
+/**
+ * Reject CIDs with path traversal, null bytes, whitespace, excessive length,
+ * or that don't even look like base58-v0 (`Qm…`) / base32-v1 (`b…`/`B…`).
+ * #168: pre-fix any non-traversal string like `"bogus"` passed, then the
+ * blockstore opened `blocks/bogus`, hit ENOENT, and the handler surfaced
+ * the stacktrace as a generic 500. The 10-char floor rejects typos like
+ * "bogus" / "b" while allowing the fake-shape CIDs used in fixtures.
+ */
 function isValidCid(cid: string): boolean {
-  if (!cid || cid.length > 512) return false
+  if (!cid || cid.length < 10 || cid.length > 512) return false
   const trimmed = cid.trim()
-  if (trimmed !== cid || trimmed.length === 0) return false
-  return !/[\/\\]|\.\.|\0|\s/.test(cid)
+  if (trimmed !== cid) return false
+  if (/[\/\\]|\.\.|\0|\s/.test(cid)) return false
+  // Base58 v0: "Qm" + base58 chars. Strict alphabet (no 0/O/I/l).
+  if (cid.startsWith("Qm")) {
+    return /^Qm[1-9A-HJ-NP-Za-km-z]+$/.test(cid)
+  }
+  // Base32 v1: "b"/"B" + RFC 4648 base32 chars (no 0/1/8/9).
+  if (cid.startsWith("b") || cid.startsWith("B")) {
+    return /^[bB][a-z2-7]+$/.test(cid)
+  }
+  return false
 }
 
 /**
