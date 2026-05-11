@@ -1518,6 +1518,42 @@ test("RPC Extended Methods", async (t) => {
     assert.equal(sanityJson.error, undefined, "valid hex index must NOT error")
   })
 
+  await t.test("#196: eth_get/uninstallFilter* reject malformed filter ids (no silent String() coercion)", async () => {
+    // Pre-fix `const id = String((payload.params ?? [])[0] ?? "")`
+    // silently coerced any input — number, array, null — to a string
+    // that won't match any real filter. Callers got `[]` / `false`
+    // indistinguishable from "filter expired", and never learned
+    // their poll was malformed. Filter IDs are `0x` + 32 hex chars.
+    const cases: Array<{ method: string; value: unknown; label: string }> = [
+      { method: "eth_getFilterChanges", value: 42, label: "number" },
+      { method: "eth_getFilterChanges", value: null, label: "null" },
+      { method: "eth_getFilterChanges", value: ["0x" + "a".repeat(32)], label: "array" },
+      { method: "eth_getFilterChanges", value: "not-a-filter-id", label: "non-hex string" },
+      { method: "eth_getFilterChanges", value: "0x123", label: "too short" },
+      { method: "eth_uninstallFilter", value: 42, label: "number" },
+      { method: "eth_uninstallFilter", value: "not-a-filter-id", label: "non-hex" },
+      { method: "eth_getFilterLogs", value: { obj: 1 }, label: "object" },
+      { method: "eth_getFilterLogs", value: "0x" + "a".repeat(31), label: "31 chars" },
+    ]
+    for (const { method, value, label } of cases) {
+      const resp = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: [value] }),
+      })
+      const json = await resp.json() as { error?: { code: number; message: string }; result?: unknown }
+      assert.equal(json.error?.code, -32602, `${method}(${label}) must be -32602, got ${JSON.stringify(json)}`)
+      assert.match(json.error!.message, /filter id/i, `${method}: error must name the field`)
+    }
+    // Sanity: real filter from eth_newFilter round-trips correctly.
+    const fid = await rpcCall(port, "eth_newFilter", [{ fromBlock: "0x0", toBlock: "latest" }]) as string
+    assert.match(fid, /^0x[0-9a-fA-F]{32}$/, "newFilter must return shape-correct id")
+    const changes = await rpcCall(port, "eth_getFilterChanges", [fid])
+    assert.ok(Array.isArray(changes), "valid filter id must return array result")
+    const removed = await rpcCall(port, "eth_uninstallFilter", [fid])
+    assert.equal(removed, true, "valid filter id uninstall must return true")
+  })
+
   if (prevDevAccounts === undefined) {
     delete process.env.COC_DEV_ACCOUNTS
   } else {
