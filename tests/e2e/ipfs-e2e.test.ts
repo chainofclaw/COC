@@ -424,16 +424,25 @@ describe("IPFS E2E", () => {
       assert.ok(names.includes("hello.txt"))
     })
 
-    it("stat returns file metadata", async () => {
+    it("stat returns file metadata in kubo-compat PascalCase shape (#158)", async () => {
       const res = await fetch(
         `${base}/api/v0/files/stat?arg=/test-dir/hello.txt`,
         { method: "POST" },
       )
       assert.equal(res.status, 200)
       const json = (await res.json()) as Record<string, unknown>
-      assert.ok(json.hash)
-      assert.ok(typeof json.size === "number")
-      assert.equal(json.type, "file")
+      // #158: kubo's /api/v0/files/stat returns PascalCase keys.
+      // Pre-fix we emitted camelCase (hash/size/cumulativeSize/type/blocks)
+      // which broke ipfs-http-client + every other kubo-compat client.
+      assert.ok(json.Hash, "must have PascalCase Hash field")
+      assert.ok(typeof json.Size === "number", "Size must be a number")
+      assert.equal(json.Type, "file")
+      assert.ok(typeof json.CumulativeSize === "number")
+      assert.ok(typeof json.Blocks === "number")
+      // Negative: legacy camelCase keys must NOT be present.
+      assert.equal(json.hash, undefined, "legacy camelCase hash must be gone")
+      assert.equal(json.size, undefined, "legacy camelCase size must be gone")
+      assert.equal(json.type, undefined, "legacy camelCase type must be gone")
     })
 
     it("rm removes file and ls shows empty directory", async () => {
