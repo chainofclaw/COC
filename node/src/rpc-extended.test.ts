@@ -952,6 +952,37 @@ test("RPC Extended Methods", async (t) => {
     assert.equal(mixedJson[0].id, 42)
   })
 
+  await t.test("#142: eth_newFilter validates address and topic shape (rejects with -32602)", async () => {
+    // Pre-fix any string was accepted for address/topics. Malformed
+    // filters consumed MAX_FILTERS slots while matching 0 logs forever,
+    // and clients couldn't distinguish typo'd filters from "no events".
+    const validAddr = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+    const validTopic = "0x" + "a".repeat(64)
+    const cases: Array<{ params: unknown; what: string }> = [
+      { params: [{ address: "not-an-address" }], what: "address non-hex" },
+      { params: [{ address: "0x123" }], what: "address short hex" },
+      { params: [{ address: ["0x" + "f".repeat(40), "0xbad"] }], what: "address array with bad index" },
+      { params: [{ topics: ["not-hex"] }], what: "topic non-hex" },
+      { params: [{ topics: ["0x1"] }], what: "topic too short" },
+      { params: [{ topics: [null, "0xbad"] }], what: "topic null+bad" },
+      { params: [{ topics: [["0x" + "a".repeat(64), "0xbad"]] }], what: "topic OR-array with bad index" },
+    ]
+    for (const { params, what } of cases) {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_newFilter", params }),
+      })
+      const json = await r.json() as { result?: string; error?: { code: number; message: string } }
+      assert.ok(json.error, `eth_newFilter(${what}) must reject, got result=${json.result}`)
+      assert.equal(json.error!.code, -32602, `eth_newFilter(${what}) must be -32602, got ${json.error!.code}`)
+      assert.match(json.error!.message, /invalid filter (address|topic)/, `error message for ${what}`)
+    }
+    // Sanity: a fully valid filter spec creates a filter.
+    const okId = await rpcCall(port, "eth_newFilter", [{ address: validAddr, topics: [validTopic, null] }])
+    assert.match(okId as string, /^0x[0-9a-f]+$/i, "valid filter must return id")
+  })
+
   if (prevDevAccounts === undefined) {
     delete process.env.COC_DEV_ACCOUNTS
   } else {

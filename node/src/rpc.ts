@@ -801,6 +801,19 @@ async function handleRpc(
       const newFilterHeight = await Promise.resolve(chain.getHeight())
       const fromBlock = parseBlockTag(query.fromBlock, newFilterHeight)
       const toBlock = query.toBlock !== undefined ? parseBlockTag(query.toBlock, newFilterHeight) : undefined
+      // #142: validate address + topic shape so malformed inputs reject
+      // at the boundary instead of silently consuming a filter slot.
+      // Pre-fix `eth_newFilter({address:"0x123"})` succeeded and returned
+      // a filter id; the filter then matched zero logs forever, while
+      // the slot counted against MAX_FILTERS.
+      const FILTER_ADDR_RE = /^0x[0-9a-fA-F]{40}$/
+      const FILTER_TOPIC_RE = /^0x[0-9a-fA-F]{64}$/
+      const validateFilterAddr = (raw: unknown, idx: number): Hex => {
+        if (typeof raw !== "string" || !FILTER_ADDR_RE.test(raw)) {
+          throw { code: -32602, message: `invalid filter address at index ${idx}: must match /^0x[0-9a-fA-F]{40}$/` }
+        }
+        return raw.toLowerCase() as Hex
+      }
       // Normalize address: support both single string and array of addresses
       let filterAddress: Hex | undefined
       let filterAddresses: Hex[] | undefined
@@ -810,11 +823,32 @@ async function handleRpc(
           if (query.address.length > MAX_FILTER_ADDRESSES) {
             throw { code: -32602, message: `address array too large: ${query.address.length} > ${MAX_FILTER_ADDRESSES}` }
           }
-          filterAddresses = (query.address as string[]).map((a) => String(a).toLowerCase() as Hex)
+          filterAddresses = (query.address as unknown[]).map((a, i) => validateFilterAddr(a, i))
           filterAddress = filterAddresses.length > 0 ? filterAddresses[0] : undefined
         } else {
-          filterAddress = String(query.address).toLowerCase() as Hex
+          filterAddress = validateFilterAddr(query.address, 0)
         }
+      }
+      // Each topic position can be: null (wildcard), a 32-byte hex
+      // string, or a non-empty array of 32-byte hex strings (OR
+      // semantics) per the Ethereum JSON-RPC spec.
+      let normalizedTopics: Array<Hex | Hex[] | null> | undefined
+      if (Array.isArray(query.topics)) {
+        normalizedTopics = query.topics.map((t, i) => {
+          if (t === null || t === undefined) return null
+          if (Array.isArray(t)) {
+            return t.map((tt, j) => {
+              if (typeof tt !== "string" || !FILTER_TOPIC_RE.test(tt)) {
+                throw { code: -32602, message: `invalid filter topic at index ${i}[${j}]: must match /^0x[0-9a-fA-F]{64}$/ or null` }
+              }
+              return tt as Hex
+            })
+          }
+          if (typeof t !== "string" || !FILTER_TOPIC_RE.test(t)) {
+            throw { code: -32602, message: `invalid filter topic at index ${i}: must match /^0x[0-9a-fA-F]{64}$/ or null` }
+          }
+          return t as Hex
+        })
       }
       const filter: PendingFilter = {
         id,
@@ -823,7 +857,7 @@ async function handleRpc(
         toBlock,
         address: filterAddress,
         addresses: filterAddresses,
-        topics: Array.isArray(query.topics) ? query.topics.map((t) => (t ? String(t) as Hex : null)) : undefined,
+        topics: normalizedTopics as Array<Hex | null> | undefined,
         lastCursor: fromBlock > 0n ? fromBlock - 1n : 0n,
         createdAtMs: Date.now(),
       }
