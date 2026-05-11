@@ -1633,6 +1633,59 @@ test("RPC Extended Methods", async (t) => {
     assert.equal(okStr.error, undefined, "id as string must be allowed")
   })
 
+  await t.test("#218: coc_submitProposal rejects malformed stakeAmount without leaking V8 BigInt error", async () => {
+    // Pre-fix `BigInt(proposalParams.stakeAmount)` threw a V8 SyntaxError
+    // when stakeAmount was an object/array/non-digit-string and the
+    // outer catch leaked the V8 wording verbatim. Path is normally
+    // dead (chain has no governance), so monkey-patch a stub onto the
+    // chain instance to make `hasGovernance(chain)` true and reach the
+    // validation. Same leak class as #212 (pose-http).
+    const submittedProposals: Array<Record<string, unknown>> = []
+    const governanceStub = {
+      submitProposal: (type: string, targetId: string, proposer: string, opts: Record<string, unknown>) => {
+        submittedProposals.push({ type, targetId, proposer, opts })
+        return { id: "p1", type, targetId, status: "pending" }
+      },
+    } as Record<string, unknown>
+    // Monkey-patch the chain instance. `hasGovernance` checks for `.governance`.
+    ;(chain as unknown as Record<string, unknown>).governance = governanceStub
+    try {
+      const probe = async (stakeAmount: unknown) => {
+        const r = await fetch(`http://127.0.0.1:${port}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0", id: 1, method: "coc_submitProposal",
+            params: [{ type: "add_validator", targetId: "v4", proposer: "node-1", stakeAmount }],
+          }),
+        })
+        return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+      }
+      // Bad shapes → -32602 with `/stakeAmount/i` and NO V8 leak wording.
+      const badCases: unknown[] = [{}, [1, 2], "abc", "1.5", "-1", true]
+      for (const v of badCases) {
+        const r = await probe(v)
+        assert.equal(r.error?.code, -32602, `stakeAmount=${JSON.stringify(v)} must be -32602, got ${JSON.stringify(r)}`)
+        assert.match(r.error!.message, /stakeAmount/i, "error must name the field")
+        assert.doesNotMatch(r.error!.message, /Cannot convert|BigInt|SyntaxError/i,
+          `must not leak V8 wording, got ${r.error!.message}`)
+      }
+      // Sanity: valid decimal and 0x-hex round-trip; the stub records.
+      const ok1 = await probe("1000")
+      assert.equal(ok1.error, undefined, "decimal stakeAmount must NOT error")
+      const ok2 = await probe("0x3e8")
+      assert.equal(ok2.error, undefined, "0x-hex stakeAmount must NOT error")
+      const ok3 = await probe(42)
+      assert.equal(ok3.error, undefined, "number stakeAmount must NOT error")
+      // Sanity: undefined / empty string → stakeAmount omitted.
+      const ok4 = await probe(undefined)
+      assert.equal(ok4.error, undefined, "undefined stakeAmount must NOT error")
+      assert.ok(submittedProposals.length >= 4, "stub should record the 4 valid calls")
+    } finally {
+      delete (chain as unknown as Record<string, unknown>).governance
+    }
+  })
+
   if (prevDevAccounts === undefined) {
     delete process.env.COC_DEV_ACCOUNTS
   } else {
