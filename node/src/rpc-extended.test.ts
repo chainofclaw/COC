@@ -748,6 +748,47 @@ test("RPC Extended Methods", async (t) => {
     assert.equal(result, 1, "fixture has exactly one mock equivocation, so total must be 1")
   })
 
+  await t.test("#124: eth_getCode / eth_getStorageAt / eth_getProof / eth_call reject malformed addresses with -32602", async () => {
+    // Same class as #122 but the address-arg variants for these methods
+    // still used requireHexParam, which accepts any 0x-prefixed hex up
+    // to 64 chars. Pre-fix:
+    //   - eth_getCode("0x123", ...)  surfaced as -32603 internal error
+    //     ("Address must be 20 bytes long") from Address.fromString
+    //   - eth_getStorageAt("0x123", ...) same internal-error leak via
+    //     the evm layer
+    //   - eth_getProof("0x123", [], ...) same internal-error leak
+    //   - eth_call({to:"0x1"}) regex was /^0x[0-9a-fA-F]{1,40}$/ which
+    //     accepted 1-39 hex chars instead of exactly 40
+    const badAddrs = ["not-an-address", "0x", "0x123", "0x" + "g".repeat(40), "0x" + "f".repeat(41), "0x" + "f".repeat(39)]
+    const cases: Array<{ method: string; params: (b: string) => unknown[] }> = [
+      { method: "eth_getCode", params: (b) => [b, "latest"] },
+      { method: "eth_getStorageAt", params: (b) => [b, "0x0", "latest"] },
+      { method: "eth_getProof", params: (b) => [b, [], "latest"] },
+      { method: "eth_call", params: (b) => [{ to: b }, "latest"] },
+    ]
+    for (const { method, params } of cases) {
+      for (const badAddr of badAddrs) {
+        const r = await fetch(`http://127.0.0.1:${port}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: params(badAddr) }),
+        })
+        const json = await r.json() as { error?: { code: number; message: string } }
+        assert.ok(json.error, `expected error for ${method}(${JSON.stringify(badAddr)})`)
+        assert.equal(json.error!.code, -32602, `${method}(${JSON.stringify(badAddr)}) must be -32602, got ${json.error!.code} (${json.error!.message})`)
+        assert.match(json.error!.message, /invalid (to |from )?address/i, `${method} error message should mention "invalid address"`)
+      }
+    }
+    // Sanity: valid address shape still works (eth_call with no `to` and
+    // eth_getCode/Storage/Proof against a fresh account returns "0x"/"0x0"
+    // or empty proof structure).
+    const validAddr = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+    const code = await rpcCall(port, "eth_getCode", [validAddr, "latest"])
+    assert.match(code as string, /^0x[0-9a-f]*$/i)
+    const slot = await rpcCall(port, "eth_getStorageAt", [validAddr, "0x0", "latest"])
+    assert.match(slot as string, /^0x[0-9a-f]+$/i)
+  })
+
   if (prevDevAccounts === undefined) {
     delete process.env.COC_DEV_ACCOUNTS
   } else {
