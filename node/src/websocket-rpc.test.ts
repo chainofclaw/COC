@@ -284,4 +284,60 @@ describe("WebSocket RPC", () => {
 
     assert.equal(server.getClientCount(), 0)
   })
+
+  // #130: structured JSON-RPC error helper — sendRpc rejects with just
+  // the message, losing the code. This variant returns the full error.
+  async function sendRpcExpectError(ws: WebSocket, method: string, params: unknown[] = []): Promise<{ code: number; message: string }> {
+    const id = Math.floor(Math.random() * 100000)
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("timeout")), 5000)
+      const handler = (data: Buffer | string) => {
+        const msg = JSON.parse(data.toString())
+        if (msg.id === id) {
+          ws.removeListener("message", handler)
+          clearTimeout(timeout)
+          if (msg.error) resolve(msg.error)
+          else reject(new Error(`expected error but got result: ${JSON.stringify(msg.result)}`))
+        }
+      }
+      ws.on("message", handler)
+      ws.send(JSON.stringify({ jsonrpc: "2.0", id, method, params }))
+    })
+  }
+
+  it("#130: eth_subscribe with bogus type returns -32602 (not -32603)", async () => {
+    const ws = await connectWs(WS_PORT)
+    try {
+      const err = await sendRpcExpectError(ws, "eth_subscribe", ["bogusType"])
+      assert.equal(err.code, -32602, `expected -32602 invalid params, got ${err.code} (${err.message})`)
+      assert.match(err.message, /unsupported subscription type/)
+    } finally {
+      ws.close()
+    }
+  })
+
+  it("#130: eth_subscribe with no params returns -32602", async () => {
+    const ws = await connectWs(WS_PORT)
+    try {
+      const err = await sendRpcExpectError(ws, "eth_subscribe", [])
+      assert.equal(err.code, -32602, `expected -32602 invalid params, got ${err.code}`)
+    } finally {
+      ws.close()
+    }
+  })
+
+  it("#130: 11th subscription on one client returns -32005 (not -32603)", async () => {
+    const ws = await connectWs(WS_PORT)
+    try {
+      // MAX_SUBSCRIPTIONS_PER_CLIENT = 10 — fill the cap with newHeads.
+      for (let i = 0; i < 10; i++) {
+        await sendRpc(ws, "eth_subscribe", ["newHeads"])
+      }
+      const err = await sendRpcExpectError(ws, "eth_subscribe", ["newHeads"])
+      assert.equal(err.code, -32005, `expected -32005 resource limit, got ${err.code} (${err.message})`)
+      assert.match(err.message, /max subscriptions per client/)
+    } finally {
+      ws.close()
+    }
+  })
 })
