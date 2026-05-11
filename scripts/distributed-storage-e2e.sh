@@ -67,7 +67,7 @@ CONTENT_FILE="${TEMP_DIR}/input.bin"
 head -c 262144 /dev/urandom > "${CONTENT_FILE}"
 EXPECTED_HASH="$(sha256sum "${CONTENT_FILE}" | cut -d' ' -f1)"
 
-UPLOAD_RES="$(curl -sf -X POST "${NODE1_IPFS}/api/v0/add" \
+UPLOAD_RES="$(curl -X POST -sf "${NODE1_IPFS}/api/v0/add" \
   -F "file=@${CONTENT_FILE};filename=test.bin" 2>&1)" || fail "upload to node-1 (${UPLOAD_RES})"
 
 CID="$(echo "${UPLOAD_RES}" | grep -oE '"Hash":"[^"]+"' | head -1 | sed 's/"Hash":"\([^"]*\)"/\1/')"
@@ -114,7 +114,7 @@ OUT_FILE="${TEMP_DIR}/out.bin"
 # First try /api/v0/cat since that's the official IPFS path; fall back
 # to gateway /ipfs/<cid> if the HTTP API variant isn't wired up on the
 # devnet config.
-curl -sf "${NODE2_IPFS}/api/v0/cat?arg=${CID}" -o "${OUT_FILE}" \
+curl -X POST -sf "${NODE2_IPFS}/api/v0/cat?arg=${CID}" -o "${OUT_FILE}" \
   || curl -sf "${NODE2_IPFS}/ipfs/${CID}" -o "${OUT_FILE}" \
   || fail "GET from node-2 failed — did C1.3 fetchRemote fallback land a cached chunk?"
 

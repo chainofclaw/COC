@@ -28,7 +28,7 @@ SIZE=$(stat -c%s "$PAYLOAD")
 echo "==> Generated $SIZE-byte payload at $PAYLOAD"
 
 echo "==> [1/4] PUT to server-A"
-CID=$(curl -sS --max-time 30 -F "file=@$PAYLOAD" "http://${SERVER_A}:${IPFS_PORT}/api/v0/add?cid-version=1" \
+CID=$(curl -X POST -sS --max-time 30 -F "file=@$PAYLOAD" "http://${SERVER_A}:${IPFS_PORT}/api/v0/add?cid-version=1" \
   | grep -oE '"Hash":"[^"]+"' | head -1 | cut -d'"' -f4)
 if [[ -z "$CID" ]]; then
   echo "ERROR: PUT did not return a CID"
@@ -41,7 +41,7 @@ sleep 15
 
 echo "==> [3/4] GET from server-C (must work — proves cross-network replication)"
 RECV=$(mktemp)
-if ! curl -sS --max-time 60 "http://${SERVER_C}:${IPFS_PORT}/api/v0/cat/${CID}" -o "$RECV"; then
+if ! curl -X POST -sS --max-time 60 "http://${SERVER_C}:${IPFS_PORT}/api/v0/cat/${CID}" -o "$RECV"; then
   echo "ERROR: server-C GET failed"
   exit 3
 fi
