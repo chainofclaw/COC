@@ -2482,6 +2482,15 @@ test("RPC Extended Methods", async (t) => {
     // `[3]`→3, `{}`→NaN→fallback. `(params[2] !== false)` accepted every
     // non-false value (`0`, `"false"`, `null`, `""`) as reverse=true. Same
     // anti-pattern family as #252/#251/#224/#120.
+  })
+
+  await t.test("#258: coc_getContracts rejects non-integer limit/offset and non-boolean reverse INSIDE pagination object", async () => {
+    // #249 hardened the OUTER param shape (`[true]` → -32602). But the
+    // INNER fields still silently coerced: `{limit: true}` → 1,
+    // `{limit: "5"}` → 5, `{limit: [5]}` → 5, `{reverse: 0}` → true.
+    // Same anti-pattern as #254 (positional sibling). The new
+    // `optionalIntegerField` / `optionalBooleanField` helpers reject
+    // every non-integer / non-boolean shape.
     const probe = async (params: unknown[]) => {
       const r = await fetch(`http://127.0.0.1:${port}`, {
         method: "POST",
@@ -2515,6 +2524,37 @@ test("RPC Extended Methods", async (t) => {
       [addr, null, null, null],
       [addr],
       [addr, undefined, false, undefined],
+  })
+
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "coc_getContracts", params }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    }
+    // limit: non-integer fields must be rejected
+    for (const bad of [true, false, "5", [3], [1, 2], {}, 1.5, -1]) {
+      const r = await probe([{ limit: bad }])
+      assert.equal(r.error?.code, -32602,
+        `coc_getContracts({limit:${JSON.stringify(bad)}}) must be -32602, got ${JSON.stringify(r)}`)
+    }
+    // offset: same
+    for (const bad of [true, "0", [0], {}, 0.5, -1]) {
+      const r = await probe([{ offset: bad }])
+      assert.equal(r.error?.code, -32602,
+        `coc_getContracts({offset:${JSON.stringify(bad)}}) must be -32602, got ${JSON.stringify(r)}`)
+    }
+    // reverse: non-boolean fields must be rejected
+    for (const bad of [0, 1, "false", "true", [true], {}]) {
+      const r = await probe([{ reverse: bad }])
+      assert.equal(r.error?.code, -32602,
+        `coc_getContracts({reverse:${JSON.stringify(bad)}}) must be -32602, got ${JSON.stringify(r)}`)
+    }
+    // Sanity: well-shaped + omitted fields still succeed
+    for (const params of [
+      [{}],
+      [{ limit: 5 }],
+      [{ limit: 5, offset: 0, reverse: false }],
+      [{ limit: 10, reverse: true }],
+      [],
     ]) {
       const r = await probe(params)
       assert.equal(r.error, undefined,
@@ -2741,6 +2781,8 @@ test("RPC Extended Methods", async (t) => {
     assert.equal(ok2.error, undefined, `0x0 must pass: ${JSON.stringify(ok2)}`)
     const ok3 = await probe("eth_feeHistory", ["0x1", "latest", []])
     assert.equal(ok3.error, undefined, `feeHistory latest must pass: ${JSON.stringify(ok3)}`)
+  })
+
   })
 
   if (prevDevAccounts === undefined) {

@@ -345,11 +345,26 @@ export function requireIntegerParam(params: unknown[], index: number, name: stri
 export function optionalIntegerParam(
   params: unknown[],
   index: number,
+  })
+
+ * #258: Object-field counterpart of {@link requireIntegerParam}/
+ * {@link optionalIntegerParam}. Pre-fix object-shaped pagination
+ * options (`coc_getContracts(opts)`) used silent `Number(opts.limit
+ * ?? N) || N` coercion: `true`→1, `[5]`→5, `"5"`→5, `{}`→NaN→fallback.
+ * The outer object was validated by `requireFilterObject` (#249), but
+ * the inner fields still silently coerced. Same family as #254 (its
+ * positional sibling).
+ */
+export function optionalIntegerField(
+  obj: Record<string, unknown>,
   name: string,
   defaultValue: number,
   opts?: { min?: number; max?: number },
 ): number {
   const raw = (params ?? [])[index]
+  })
+
+  const raw = obj[name]
   if (raw === undefined || raw === null) return defaultValue
   if (typeof raw !== "number" || !Number.isFinite(raw) || !Number.isInteger(raw)) {
     invalidParams(`invalid ${name}: expected integer or omitted, got ${Array.isArray(raw) ? "array" : typeof raw}`)
@@ -377,6 +392,19 @@ export function optionalBooleanParam(
   defaultValue: boolean,
 ): boolean {
   const raw = (params ?? [])[index]
+  })
+
+ * #258: Object-field counterpart of {@link optionalBooleanParam}.
+ * Pre-fix `opts.reverse !== false` accepted every non-`false` value
+ * (`0`, `"false"`, `null`, `{}`) as `reverse=true`. Returns the
+ * supplied default for `undefined`/`null`; rejects every non-boolean.
+ */
+export function optionalBooleanField(
+  obj: Record<string, unknown>,
+  name: string,
+  defaultValue: boolean,
+): boolean {
+  const raw = obj[name]
   if (raw === undefined || raw === null) return defaultValue
   if (typeof raw !== "boolean") {
     invalidParams(`invalid ${name}: expected boolean or omitted, got ${Array.isArray(raw) ? "array" : typeof raw}`)
