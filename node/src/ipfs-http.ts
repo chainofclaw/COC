@@ -38,6 +38,25 @@ class HttpError extends Error {
   }
 }
 
+/**
+ * #192: Node's `parseUrl(req.url, true).query[key]` returns
+ * `string | string[] | undefined` — duplicate query params arrive as
+ * arrays. Pre-fix, every route in this file cast it as `string`, a
+ * runtime no-op; the array reached downstream handlers expecting
+ * strings, threw downstream, and surfaced as `500 "internal error"`
+ * across 9 IPFS endpoints — a textbook validation-by-cast bug.
+ *
+ * Coalesce to the first occurrence (matches kubo for non-batch
+ * endpoints) so single-arg routes get a predictable string and the
+ * existing per-handler validation can reject empty/invalid values
+ * with 400 like it was designed to.
+ */
+function firstQueryValue(raw: string | string[] | undefined): string | undefined {
+  if (raw === undefined) return undefined
+  if (Array.isArray(raw)) return raw[0]
+  return raw
+}
+
 function isNotFoundError(err: unknown): boolean {
   if (err && typeof err === "object" && "code" in err && (err as { code: unknown }).code === "ENOENT") return true
   const msg = String(err instanceof Error ? err.message : err)
@@ -187,8 +206,12 @@ export class IpfsHttpServer {
         return
       }
 
+      // #192: coalesce dup query params at the dispatcher boundary so
+      // route handlers always receive `string | undefined` (not the
+      // `string | string[]` Node's url-parser actually returns).
+      const argParam = firstQueryValue(url.query.arg)
       if (url.pathname === "/api/v0/add") {
-        await this.handleAdd(req, res, url.query.erasure as string | undefined)
+        await this.handleAdd(req, res, firstQueryValue(url.query.erasure))
         return
       }
       if (url.pathname === "/api/v0/version") {
@@ -204,22 +227,22 @@ export class IpfsHttpServer {
         return
       }
       if (url.pathname === "/api/v0/ls") {
-        await this.handleLs(res, url.query.arg as string)
+        await this.handleLs(res, argParam ?? "")
         return
       }
       if (url.pathname === "/api/v0/object/stat") {
-        await this.handleObjectStat(res, url.query.arg as string)
+        await this.handleObjectStat(res, argParam ?? "")
         return
       }
       if (url.pathname === "/api/v0/cat") {
-        await this.handleCat(req, res, url.query.arg as string, {
-          offset: url.query.offset as string | undefined,
-          length: (url.query.length ?? url.query.count) as string | undefined,
+        await this.handleCat(req, res, argParam ?? "", {
+          offset: firstQueryValue(url.query.offset),
+          length: firstQueryValue(url.query.length) ?? firstQueryValue(url.query.count),
         })
         return
       }
       if (url.pathname === "/api/v0/get") {
-        await this.handleGet(res, url.query.arg as string)
+        await this.handleGet(res, argParam ?? "")
         return
       }
       if (url.pathname === "/api/v0/block/put") {
@@ -227,27 +250,27 @@ export class IpfsHttpServer {
         return
       }
       if (url.pathname === "/api/v0/block/get") {
-        await this.handleBlockGet(req, res, url.query.arg as string)
+        await this.handleBlockGet(req, res, argParam ?? "")
         return
       }
       if (url.pathname === "/api/v0/block/stat") {
-        await this.handleBlockStat(res, url.query.arg as string)
+        await this.handleBlockStat(res, argParam ?? "")
         return
       }
       if (url.pathname === "/api/v0/pin/add") {
-        await this.handlePinAdd(req, res, url.query.arg as string)
+        await this.handlePinAdd(req, res, argParam ?? "")
         return
       }
       if (url.pathname === "/api/v0/pin/ls") {
-        await this.handlePinLs(res, url.query.arg as string | undefined)
+        await this.handlePinLs(res, argParam)
         return
       }
       if (url.pathname === "/api/v0/pin/rm") {
-        await this.handlePinRm(res, url.query.arg as string | undefined)
+        await this.handlePinRm(res, argParam)
         return
       }
       if (url.pathname === "/api/v0/block/rm") {
-        await this.handleBlockRm(res, url.query.arg as string | undefined)
+        await this.handleBlockRm(res, argParam)
         return
       }
       if (url.pathname === "/api/v0/repo/gc") {
@@ -255,7 +278,7 @@ export class IpfsHttpServer {
         return
       }
       if (url.pathname === "/api/v0/erasure/status") {
-        await this.handleErasureStatus(res, url.query.arg as string | undefined)
+        await this.handleErasureStatus(res, argParam)
         return
       }
 
@@ -920,7 +943,8 @@ export class IpfsHttpServer {
     }
 
     const route = url.pathname?.replace("/api/v0/files/", "") ?? ""
-    const arg = (url.query?.arg as string) ?? ""
+    // #192: dup query params arrive as arrays; coalesce to first.
+    const arg = firstQueryValue(url.query?.arg) ?? ""
 
     try {
       switch (route) {
@@ -992,7 +1016,7 @@ export class IpfsHttpServer {
         }
         case "mv": {
           const source = arg
-          const dest = url.query?.dest as string ?? ""
+          const dest = firstQueryValue(url.query?.dest) ?? ""
           await this.mfs.mv(source, dest)
           res.writeHead(200, { "content-type": "application/json" })
           res.end(JSON.stringify({ ok: true }))
@@ -1000,7 +1024,7 @@ export class IpfsHttpServer {
         }
         case "cp": {
           const source = arg
-          const dest = url.query?.dest as string ?? ""
+          const dest = firstQueryValue(url.query?.dest) ?? ""
           await this.mfs.cp(source, dest)
           res.writeHead(200, { "content-type": "application/json" })
           res.end(JSON.stringify({ ok: true }))
@@ -1094,7 +1118,8 @@ export class IpfsHttpServer {
     }
 
     const route = url.pathname?.replace("/api/v0/pubsub/", "") ?? ""
-    const topic = (url.query?.arg as string) ?? ""
+    // #192: dup query params arrive as arrays; coalesce to first.
+    const topic = firstQueryValue(url.query?.arg) ?? ""
 
     try {
       // Validate topic length to prevent memory exhaustion via oversized topic names
