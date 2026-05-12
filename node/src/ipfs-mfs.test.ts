@@ -189,3 +189,71 @@ test("MFS: cannot remove root directory", async () => {
     cleanup()
   }
 })
+
+test("#302: mkdir under an existing FILE must reject with 'not a directory'", async () => {
+  // Live-reproducible bug on 88780 testnet (probe iteration #37):
+  //   POST /api/v0/files/write?arg=/a/file.txt&create=true&parents=true   → 200
+  //   POST /api/v0/files/mkdir?arg=/a/file.txt/sub&parents=true           → 200 (BUG)
+  //   POST /api/v0/files/ls?arg=/a/file.txt                                → lists `sub` as child
+  // Pre-fix mkdir blindly overwrote the file entry in the parent dir
+  // with a `type:"directory"` entry, silently orphaning the UnixFS file
+  // content, and `this.dirs` and `parent.entries` then disagreed on the
+  // type of the same path. POSIX requires ENOTDIR here.
+  const { mfs, cleanup } = await createMfs()
+  try {
+    await mfs.mkdir("/a", { parents: true })
+    await mfs.write("/a/file.txt", new TextEncoder().encode("hello"), { create: true })
+
+    // KEY invariant 1: mkdir UNDER the file must reject
+    await assert.rejects(
+      () => mfs.mkdir("/a/file.txt/sub", { parents: true }),
+      /not a directory/,
+      "mkdir under a file must reject with 'not a directory' (POSIX ENOTDIR)",
+    )
+
+    // KEY invariant 2: even mkdir AT the file path must reject (no clobber)
+    await assert.rejects(
+      () => mfs.mkdir("/a/file.txt", { parents: true }),
+      /not a directory/,
+      "mkdir at a path that is already a file must reject (no silent overwrite)",
+    )
+
+    // KEY invariant 3: the original file's content + listing must be intact
+    const lsRoot = await mfs.ls("/a")
+    const fileEntry = lsRoot.find((e: { name: string; type: string }) => e.name === "file.txt")
+    assert.ok(fileEntry, "file entry must still exist after rejected mkdir")
+    assert.strictEqual(fileEntry!.type, "file", "entry type must still be 'file', not 'directory'")
+    const stat = await mfs.stat("/a/file.txt")
+    assert.strictEqual(stat.type, "file", "stat must report 'file' for the rejected-mkdir path")
+
+    // KEY invariant 4: write through a file-as-parent must reject too,
+    // since write uses mkdir({parents:true}) under the hood.
+    await assert.rejects(
+      () => mfs.write("/a/file.txt/nested", new Uint8Array([1, 2, 3]), { create: true, parents: true }),
+      /not a directory/,
+      "write with parents:true through a file path must reject — write goes through mkdir",
+    )
+  } finally {
+    cleanup()
+  }
+})
+
+test("#302: mkdir at root depth with file collision still rejects", async () => {
+  // Same family, top-level path. Confirms the check fires on the FIRST
+  // component too (not just intermediates), so a flat /root.txt + mkdir
+  // /root.txt is not a regression case.
+  const { mfs, cleanup } = await createMfs()
+  try {
+    await mfs.write("/root.txt", new TextEncoder().encode("x"), { create: true })
+    await assert.rejects(
+      () => mfs.mkdir("/root.txt", { parents: true }),
+      /not a directory/,
+    )
+    await assert.rejects(
+      () => mfs.mkdir("/root.txt/x", { parents: true }),
+      /not a directory/,
+    )
+  } finally {
+    cleanup()
+  }
+})
