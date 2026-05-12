@@ -816,6 +816,25 @@ export class IpfsHttpServer {
       res.end(JSON.stringify({ error: !cid ? "missing cid" : "invalid cid" }))
       return
     }
+    // #310: kubo `block/stat` is a LOCAL metadata query. Pre-fix it routed
+    // through `loadRawBlock` → `store.get` which calls `fetchRemote` (DHT
+    // findProviders + 5s per-provider timeout + fallback to every
+    // connected peer) on any local miss. Any client probing for an unknown
+    // CID therefore waited ~5-10s for a 404, and an unauthenticated
+    // attacker could pin ~100 wire-connection slots per minute (rate-limit
+    // budget) by spraying unknown CIDs — a soft DoS surface on a "stat"
+    // endpoint that semantically should never touch the network. Short-
+    // circuit via `store.has()` so block/stat is a cheap fs.access check;
+    // block/get keeps its network-fetch behaviour because that's the whole
+    // point of bitswap-style block retrieval. TOCTOU: if GC races between
+    // has() and loadRawBlock, the ENOENT branch still maps to 404, so the
+    // worst case is one fetchRemote attempt (acceptable, vs. one EVERY
+    // unknown-cid stat pre-fix).
+    if (!(await this.store.has(cid))) {
+      res.writeHead(404, { "content-type": "application/json" })
+      res.end(JSON.stringify({ error: "block not found" }))
+      return
+    }
     // #168: same ENOENT → 404 mapping as handleBlockGet.
     try {
       const block = await loadRawBlock(this.store, cid)
