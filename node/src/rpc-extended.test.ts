@@ -2008,6 +2008,50 @@ test("RPC Extended Methods", async (t) => {
     assert.equal(okStr.error, undefined, "id as string must be allowed")
   })
 
+  await t.test("#398: reject fractional ids and numeric ids past Number.MAX_SAFE_INTEGER", async () => {
+    // §4 — "Numbers SHOULD NOT contain fractional parts" AND values
+    // past 2^53-1 silently lose precision through V8 JSON.parse
+    // (a client sending id 9007199254740993 got back 9007199254740992,
+    // off by one) so clients tracking sequential 64-bit ids can't
+    // correlate the response. Number.isSafeInteger catches both.
+    // The pre-fix `Number.isFinite` accepted both.
+    const probe = async (body: Record<string, unknown>) => {
+      // Build the body manually so we can keep a giant numeric id as
+      // raw JSON (JSON.stringify would coerce through Number first).
+      const idRaw = body.__rawId as string | undefined
+      const json = idRaw !== undefined
+        ? `{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":${idRaw}}`
+        : JSON.stringify(body)
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: json,
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown; id?: unknown }
+    }
+    // Fractional id rejected
+    const fractional = await probe({ jsonrpc: "2.0", id: 1.5, method: "eth_chainId" })
+    assert.equal(fractional.error?.code, -32600, "id=1.5 must be -32600")
+    assert.match(fractional.error!.message, /id must be/i)
+    // 2^53 (one past MAX_SAFE_INTEGER) rejected
+    const overSafe = await probe({ jsonrpc: "2.0", __rawId: "9007199254740993", method: "eth_chainId" })
+    assert.equal(overSafe.error?.code, -32600, "id past MAX_SAFE_INTEGER must be -32600")
+    // 50-digit integer (massive precision loss) rejected
+    const huge = await probe({ jsonrpc: "2.0", __rawId: "12345678901234567890123456789012345678901234567890", method: "eth_chainId" })
+    assert.equal(huge.error?.code, -32600, "50-digit id must be -32600")
+    // Negative integer in safe range still works (spec doesn't ban negatives)
+    const neg = await probe({ jsonrpc: "2.0", id: -1, method: "eth_chainId" })
+    assert.equal(neg.error, undefined, "negative safe-integer id must work")
+    assert.equal(neg.id, -1, "id must echo verbatim")
+    // Exactly Number.MAX_SAFE_INTEGER allowed
+    const max = await probe({ jsonrpc: "2.0", id: Number.MAX_SAFE_INTEGER, method: "eth_chainId" })
+    assert.equal(max.error, undefined, "MAX_SAFE_INTEGER id must work")
+    // String ids of any length allowed (escape hatch for 64-bit clients)
+    const longStr = await probe({ jsonrpc: "2.0", id: "9999999999999999999", method: "eth_chainId" })
+    assert.equal(longStr.error, undefined, "long string id must work")
+    assert.equal(longStr.id, "9999999999999999999", "string id echoed verbatim")
+  })
+
   await t.test("#218: coc_submitProposal rejects malformed stakeAmount without leaking V8 BigInt error", async () => {
     // Pre-fix `BigInt(proposalParams.stakeAmount)` threw a V8 SyntaxError
     // when stakeAmount was an object/array/non-digit-string and the
