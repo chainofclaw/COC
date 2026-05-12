@@ -72,6 +72,66 @@ function isNotFoundError(err: unknown): boolean {
   return /not\s*found|no such|ENOENT/i.test(msg)
 }
 
+/**
+ * #353: /api/v0/add silently ignored kubo params that materially change
+ * the resulting CID (cid-version, hash, chunker, raw-leaves, trickle,
+ * wrap-with-directory, inline, nocopy). A client requesting
+ * `cid-version=0` got back a `bafy...` v1 CID; the upload succeeded,
+ * the client recomputed its expected v0 `Qm...` digest, and the two
+ * never matched — content-addressed verification silently broke.
+ *
+ * This server's UnixFS builder is hard-coded to: cid-version=1 (raw
+ * dag-pb), hash=sha2-256, chunker=size-262144 (256 KiB), unixfs-
+ * wrapped leaves (i.e. raw-leaves=false), balanced layout (trickle=
+ * false), no directory wrap. Reject any client request that demands
+ * a different shape so they can fall back / retry with the right
+ * settings instead of pinning a CID that doesn't match their hash.
+ *
+ * Benign params (pin, progress, silent, quieter, quiet, fscache,
+ * stdin-name, only-hash, hash-fun-code) are passed through — they
+ * either don't change the CID or the response shape we already
+ * emit (single newline-terminated JSON object) is a strict subset
+ * of kubo's progress stream.
+ */
+function validateAddParams(query: Record<string, string | string[] | undefined>): void {
+  const exactDefault = (key: string, expected: string): void => {
+    const raw = firstQueryValue(query[key])
+    if (raw !== undefined && raw !== expected) {
+      throw new HttpError(400, "unsupported_param",
+        `${key}: only '${expected}' is supported (got '${raw}')`)
+    }
+  }
+
+  exactDefault("cid-version", "1")
+  exactDefault("hash", "sha2-256")
+  exactDefault("chunker", "size-262144")
+
+  // Booleans we don't honor — accept "false" / absent, reject "true".
+  // Case-insensitive to match kubo's go-flag parser.
+  const booleanRejectsTrue = [
+    "raw-leaves",
+    "wrap-with-directory",
+    "nocopy",
+    "inline",
+    "trickle",
+  ]
+  for (const key of booleanRejectsTrue) {
+    const raw = firstQueryValue(query[key])
+    if (raw === undefined) continue
+    const norm = raw.toLowerCase()
+    if (norm === "true" || norm === "1") {
+      throw new HttpError(400, "unsupported_param",
+        `${key}: not supported by this server (only 'false' / unset)`)
+    }
+    // Reject obvious garbage like "maybe", "yes". kubo's flag parser
+    // accepts true/false/0/1 (case-insensitive) and 400s on the rest.
+    if (norm !== "false" && norm !== "0") {
+      throw new HttpError(400, "unsupported_param",
+        `${key}: expected boolean (true/false/0/1), got '${raw}'`)
+    }
+  }
+}
+
 export interface IpfsServerConfig {
   bind: string
   port: number
@@ -220,6 +280,12 @@ export class IpfsHttpServer {
       // `string | string[]` Node's url-parser actually returns).
       const argParam = firstQueryValue(url.query.arg)
       if (url.pathname === "/api/v0/add") {
+        // #353: reject unsupported kubo params *before* we read the
+        // multipart body — a client requesting cid-version=0 should
+        // get a fast 400 with `unsupported_param`, not a successful
+        // upload + a v1 CID they can't reconcile against their v0
+        // expectation.
+        validateAddParams(url.query as Record<string, string | string[] | undefined>)
         await this.handleAdd(req, res, firstQueryValue(url.query.erasure))
         return
       }
