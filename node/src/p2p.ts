@@ -633,7 +633,23 @@ export class P2PNode {
       }
 
       if (req.method !== "POST") {
-        res.writeHead(405)
+        // #378: parity with rpc.ts #376 — pre-fix `res.writeHead(405);
+        // res.end()` left Content-Length unset. Node defaulted to
+        // chunked Transfer-Encoding, and for HEAD requests it
+        // suppresses the body but still advertises chunked, so the
+        // client waited for a terminating chunk that never arrived
+        // and hung until the 5 s keepAliveTimeout fired. Load balancer
+        // health probes (AWS ALB / GCP LB / K8s readinessProbe) commonly
+        // default to HEAD — each probe stalls 5 s, exhausting the
+        // keep-alive socket pool and destabilising the health window.
+        //
+        // Set Content-Length: 0 + Allow: POST so HEAD/GET/PUT/DELETE
+        // terminate immediately. RFC 7231 §6.5.5 also requires Allow
+        // on 405 responses.
+        res.writeHead(405, {
+          "allow": "POST",
+          "content-length": "0",
+        })
         res.end()
         return
       }
