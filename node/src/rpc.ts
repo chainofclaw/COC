@@ -504,6 +504,17 @@ async function handleOne(
     // via JS truthy semantics. Method MUST be a non-empty string.
     return { jsonrpc: "2.0", id: null, error: { code: -32600, message: "invalid request: method must be a non-empty string" } }
   }
+  // #314: cap method name length so a malicious client can't force an
+  // N-byte echo via the default `method not supported: ${payload.method}`
+  // error path (rpc.ts:methodNotFound around the dispatch switch). The
+  // longest standard Ethereum/COC RPC method is ~30 chars
+  // ("eth_getTransactionReceiptsByBlock"). 128 is generous headroom and
+  // bounds the response amplification any unauthenticated client can
+  // force from a malformed request. -32600 (invalid request) per
+  // JSON-RPC §5.1 because the request shape itself is the problem.
+  if (payload.method.length > 128) {
+    return { jsonrpc: "2.0", id: null, error: { code: -32600, message: "invalid request: method name too long (max 128 chars)" } }
+  }
   // #202: §4.1 — id MUST be String, Number, or NULL when present.
   // Pre-fix objects, arrays, bools were silently echoed back, which
   // either crashed strict-typed client response parsers or masked
