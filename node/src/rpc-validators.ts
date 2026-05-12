@@ -447,6 +447,33 @@ export function validateTxCallFields(callParams: Record<string, unknown>): void 
       invalidParams("invalid data: must match /^0x([0-9a-fA-F]{2})*$/")
     }
   }
+  // #394: EIP-1559 field combinations. Pre-fix each field was shape-
+  // validated in isolation but the relationship between them wasn't
+  // checked, so eth_call / eth_estimateGas / eth_sendTransaction
+  // accepted illegal combos that geth (and any tx parser) would
+  // reject downstream:
+  //
+  //   {gasPrice: 0x1, maxFeePerGas: 0x2}          → legacy + 1559 mix
+  //   {maxFeePerGas: 0x1, maxPriorityFeePerGas: 0x100} → tip > total
+  //
+  // The simulation path silently returned a result; a wallet that
+  // built the same tx and then called eth_sendRawTransaction got a
+  // surprise error. Match geth's eth_call by rejecting both shapes
+  // upfront with a clear message.
+  const hasLegacy = typeof callParams.gasPrice === "string" && callParams.gasPrice !== ""
+  const hasMaxFee = typeof callParams.maxFeePerGas === "string" && callParams.maxFeePerGas !== ""
+  const hasMaxTip = typeof callParams.maxPriorityFeePerGas === "string" && callParams.maxPriorityFeePerGas !== ""
+  if (hasLegacy && (hasMaxFee || hasMaxTip)) {
+    invalidParams("both gasPrice and (maxFeePerGas or maxPriorityFeePerGas) specified")
+  }
+  if (hasMaxFee && hasMaxTip) {
+    // Compare without leading zeros: BigInt() handles arbitrary length.
+    const maxFee = BigInt(callParams.maxFeePerGas as string)
+    const maxTip = BigInt(callParams.maxPriorityFeePerGas as string)
+    if (maxTip > maxFee) {
+      invalidParams(`maxPriorityFeePerGas (${maxTip}) > maxFeePerGas (${maxFee})`)
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
