@@ -827,11 +827,17 @@ export class EvmChain {
     return this.txs.get(txHash) ?? null
   }
 
+  // #286: declared return type now surfaces `failed` so eth_call /
+  // eth_estimateGas can detect reverts and emit a geth-compatible
+  // -32000/"execution reverted" error with the revert payload as `data`.
+  // Pre-fix the type omitted `failed` even though runCall already populated
+  // it; eth_call silently returned the revert payload as if it were a
+  // success, breaking ethers.js / viem / foundry revert detection.
   async callRaw(
     params: { from?: string; to: string; data?: string; value?: string; gas?: string },
     stateRoot?: string,
     context?: bigint | ExecutionContext,
-  ): Promise<{ returnValue: string; gasUsed: bigint }> {
+  ): Promise<{ returnValue: string; gasUsed: bigint; failed: boolean }> {
     const executionContext = normalizeExecutionContext(context)
     if (stateRoot || executionContext.blockNumber !== undefined) {
       const stateManager = await this.resolveStateManager(stateRoot)
@@ -1723,7 +1729,10 @@ function formatTraceWord(value: unknown): string {
   return "0x0"
 }
 
-function decodeRevertReason(data: string): string | undefined {
+// #286: exported so eth_call / eth_estimateGas can build a geth-compatible
+// revert error message ("execution reverted: <reason>") from the returned
+// payload.
+export function decodeRevertReason(data: string): string | undefined {
   if (!data || data === "0x" || !data.startsWith("0x")) {
     return undefined
   }
