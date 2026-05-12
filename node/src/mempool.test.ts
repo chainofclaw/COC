@@ -131,6 +131,77 @@ describe("Mempool", () => {
     assert.throws(() => pool.addRawTx(raw), /invalid chain ID/)
   })
 
+  // #334: gasLimit below intrinsic was silently accepted, returning a
+  // success hash from eth_sendRawTransaction but never executing — wasted
+  // nonce slot, unreplayable (10% bump on zero) + mempool-fill DoS.
+  it("rejects gasLimit below intrinsic gas (EIP-3)", () => {
+    const pool = new Mempool({ chainId: CHAIN_ID })
+    const wallet = new Wallet(PK1)
+    // Plain transfer: intrinsic = 21000. Submit with 100.
+    const tx = Transaction.from({
+      to: "0x0000000000000000000000000000000000000001",
+      value: "0x1",
+      nonce: 0,
+      gasLimit: "0x64", // 100 — below 21000
+      gasPrice: "0x3b9aca00",
+      chainId: CHAIN_ID,
+      data: "0x",
+    })
+    const signed = wallet.signingKey.sign(tx.unsignedHash)
+    const clone = tx.clone()
+    clone.signature = signed
+    assert.throws(
+      () => pool.addRawTx(clone.serialized as Hex),
+      /intrinsic gas too low: have 100, want 21000/,
+      "below-intrinsic gasLimit must throw with geth-style message",
+    )
+  })
+
+  it("rejects gasLimit below intrinsic for contract creation (EIP-3860)", () => {
+    const pool = new Mempool({ chainId: CHAIN_ID })
+    const wallet = new Wallet(PK1)
+    // Contract creation: intrinsic = 21000 + 32000 + data cost + initcode word cost.
+    // Init code "0xfe" = 1 nonzero byte = +16. 1 byte init code = ceil(1/32) = 1 word = +2.
+    // Total: 21000 + 32000 + 16 + 2 = 53018. Submit 53000 to verify the precise floor.
+    const tx = Transaction.from({
+      to: null, // creation
+      value: 0n,
+      nonce: 0,
+      gasLimit: 53000n, // 18 below the required 53018
+      gasPrice: "0x3b9aca00",
+      chainId: CHAIN_ID,
+      data: "0xfe",
+    })
+    const signed = wallet.signingKey.sign(tx.unsignedHash)
+    const clone = tx.clone()
+    clone.signature = signed
+    assert.throws(
+      () => pool.addRawTx(clone.serialized as Hex),
+      /intrinsic gas too low: have 53000, want 53018/,
+      "creation must charge +32000 base + initcode-word cost",
+    )
+  })
+
+  it("accepts gasLimit exactly at intrinsic floor", () => {
+    const pool = new Mempool({ chainId: CHAIN_ID })
+    const wallet = new Wallet(PK1)
+    // Plain transfer with no data — exactly 21000.
+    const tx = Transaction.from({
+      to: "0x0000000000000000000000000000000000000001",
+      value: "0x1",
+      nonce: 0,
+      gasLimit: 21000n,
+      gasPrice: "0x3b9aca00",
+      chainId: CHAIN_ID,
+      data: "0x",
+    })
+    const signed = wallet.signingKey.sign(tx.unsignedHash)
+    const clone = tx.clone()
+    clone.signature = signed
+    const added = pool.addRawTx(clone.serialized as Hex)
+    assert.ok(added.hash, "exact-floor tx must be accepted")
+  })
+
   it("picks txs in gas price order with nonce continuity", async () => {
     const pool = new Mempool({ chainId: CHAIN_ID })
     signAndAdd(pool, PK1, 0, "0x3b9aca00") // 1 gwei, nonce 0
