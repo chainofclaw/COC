@@ -2890,8 +2890,18 @@ async function resolveHistoricalExecutionContext(
     }
   }
 
-  if (typeof input === "object" && input !== null && "blockHash" in input) {
-    const blockHash = String((input as Record<string, unknown>).blockHash ?? "") as Hex
+  // #368: per EIP-1898, methods taking a BlockNumberOrHash accept FIVE
+  // shapes — tag, hex number, bare 32-byte hash, {blockHash}, {blockNumber}.
+  // Pre-fix only {blockHash} was honoured. Bare hash strings fell through
+  // to parseBlockTag → safeBigInt(hash) → BigInt(huge) → no-such-block at
+  // a height that doesn't exist. {blockNumber} objects hit parseBlockTag,
+  // which rejected them as -32602 "invalid block tag." geth and infura
+  // accept all five — match them so cross-client tooling (ethers, viem,
+  // hardhat reorg-aware historicals) doesn't break.
+
+  // Bare 32-byte hash string (66 chars total): treat as {blockHash}.
+  if (typeof input === "string" && /^0x[0-9a-fA-F]{64}$/.test(input)) {
+    const blockHash = input.toLowerCase() as Hex
     const block = await Promise.resolve(chain.getBlockByHash(blockHash))
     if (!block) {
       throw { code: -32001, message: `block not found: ${blockHash}` }
@@ -2902,6 +2912,48 @@ async function resolveHistoricalExecutionContext(
     return {
       stateRoot: block.stateRoot,
       blockNumber: block.number,
+      ...buildExecutionContextFromBlock(block),
+    }
+  }
+
+  // EIP-1898 object form #1: {blockHash: "0x…", requireCanonical?: bool}.
+  if (typeof input === "object" && input !== null && "blockHash" in input) {
+    const rawHash = (input as Record<string, unknown>).blockHash
+    if (typeof rawHash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(rawHash)) {
+      throw { code: -32602, message: "invalid blockHash: must match /^0x[0-9a-fA-F]{64}$/" }
+    }
+    const blockHash = rawHash.toLowerCase() as Hex
+    const block = await Promise.resolve(chain.getBlockByHash(blockHash))
+    if (!block) {
+      throw { code: -32001, message: `block not found: ${blockHash}` }
+    }
+    if (!block.stateRoot) {
+      throw { code: -32001, message: `state root unavailable for block ${blockHash}` }
+    }
+    return {
+      stateRoot: block.stateRoot,
+      blockNumber: block.number,
+      ...buildExecutionContextFromBlock(block),
+    }
+  }
+
+  // EIP-1898 object form #2: {blockNumber: "0x123"}. Route the inner
+  // value through parseBlockTag so tags and hex quantities both work
+  // ({blockNumber: "latest"} is technically allowed by geth).
+  if (typeof input === "object" && input !== null && "blockNumber" in input) {
+    const inner = (input as Record<string, unknown>).blockNumber
+    const heightForObj = await Promise.resolve(chain.getHeight())
+    const blockNumber = parseBlockTag(inner, heightForObj)
+    const block = await Promise.resolve(chain.getBlockByNumber(blockNumber))
+    if (!block) {
+      throw { code: -32001, message: `block not found: ${String(inner)}` }
+    }
+    if (!block.stateRoot) {
+      throw { code: -32001, message: `state root unavailable for block ${blockNumber}` }
+    }
+    return {
+      stateRoot: block.stateRoot,
+      blockNumber,
       ...buildExecutionContextFromBlock(block),
     }
   }
