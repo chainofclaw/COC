@@ -1638,6 +1638,67 @@ describe("IpfsHttpServer", () => {
     const statRes = await fetch("/api/v0/files/stat?arg=/probe-380", { method: "POST" })
     assert.equal(statRes.status, 200, "directory must actually be created")
   })
+
+  it("#382: HEAD requests on IPFS HTTP do not hang (Content-Length set on 404/405)", async () => {
+    // Pre-fix the IPFS HTTP server's catch-all 404 (line 202) and
+    // /api/v0/* non-POST 405 (line 212) used `res.writeHead(X);
+    // res.end([body])` which committed headers before body length
+    // was known. Node defaulted to chunked Transfer-Encoding. For
+    // HEAD requests, Node suppresses the body but still advertises
+    // chunked — the client waits for a terminating chunk that never
+    // arrives, hanging until the 5 s keepAliveTimeout fires.
+    //
+    // Live testnet 88780 reproduction (pre-fix):
+    //
+    //   $ time curl -X HEAD http://node:28800/api/v0/version
+    //   → 6.47 s
+    //   $ time curl -X HEAD http://node:28800/foo
+    //   → 6.48 s
+    //
+    // Same pattern as #376 (rpc.ts) / #378 (p2p.ts). Fix sets
+    // Content-Length explicitly so HEAD/GET terminate identically.
+    const probes = [
+      { path: "/foo", expectedStatus: 404, label: "404 catch-all (non-/api/v0, non-/ipfs)" },
+      { path: "/api/v0/version", expectedStatus: 405, label: "405 for HEAD on POST-only /api/v0/*" },
+      { path: "/api/v0/cat?arg=bafybeibpm6rvk2zrrwakx3xj2xpjcd66kifv46s4te3evt7d42ybellahm", expectedStatus: 405, label: "405 for HEAD on /api/v0/cat" },
+    ]
+    for (const { path, expectedStatus, label } of probes) {
+      const start = Date.now()
+      const result = await new Promise<{ status: number; headers: http.IncomingHttpHeaders }>(
+        (resolve, reject) => {
+          const url = new URL(path, baseUrl)
+          const req = http.request(
+            {
+              hostname: url.hostname,
+              port: url.port,
+              method: "HEAD",
+              path: url.pathname + url.search,
+            },
+            (r) => {
+              r.on("data", () => {})
+              r.on("end", () => resolve({ status: r.statusCode ?? 0, headers: r.headers }))
+            },
+          )
+          req.on("error", reject)
+          req.setTimeout(3000, () => {
+            req.destroy(new Error(`HEAD hang on ${path} — pre-fix bug shape`))
+            reject(new Error(`HEAD hang on ${path}`))
+          })
+          req.end()
+        },
+      )
+      const elapsed = Date.now() - start
+      assert.equal(result.status, expectedStatus, `${label}: status`)
+      assert.ok(
+        result.headers["content-length"] !== undefined,
+        `${label}: Content-Length must be set (got headers: ${JSON.stringify(result.headers)})`,
+      )
+      assert.ok(
+        elapsed < 1000,
+        `${label}: HEAD must terminate quickly (got ${elapsed} ms — pre-fix hung ~5 s)`,
+      )
+    }
+  })
 })
 
 // Phase Q.4 — Reed-Solomon erasure coding integration tests.
