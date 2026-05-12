@@ -3491,7 +3491,7 @@ async function queryLogs(chain: IChainEngine, query: Record<string, unknown>, re
       toBlock,
       address,
       addresses,
-      topics: topics as Array<Hex | null> | undefined,
+      topics: topics as Array<Hex | Hex[] | null> | undefined,
     })
     return results.slice(0, MAX_LOG_RESULTS)
   }

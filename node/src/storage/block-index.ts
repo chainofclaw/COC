@@ -67,7 +67,11 @@ export interface LogFilter {
   toBlock?: bigint
   address?: Hex
   addresses?: Hex[]
-  topics?: Array<Hex | null>
+  // Each topic slot accepts: null (any), single Hex (exact match), or Hex[] (OR-set
+  // — log matches if log.topics[i] equals ANY entry). Pre-#300 the inner-array
+  // form was dropped at the type level here and matchLogFilter crashed with
+  // "expected.toLowerCase is not a function" on any caller that passed it.
+  topics?: Array<Hex | Hex[] | null>
 }
 
 export interface AddressTxQuery {
@@ -558,9 +562,21 @@ function matchLogFilter(log: IndexedLog, filter: LogFilter): boolean {
   if (filter.topics && filter.topics.length > 0) {
     for (let i = 0; i < filter.topics.length; i++) {
       const expected = filter.topics[i]
-      if (!expected) continue
+      if (expected === null || expected === undefined) continue
       const actual = log.topics[i]
-      if (!actual || actual.toLowerCase() !== expected.toLowerCase()) return false
+      if (!actual) return false
+      const actualLower = actual.toLowerCase()
+      // #300: a topic slot may be a single Hex OR a Hex[] OR-set per the
+      // Ethereum eth_getLogs spec. Pre-fix this called expected.toLowerCase()
+      // unconditionally, throwing "expected.toLowerCase is not a function"
+      // when the caller passed the standard array form (e.g. matching either
+      // a Transfer or an Approval signature in topic[0]).
+      if (Array.isArray(expected)) {
+        if (expected.length === 0) continue
+        if (!expected.some((e) => typeof e === "string" && e.toLowerCase() === actualLower)) return false
+      } else {
+        if (actualLower !== expected.toLowerCase()) return false
+      }
     }
   }
   return true
