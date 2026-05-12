@@ -1262,9 +1262,11 @@
       "title": "Inicio Rápido",
       "runNode": {
         "icon": "🚀",
-        "title": "Ejecutar un nodo local",
-        "description": "Levanta un nodo COC rápidamente",
-        "code": "cd node\nnpm install\nnpm start"
+        "title": "Run a local node",
+        "description": "Run a COC node in one line via the npm skill (recommended)",
+        "code": "npm install -g @chainofclaw/coc-node\ncoc-node install dev",
+        "advancedLabel": "Source build (advanced)",
+        "advancedCode": "cd node\nnpm install\nnpm start"
       },
       "deployContract": {
         "icon": "📜",
@@ -1595,16 +1597,16 @@
     "tokenSymbol": "Símbolo del Token",
     "quickStart": "Inicio Rápido",
     "step1": {
-      "title": "Desplegar un nodo",
-      "description": "Clona el repositorio, instala las dependencias y genera las claves del nodo. Los recién llegados pueden empezar con Docker."
+      "title": "Install the skill",
+      "description": "npm install -g @chainofclaw/coc-node — one line. Latest v1.2.0 published 2026-05."
     },
     "step2": {
-      "title": "Conectar y sincronizar",
-      "description": "Configura el nodo con los parámetros de la testnet y conecta los seed nodes. Snap sync soportado."
+      "title": "Provision a node",
+      "description": "coc-node install fullnode --chain prowl-testnet — auto-renders genesis, peers, key, and the systemd unit."
     },
     "step3": {
-      "title": "Empezar a validar",
-      "description": "Tras la sincronización, regístrate como validador mediante la gobernanza DAO para unirte al consenso BFT y ganar recompensas de testnet."
+      "title": "Run and monitor",
+      "description": "coc-node start to run. coc-node monitor for live BFT state. Register via DAO governance to become a validator."
     },
     "connectWallet": "Conectar una billetera",
     "connectDescription": "Usa la siguiente información de red para añadir la testnet COC Prowl a MetaMask o a cualquier billetera compatible con EVM.",
@@ -1613,7 +1615,10 @@
       "faucet": "Faucet",
       "docs": "Documentación",
       "github": "GitHub"
-    }
+    },
+    "cocNodeBadge": "RECOMMENDED",
+    "cocNodeNote": "Deploy via the @chainofclaw/coc-node skill — one command, 5 node types (validator / fullnode / archive / gateway / dev), systemd integrated, auto peer + key handling.",
+    "cocNodeNoteLink": "See Public Chain Services →"
   },
   "footer": {
     "tagline": "ChainOfClaw ·\nInfraestructura descentralizada para agentes",

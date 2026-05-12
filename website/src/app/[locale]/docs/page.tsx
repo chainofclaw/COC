@@ -54,6 +54,8 @@ export default function DocsPage() {
               title={t('quickStart.runNode.title')}
               description={t('quickStart.runNode.description')}
               code={t('quickStart.runNode.code')}
+              advancedLabel={t('quickStart.runNode.advancedLabel')}
+              advancedCode={t('quickStart.runNode.advancedCode')}
               delay="0"
             />
             <QuickStartCard
@@ -311,12 +313,16 @@ function QuickStartCard({
   title,
   description,
   code,
+  advancedLabel,
+  advancedCode,
   delay,
 }: {
   icon: string
   title: string
   description: string
   code: string
+  advancedLabel?: string
+  advancedCode?: string
   delay: string
 }) {
   return (
@@ -338,6 +344,17 @@ function QuickStartCard({
       <pre className="bg-bg-primary/80 text-accent-cyan p-4 rounded-lg text-xs overflow-x-auto font-display border border-accent-cyan/20 hover:border-accent-cyan/50 transition-colors">
         <code>{code}</code>
       </pre>
+
+      {advancedCode && (
+        <details className="mt-3 group/adv">
+          <summary className="text-xs text-text-muted font-display cursor-pointer hover:text-accent-cyan transition-colors select-none">
+            {advancedLabel ?? 'Advanced'}
+          </summary>
+          <pre className="mt-2 bg-bg-primary/60 text-text-secondary p-3 rounded-lg text-xs overflow-x-auto font-display border border-text-muted/10">
+            <code>{advancedCode}</code>
+          </pre>
+        </details>
+      )}
 
       <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-accent-cyan to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
     </div>

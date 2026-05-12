@@ -1263,8 +1263,10 @@
       "runNode": {
         "icon": "🚀",
         "title": "運行本地節點",
-        "description": "快速啟動一個 COC 節點",
-        "code": "cd node\nnpm install\nnpm start"
+        "description": "通过 npm skill 一行启动 COC 节点 (推荐)",
+        "code": "npm install -g @chainofclaw/coc-node\ncoc-node install dev",
+        "advancedLabel": "源码构建 (高级)",
+        "advancedCode": "cd node\nnpm install\nnpm start"
       },
       "deployContract": {
         "icon": "📜",
@@ -1595,16 +1597,16 @@
     "tokenSymbol": "代幣符號",
     "quickStart": "快速開始",
     "step1": {
-      "title": "部署節點",
-      "description": "克隆倉庫、安裝依賴並生成節點密鑰。新手可使用 Docker 快速部署。"
+      "title": "npm 安装",
+      "description": "npm install -g @chainofclaw/coc-node — 一行命令完成。skill 已发布至 npm，2026-05 最新版 v1.2.0。"
     },
     "step2": {
-      "title": "連接與同步",
-      "description": "使用測試網參數配置節點並連接種子節點。支持 Snap 快速同步。"
+      "title": "部署节点",
+      "description": "coc-node install fullnode --chain prowl-testnet — 自动生成 genesis、peers、key 并写好 systemd unit。"
     },
     "step3": {
-      "title": "開始驗證",
-      "description": "同步完成後通過 DAO 治理註冊為驗證者，參與 BFT 共識並獲取測試獎勵。"
+      "title": "启动并监控",
+      "description": "coc-node start 启动节点，coc-node monitor 看实时 BFT 状态。需要参与共识则通过 DAO governance 注册为 validator。"
     },
     "connectWallet": "連接錢包",
     "connectDescription": "使用以下網絡信息將 COC Prowl 測試網添加到 MetaMask 或任何 EVM 兼容錢包。",
@@ -1613,7 +1615,10 @@
       "faucet": "水龍頭",
       "docs": "文檔",
       "github": "GitHub"
-    }
+    },
+    "cocNodeBadge": "RECOMMENDED",
+    "cocNodeNote": "推荐用 @chainofclaw/coc-node skill 部署 — 一行命令、5 种节点类型、systemd 集成、自动 peer/key 处理。",
+    "cocNodeNoteLink": "查看公链服务 →"
   },
   "footer": {
     "tagline": "ChainOfClaw ·\nAgent 的去中心化基礎設施",

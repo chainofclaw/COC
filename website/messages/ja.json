@@ -1262,9 +1262,11 @@
       "title": "クイックスタート",
       "runNode": {
         "icon": "🚀",
-        "title": "ローカルノードを起動",
-        "description": "COC ノードを素早く立ち上げる",
-        "code": "cd node\nnpm install\nnpm start"
+        "title": "Run a local node",
+        "description": "Run a COC node in one line via the npm skill (recommended)",
+        "code": "npm install -g @chainofclaw/coc-node\ncoc-node install dev",
+        "advancedLabel": "Source build (advanced)",
+        "advancedCode": "cd node\nnpm install\nnpm start"
       },
       "deployContract": {
         "icon": "📜",
@@ -1595,16 +1597,16 @@
     "tokenSymbol": "トークンシンボル",
     "quickStart": "クイックスタート",
     "step1": {
-      "title": "ノードをデプロイ",
-      "description": "リポジトリをクローンし、依存関係をインストールしてノード鍵を生成。初心者は Docker から始められる。"
+      "title": "Install the skill",
+      "description": "npm install -g @chainofclaw/coc-node — one line. Latest v1.2.0 published 2026-05."
     },
     "step2": {
-      "title": "接続と同期",
-      "description": "テストネットパラメータでノードを設定し、シードノードに接続。Snap sync サポート。"
+      "title": "Provision a node",
+      "description": "coc-node install fullnode --chain prowl-testnet — auto-renders genesis, peers, key, and the systemd unit."
     },
     "step3": {
-      "title": "検証を開始",
-      "description": "同期後、DAO ガバナンスを通じてバリデーターとして登録し、BFT 合意に参加してテストネット報酬を得る。"
+      "title": "Run and monitor",
+      "description": "coc-node start to run. coc-node monitor for live BFT state. Register via DAO governance to become a validator."
     },
     "connectWallet": "ウォレットを接続",
     "connectDescription": "以下のネットワーク情報を使って COC Prowl テストネットを MetaMask または任意の EVM 互換ウォレットに追加する。",
@@ -1613,7 +1615,10 @@
       "faucet": "フォーセット",
       "docs": "ドキュメント",
       "github": "GitHub"
-    }
+    },
+    "cocNodeBadge": "RECOMMENDED",
+    "cocNodeNote": "Deploy via the @chainofclaw/coc-node skill — one command, 5 node types (validator / fullnode / archive / gateway / dev), systemd integrated, auto peer + key handling.",
+    "cocNodeNoteLink": "See Public Chain Services →"
   },
   "footer": {
     "tagline": "ChainOfClaw ·\nエージェントのための分散型インフラ",

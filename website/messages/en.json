@@ -1263,8 +1263,10 @@
       "runNode": {
         "icon": "🚀",
         "title": "Run a local node",
-        "description": "Spin up a COC node fast",
-        "code": "cd node\nnpm install\nnpm start"
+        "description": "Run a COC node in one line via the npm skill (recommended)",
+        "code": "npm install -g @chainofclaw/coc-node\ncoc-node install dev",
+        "advancedLabel": "Source build (advanced)",
+        "advancedCode": "cd node\nnpm install\nnpm start"
       },
       "deployContract": {
         "icon": "📜",
@@ -1595,16 +1597,16 @@
     "tokenSymbol": "Token Symbol",
     "quickStart": "Quick Start",
     "step1": {
-      "title": "Deploy a node",
-      "description": "Clone the repo, install deps, and generate node keys. Newcomers can start with Docker."
+      "title": "Install the skill",
+      "description": "npm install -g @chainofclaw/coc-node — one line. Latest v1.2.0 published 2026-05."
     },
     "step2": {
-      "title": "Connect and sync",
-      "description": "Configure the node with testnet parameters and connect seed nodes. Snap sync supported."
+      "title": "Provision a node",
+      "description": "coc-node install fullnode --chain prowl-testnet — auto-renders genesis, peers, key, and the systemd unit."
     },
     "step3": {
-      "title": "Start validating",
-      "description": "After syncing, register as a validator via DAO governance to join BFT consensus and earn testnet rewards."
+      "title": "Run and monitor",
+      "description": "coc-node start to run. coc-node monitor for live BFT state. Register via DAO governance to become a validator."
     },
     "connectWallet": "Connect a wallet",
     "connectDescription": "Use the following network info to add COC Prowl testnet to MetaMask or any EVM-compatible wallet.",
@@ -1613,7 +1615,10 @@
       "faucet": "Faucet",
       "docs": "Docs",
       "github": "GitHub"
-    }
+    },
+    "cocNodeBadge": "RECOMMENDED",
+    "cocNodeNote": "Deploy via the @chainofclaw/coc-node skill — one command, 5 node types (validator / fullnode / archive / gateway / dev), systemd integrated, auto peer + key handling.",
+    "cocNodeNoteLink": "See Public Chain Services →"
   },
   "footer": {
     "tagline": "ChainOfClaw ·\nDecentralized infrastructure for agents",

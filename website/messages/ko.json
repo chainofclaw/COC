@@ -1262,9 +1262,11 @@
       "title": "빠른 시작",
       "runNode": {
         "icon": "🚀",
-        "title": "로컬 노드 실행",
-        "description": "COC 노드를 빠르게 띄운다",
-        "code": "cd node\nnpm install\nnpm start"
+        "title": "Run a local node",
+        "description": "Run a COC node in one line via the npm skill (recommended)",
+        "code": "npm install -g @chainofclaw/coc-node\ncoc-node install dev",
+        "advancedLabel": "Source build (advanced)",
+        "advancedCode": "cd node\nnpm install\nnpm start"
       },
       "deployContract": {
         "icon": "📜",
@@ -1595,16 +1597,16 @@
     "tokenSymbol": "토큰 심볼",
     "quickStart": "빠른 시작",
     "step1": {
-      "title": "노드 배포",
-      "description": "저장소를 클론하고, 의존성을 설치하며, 노드 키를 생성한다. 초심자는 Docker로 시작할 수 있다."
+      "title": "Install the skill",
+      "description": "npm install -g @chainofclaw/coc-node — one line. Latest v1.2.0 published 2026-05."
     },
     "step2": {
-      "title": "연결 및 동기화",
-      "description": "테스트넷 파라미터로 노드를 구성하고 시드 노드에 연결한다. Snap 동기화 지원."
+      "title": "Provision a node",
+      "description": "coc-node install fullnode --chain prowl-testnet — auto-renders genesis, peers, key, and the systemd unit."
     },
     "step3": {
-      "title": "검증 시작",
-      "description": "동기화 후, DAO 거버넌스를 통해 밸리데이터로 등록하여 BFT 합의에 참여하고 테스트넷 보상을 획득한다."
+      "title": "Run and monitor",
+      "description": "coc-node start to run. coc-node monitor for live BFT state. Register via DAO governance to become a validator."
     },
     "connectWallet": "지갑 연결",
     "connectDescription": "다음 네트워크 정보를 사용해 MetaMask 또는 EVM 호환 지갑에 COC Prowl 테스트넷을 추가하세요.",
@@ -1613,7 +1615,10 @@
       "faucet": "Faucet",
       "docs": "문서",
       "github": "GitHub"
-    }
+    },
+    "cocNodeBadge": "RECOMMENDED",
+    "cocNodeNote": "Deploy via the @chainofclaw/coc-node skill — one command, 5 node types (validator / fullnode / archive / gateway / dev), systemd integrated, auto peer + key handling.",
+    "cocNodeNoteLink": "See Public Chain Services →"
   },
   "footer": {
     "tagline": "ChainOfClaw ·\n에이전트를 위한 탈중앙화 인프라",
