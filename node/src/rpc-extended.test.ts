@@ -635,6 +635,73 @@ test("RPC Extended Methods", async (t) => {
     assert.ok(typeof content.queued === "object")
   })
 
+  await t.test("#386: txpool_status / txpool_content classify gap-nonce txs as queued (not pending)", async () => {
+    // Pre-fix: txpool_status hardcoded `queued: "0x0"` and txpool_content
+    // returned `queued: {}` regardless of nonce gaps. A tx with nonce=5
+    // while account onchain nonce was 0 reported as pending, so wallet
+    // stuck-tx detection (which polls txpool_content and waits for the
+    // tx to move from queued → pending) never triggered.
+    //
+    // Live testnet 88780 repro: deployer had a tx with nonce=300 in the
+    // mempool while onchain nonce was 187. Pre-fix txpool_content showed
+    // it under "pending"; post-fix it correctly appears under "queued".
+    //
+    // Fix mirrors geth's separation: contiguous-from-onchain → pending,
+    // gapped/future → queued.
+    const { Wallet: EthersWallet, Transaction: EthersTransaction } = await import("ethers")
+    const TEST_PK = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+    const wallet = new EthersWallet(TEST_PK)
+    const senderAddr = wallet.address.toLowerCase()
+
+    // Clear any pre-existing test txs first by getting baseline.
+    const baselineNonce = await rpcCall(port, "eth_getTransactionCount", [wallet.address, "latest"]) as string
+    const startNonce = parseInt(baselineNonce, 16)
+
+    // Sign two txs: one contiguous (startNonce) and one gapped (startNonce + 5).
+    function sign(nonce: number): string {
+      const tx = EthersTransaction.from({
+        to: "0x0000000000000000000000000000000000000001",
+        value: "0x1",
+        nonce,
+        gasLimit: "0x5208",
+        gasPrice: "0x3b9aca00",
+        chainId,
+        data: "0x",
+      })
+      const sig = wallet.signingKey.sign(tx.unsignedHash)
+      const clone = tx.clone()
+      clone.signature = sig
+      return clone.serialized
+    }
+    await rpcCall(port, "eth_sendRawTransaction", [sign(startNonce)])
+    await rpcCall(port, "eth_sendRawTransaction", [sign(startNonce + 5)])
+
+    const status = await rpcCall(port, "txpool_status") as { pending: string; queued: string }
+    const pendingCount = parseInt(status.pending, 16)
+    const queuedCount = parseInt(status.queued, 16)
+    assert.ok(pendingCount >= 1, `txpool_status.pending must count contiguous tx (got ${pendingCount})`)
+    assert.ok(queuedCount >= 1, `txpool_status.queued must count gap tx (got ${queuedCount}, pre-fix was always 0)`)
+
+    const content = await rpcCall(port, "txpool_content") as {
+      pending: Record<string, Record<string, { nonce: string }>>
+      queued: Record<string, Record<string, { nonce: string }>>
+    }
+    const pendingForSender = content.pending[senderAddr] ?? {}
+    const queuedForSender = content.queued[senderAddr] ?? {}
+    assert.ok(
+      String(startNonce) in pendingForSender,
+      `nonce ${startNonce} (contiguous) must be in pending, got pending=${JSON.stringify(Object.keys(pendingForSender))} queued=${JSON.stringify(Object.keys(queuedForSender))}`,
+    )
+    assert.ok(
+      String(startNonce + 5) in queuedForSender,
+      `nonce ${startNonce + 5} (gap) must be in queued, got pending=${JSON.stringify(Object.keys(pendingForSender))} queued=${JSON.stringify(Object.keys(queuedForSender))}`,
+    )
+    assert.ok(
+      !(String(startNonce + 5) in pendingForSender),
+      `gap nonce ${startNonce + 5} must NOT appear in pending`,
+    )
+  })
+
   await t.test("coc_nodeInfo returns node metadata", async () => {
     const info = await rpcCall(port, "coc_nodeInfo")
     assert.ok(typeof info === "object")

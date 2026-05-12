@@ -1919,31 +1919,30 @@ async function handleRpc(
       return receipts
     }
     case "txpool_status": {
-      const stats = chain.mempool.stats()
+      // #386: pre-fix hardcoded queued:"0x0" miscounted gap/future-nonce
+      // txs as pending. Geth's txpool_status separates contiguous-from-
+      // onchain (pending) vs gapped/future (queued) so stuck-tx detection
+      // works. Bucket per-sender by walking nonces from each sender's
+      // onchain nonce.
+      const allTxs = chain.mempool.getAll()
+      const { pendingCount, queuedCount } = await classifyMempoolPendingQueued(allTxs, evm)
       return {
-        pending: `0x${stats.size.toString(16)}`,
-        queued: "0x0",
+        pending: `0x${pendingCount.toString(16)}`,
+        queued: `0x${queuedCount.toString(16)}`,
       }
     }
     case "txpool_content": {
+      // #386: same pending vs queued split as txpool_status. Pre-fix lumped
+      // every tx into `pending` (queued stayed {}) so ethers/wagmi/web3.js
+      // stuck-tx detection — which polls txpool_content and checks if the
+      // tx moved from queued → pending — never triggered. Live-testnet
+      // repro: a tx with nonce=300 sat in mempool while account onchain
+      // nonce was 187; pre-fix txpool_content reported it as pending,
+      // post-fix it reports as queued (correct — the 188..299 gap blocks
+      // it from execution).
       const allTxs = chain.mempool.getAll()
-      const pending: Record<string, Record<string, unknown>> = {}
-      for (const mtx of allTxs) {
-        const sender = mtx.from
-        if (!pending[sender]) pending[sender] = {}
-        const parsed = Transaction.from(mtx.rawTx)
-        pending[sender][mtx.nonce.toString()] = {
-          hash: mtx.hash,
-          nonce: `0x${mtx.nonce.toString(16)}`,
-          from: mtx.from,
-          to: parsed.to ?? null,
-          value: `0x${(parsed.value ?? 0n).toString(16)}`,
-          gas: `0x${mtx.gasLimit.toString(16)}`,
-          gasPrice: `0x${mtx.gasPrice.toString(16)}`,
-          input: parsed.data ?? "0x",
-        }
-      }
-      return { pending, queued: {} }
+      const { pending, queued } = await splitMempoolPendingQueued(allTxs, evm)
+      return { pending, queued }
     }
     case "coc_getTransactionsByAddress": {
       // #120: validate address shape so typos surface as -32602 instead
@@ -3660,6 +3659,84 @@ async function formatPersistentReceipt(
     contractAddress,
     type: String((parsed as Record<string, unknown>).type ?? "0x0"),
   }
+}
+
+/**
+ * #386: split mempool txs into geth-compatible "pending" (contiguous
+ * from onchain nonce) vs "queued" (gap/future). Caches per-sender
+ * onchain nonce since multiple txs from the same sender share it.
+ *
+ * Returns the two buckets pre-shaped for `txpool_content`. Sort each
+ * sender's txs by nonce, then walk from the sender's onchain nonce —
+ * the contiguous run is "pending", everything after a gap is "queued".
+ */
+async function splitMempoolPendingQueued(
+  allTxs: ReturnType<IChainEngine["mempool"]["getAll"]>,
+  evm: EvmChain,
+): Promise<{
+  pending: Record<string, Record<string, unknown>>
+  queued: Record<string, Record<string, unknown>>
+}> {
+  const pending: Record<string, Record<string, unknown>> = {}
+  const queued: Record<string, Record<string, unknown>> = {}
+  const bySender = new Map<string, typeof allTxs>()
+  for (const mtx of allTxs) {
+    const arr = bySender.get(mtx.from) ?? []
+    arr.push(mtx)
+    bySender.set(mtx.from, arr)
+  }
+  for (const [sender, senderTxs] of bySender) {
+    senderTxs.sort((a, b) => (a.nonce < b.nonce ? -1 : a.nonce > b.nonce ? 1 : 0))
+    const onchainNonce = await evm.getNonce(sender)
+    let expected = onchainNonce
+    for (const mtx of senderTxs) {
+      const parsed = Transaction.from(mtx.rawTx)
+      const entry = {
+        hash: mtx.hash,
+        nonce: `0x${mtx.nonce.toString(16)}`,
+        from: mtx.from,
+        to: parsed.to ?? null,
+        value: `0x${(parsed.value ?? 0n).toString(16)}`,
+        gas: `0x${mtx.gasLimit.toString(16)}`,
+        gasPrice: `0x${mtx.gasPrice.toString(16)}`,
+        input: parsed.data ?? "0x",
+      }
+      const bucket = mtx.nonce === expected ? pending : queued
+      if (!bucket[sender]) bucket[sender] = {}
+      bucket[sender][mtx.nonce.toString()] = entry
+      if (mtx.nonce === expected) expected++
+    }
+  }
+  return { pending, queued }
+}
+
+/** #386: count-only variant for `txpool_status`. Same partition logic. */
+async function classifyMempoolPendingQueued(
+  allTxs: ReturnType<IChainEngine["mempool"]["getAll"]>,
+  evm: EvmChain,
+): Promise<{ pendingCount: number; queuedCount: number }> {
+  let pendingCount = 0
+  let queuedCount = 0
+  const bySender = new Map<string, bigint[]>()
+  for (const mtx of allTxs) {
+    const arr = bySender.get(mtx.from) ?? []
+    arr.push(mtx.nonce)
+    bySender.set(mtx.from, arr)
+  }
+  for (const [sender, nonces] of bySender) {
+    nonces.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+    const onchainNonce = await evm.getNonce(sender)
+    let expected = onchainNonce
+    for (const nonce of nonces) {
+      if (nonce === expected) {
+        pendingCount++
+        expected++
+      } else {
+        queuedCount++
+      }
+    }
+  }
+  return { pendingCount, queuedCount }
 }
 
 /**
