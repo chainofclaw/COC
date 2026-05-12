@@ -280,6 +280,22 @@ describe("requireTxHashParam (#150)", () => {
     const e = captureThrow(() => requireTxHashParam([null], 0))
     assert.equal(e.code, -32602)
   })
+
+  test("#364: normalizes mixed-case to lowercase for Map.get parity", () => {
+    // ETH JSON-RPC hashes are case-INsensitive — geth accepts both
+    // `0xABCD…` and `0xabcd…`. Pre-fix the downstream `chain.blockByHash
+    // .get(hash)` / `txByHash.get(hash)` used the as-received case, so
+    // `0xBBAD…` returned null indistinguishable from "no such tx" even
+    // when the lowercased equivalent existed.
+    const mixed  = "0xBBaD93Ae799eCB20E5A0Dd43Dc1211Bb4141572399cD0E23E40F9B92388B3D31"
+    const lower  = "0xbbad93ae799ecb20e5a0dd43dc1211bb4141572399cd0e23e40f9b92388b3d31"
+    assert.equal(requireTxHashParam([mixed], 0), lower)
+    // All-caps must also normalize.
+    const upper = "0xBBAD93AE799ECB20E5A0DD43DC1211BB4141572399CD0E23E40F9B92388B3D31"
+    assert.equal(requireTxHashParam([upper], 0), lower)
+    // Already-lowercased passes through unchanged.
+    assert.equal(requireTxHashParam([lower], 0), lower)
+  })
 })
 
 describe("requireBlockHashParam (#166)", () => {

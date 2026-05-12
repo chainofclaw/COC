@@ -181,6 +181,17 @@ export function requireAddressParam(params: unknown[], index: number, name = "ad
  * like "0x123" slipped through and the downstream tx lookup returned
  * null ("tx not found"). Clients couldn't distinguish a typo from a
  * tx that doesn't exist on-chain.
+ *
+ * #364: ETH JSON-RPC hashes are case-INsensitive — geth accepts both
+ * `0xABCD…` and `0xabcd…` for the same hash. Our `chain.blockByHash`
+ * / `blockIndex.getBlockByHash` / tx-by-hash lookups go through
+ * `Map.get(hash)` keyed by the lowercase-computed digest, so a
+ * client passing the mixed-case form (common when copy-pasting
+ * from block explorers like Etherscan-clone UIs that render hashes
+ * with uppercase letters for readability) got `null` indistinguishable
+ * from "no such block/tx." Normalize to lowercase here so every
+ * caller of `requireTxHashParam` / `requireBlockHashParam` sees the
+ * canonical form regardless of client casing.
  */
 export function requireTxHashParam(params: unknown[], index: number, name = "transaction hash"): Hex {
   const value = (params ?? [])[index]
@@ -190,7 +201,7 @@ export function requireTxHashParam(params: unknown[], index: number, name = "tra
   if (!HASH_RE.test(value as string)) {
     invalidParams(`invalid ${name}: must match /^0x[0-9a-fA-F]{64}$/`)
   }
-  return value as Hex
+  return (value as string).toLowerCase() as Hex
 }
 
 /**
