@@ -1616,6 +1616,45 @@ test("RPC Extended Methods", async (t) => {
       assert.equal(r.error?.code, -32600, `id=${JSON.stringify(badId)} must be -32600, got ${JSON.stringify(r)}`)
       assert.match(r.error!.message, /id must be/i, "error must explain id shape")
     }
+    // #316: cap string-id length to bound 1:1 echo amplification. Pre-fix a
+    // 5000-char string id flowed straight back into every response.
+    {
+      const longId = "Z".repeat(257)
+      const r = await probe({ jsonrpc: "2.0", id: longId, method: "eth_chainId" })
+      assert.equal(r.error?.code, -32600, "id >256 chars must be -32600")
+      assert.match(r.error!.message, /id too long/i, "error must explain length cap")
+      // KEY invariant: response does NOT echo the malicious id
+      assert.ok(!JSON.stringify(r).includes("ZZZZZ"),
+        "id-too-long error must NOT echo the input — closes the amplification")
+      // Boundary: exactly 256 chars must still be accepted
+      const max = await probe({ jsonrpc: "2.0", id: "y".repeat(256), method: "eth_chainId" })
+      assert.equal(max.error, undefined, "id of exactly 256 chars must be accepted")
+      assert.ok(typeof max.result === "string", "well-formed envelope must produce result")
+    }
+    // #316: reject control chars in string id — same log-injection /
+    // parser-confusion family as #312 (pubsub topic).
+    {
+      for (const bad of ["line1\nline2", "with\rCR", "tab\there", "null\u0000byte", "del\u007fhere"]) {
+        const r = await probe({ jsonrpc: "2.0", id: bad, method: "eth_chainId" })
+        assert.equal(r.error?.code, -32600, `id=${JSON.stringify(bad)} must reject as -32600`)
+        assert.match(r.error!.message, /control character/i, "error must explain control-char rule")
+        // KEY invariant: invalid-envelope response resets id to null
+        // per JSON-RPC §5.1; no raw control char from the input may
+        // survive in the response.
+        assert.equal(r.id, null, "invalid envelope must reset id to null")
+        const serialized = JSON.stringify(r)
+        for (const ch of bad) {
+          const code = ch.charCodeAt(0)
+          if (code < 0x20 || code === 0x7f) {
+            assert.ok(!serialized.includes(ch),
+              `response must not contain raw control char U+${code.toString(16).padStart(4, "0")} from id`)
+          }
+        }
+      }
+      // Normal string ids still pass
+      const r = await probe({ jsonrpc: "2.0", id: "abc-123_456", method: "eth_chainId" })
+      assert.equal(r.error, undefined, "normal ASCII id must pass")
+    }
     // method must be a non-empty string
     for (const m of [0, "", null, true, ["eth_chainId"]]) {
       const r = await probe({ jsonrpc: "2.0", id: 1, method: m })
