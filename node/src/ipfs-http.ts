@@ -327,6 +327,14 @@ export class IpfsHttpServer {
           // Accept-Ranges so well-behaved clients can re-request with
           // Range on a subsequent fetch.
           res.writeHead(200, { "accept-ranges": "bytes" })
+  })
+
+          // #340: sniff MIME so browsers render HTML/JSON/images instead of
+          // downloading them as application/octet-stream. kubo gateway uses
+          // a similar magic-byte sniffer (Go's http.DetectContentType). The
+          // gateway is read-only content addressing so there's no XSS risk
+          // beyond what the publishing client already accepted.
+          res.writeHead(200, { "content-type": sniffMimeType(data) })
           res.end(data)
         } catch (err) {
           if (isNotFoundError(err)) {
@@ -1526,6 +1534,88 @@ export class IpfsHttpServer {
  * the stacktrace as a generic 500. The 10-char floor rejects typos like
  * "bogus" / "b" while allowing the fake-shape CIDs used in fixtures.
  */
+/**
+ * #340: minimal MIME sniffer for the /ipfs/<cid> gateway. Browsers
+ * served `Content-Type: application/octet-stream` (or no Content-Type
+ * at all — what the gateway used to do) trigger a download dialog
+ * instead of rendering. kubo's gateway uses a similar sniffer; we
+ * match the common cases the IPFS ecosystem actually serves:
+ *
+ *   - HTML, SVG, XML, JSON, plain text (the bulk of web content)
+ *   - PNG, JPEG, GIF, WebP (images)
+ *   - PDF, GZIP, ZIP (binary archives)
+ *
+ * Falls back to `application/octet-stream` when no signature matches.
+ * Sniffs the first 512 bytes only (kubo limit) — large files don't pay
+ * extra cost.
+ */
+export function sniffMimeType(data: Uint8Array): string {
+  if (data.length === 0) return "application/octet-stream"
+  const head = data.subarray(0, Math.min(data.length, 512))
+
+  // Binary magic bytes (check before text — UTF-8 BOM is text but rare)
+  if (head.length >= 8 &&
+      head[0] === 0x89 && head[1] === 0x50 && head[2] === 0x4e && head[3] === 0x47 &&
+      head[4] === 0x0d && head[5] === 0x0a && head[6] === 0x1a && head[7] === 0x0a) {
+    return "image/png"
+  }
+  if (head.length >= 3 && head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff) {
+    return "image/jpeg"
+  }
+  if (head.length >= 6 && head[0] === 0x47 && head[1] === 0x49 && head[2] === 0x46 &&
+      head[3] === 0x38 && (head[4] === 0x37 || head[4] === 0x39) && head[5] === 0x61) {
+    return "image/gif"
+  }
+  if (head.length >= 12 && head[0] === 0x52 && head[1] === 0x49 && head[2] === 0x46 &&
+      head[3] === 0x46 && head[8] === 0x57 && head[9] === 0x45 &&
+      head[10] === 0x42 && head[11] === 0x50) {
+    return "image/webp"
+  }
+  if (head.length >= 5 && head[0] === 0x25 && head[1] === 0x50 && head[2] === 0x44 &&
+      head[3] === 0x46 && head[4] === 0x2d) {
+    return "application/pdf"
+  }
+  if (head.length >= 3 && head[0] === 0x1f && head[1] === 0x8b && head[2] === 0x08) {
+    return "application/gzip"
+  }
+  if (head.length >= 4 && head[0] === 0x50 && head[1] === 0x4b &&
+      (head[2] === 0x03 || head[2] === 0x05) && (head[3] === 0x04 || head[3] === 0x06)) {
+    return "application/zip"
+  }
+
+  // Text-based detection (strip UTF-8 BOM if present)
+  let textStart = 0
+  if (head.length >= 3 && head[0] === 0xef && head[1] === 0xbb && head[2] === 0xbf) {
+    textStart = 3
+  }
+  const text = Buffer.from(head.subarray(textStart)).toString("utf8").trimStart().toLowerCase()
+  if (text.startsWith("<!doctype html") || text.startsWith("<html")) return "text/html; charset=utf-8"
+  if (text.startsWith("<?xml")) return "application/xml; charset=utf-8"
+  if (text.startsWith("<svg")) return "image/svg+xml"
+  // JSON: starts with { or [ AND parses (only try-parse the first 512 bytes)
+  if (text.length > 0 && (text[0] === "{" || text[0] === "[")) {
+    try {
+      JSON.parse(text)
+      return "application/json"
+    } catch {
+      // Truncated head may not parse — fall through to plain-text check.
+    }
+  }
+
+  // Plain text: at least 90% of bytes printable ASCII or common whitespace.
+  let printable = 0
+  for (const b of head.subarray(textStart)) {
+    if (b === 0x09 || b === 0x0a || b === 0x0d || (b >= 0x20 && b <= 0x7e) || b >= 0x80) {
+      printable++
+    }
+  }
+  if (head.length - textStart > 0 && printable / (head.length - textStart) >= 0.9) {
+    return "text/plain; charset=utf-8"
+  }
+
+  return "application/octet-stream"
+}
+
 function isValidCid(cid: string): boolean {
   // #216: real-world CID max is ~80 chars (Qm v0 = 46, bafy v1 ≤ ~80).
   // 100 leaves comfortable headroom for any future codec without

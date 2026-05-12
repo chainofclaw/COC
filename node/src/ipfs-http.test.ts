@@ -1149,6 +1149,94 @@ describe("IpfsHttpServer", () => {
       assert.equal(res.status, 200)
       const json = await res.json() as { Hash: string; Size: string }
       assert.equal(Number(json.Size), content.length, "normal upload byte count must match")
+  })
+
+  // #340: gateway omitted Content-Type — browsers default to
+  // application/octet-stream which triggers download instead of
+  // rendering. kubo gateway auto-sniffs MIME from magic bytes; mirror
+  // that for the common content types IPFS pipelines actually serve.
+  describe("#340 gateway Content-Type sniffing", () => {
+    async function addAndFetch(content: Uint8Array, filename = "x.bin"): Promise<{ ct: string; body: Buffer }> {
+      const meta = await unixfs.addFile(filename, content)
+      const res = await fetch(`/ipfs/${meta.cid}`)
+      assert.equal(res.status, 200)
+      const body = await res.buffer()
+      const ct = String(res.headers["content-type"] ?? "")
+      return { ct, body }
+    }
+
+    it("PNG magic bytes → image/png", async () => {
+      const png = Buffer.concat([
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+        Buffer.from([0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52]),
+        Buffer.from("padding".repeat(10)),
+      ])
+      const { ct, body } = await addAndFetch(png, "img.png")
+      assert.equal(ct, "image/png")
+      assert.equal(body.length, png.length, "body must round-trip intact")
+    })
+
+    it("JPEG magic bytes → image/jpeg", async () => {
+      const jpeg = Buffer.concat([
+        Buffer.from([0xff, 0xd8, 0xff, 0xe0]),
+        Buffer.from("JFIF padding".repeat(20)),
+      ])
+      const { ct } = await addAndFetch(jpeg, "img.jpg")
+      assert.equal(ct, "image/jpeg")
+    })
+
+    it("PDF magic bytes → application/pdf", async () => {
+      const pdf = Buffer.concat([
+        Buffer.from("%PDF-1.4\n"),
+        Buffer.from("body".repeat(30)),
+      ])
+      const { ct } = await addAndFetch(pdf, "doc.pdf")
+      assert.equal(ct, "application/pdf")
+    })
+
+    it("GZIP magic bytes → application/gzip", async () => {
+      const gz = Buffer.concat([
+        Buffer.from([0x1f, 0x8b, 0x08, 0x00]),
+        Buffer.from("body".repeat(30)),
+      ])
+      const { ct } = await addAndFetch(gz, "a.gz")
+      assert.equal(ct, "application/gzip")
+    })
+
+    it("HTML (<!doctype html>) → text/html; charset=utf-8", async () => {
+      const html = Buffer.from("<!doctype html><html><body>hi</body></html>")
+      const { ct } = await addAndFetch(html, "page.html")
+      assert.match(ct, /text\/html/)
+    })
+
+    it("SVG (<svg>) → image/svg+xml", async () => {
+      const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>')
+      const { ct } = await addAndFetch(svg, "icon.svg")
+      assert.equal(ct, "image/svg+xml")
+    })
+
+    it("JSON object → application/json", async () => {
+      const json = Buffer.from('{"key":"value","arr":[1,2,3]}')
+      const { ct } = await addAndFetch(json, "data.json")
+      assert.equal(ct, "application/json")
+    })
+
+    it("plain ASCII text → text/plain; charset=utf-8", async () => {
+      const txt = Buffer.from("Hello, world!\nThis is just plain text.\n")
+      const { ct } = await addAndFetch(txt, "note.txt")
+      assert.match(ct, /text\/plain/)
+    })
+
+    it("opaque binary (no magic) → application/octet-stream", async () => {
+      // High-entropy random bytes — no recognised signature
+      const opaque = Buffer.alloc(100)
+      for (let i = 0; i < 100; i++) opaque[i] = (i * 37 + 13) & 0xff
+      // Force a leading zero byte so plain-text heuristic also rejects
+      opaque[0] = 0
+      opaque[1] = 0
+      opaque[2] = 0
+      const { ct } = await addAndFetch(opaque, "blob.bin")
+      assert.equal(ct, "application/octet-stream")
     })
   })
 })
