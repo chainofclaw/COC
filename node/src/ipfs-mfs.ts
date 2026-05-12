@@ -131,17 +131,37 @@ export class IpfsMfs {
       throw new Error(`file not found: ${normalized} (use create=true to create)`)
     }
 
+    // #306: validate offset on ALL paths (new file, truncate, and overwrite),
+    // not just the `existing && !truncate` overwrite path. Pre-fix the offset
+    // check lived inside the overwrite branch only, so:
+    //   - `create:true` (no existing) + negative offset → silently dropped
+    //   - `create:true` + non-numeric offset → silently dropped (NaN)
+    //   - `truncate:true` + offset → silently dropped
+    // The HTTP route never forwarded offset to mfs.write either (#306 sibling
+    // fix in ipfs-http.ts), so these were doubly hidden. Now offset is
+    // validated up-front and applied uniformly per kubo MFS semantics:
+    //   write(path, data, {offset:N})  → file = zeros(N) + data + tail(existing)
+    if (opts?.offset !== undefined) {
+      if (!Number.isFinite(opts.offset) || !Number.isInteger(opts.offset) || opts.offset < 0) {
+        throw new Error(`invalid offset: ${opts.offset} (must be non-negative integer)`)
+      }
+    }
+
+    const MAX_WRITE_SIZE = 64 * 1024 * 1024 // 64 MiB
     let finalData = data
-    if (existing && !opts?.truncate && opts?.offset !== undefined) {
-      if (opts.offset < 0) throw new Error("offset must be non-negative")
-      // Guard against memory exhaustion from large offset + data.length
-      const MAX_WRITE_SIZE = 64 * 1024 * 1024 // 64 MiB
+
+    if (opts?.offset !== undefined && opts.offset > 0) {
       const mergedSize = opts.offset + data.length
-      if (mergedSize > MAX_WRITE_SIZE) throw new Error(`write would exceed max size (${MAX_WRITE_SIZE} bytes)`)
-      // Append/overwrite at offset
-      const existingData = await this.unixfs.readFile(existing.cid)
+      if (mergedSize > MAX_WRITE_SIZE) {
+        throw new Error(`write would exceed max size (${MAX_WRITE_SIZE} bytes)`)
+      }
+
+      // For new-file or truncate cases, start from a zero buffer of length offset.
+      // For existing+!truncate, start from existing content (preserve tail).
+      const useExisting = existing && !opts?.truncate
+      const existingData = useExisting ? await this.unixfs.readFile(existing!.cid) : new Uint8Array(0)
       const merged = new Uint8Array(Math.max(existingData.length, mergedSize))
-      merged.set(existingData)
+      if (useExisting) merged.set(existingData)
       merged.set(data, opts.offset)
       finalData = merged
     }

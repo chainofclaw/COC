@@ -1328,11 +1328,28 @@ export class IpfsHttpServer {
           // handles both: it extracts the file bytes from multipart, or returns
           // raw bytes when the request has no boundary in Content-Type.
           const { bytes: body } = await readMultipartFile(req)
-          await this.mfs.write(arg, body, {
+          // #306: pre-fix the HTTP handler dropped the `offset` query param
+          // entirely — every kubo-style `files/write?offset=N` request was
+          // accepted with 200 but the offset never reached `mfs.write`. This
+          // silently broke partial-write clients (kubo CLI, js-ipfs, etherman)
+          // and made the validation inside mfs.write unreachable. Mirror the
+          // existing offset validation rule from the `read` handler at line
+          // 1027 so the shape contract is the same for both ends of an MFS
+          // partial I/O round-trip.
+          const writeOpts: { create?: boolean; truncate?: boolean; parents?: boolean; offset?: number } = {
             create: url.query?.create === "true",
             truncate: url.query?.truncate === "true",
             parents: url.query?.parents === "true",
-          })
+          }
+          const offsetRaw = firstQueryValue(url.query?.offset)
+          if (offsetRaw !== undefined) {
+            const n = Number(offsetRaw)
+            if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) {
+              throw new HttpError(400, "invalid offset: must be a non-negative integer")
+            }
+            writeOpts.offset = n
+          }
+          await this.mfs.write(arg, body, writeOpts)
           res.writeHead(200, { "content-type": "application/json" })
           res.end(JSON.stringify({ ok: true }))
           break

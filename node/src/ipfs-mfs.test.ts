@@ -283,6 +283,35 @@ test("#304: mv/cp onto an existing DIRECTORY rejects (no type clobber)", async (
     // KEY invariant 4: read /D as a file must NOT return file content
     // (i.e. the dir was never overwritten, parent.entries still says directory)
     await assert.rejects(() => mfs.read("/D"), /not a file|is a directory|cannot read directory/i)
+  })
+
+test("#306: write to NEW file with offset pads with zeros (sparse-style)", async () => {
+  // Live-reproducible on 88780 testnet (probe iteration #39):
+  //   /api/v0/files/write?arg=/sparse.bin&create=true&offset=100 -F data=TAIL
+  //   /api/v0/files/stat?arg=/sparse.bin   → {"Size": 5, ...}   ← BUG: offset dropped
+  //   /api/v0/files/read?arg=/sparse.bin   → "TAIL\n"            ← 5 bytes, not 105
+  // Pre-fix: the offset-handling block at mfs-write was inside
+  // `if (existing && !opts?.truncate && opts?.offset !== undefined)`, so the
+  // `create:true, offset:N` (no existing file) path silently dropped offset.
+  // The HTTP route also did not forward offset to mfs.write — see #306
+  // sibling fix in ipfs-http.ts. Kubo MFS semantics: file becomes
+  // zeros(N) + data.
+  const { mfs, cleanup } = await createMfs()
+  try {
+    const tail = new TextEncoder().encode("TAIL")
+    await mfs.write("/sparse.bin", tail, { create: true, offset: 100 })
+
+    // KEY invariant 1: file size = offset + data.length, not just data.length
+    const stat = await mfs.stat("/sparse.bin")
+    assert.strictEqual(stat.size, 104, "new-file + offset must produce size = offset + data.length")
+
+    // KEY invariant 2: prefix is all zeros, suffix is the data
+    const read = await mfs.read("/sparse.bin")
+    assert.strictEqual(read.length, 104)
+    for (let i = 0; i < 100; i++) {
+      assert.strictEqual(read[i], 0, `byte ${i} must be zero (zero-padded prefix)`)
+    }
+    assert.strictEqual(new TextDecoder().decode(read.slice(100)), "TAIL")
   } finally {
     cleanup()
   }
@@ -330,6 +359,76 @@ test("#304: mv/cp file onto existing DIRECTORY entry (type mismatch at leaf) rej
       /type mismatch|destination is a directory/,
       "mv dir onto existing file must reject (cannot replace file with dir silently)",
     )
+  })
+
+test("#306: write with truncate+offset replaces existing then pads", async () => {
+  // Pre-fix `truncate:true + offset` also silently dropped offset because
+  // the condition required `!opts?.truncate`. Kubo: truncate then write at
+  // offset = pad with zeros + data.
+  const { mfs, cleanup } = await createMfs()
+  try {
+    await mfs.write("/t.bin", new TextEncoder().encode("ORIGINAL"), { create: true })
+    await mfs.write("/t.bin", new TextEncoder().encode("NEW"), { truncate: true, offset: 5 })
+
+    const stat = await mfs.stat("/t.bin")
+    assert.strictEqual(stat.size, 8, "truncate+offset must produce size = offset + new data length")
+
+    const read = await mfs.read("/t.bin")
+    for (let i = 0; i < 5; i++) {
+      assert.strictEqual(read[i], 0, `byte ${i} must be zero (truncate discarded original; offset padded)`)
+    }
+    assert.strictEqual(new TextDecoder().decode(read.slice(5)), "NEW")
+  } finally {
+    cleanup()
+  }
+})
+
+test("#306: write with invalid offset rejects on every path", async () => {
+  // Pre-fix the offset<0 check only ran when `existing && !truncate`. New-file
+  // and truncate paths bypassed it. Now the check is up-front and uniform.
+  const { mfs, cleanup } = await createMfs()
+  try {
+    // Negative offset on new file
+    await assert.rejects(
+      () => mfs.write("/n.bin", new Uint8Array([1, 2]), { create: true, offset: -5 }),
+      /invalid offset/,
+    )
+    // NaN / non-integer
+    await assert.rejects(
+      () => mfs.write("/nan.bin", new Uint8Array([1, 2]), { create: true, offset: NaN }),
+      /invalid offset/,
+    )
+    await assert.rejects(
+      () => mfs.write("/frac.bin", new Uint8Array([1, 2]), { create: true, offset: 1.5 }),
+      /invalid offset/,
+    )
+    // Negative + truncate (was bypassed pre-fix)
+    await mfs.write("/x.bin", new TextEncoder().encode("seed"), { create: true })
+    await assert.rejects(
+      () => mfs.write("/x.bin", new Uint8Array([1, 2]), { truncate: true, offset: -1 }),
+      /invalid offset/,
+    )
+
+    // offset=0 must continue to work (boundary, not invalid)
+    await mfs.write("/zero.bin", new TextEncoder().encode("Z"), { create: true, offset: 0 })
+    const read = await mfs.read("/zero.bin")
+    assert.strictEqual(new TextDecoder().decode(read), "Z")
+  } finally {
+    cleanup()
+  }
+})
+
+test("#306: existing-file overwrite at offset preserves tail (regression for old path)", async () => {
+  // This is the path that WAS working pre-fix. Verify it still works to
+  // catch regressions from the refactor.
+  const { mfs, cleanup } = await createMfs()
+  try {
+    await mfs.write("/o.bin", new TextEncoder().encode("ABCDEFGHIJ"), { create: true })
+    await mfs.write("/o.bin", new TextEncoder().encode("XYZ"), { offset: 3 })
+
+    const read = await mfs.read("/o.bin")
+    assert.strictEqual(new TextDecoder().decode(read), "ABCXYZGHIJ",
+      "overwrite at offset must preserve bytes before+after the written slice")
   } finally {
     cleanup()
   }
