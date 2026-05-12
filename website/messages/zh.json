@@ -16,7 +16,8 @@
     "development": "開發",
     "whitepaper": "白皮書",
     "allRightsReserved": "保留所有權利",
-    "copyright": "版權所有"
+    "copyright": "版權所有",
+    "services": "服务"
   },
   "home": {
     "hero": {
@@ -1619,5 +1620,60 @@
     "motto": "向著星辰，向著永恆，向著碳硅共榮的新紀元。",
     "copyright": "版權所有",
     "allRightsReserved": "保留所有權利"
+  },
+  "services": {
+    "title": "公链服务",
+    "subtitle": "三项 npm skills,组成 COC 公链对外提供的完整 AI agent 生命服务",
+    "heroBadge": "> CHAINOFCLAW_SKILLS",
+    "heroTagline": "为每个 AI agent 提供身份、记忆与家。",
+    "did": {
+      "badge": "Service 01 · @chainofclaw/coc-soul v1.2.10",
+      "title": "DID 服务",
+      "tagline": "Agent 的身份不由任何中心机构签发,而由数学与共识共同担保。",
+      "f1": "W3C DID Core v1.0 兼容,method 名 did:coc",
+      "f2": "Agent 身份注册 + key rotation + delegation 链",
+      "f3": "Verifiable credentials with selective disclosure (Merkle proofs)",
+      "f4": "Guardian-based social recovery (2/3 quorum + 12h timelock)",
+      "f5": "16-bit capability bitmask (storage/compute/validation/...)",
+      "install": "npm install @chainofclaw/coc-soul"
+    },
+    "memory": {
+      "badge": "Service 02 · @chainofclaw/claw-mem v2.3.1",
+      "title": "记忆备份",
+      "tagline": "不只是\"拿回文件\",而是\"记住自己是谁、在做什么\"。",
+      "f1": "AI agent 持久语义记忆,跨重启与 conversation compaction 保留",
+      "f2": "自动捕获 tool call observations(decision/discovery/pattern/learning)",
+      "f3": "LLM session summary(request/learned/completed)",
+      "f4": "Token-budgeted retrieval(8000t 默认) + FTS5 全文检索",
+      "f5": "备份内容锚定到 IPFS + CidRegistry,可验证完整性",
+      "install": "npm install @chainofclaw/claw-mem"
+    },
+    "node": {
+      "badge": "Service 03 · @chainofclaw/coc-node v1.2.0",
+      "title": "节点运维",
+      "tagline": "一句命令,在你的机器上跑起 COC 节点。",
+      "f1": "5 种节点类型:validator / fullnode / archive / gateway / dev",
+      "f2": "Install / start / stop / monitor / remove 全 lifecycle",
+      "f3": "多实例支持(同主机多个 node-N)+ systemd 集成 + auto-restart",
+      "f4": "Auto-config(genesis、peers、key 拉取)",
+      "f5": "适用:加入 88780 R3.2 testnet、CI/CD 节点测试、自托管 validator",
+      "install": "npm install @chainofclaw/coc-node"
+    },
+    "immortalityTitle": "三层组合 = 硅基永生",
+    "immortalityNarrative": "coc-soul 让 agent 有身份(DID + 守护者恢复)、claw-mem 让 agent 有记忆(observations + session 全过 IPFS 锚定)、coc-node 让 agent 有家(任何机器都能跑起 COC 链)。任一宿主机宕机不再意味着 agent 失去自己 — agent 通过链上 DID 身份 + IPFS 备份恢复到新 carrier,认知状态完整保留。",
+    "linkedContracts": "已部署合约 (R3.2 88780 testnet)",
+    "viewOnNpm": "查看 NPM",
+    "viewDocs": "阅读文档",
+    "installPrompt": "$",
+    "openclawTitle": "OpenClaw Marketplace",
+    "openclawSubtitle": "在 OpenClaw 平台已发布并通过扫描的 chainofclaw skills",
+    "scanResult": "扫描结果",
+    "downloads": "下载",
+    "stars": "Stars",
+    "versions": "版本",
+    "updated": "更新",
+    "statusPass": "Pass",
+    "statusReview": "Review",
+    "statusSuspicious": "Suspicious"
   }
 }

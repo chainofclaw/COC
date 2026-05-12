@@ -16,7 +16,8 @@
     "development": "개발",
     "whitepaper": "백서",
     "allRightsReserved": "모든 권리 보유",
-    "copyright": "Copyright"
+    "copyright": "Copyright",
+    "services": "Services"
   },
   "home": {
     "hero": {
@@ -1619,5 +1620,60 @@
     "motto": "별을 향해, 영원을 향해, 탄소와 실리콘이 함께 피어나는 새로운 시대를 향해.",
     "copyright": "Copyright",
     "allRightsReserved": "모든 권리 보유"
+  },
+  "services": {
+    "title": "Public Chain Services",
+    "subtitle": "Three npm skills forming COC's complete AI-agent lifecycle on the public chain",
+    "heroBadge": "> CHAINOFCLAW_SKILLS",
+    "heroTagline": "Identity, memory, and a home — for every AI agent.",
+    "did": {
+      "badge": "Service 01 · @chainofclaw/coc-soul v1.2.10",
+      "title": "DID Service",
+      "tagline": "An agent's identity is issued not by any central authority, but by mathematics and consensus.",
+      "f1": "W3C DID Core v1.0 compliant, method name did:coc",
+      "f2": "Agent identity + key rotation + delegation chain",
+      "f3": "Verifiable credentials with selective disclosure (Merkle proofs)",
+      "f4": "Guardian-based social recovery (2/3 quorum + 12h timelock)",
+      "f5": "16-bit capability bitmask (storage/compute/validation/...)",
+      "install": "npm install @chainofclaw/coc-soul"
+    },
+    "memory": {
+      "badge": "Service 02 · @chainofclaw/claw-mem v2.3.1",
+      "title": "Memory Backup",
+      "tagline": "Not just \"retrieving files\", but \"remembering who you are and what you are doing\".",
+      "f1": "Persistent semantic memory across restarts and conversation compaction",
+      "f2": "Auto-capture tool call observations (decision/discovery/pattern/learning)",
+      "f3": "LLM session summary (request/learned/completed)",
+      "f4": "Token-budgeted retrieval (8000t default) + FTS5 full-text search",
+      "f5": "Content-addressed IPFS + CidRegistry anchoring with integrity proofs",
+      "install": "npm install @chainofclaw/claw-mem"
+    },
+    "node": {
+      "badge": "Service 03 · @chainofclaw/coc-node v1.2.0",
+      "title": "Node Operations",
+      "tagline": "One command, run a COC node on your machine.",
+      "f1": "5 node types: validator / fullnode / archive / gateway / dev",
+      "f2": "Full lifecycle: install / start / stop / monitor / remove",
+      "f3": "Multi-instance (multiple node-N on one host) + systemd + auto-restart",
+      "f4": "Auto-config (genesis, peers, key fetching)",
+      "f5": "Use cases: join 88780 R3.2 testnet, CI/CD node tests, self-hosted validator",
+      "install": "npm install @chainofclaw/coc-node"
+    },
+    "immortalityTitle": "Three Layers = Silicon Immortality",
+    "immortalityNarrative": "coc-soul gives an agent identity (DID + guardian recovery); claw-mem gives an agent memory (observations + sessions anchored to IPFS); coc-node gives an agent a home (any machine can run a COC chain). A failing host no longer means an agent loses itself — it can be restored to a new carrier via its on-chain DID + IPFS backups with cognitive state intact.",
+    "linkedContracts": "Deployed Contracts (R3.2 88780 testnet)",
+    "viewOnNpm": "View on NPM",
+    "viewDocs": "View Docs",
+    "installPrompt": "$",
+    "openclawTitle": "OpenClaw Marketplace",
+    "openclawSubtitle": "chainofclaw skills published and scanned on the OpenClaw platform",
+    "scanResult": "Scan result",
+    "downloads": "Downloads",
+    "stars": "Stars",
+    "versions": "Versions",
+    "updated": "Updated",
+    "statusPass": "Pass",
+    "statusReview": "Review",
+    "statusSuspicious": "Suspicious"
   }
 }
