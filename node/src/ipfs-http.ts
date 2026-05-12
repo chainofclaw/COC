@@ -1967,6 +1967,16 @@ async function readMultipartFile(req: http.IncomingMessage): Promise<{ filename?
   // Limit boundary length to prevent split amplification DoS
   const boundaryMatch = /boundary=([^;\s]{1,256})/.exec(contentType)
   if (!boundaryMatch) {
+    // #356: `multipart/...` Content-Type without a boundary param is a
+    // malformed request per RFC 7578 — pre-fix we silently fell back
+    // to the raw-body path and treated `--unspecified-boundary\r\n
+    // Content-Disposition: ...\r\n\r\nfilebytes\r\n--unspecified-boundary--`
+    // as a 289-byte file blob, content-addressed against the entire
+    // multipart envelope. Reject the request explicitly instead.
+    if (/^\s*multipart\//i.test(contentType)) {
+      throw new HttpError(400, "invalid_multipart",
+        "multipart/* Content-Type requires boundary param")
+    }
     const raw = await readBody(req)
     return { bytes: raw }
   }
@@ -1981,12 +1991,41 @@ async function readMultipartFile(req: http.IncomingMessage): Promise<{ filename?
     if (sepIdx === -1) continue
     const headerRaw = part.subarray(0, sepIdx).toString("binary")
     const body = part.subarray(sepIdx + 4)
+  })
+
+  const parts = raw.toString("binary").split(boundary)
+  // #356: collect every parseable part instead of returning on the
+  // first one so we can reject empty (0 parts) and multi-file (>1)
+  // bodies. Pre-fix: empty multipart → empty CID, 200 OK (silent
+  // accept); multi-file multipart → first file processed, every
+  // subsequent file's bytes silently DROPPED — that's data loss
+  // for any client that thought `/api/v0/add` accepts batches.
+  const validParts: Array<{ filename?: string; bytes: Uint8Array }> = []
+  for (const part of parts) {
+    if (!part || part === "--\r\n") continue
+    // Use indexOf to split only at the FIRST \r\n\r\n (body may contain \r\n\r\n)
+    const separatorIdx = part.indexOf("\r\n\r\n")
+    if (separatorIdx === -1) continue
+    const headerRaw = part.slice(0, separatorIdx)
+    let body = part.slice(separatorIdx + 4)
     const filenameMatch = /filename="([^"]+)"/.exec(headerRaw)
     const rawFilename = filenameMatch ? filenameMatch[1] : undefined
     // Strip path components to prevent directory traversal in metadata
     const filename = rawFilename ? rawFilename.replace(/.*[/\\]/, "").slice(0, 255) || undefined : undefined
     return { filename, bytes: new Uint8Array(body) }
+  })
+
+    if (body.endsWith("\r\n")) body = body.slice(0, -2)
+    validParts.push({ filename, bytes: Buffer.from(body, "binary") })
   }
 
-  return { bytes: new Uint8Array() }
+  if (validParts.length === 0) {
+    throw new HttpError(400, "invalid_multipart",
+      "no part found in multipart body")
+  }
+  if (validParts.length > 1) {
+    throw new HttpError(400, "unsupported_multipart",
+      `multipart body has ${validParts.length} parts, but this endpoint accepts at most 1`)
+  }
+  return validParts[0]
 }
