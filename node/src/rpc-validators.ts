@@ -70,6 +70,11 @@ export function internalError(message: string): never {
   throw { code: -32603, message }
 }
 
+/** Throw COC-custom -32003 "unauthorized" (admin RPC gated, etc.). Never returns. */
+export function unauthorized(message: string): never {
+  throw { code: -32003, message }
+}
+
 // ---------------------------------------------------------------------------
 // BigInt + numeric parsers
 // ---------------------------------------------------------------------------

@@ -24,6 +24,7 @@ import {
   parseError,
   limitExceeded,
   internalError,
+  unauthorized,
   safeBigInt,
   parseBlockTag,
   requireHexParam,
@@ -94,6 +95,25 @@ function constantTimeEqual(a: string, b: string): boolean {
   bufB.copy(paddedB)
   const equal = timingSafeEqual(paddedA, paddedB)
   return equal && bufA.length === bufB.length
+}
+
+/**
+ * #336: is the request peer on the loopback interface? Used to gate
+ * admin_* methods when no Bearer auth token is configured. IPv4 form
+ * "127.x.x.x" (entire loopback /8) + IPv6 "::1" + IPv4-mapped IPv6
+ * "::ffff:127.x.x.x". The caller has already stripped the "::ffff:"
+ * prefix during rate-limit normalization, but be defensive.
+ */
+export function isLoopbackAddress(ip: string): boolean {
+  if (!ip || ip === "unknown") return false
+  const stripped = ip.startsWith("::ffff:") ? ip.slice(7) : ip
+  if (stripped === "::1") return true
+  // IPv4 loopback /8 range: 127.0.0.0 – 127.255.255.255
+  if (/^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(stripped)) {
+    const parts = stripped.split(".").map(Number)
+    return parts.every((p) => p >= 0 && p <= 255)
+  }
+  return false
 }
 
 /** JSON stringify that serializes bigint values as hex strings (EVM RPC convention). */
@@ -345,6 +365,17 @@ export function startRpcServer(
         const rpcOpts: Record<string, unknown> = {}
         if (rpcAuthOptions?.enableAdminRpc) {
           rpcOpts.enableAdminRpc = true
+          // #336: admin methods are gated by enableAdminRpc but pre-fix
+          // had no source-IP / auth check on top — any unauthenticated
+          // client could call admin_addPeer (peer-list pollution),
+          // admin_removePeer (network split), admin_pruneStalePhantoms
+          // (CPU DoS), admin_nodeInfo (info leak). Require either:
+          //   (a) global Bearer auth was set and validated above, OR
+          //   (b) the request came from loopback (127.0.0.1 / ::1).
+          // No RFC1918 allow — operators wanting LAN access must set
+          // COC_RPC_AUTH_TOKEN explicitly.
+          const hasGlobalAuth = !!rpcAuthOptions?.authToken
+          rpcOpts.adminAuthorized = hasGlobalAuth || isLoopbackAddress(clientIp)
         }
         const resolvedNodeId = nodeId ?? runtimeOptions?.nodeId
         if (resolvedNodeId) {
@@ -2377,6 +2408,9 @@ async function handleRpc(
       if (!(opts as Record<string, unknown>)?.enableAdminRpc) {
         methodNotFound("admin methods disabled (set enableAdminRpc=true)")
       }
+      if (!(opts as Record<string, unknown>)?.adminAuthorized) {
+        unauthorized("admin methods require Bearer auth or loopback request")
+      }
       const height = await Promise.resolve(chain.getHeight())
       const mempoolStats = chain.mempool.stats()
       return {
@@ -2399,6 +2433,9 @@ async function handleRpc(
     case "admin_addPeer": {
       if (!(opts as Record<string, unknown>)?.enableAdminRpc) {
         methodNotFound("admin methods disabled")
+      }
+      if (!(opts as Record<string, unknown>)?.adminAuthorized) {
+        unauthorized("admin methods require Bearer auth or loopback request")
       }
       // #240: pre-fix `String(...)` silently coerced numbers/bools to
       // plausible-looking strings ("123", "true"), bypassing the
@@ -2427,6 +2464,9 @@ async function handleRpc(
       if (!(opts as Record<string, unknown>)?.enableAdminRpc) {
         methodNotFound("admin methods disabled")
       }
+      if (!(opts as Record<string, unknown>)?.adminAuthorized) {
+        unauthorized("admin methods require Bearer auth or loopback request")
+      }
       // #240: same shape guard as admin_addPeer — pre-fix `String(true)`
       // = "true" silently masqueraded as a peerId and the removePeer
       // call no-op'd successfully, returning true and confusing the
@@ -2446,6 +2486,9 @@ async function handleRpc(
       if (!(opts as Record<string, unknown>)?.enableAdminRpc) {
         methodNotFound("admin methods disabled")
       }
+      if (!(opts as Record<string, unknown>)?.adminAuthorized) {
+        unauthorized("admin methods require Bearer auth or loopback request")
+      }
       const peers = p2p.getPeers?.() ?? p2p.discovery.getActivePeers()
       return peers.map((peer: { id: string; url?: string }) => ({
         id: peer.id,
@@ -2462,6 +2505,9 @@ async function handleRpc(
     case "admin_pruneStalePhantoms": {
       if (!(opts as Record<string, unknown>)?.enableAdminRpc) {
         methodNotFound("admin methods disabled")
+      }
+      if (!(opts as Record<string, unknown>)?.adminAuthorized) {
+        unauthorized("admin methods require Bearer auth or loopback request")
       }
       const persistentChain = chain as unknown as { pruneStalePhantoms?: () => Promise<{
         scanned: number
