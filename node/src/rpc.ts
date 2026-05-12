@@ -311,11 +311,30 @@ export function startRpcServer(
     let body = ""
     let bodySize = 0
     let aborted = false
+    // #346: pre-fix the RPC body reader had NO inactivity / total timeout.
+    // An attacker sending `Content-Length: 100` headers + 0 body bytes
+    // would tie up a request slot until Node's default 5-minute
+    // requestTimeout. Slowloris-style: open N connections, send headers,
+    // never send body. With the default per-server socket cap, this is
+    // a cheap full-quota DoS. IPFS readBody (ipfs-http.ts:1349) already
+    // has a 30s timeout — mirror it on the RPC side.
+    const READ_TIMEOUT_MS = 30_000
+    const readTimer = setTimeout(() => {
+      if (aborted) return
+      aborted = true
+      // Don't write a body — the client either already sent something
+      // wrong (and parse error will fire below) or is intentionally
+      // slowlorising and won't read the response anyway. Just kill the
+      // socket so the request slot is freed.
+      req.destroy(new Error("body read timeout"))
+    }, READ_TIMEOUT_MS).unref()
+
     req.on("data", (chunk: Buffer | string) => {
       if (aborted) return
       bodySize += typeof chunk === "string" ? chunk.length : chunk.byteLength
       if (bodySize > MAX_RPC_BODY) {
         aborted = true
+        clearTimeout(readTimer)
         res.writeHead(413, { "content-type": "application/json" })
         res.end(JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "request body too large" } }))
         req.destroy()
@@ -324,6 +343,7 @@ export function startRpcServer(
       body += chunk
     })
     req.on("end", async () => {
+      clearTimeout(readTimer)
       if (aborted) return
       try {
         if (!body || body.trim().length === 0) {
