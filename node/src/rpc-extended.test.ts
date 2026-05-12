@@ -235,6 +235,61 @@ test("RPC Extended Methods", async (t) => {
     assert.strictEqual(count, "0x0")
   })
 
+  await t.test("#396: eth_getUncleCountByBlockHash rejects non-hash arg with -32602", async () => {
+    // Pre-fix the handler returned the no-uncle stub ("0x0") regardless
+    // of the param shape, so a non-string / non-hex hash silently came
+    // back as "no uncles" instead of -32602. Geth validates the hash
+    // shape first — clients that send garbage learn about misuse instead
+    // of receiving a "valid hash, no uncle" answer they could act on.
+    const garbageCases = [
+      { params: [12345], desc: "number" },
+      { params: [{}], desc: "object" },
+      { params: ["not-a-hash"], desc: "non-hex string" },
+      { params: ["0x123"], desc: "wrong-length hex" },
+      { params: [], desc: "missing arg" },
+    ]
+    for (const tc of garbageCases) {
+      const res = await rpcCallRaw(port, "eth_getUncleCountByBlockHash", tc.params)
+      assert.ok(res.error, `${tc.desc}: expected error, got result ${JSON.stringify(res)}`)
+      assert.strictEqual(
+        res.error.code,
+        -32602,
+        `${tc.desc}: expected code -32602, got ${res.error.code}`,
+      )
+    }
+    // Valid 32-byte hash still returns "0x0"
+    const valid = await rpcCall(port, "eth_getUncleCountByBlockHash", [
+      "0x" + "0".repeat(64),
+    ])
+    assert.strictEqual(valid, "0x0")
+  })
+
+  await t.test("#396: eth_getUncleByBlockHashAndIndex rejects non-hash and non-hex index", async () => {
+    // Same anti-pattern: the index param flowed straight to the null
+    // return without shape validation. Match the *byHash sibling so
+    // negative / non-hex indices surface as -32602.
+    const res1 = await rpcCallRaw(port, "eth_getUncleByBlockHashAndIndex", ["not-a-hash", "0x0"])
+    assert.strictEqual(res1.error?.code, -32602)
+    const res2 = await rpcCallRaw(port, "eth_getUncleByBlockHashAndIndex", [
+      "0x" + "0".repeat(64),
+      "not-hex",
+    ])
+    assert.strictEqual(res2.error?.code, -32602)
+    // Valid args still return null (no uncles on COC chain).
+    const valid = await rpcCall(port, "eth_getUncleByBlockHashAndIndex", [
+      "0x" + "0".repeat(64),
+      "0x0",
+    ])
+    assert.strictEqual(valid, null)
+  })
+
+  await t.test("#396: eth_getUncleByBlockNumberAndIndex rejects non-string tag", async () => {
+    const res = await rpcCallRaw(port, "eth_getUncleByBlockNumberAndIndex", [{}, "0x0"])
+    assert.strictEqual(res.error?.code, -32602)
+    const valid = await rpcCall(port, "eth_getUncleByBlockNumberAndIndex", ["0x0", "0x0"])
+    assert.strictEqual(valid, null)
+  })
+
   await t.test("eth_protocolVersion returns version", async () => {
     const version = await rpcCall(port, "eth_protocolVersion")
     assert.ok(typeof version === "string")
