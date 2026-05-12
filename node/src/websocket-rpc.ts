@@ -137,10 +137,58 @@ export class WsRpcServer {
   }
 
   start(): void {
+    // #374: validate browser-sent `Origin` header during the upgrade
+    // handshake to block Cross-Site WebSocket Hijacking (CSWSH). Without
+    // this check, ANY origin (`http://evil.com`) is allowed to open a
+    // WebSocket from a victim's browser session and subscribe to the
+    // node's pending-tx / log / block notifications, exfiltrating
+    // mempool data and bypassing the HTTP CORS gate (#330).
+    //
+    // Allowlist sourced from COC_WS_ORIGIN env (comma-separated, exact
+    // match against `Origin` header). Defaults match the HTTP CORS
+    // default (`http://localhost:3000`) plus same-host loopback so the
+    // local explorer + curl/wscat tests keep working out-of-the-box.
+    // The literal "*" wildcard explicitly allows all origins for
+    // operators who want CORS-less public RPC.
+    //
+    // Non-browser clients (curl, ethers Node provider, wscat) typically
+    // send NO `Origin` header — these are accepted because Same-Origin
+    // Policy doesn't apply to them. The CSWSH attack only works when
+    // a BROWSER forges the connection, and browsers MUST set Origin.
+    const allowedOrigins = (process.env.COC_WS_ORIGIN ?? "http://localhost:3000")
+      .split(",")
+      .map((o) => o.trim())
+      .filter((o) => o.length > 0)
+    const allowAnyOrigin = allowedOrigins.includes("*")
+
     this.wss = new WebSocketServer({
       port: this.config.port,
       host: this.config.bind,
       maxPayload: WS_MAX_PAYLOAD,
+      verifyClient: (info, cb) => {
+        const origin = info.req.headers.origin
+        // Origin absent → non-browser client (curl, ethers, wscat).
+        // Browsers ALWAYS attach Origin to cross-origin WS upgrades,
+        // so absence means there's no SOP bypass risk to defend
+        // against here.
+        if (origin === undefined) {
+          cb(true)
+          return
+        }
+        if (allowAnyOrigin) {
+          cb(true)
+          return
+        }
+        if (allowedOrigins.includes(origin)) {
+          cb(true)
+          return
+        }
+        log.warn("WS upgrade rejected: origin not in COC_WS_ORIGIN allowlist", {
+          origin,
+          allowed: allowedOrigins,
+        })
+        cb(false, 403, "forbidden: origin not allowed")
+      },
     })
 
     this.wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
