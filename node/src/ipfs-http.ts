@@ -1554,6 +1554,27 @@ export class IpfsHttpServer {
         return
       }
 
+      // #312: reject control characters in topic name. Pre-fix, a topic
+      // like `evil\0null` was accepted by pub AND sub; pubsub/ls then
+      // returned `{"Strings":["evil\0null"]}`. Concerns:
+      // - Log injection: `log.info("subscribed", {topic})` in
+      //   ipfs-pubsub.ts:109 — line-based loggers may truncate at \0
+      //   or split on \n
+      // - Subscriber-side parser confusion: a subscriber receiving the
+      //   ndjson stream gets `topicIDs:["evil\0null"]` and may
+      //   break on null-terminator-aware C clients
+      // - Topic-name confusion: two topics that differ only in control
+      //   chars look identical in many UIs
+      // Reject any control char in C0/DEL range (U+0000-U+001F, U+007F).
+      // Allow normal printable + UTF-8 multibyte (matches kubo's
+      // "no whitespace" guidance loosely while keeping interop with
+      // multi-language topic names).
+      if (topic && /[\u0000-\u001f\u007f]/.test(topic)) {
+        res.writeHead(400, { "content-type": "application/json" })
+        res.end(JSON.stringify({ error: "topic contains control characters" }))
+        return
+      }
+
       switch (route) {
         case "pub": {
           if (!topic) {

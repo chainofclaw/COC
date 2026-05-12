@@ -1930,4 +1930,105 @@ describe("#324 IPFS gateway honors HTTP Range header", () => {
     assert.equal(res.status, 200)
     assert.equal(res.headers["accept-ranges"], "bytes")
   })
+
+describe("#312 pubsub topic rejects control characters", () => {
+  let pubsubTmpDir: string
+  let pubsubServer: IpfsHttpServer
+  let pubsubPort: number
+  let pubsubBaseUrl: string
+
+  beforeEach(async () => {
+    const { IpfsPubsub } = await import("./ipfs-pubsub.ts")
+    pubsubTmpDir = await mkdtemp(join(tmpdir(), "ipfs-http-312-"))
+    const s = new IpfsBlockstore(pubsubTmpDir)
+    await s.init()
+    const u = new UnixFsBuilder(s)
+    pubsubPort = 30000 + Math.floor(Math.random() * 10000)
+    pubsubBaseUrl = `http://127.0.0.1:${pubsubPort}`
+    pubsubServer = new IpfsHttpServer(
+      { bind: "127.0.0.1", port: pubsubPort, storageDir: pubsubTmpDir, nodeId: "t312" },
+      s,
+      u,
+    )
+    pubsubServer.attachSubsystems({ pubsub: new IpfsPubsub({ nodeId: "t312" }) })
+    pubsubServer.start()
+    await new Promise((r) => setTimeout(r, 100))
+  })
+
+  afterEach(async () => {
+    await pubsubServer.stop()
+    await rm(pubsubTmpDir, { recursive: true, force: true })
+  })
+
+  async function localFetch(path: string, opts?: { method?: string; body?: Uint8Array | string }): Promise<{ status: number; json: () => Promise<unknown> }> {
+    return new Promise((resolve, reject) => {
+      const url = new URL(path, pubsubBaseUrl)
+      const req = http.request({
+        hostname: url.hostname,
+        port: url.port,
+        path: url.pathname + url.search,
+        method: opts?.method ?? "POST",
+      }, (r) => {
+        const chunks: Buffer[] = []
+        r.on("data", (c) => chunks.push(Buffer.from(c)))
+        r.on("end", () => {
+          const buf = Buffer.concat(chunks)
+          resolve({
+            status: r.statusCode ?? 0,
+            json: () => Promise.resolve(JSON.parse(buf.toString())),
+          })
+        })
+      })
+      req.on("error", reject)
+      if (opts?.body) req.write(opts.body)
+      req.end()
+    })
+  }
+
+  it("pub with null byte in topic → 400 (log-injection / parser-confusion surface)", async () => {
+    // Live-reproducible on 88780: pubsub/pub?arg=evil%00null returned 200
+    // and the topic later showed up in pubsub/ls as "evil\0null".
+    // log.info("subscribed", {topic}) writes the topic to logs — line-based
+    // loggers may truncate at \0 or split on \n. Subscribers receiving
+    // ndjson get topicIDs:["evil\0null"] and may misparse on
+    // null-terminator-aware clients.
+    const res = await localFetch("/api/v0/pubsub/pub?arg=evil%00null", {
+      method: "POST",
+      body: new TextEncoder().encode("payload"),
+    })
+    assert.equal(res.status, 400)
+    const body = await res.json() as Record<string, string>
+    assert.match(body.error, /control character/i)
+  })
+
+  it("pub with newline + carriage return in topic → 400 (CRLF injection)", async () => {
+    const res = await localFetch("/api/v0/pubsub/pub?arg=evil%0a%0devil", {
+      method: "POST",
+      body: new TextEncoder().encode("payload"),
+    })
+    assert.equal(res.status, 400)
+  })
+
+  it("sub with null byte in topic → 400 (same family, same rule)", async () => {
+    const res = await localFetch("/api/v0/pubsub/sub?arg=sub%00evil", { method: "POST" })
+    assert.equal(res.status, 400)
+  })
+
+  it("pub with normal UTF-8 multibyte topic still works (no over-rejection)", async () => {
+    // Boundary: chinese / emoji topics should remain valid. The C0 + DEL
+    // ban is narrow enough that multi-byte UTF-8 (0x80+) survives.
+    const res = await localFetch("/api/v0/pubsub/pub?arg=" + encodeURIComponent("订阅-🚀"), {
+      method: "POST",
+      body: new TextEncoder().encode("hi"),
+    })
+    assert.equal(res.status, 200)
+  })
+
+  it("pub with regular ASCII topic still works", async () => {
+    const res = await localFetch("/api/v0/pubsub/pub?arg=normal-topic_42", {
+      method: "POST",
+      body: new TextEncoder().encode("hi"),
+    })
+    assert.equal(res.status, 200)
+  })
 })
