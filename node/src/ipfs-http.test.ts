@@ -829,6 +829,67 @@ describe("IpfsHttpServer", () => {
     assert.equal(denied.status, 404)
   })
 
+  it("#388: /api/v0/pin/ls validates ?type= filter (kubo parity)", async () => {
+    // Pre-fix the handler ignored `type=` entirely:
+    //   - `type=bogus` → 200 with the full pin set (no filter applied)
+    //   - `type=indirect` → 200 with recursive-typed pins (wrong filter)
+    // Tools that partition by pin type (browser-IPFS, audit scripts)
+    // saw nonsense results. Kubo validates type ∈ {direct, indirect,
+    // recursive, all}; we now match that, and since COC's blockstore
+    // only tracks recursive pins, direct/indirect always returns empty.
+    //
+    // Live testnet 88780 reproduction:
+    //   $ curl -X POST 'http://node:28800/api/v0/pin/ls?type=bogus'
+    //   → 200 {"Keys":{... all pins, type-filter ignored ...}}
+    //   $ curl -X POST 'http://node:28800/api/v0/pin/ls?type=indirect'
+    //   → 200 {"Keys":{... all pins typed "recursive" ...}}
+    // Post-fix both reject with 400 / return empty as appropriate.
+
+    // Seed at least one pin.
+    const data = new TextEncoder().encode("hello-388")
+    const meta = await unixfs.addFile("p388.txt", data)
+    const pinRes = await fetch(`/api/v0/pin/add?arg=${meta.cid}`, { method: "POST" })
+    assert.equal(pinRes.status, 200)
+
+    // type=bogus → 400 invalid type
+    const bogusRes = await fetch("/api/v0/pin/ls?type=bogus")
+    assert.equal(bogusRes.status, 400, `type=bogus must be 400, got ${bogusRes.status}`)
+    const bogusBody = await bogusRes.json() as { error?: string; message?: string }
+    assert.match(
+      `${bogusBody.error} ${bogusBody.message ?? ""}`,
+      /invalid type|recursive/i,
+      `error must explain allowed values, got ${JSON.stringify(bogusBody)}`,
+    )
+
+    // type=recursive → returns full set
+    const recRes = await fetch("/api/v0/pin/ls?type=recursive")
+    assert.equal(recRes.status, 200)
+    const recBody = await recRes.json() as { Keys: Record<string, unknown> }
+    assert.ok(meta.cid in recBody.Keys, "recursive type returns the recursive pin")
+
+    // type=all → returns full set (default)
+    const allRes = await fetch("/api/v0/pin/ls?type=all")
+    assert.equal(allRes.status, 200)
+    const allBody = await allRes.json() as { Keys: Record<string, unknown> }
+    assert.ok(meta.cid in allBody.Keys, "type=all returns the pin")
+
+    // type=direct → empty (COC has no direct pins)
+    const directRes = await fetch("/api/v0/pin/ls?type=direct")
+    assert.equal(directRes.status, 200)
+    const directBody = await directRes.json() as { Keys: Record<string, unknown> }
+    assert.equal(Object.keys(directBody.Keys).length, 0, "COC has no direct pins → must be empty")
+
+    // type=indirect → empty
+    const indirectRes = await fetch("/api/v0/pin/ls?type=indirect")
+    assert.equal(indirectRes.status, 200)
+    const indirectBody = await indirectRes.json() as { Keys: Record<string, unknown> }
+    assert.equal(Object.keys(indirectBody.Keys).length, 0, "COC has no indirect pins → must be empty")
+
+    // pin/ls?arg=<cid>&type=direct → 404 (cid is recursive, not direct)
+    const cidDirectRes = await fetch(`/api/v0/pin/ls?arg=${meta.cid}&type=direct`)
+    assert.equal(cidDirectRes.status, 404, "cid lookup with wrong type returns 404")
+  })
+
   it("POST /api/v0/add accepts a 10 MB payload (regression: 10MB PUT was rejected by the 10MB exact cap)", async () => {
     const boundary = "----TenMbBoundary"
     const payload = Buffer.alloc(10 * 1024 * 1024, 0x61) // 10 MB of 'a'

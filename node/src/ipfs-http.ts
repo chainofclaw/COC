@@ -590,6 +590,9 @@ export class IpfsHttpServer {
         // #372: batch filter — pin/ls with multiple args returns per-CID
         // status (kubo semantics).
         await this.handlePinLs(res, allQueryValues(url.query.arg))
+  })
+
+        await this.handlePinLs(res, argParam, firstQueryValue(url.query?.type))
         return
       }
       if (url.pathname === "/api/v0/pin/rm") {
@@ -1384,6 +1387,24 @@ export class IpfsHttpServer {
       resolvedType = type as AllowedType
     }
 
+  })
+
+    // #388: kubo's `/api/v0/pin/ls?type=<filter>` validates the filter
+    // string against {direct, indirect, recursive, all}. Pre-fix this
+    // handler ignored the `type` param entirely, so `type=bogus`
+    // silently returned the full pin set as if no filter were applied,
+    // and `type=indirect` returned recursive-typed pins. Tools that
+    // partition their UI by pin type (browser-IPFS, pin-management
+    // scripts) were broken on COC.
+    //
+    // COC's blockstore only tracks recursive pins, so the filter logic
+    // is straightforward: direct/indirect → empty, recursive/all → full
+    // set. Unknown values reject with 400.
+    const validTypes = new Set(["direct", "indirect", "recursive", "all"])
+    const resolvedType = type === undefined || type === "" ? "all" : type
+    if (!validTypes.has(resolvedType)) {
+      throw new HttpError(400, "invalid type", `pin type must be one of: ${[...validTypes].join(", ")}`)
+    }
     const pins = await this.store.listPins()
     if (cid !== undefined) {
       // Match the kubo `/api/v0/pin/ls?arg=<cid>` semantics: 404 when the
@@ -1411,6 +1432,13 @@ export class IpfsHttpServer {
     const pins = await this.store.listPins()
     if (cids.length === 0) {
       // No filter — return entire pin set (unchanged from pre-fix).
+  })
+
+      // #388: cid is recursive-typed. If caller asked for direct/indirect,
+      // the answer is "not in that bucket" → 404 (matches kubo).
+      if (resolvedType === "direct" || resolvedType === "indirect") {
+        throw new HttpError(404, "not pinned", `cid is recursive, not ${resolvedType}`)
+      }
       res.writeHead(200, { "content-type": "application/json" })
       res.end(JSON.stringify({ Keys: pins.reduce((acc, c) => {
         acc[c] = { Type: "recursive" }
@@ -1442,6 +1470,16 @@ export class IpfsHttpServer {
     }
     res.writeHead(200, { "content-type": "application/json" })
     res.end(JSON.stringify({ Keys: out }))
+  })
+
+    // #388: bulk listing — direct/indirect always empty on COC (no such
+    // pin types exist); recursive/all returns the full pin set.
+    const filteredPins = resolvedType === "direct" || resolvedType === "indirect" ? [] : pins
+    res.writeHead(200, { "content-type": "application/json" })
+    res.end(JSON.stringify({ Keys: filteredPins.reduce((acc, c) => {
+      acc[c] = { Type: "recursive" }
+      return acc
+    }, {} as Record<string, { Type: string }>) }))
   }
 
   private metaPath(): string {
