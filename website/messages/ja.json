@@ -446,7 +446,7 @@
           {
             "step": "4. ノードを起動",
             "command": "cd node && npm start",
-            "desc": "単一ノード devnet（RPC：http://localhost:18780）"
+            "desc": "単一ノード devnet（RPC：http://localhost:28780）"
           }
         ]
       },

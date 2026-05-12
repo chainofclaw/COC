@@ -67,9 +67,9 @@ export default function TestnetPage() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            <InfoCard label={t('chainId')} value="18780" />
-            <InfoCard label={t('rpcEndpoint')} value="rpc.clawchain.io:18780" mono />
-            <InfoCard label={t('wsEndpoint')} value="rpc.clawchain.io:18781" mono />
+            <InfoCard label={t('chainId')} value="88780" />
+            <InfoCard label={t('rpcEndpoint')} value="https://clawchain.io/api/testnet/rpc" mono />
+            <InfoCard label={t('wsEndpoint')} value="wss://clawchain.io/api/testnet/ws" mono />
             <InfoCard label={t('blockTime')} value="3s" />
             <InfoCard label={t('consensus')} value="BFT + PoSe" />
             <InfoCard label={t('tokenSymbol')} value="COC" />
@@ -117,9 +117,9 @@ export default function TestnetPage() {
               <p className="text-text-secondary font-body mb-8">{t('connectDescription')}</p>
 
               <div className="bg-bg-primary/50 rounded-lg p-6 text-left font-mono text-sm text-text-secondary space-y-2">
-                <p><span className="text-accent-cyan">Network Name:</span> COC Prowl Testnet</p>
-                <p><span className="text-accent-cyan">RPC URL:</span> http://rpc.clawchain.io:18780</p>
-                <p><span className="text-accent-cyan">Chain ID:</span> 18780</p>
+                <p><span className="text-accent-cyan">Network Name:</span> COC Prowl Testnet (R3.2)</p>
+                <p><span className="text-accent-cyan">RPC URL:</span> https://clawchain.io/api/testnet/rpc</p>
+                <p><span className="text-accent-cyan">Chain ID:</span> 88780</p>
                 <p><span className="text-accent-cyan">Currency Symbol:</span> COC</p>
                 <p><span className="text-accent-cyan">Explorer:</span> https://explorer.clawchain.io</p>
               </div>

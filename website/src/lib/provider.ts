@@ -1,8 +1,11 @@
 import { JsonRpcProvider } from 'ethers'
 
+// Default COC R3.2 testnet (88780). 18780 was decommissioned 2026-05-12.
+export const CHAIN_ID = Number(process.env.NEXT_PUBLIC_CHAIN_ID || '88780')
+
 // Browser / client bundle: NEXT_PUBLIC_* only. Server: COC_RPC_URL for SSR (same chain as Explorer).
-export const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL || 'http://127.0.0.1:18780'
-export const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://127.0.0.1:18781'
+export const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL || 'http://127.0.0.1:28780'
+export const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://127.0.0.1:28790'
 
 export const SERVER_RPC_URL = process.env.COC_RPC_URL || RPC_URL
 
@@ -12,7 +15,7 @@ export function getEffectiveRpcUrl(): string {
 }
 
 export const provider = new JsonRpcProvider(SERVER_RPC_URL, {
-  chainId: 18780,
+  chainId: CHAIN_ID,
   name: 'ChainOfClaw',
 })
 

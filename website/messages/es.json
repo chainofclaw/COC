@@ -446,7 +446,7 @@
           {
             "step": "4. Iniciar el nodo",
             "command": "cd node && npm start",
-            "desc": "Devnet de nodo único (RPC: http://localhost:18780)"
+            "desc": "Devnet de nodo único (RPC: http://localhost:28780)"
           }
         ]
       },

@@ -446,7 +446,7 @@
           {
             "step": "4. 노드 시작",
             "command": "cd node && npm start",
-            "desc": "단일 노드 devnet (RPC: http://localhost:18780)"
+            "desc": "단일 노드 devnet (RPC: http://localhost:28780)"
           }
         ]
       },
