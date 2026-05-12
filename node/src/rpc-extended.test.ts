@@ -2399,6 +2399,57 @@ test("RPC Extended Methods", async (t) => {
       "contract T must be in compile output")
   })
 
+  await t.test("#332: eth_sendRawTransaction replacement-underpriced surfaces as -32000 (not -32603)", async () => {
+    // mempool.addRawTx throws plain Error("replacement tx gas price too
+    // low: need at least X, got Y") when a same-nonce replacement does
+    // not clear the 10% bump threshold. Pre-fix this fell through to the
+    // outer dispatch and surfaced as -32603 "internal error" — clients
+    // treat -32603 as transient and retry, burning the same underpriced
+    // replacement until they give up. Geth uses -32000 for this exact
+    // condition with message "replacement transaction underpriced".
+    const { Wallet, parseEther } = await import("ethers")
+    const wallet = new Wallet(`0x${"03".repeat(32)}`)
+    // Pre-fund the wallet so the mempool accepts the first tx.
+    await evm.prefund([{ address: wallet.address, balanceWei: "1000000000000000000" }])
+
+    async function signTx(nonce: number, gasPrice: bigint): Promise<string> {
+      return await wallet.signTransaction({
+        type: 0,
+        to: `0x${"02".repeat(20)}`,
+        value: 1n,
+        nonce,
+        gasPrice,
+        gasLimit: 21_000n,
+        chainId,
+      })
+    }
+
+    // Submit initial tx at nonce N with a base gas price.
+    const startNonce = await evm.getNonce(wallet.address.toLowerCase() as `0x${string}`)
+    const initial = await signTx(Number(startNonce), 1_000_000_000n)
+    const initialRes = await fetch(`http://127.0.0.1:${port}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_sendRawTransaction", params: [initial] }),
+    })
+    const initialBody = await initialRes.json() as { result?: string; error?: { code: number; message: string } }
+    assert.ok(initialBody.result, `initial submit must succeed: ${JSON.stringify(initialBody)}`)
+
+    // Submit replacement with INSUFFICIENT bump (same gas price → 0% bump,
+    // mempool requires 10%). This is the trigger for the bug.
+    const replacement = await signTx(Number(startNonce), 1_000_000_000n)
+    const replRes = await fetch(`http://127.0.0.1:${port}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "eth_sendRawTransaction", params: [replacement] }),
+    })
+    const replBody = await replRes.json() as { error?: { code: number; message: string }; result?: unknown }
+    assert.equal(replBody.error?.code, -32000,
+      `replacement-underpriced must be -32000, got ${replBody.error?.code} (${replBody.error?.message})`)
+    assert.match(replBody.error!.message, /replacement.*gas price too low/i,
+      `error must preserve "replacement tx gas price too low" surface, got: ${JSON.stringify(replBody)}`)
+  })
+
   if (prevDevAccounts === undefined) {
     delete process.env.COC_DEV_ACCOUNTS
   } else {
