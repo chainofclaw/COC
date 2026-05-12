@@ -410,6 +410,25 @@ export function startRpcServer(
         res.writeHead(413, { "content-type": "application/json" })
         res.end(JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "request body too large" } }))
         req.destroy()
+  })
+
+        // #360: pre-fix this called `req.destroy()` inline right after
+        // `res.end(...)`. The response was still buffered (the client
+        // was mid-stream uploading) and `req.destroy()` sent RST
+        // before the response made it to the wire, so clients saw
+        // "Connection reset by peer" instead of the documented 413
+        // body. Use res.end's flush callback to defer the socket
+        // destroy until the response is on the wire, and signal
+        // `Connection: close` so the client knows we're not
+        // keep-aliving the next request.
+        res.writeHead(413, {
+          "content-type": "application/json",
+          "connection": "close",
+        })
+        res.end(
+          JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "request body too large" } }),
+          () => { req.socket?.destroy() },
+        )
         return
       }
       body += chunk
