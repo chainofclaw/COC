@@ -172,15 +172,30 @@ async function runStress() {
     console.log(`[stress] sample submit fails: ${JSON.stringify(submitFailed.slice(0, 3))}`)
   }
 
-  // Wait for receipts.
+  // Wait for receipts. Reset ethers polling interval to 1s so latency
+  // measurement reflects real inclusion time, not 4s default poll period.
+  provider.pollingInterval = 1000
   const waitDeadline = Date.now() + cfg.totalTimeoutMs
+  // Cache block-by-number lookups so 50 receipts in the same block don't
+  // each fire an eth_getBlockByNumber call.
+  const blockCache = new Map()
+  const getBlockTs = async (bn) => {
+    if (blockCache.has(bn)) return blockCache.get(bn)
+    const b = await provider.getBlock(bn)
+    const ts = b ? Number(b.timestamp) * 1000 : null
+    blockCache.set(bn, ts)
+    return ts
+  }
   const receipts = await Promise.allSettled(submitted.map(async ({ hash, submittedAt }) => {
     const remaining = Math.max(1000, waitDeadline - Date.now())
     const r = await Promise.race([
       provider.waitForTransaction(hash),
       new Promise((_, rej) => setTimeout(() => rej(new Error('inclusion timeout')), remaining)),
     ])
-    return { hash, blockNumber: r.blockNumber, status: r.status, gasUsed: r.gasUsed, latencyMs: Date.now() - submittedAt }
+    // Use block timestamp as canonical inclusion time — avoids ethers polling lag.
+    const blockTs = await getBlockTs(r.blockNumber)
+    const latencyMs = blockTs ? Math.max(0, blockTs - submittedAt) : (Date.now() - submittedAt)
+    return { hash, blockNumber: r.blockNumber, status: r.status, gasUsed: r.gasUsed, latencyMs }
   }))
   const totalMs = Date.now() - t0
 
