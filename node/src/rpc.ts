@@ -796,8 +796,12 @@ async function handleRpc(
       // #122: validate at the boundary so a typo gives -32602 instead of
       // -32603 with the raw input echoed back from the EVM.
       const address = requireAddressParam(payload.params ?? [], 0)
-      const stateRoot = await resolveHistoricalStateRoot((payload.params ?? [])[1], chain)
-      const balance = await evm.getBalance(address, stateRoot)
+      const ctx = await resolveHistoricalExecutionContext((payload.params ?? [])[1], chain)
+      // #384: at synthetic genesis (no persisted block 0) every account
+      // has balance 0 — short-circuit so ethers/viem init probes don't
+      // hit "block not found".
+      if (ctx.syntheticGenesis) return "0x0"
+      const balance = await evm.getBalance(address, ctx.stateRoot)
       return `0x${balance.toString(16)}`
     }
     case "eth_getTransactionCount": {
@@ -810,8 +814,10 @@ async function handleRpc(
         const pendingNonce = chain.mempool.getPendingNonce(address as Hex, onchainNonce)
         return `0x${pendingNonce.toString(16)}`
       }
-      const stateRoot = await resolveHistoricalStateRoot(tag, chain)
-      const nonce = await evm.getNonce(address, stateRoot)
+      const ctx = await resolveHistoricalExecutionContext(tag, chain)
+      // #384: synthetic genesis → nonce 0.
+      if (ctx.syntheticGenesis) return "0x0"
+      const nonce = await evm.getNonce(address, ctx.stateRoot)
       return `0x${nonce.toString(16)}`
     }
     case "eth_getTransactionReceipt": {
@@ -949,8 +955,10 @@ async function handleRpc(
     }
     case "eth_getCode": {
       const codeAddr = requireAddressParam(payload.params ?? [], 0)
-      const stateRoot = await resolveHistoricalStateRoot((payload.params ?? [])[1], chain)
-      return await evm.getCode(codeAddr, stateRoot)
+      const ctx = await resolveHistoricalExecutionContext((payload.params ?? [])[1], chain)
+      // #384: synthetic genesis → no code deployed yet.
+      if (ctx.syntheticGenesis) return "0x"
+      return await evm.getCode(codeAddr, ctx.stateRoot)
     }
     case "eth_call": {
       // #172: reject non-object first param upfront — runtime type
@@ -973,6 +981,8 @@ async function handleRpc(
       // surfaces as -32603 with V8 message leak (data).
       validateTxCallFields(callParams)
       const executionContext = await resolveHistoricalExecutionContext((payload.params ?? [])[1], chain)
+      // #384: synthetic genesis has no contracts to call — return empty.
+      if (executionContext.syntheticGenesis) return "0x"
       const callResult = await evm.callRaw({
         from: callParams.from,
         to,
@@ -1008,8 +1018,10 @@ async function handleRpc(
       if (!/^0x[0-9a-fA-F]{1,64}$/.test(storageSlot)) {
         invalidParams(`invalid storage slot: must match /^0x[0-9a-fA-F]{1,64}$/`)
       }
-      const stateRoot = await resolveHistoricalStateRoot((payload.params ?? [])[2], chain)
-      return await evm.getStorageAt(storageAddr, storageSlot, stateRoot)
+      const ctx = await resolveHistoricalExecutionContext((payload.params ?? [])[2], chain)
+      // #384: synthetic genesis has empty storage everywhere.
+      if (ctx.syntheticGenesis) return `0x${"0".repeat(64)}`
+      return await evm.getStorageAt(storageAddr, storageSlot, ctx.stateRoot)
     }
     case "eth_getProof": {
       const proofAddr = requireAddressParam(payload.params ?? [], 0)
@@ -3023,10 +3035,21 @@ async function resolveHistoricalStateRoot(input: unknown, chain: IChainEngine): 
   return (await resolveHistoricalExecutionContext(input, chain)).stateRoot
 }
 
+/**
+ * #384: when state queries (eth_getBalance/Code/TxCount/StorageAt/call)
+ * request block 0 ("earliest" / "0x0" / EIP-1898 {blockNumber:"0x0"})
+ * but the chain has produced blocks since (height>=1), return this
+ * flag so the caller can short-circuit to the zero/empty default —
+ * mirroring #112's synthetic genesis for eth_getBlockByNumber so
+ * ethers/viem/web3.js wallets that probe genesis state during init
+ * don't get a misleading "block not found: earliest" error.
+ */
+export type HistoricalExecutionContext = { stateRoot?: string; syntheticGenesis?: boolean } & ExecutionContext
+
 async function resolveHistoricalExecutionContext(
   input: unknown,
   chain: IChainEngine,
-): Promise<{ stateRoot?: string } & ExecutionContext> {
+): Promise<HistoricalExecutionContext> {
   if (
     input === undefined ||
     input === null ||
@@ -3136,6 +3159,14 @@ async function resolveHistoricalExecutionContext(
   const blockNumber = parseBlockTag(input, height)
   const block = await Promise.resolve(chain.getBlockByNumber(blockNumber))
   if (!block) {
+    // #384: chain has no persisted block 0 (production starts at height 1),
+    // but #112 synthesises one for eth_getBlockByNumber("earliest"). Mirror
+    // that here so state queries at "earliest"/"0x0" return the empty
+    // default (zero balance / no code) instead of "block not found",
+    // matching geth's behaviour at chain start.
+    if (blockNumber === 0n && height >= 1n) {
+      return { blockNumber: 0n, syntheticGenesis: true }
+    }
     throw { code: -32001, message: `block not found: ${String(input)}` }
   }
   if (!block.stateRoot) {
