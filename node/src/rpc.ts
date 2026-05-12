@@ -1169,7 +1169,11 @@ async function handleRpc(
       // a perpetual empty stream that mimics "no new events."
       const id = requireFilterId(payload.params ?? [], 0)
       const filter = filters.get(id)
-      if (!filter) return []
+      // #342: pre-fix returned `[]` for missing/expired filter — long-
+      // running indexers polling past the 5-minute FILTER_TTL_MS got
+      // silently dropped events with no error to trigger re-creation.
+      // Geth/erigon surface -32000 "filter not found"; mirror that.
+      if (!filter) throw { code: -32000, message: `filter not found: ${id}` }
       // Refresh the filter's last-access timestamp so cleanupExpiredFilters
       // doesn't reap an actively polled subscriber.
       filter.lastAccessedAtMs = Date.now()
@@ -1839,7 +1843,9 @@ async function handleRpc(
       // #196: parity with eth_getFilterChanges / eth_uninstallFilter.
       const id = requireFilterId(payload.params ?? [], 0)
       const filter = filters.get(id)
-      if (!filter) return []
+      // #342: -32000 for missing/expired filter — matches geth/erigon and
+      // gives indexers a clear signal to re-create the filter.
+      if (!filter) throw { code: -32000, message: `filter not found: ${id}` }
       // Refresh last-access time so active polls keep the filter alive.
       filter.lastAccessedAtMs = Date.now()
       // getFilterLogs is a log-filter-only method: block and pendingTx
