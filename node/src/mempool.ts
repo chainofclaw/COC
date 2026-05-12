@@ -61,6 +61,42 @@ function partialSelect<T>(arr: T[], k: number, compare: (a: T, b: T) => number):
   }
 }
 
+/**
+ * EIP-3 / EIP-2028 / EIP-3860 intrinsic gas cost — the minimum any tx must
+ * pay before the EVM even starts. Returns the floor `gasLimit` that the
+ * mempool will accept; anything below is rejected as "intrinsic gas too low".
+ *
+ * Components (mainnet/Shanghai constants):
+ *   - 21000   base (any tx)
+ *   - +32000  contract creation (no `to`)
+ *   - +4 per zero data byte / +16 per nonzero data byte (EIP-2028)
+ *   - +2 per 32-byte init-code word (EIP-3860, contract creation only)
+ */
+export function computeIntrinsicGas(tx: Transaction): bigint {
+  let gas = 21000n
+  const isCreation = !tx.to
+  if (isCreation) gas += 32000n
+  const data = tx.data ?? "0x"
+  const hex = data.startsWith("0x") ? data.slice(2) : data
+  if (hex.length > 0) {
+    let zeros = 0n
+    let nonzeros = 0n
+    for (let i = 0; i < hex.length; i += 2) {
+      // Treat odd-length tail (shouldn't happen for valid hex) as nonzero
+      const byte = hex.slice(i, i + 2)
+      if (byte === "00") zeros++
+      else nonzeros++
+    }
+    gas += zeros * 4n + nonzeros * 16n
+    if (isCreation) {
+      const byteLen = BigInt(hex.length / 2)
+      const words = (byteLen + 31n) / 32n
+      gas += words * 2n
+    }
+  }
+  return gas
+}
+
 export class Mempool {
   private readonly txs = new Map<Hex, MempoolTx>()
   // Index: sender -> set of tx hashes for fast per-sender lookups
@@ -140,6 +176,21 @@ export class Mempool {
     const MAX_TX_GAS_LIMIT = 30_000_000n
     if (gasLimit > MAX_TX_GAS_LIMIT) {
       throw new Error(`gasLimit exceeds maximum: ${gasLimit} > ${MAX_TX_GAS_LIMIT}`)
+    }
+
+    // #334: reject gasLimit below the EIP-3 intrinsic gas cost. Pre-fix the
+    // mempool only enforced the upper bound, so a tx with `gasLimit=100`
+    // returned a success hash from eth_sendRawTransaction but could never
+    // execute — wasting a nonce slot and leaving the user with a tx they
+    // can't replace (without a 10% bump on already-zero gas price). Also
+    // a clean mempool-fill DoS surface since these txs sit forever.
+    // Geth surfaces this as -32000 "intrinsic gas too low: gas X, minimum
+    // needed Y"; mirror the message so existing clients parse it.
+    const intrinsicGasRequired = computeIntrinsicGas(tx)
+    if (gasLimit < intrinsicGasRequired) {
+      throw new Error(
+        `intrinsic gas too low: have ${gasLimit}, want ${intrinsicGasRequired}`,
+      )
     }
 
     const item: MempoolTx = {
