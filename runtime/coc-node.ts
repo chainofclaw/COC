@@ -5,6 +5,7 @@ import { loadConfig } from "./lib/config.ts";
 import { InMemoryStore } from "./lib/state.ts";
 import { IpfsBlockstore } from "../node/src/ipfs-blockstore.ts";
 import { loadStorageProof, MerkleLeavesCache } from "./lib/storage-proof.ts";
+import { readBoundedBody } from "./lib/pose-body-reader.ts";
 import { createNodeSigner, createNodeSignerV2, buildReceiptSignMessage } from "../node/src/crypto/signer.ts";
 import { keccak256Hex } from "../services/relayer/keccak256.ts";
 import { createLogger } from "../node/src/logger.ts";
@@ -109,6 +110,14 @@ function json(res: http.ServerResponse, code: number, payload: unknown): void {
   res.end(JSON.stringify(payload));
 }
 
+// #292: cap body accumulation via runtime/lib/pose-body-reader.ts —
+// pre-fix the three POST endpoints (/pose/challenge, /pose/receipt,
+// /pose/witness) used `let body = ""; req.on("data", c => body += c)`
+// with no size cap and no stream-error handler. The HTTP-side
+// pose-http.ts already enforces 1 MB via MAX_POSE_BODY; the shared
+// helper mirrors that on the runtime path so any future endpoint added
+// here inherits the cap by default.
+
 const server = http.createServer((req, res) => {
   if (!req.url) {
     return json(res, 404, { error: "not found" });
@@ -119,9 +128,11 @@ const server = http.createServer((req, res) => {
   }
 
   if (req.method === "POST" && req.url === "/pose/challenge") {
-    let body = "";
-    req.on("data", (chunk) => (body += chunk));
-    req.on("end", () => {
+    // #292: body bounded via readBody (1 MB cap). Pre-fix this was
+    // `let body = ""; req.on("data", c => body += c)` with no size
+    // check — an attacker streaming a multi-GB body could OOM the
+    // process.
+    readBoundedBody(req, res, (body) => {
       // #222: wrap JSON.parse — pre-fix a malformed body threw inside
       // the async callback and bubbled to process.on("uncaughtException"),
       // either crashing coc-node or leaking the V8 SyntaxError wording.
@@ -142,9 +153,9 @@ const server = http.createServer((req, res) => {
   }
 
   if (req.method === "POST" && req.url === "/pose/receipt") {
-    let body = "";
-    req.on("data", (chunk) => (body += chunk));
-    req.on("end", () => {
+    // #292: body bounded via readBody (1 MB cap). Same DoS class as
+    // /pose/challenge — pre-fix used unbounded body accumulation.
+    readBoundedBody(req, res, (body) => {
       // #222: parity with /pose/challenge — wrap JSON.parse so a
       // malformed body returns 400 instead of crashing the process.
       let payload: { challengeId?: string; challengeType?: string; payload?: unknown };
@@ -304,9 +315,9 @@ const server = http.createServer((req, res) => {
     if (!nodeSignerV2) {
       return json(res, 501, { error: "v2 protocol not enabled" });
     }
-    let body = "";
-    req.on("data", (chunk: string) => (body += chunk));
-    req.on("end", () => {
+    // #292: body bounded via readBody (1 MB cap). Same DoS class as
+    // /pose/challenge — pre-fix used unbounded body accumulation.
+    readBoundedBody(req, res, (body) => {
       // #222: parity with the other two POST endpoints — wrap
       // JSON.parse so a malformed body returns 400 instead of
       // crashing the process via uncaughtException.
