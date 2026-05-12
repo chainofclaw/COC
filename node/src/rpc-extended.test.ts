@@ -2946,6 +2946,22 @@ test("RPC Extended Methods", async (t) => {
       getProposal: () => ({ id: "p1", status: "pending", votes: new Map() }),
     } as Record<string, unknown>
     ;(chain as unknown as Record<string, unknown>).governance = governanceStub290
+  })
+
+  await t.test("#296: coc_submitProposal rejects non-string type/targetId/proposer and bad targetAddress", async () => {
+    // Pre-fix `as Record<string, string>` was a runtime no-op so
+    // proposalParams.type/targetId/targetAddress flowed into
+    // chain.governance.submitProposal() with whatever shape the
+    // client sent. Same anti-pattern as #290 (coc_voteProposal field
+    // strict validation). Validate each required string upfront.
+    const submittedCalls: Array<{ type: string; targetId: string; proposer: string; opts: Record<string, unknown> }> = []
+    const governanceStub296 = {
+      submitProposal: (type: string, targetId: string, proposer: string, opts: Record<string, unknown>) => {
+        submittedCalls.push({ type, targetId, proposer, opts })
+        return { id: "p1", type, targetId, status: "pending" }
+      },
+    } as Record<string, unknown>
+    ;(chain as unknown as Record<string, unknown>).governance = governanceStub296
     try {
       const probe = async (params: unknown[]) => {
         const r = await fetch(`http://127.0.0.1:${port}`, {
@@ -3103,6 +3119,46 @@ test("RPC Extended Methods", async (t) => {
       assert.equal(recordedVotes[0].approve, true, "YES vote must be exactly true")
       assert.equal(recordedVotes[1].approve, false,
         "NO vote must be exactly false — this is the direction-flip invariant")
+  })
+
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "coc_submitProposal", params }),
+        })
+        return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+      }
+      const base = { type: "add_validator", targetId: "v4", proposer: "node-1" }
+      const badStringShapes = [undefined, null, 123, true, {}, [], ""]
+      for (const bad of badStringShapes) {
+        const rType = await probe([{ ...base, type: bad }])
+        assert.equal(rType.error?.code, -32602,
+          `type=${JSON.stringify(bad)} must be -32602, got ${JSON.stringify(rType)}`)
+        const rTarget = await probe([{ ...base, targetId: bad }])
+        assert.equal(rTarget.error?.code, -32602,
+          `targetId=${JSON.stringify(bad)} must be -32602, got ${JSON.stringify(rTarget)}`)
+        const rProposer = await probe([{ ...base, proposer: bad }])
+        assert.equal(rProposer.error?.code, -32602,
+          `proposer=${JSON.stringify(bad)} must be -32602, got ${JSON.stringify(rProposer)}`)
+      }
+      // targetAddress optional, but wrong-shape must reject.
+      const validAddr = `0x${"ab".repeat(20)}`
+      for (const bad of ["0x", "0x1", "0xZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ", validAddr.slice(0, -1), 123, true, {}]) {
+        const r = await probe([{ ...base, targetAddress: bad }])
+        assert.equal(r.error?.code, -32602,
+          `targetAddress=${JSON.stringify(bad)} must be -32602, got ${JSON.stringify(r)}`)
+      }
+      // None of the rejects should have reached the stub.
+      assert.equal(submittedCalls.length, 0,
+        "no invalid proposal should have reached governance.submitProposal()")
+      // Sanity: well-shaped proposal succeeds; stub records it; addr passes verbatim.
+      const ok = await probe([{ type: "add_validator", targetId: "v4", proposer: "node-1", targetAddress: validAddr }])
+      assert.equal(ok.error, undefined, `well-shaped proposal must succeed, got ${JSON.stringify(ok)}`)
+      assert.equal(submittedCalls.length, 1)
+      assert.equal(submittedCalls[0].type, "add_validator")
+      assert.equal(submittedCalls[0].opts.targetAddress, validAddr,
+        "targetAddress must pass through verbatim")
+      // Sanity: omitted targetAddress succeeds and stub sees undefined.
+      const okOmit = await probe([{ type: "add_validator", targetId: "v5", proposer: "node-1" }])
+      assert.equal(okOmit.error, undefined, `omitted targetAddress must succeed, got ${JSON.stringify(okOmit)}`)
+      assert.equal(submittedCalls[1].opts.targetAddress, undefined)
     } finally {
       delete (chain as unknown as Record<string, unknown>).governance
     }
