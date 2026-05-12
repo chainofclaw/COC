@@ -1334,7 +1334,17 @@ startRpcServer(
       // #108: RPC bridge for the existing /api/v0/erasure/status handler.
       // Resolve the CID into an ErasureManifest (throws if it's not one
       // or the blocks are missing), then compute per-stripe availability.
-      const { resolveCid, erasureStatus, ErasureError } = await import("./ipfs-erasure-reader.ts")
+      // #358: pre-fix the dynamic import destructured `ErasureError`
+      // from `./ipfs-erasure-reader.ts`, but that module *imports*
+      // ErasureError (from ./ipfs-erasure.ts) without re-exporting it.
+      // So `ErasureError` resolved to `undefined` at runtime, and the
+      // `err instanceof ErasureError` check below threw V8 TypeError
+      // "Right-hand side of 'instanceof' is not an object" — caught
+      // by the RPC layer and surfaced as -32603 with the V8 message
+      // leaked through. Import ErasureError directly from its real
+      // owning module instead.
+      const { resolveCid, erasureStatus } = await import("./ipfs-erasure-reader.ts")
+      const { ErasureError } = await import("./ipfs-erasure.ts")
       try {
         const resolved = await resolveCid(cid, ipfsStore)
         if (resolved.kind !== "erasure" || !resolved.manifest) {
