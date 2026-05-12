@@ -356,6 +356,38 @@ test("RPC Extended Methods", async (t) => {
     assert.strictEqual(receipts, null)
   })
 
+  await t.test("#366: eth_getBlockReceipts accepts block hash (BlockNumberOrHash)", async () => {
+    // geth's `eth_getBlockReceipts` accepts both a block number/tag
+    // AND a bare 32-byte block hash. Pre-fix our handler only resolved
+    // as block number — passing a 66-char hash got BigInt(hash)
+    // parsed as a giant integer, then `chain.getBlockByNumber(huge)`
+    // returned null, indistinguishable from "no such block."
+    //
+    // Strategy: propose a real block on the fixture chain (the
+    // synthesised genesis at "0x0" isn't indexed by hash since it's
+    // a stub for #112), then fetch by-hash and expect the same
+    // receipts list as by-number.
+    await chain.proposeNextBlock()
+    const blockByNumber = await rpcCall(port, "eth_getBlockByNumber", ["0x1", false]) as { hash: string } | null
+    assert.ok(blockByNumber, "fixture must have block 0x1 after proposeNextBlock")
+    const lowerHash = blockByNumber!.hash
+    assert.match(lowerHash, /^0x[0-9a-fA-F]{64}$/, "block must have a 32-byte hash")
+
+    // Lookup by lowercase hash MUST work (this is the primary fix).
+    const byNumber = await rpcCall(port, "eth_getBlockReceipts", ["0x1"])
+    const byLowerHash = await rpcCall(port, "eth_getBlockReceipts", [lowerHash])
+    assert.notStrictEqual(byLowerHash, null, "eth_getBlockReceipts(<lowercase block hash>) must NOT return null")
+    assert.ok(Array.isArray(byLowerHash), "eth_getBlockReceipts(hash) must return an array (possibly empty)")
+    assert.deepEqual(byLowerHash, byNumber, "by-hash result must match by-number result")
+
+    // Mixed-case hash also works (case-insensitive, mirroring #364 normalization).
+    const mixedHash =
+      "0x" + lowerHash.slice(2).split("").map((c, i) => i % 2 === 0 ? c.toUpperCase() : c).join("")
+    const byMixedHash = await rpcCall(port, "eth_getBlockReceipts", [mixedHash])
+    assert.notStrictEqual(byMixedHash, null, "eth_getBlockReceipts(<mixed-case block hash>) must NOT return null")
+    assert.deepEqual(byMixedHash, byLowerHash, "mixed-case hash must yield the same receipts as lowercase")
+  })
+
   await t.test("#122: eth_getBalance / eth_getTransactionCount / coc_getContractInfo reject malformed addresses with -32602", async () => {
     // Pre-fix bugs:
     //   - eth_getBalance returned -32603 with the raw input echoed back
