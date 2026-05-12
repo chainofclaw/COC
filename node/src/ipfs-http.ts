@@ -92,6 +92,28 @@ function stripIpfsPathPrefix(arg: string | undefined): string | undefined {
   return arg
 }
 
+  })
+
+ * #372: kubo treats `/api/v0/pin/add`, `pin/rm`, `pin/ls`, `block/rm`
+ * as BATCH operations over `?arg=cid1&arg=cid2&…`. Pre-fix we only
+ * read the first `arg=` (via `firstQueryValue`), silently dropping
+ * every subsequent CID — data loss for any client that batched
+ * pin/unpin operations in one request (common pattern for dapps
+ * that pin a set of related shards).
+ *
+ * Returns every `arg=` occurrence (preserving order) as a `string[]`.
+ * Returns `[]` when no `arg=` was sent so handlers can uniformly
+ * iterate without an undefined guard.
+ */
+function allQueryValues(raw: string | string[] | undefined): string[] {
+  if (raw === undefined) return []
+  if (Array.isArray(raw)) return raw
+  return [raw]
+}
+
+/** Per-route cap on batch size to bound iteration cost on the event loop. */
+const MAX_BATCH_ARGS = 1024
+
 function isNotFoundError(err: unknown): boolean {
   if (err && typeof err === "object" && "code" in err && (err as { code: unknown }).code === "ENOENT") return true
   const msg = String(err instanceof Error ? err.message : err)
@@ -532,7 +554,8 @@ export class IpfsHttpServer {
         return
       }
       if (url.pathname === "/api/v0/pin/add") {
-        await this.handlePinAdd(req, res, argParam ?? "")
+        // #372: kubo accepts batch `?arg=cid1&arg=cid2&…` — process all.
+        await this.handlePinAdd(req, res, allQueryValues(url.query.arg))
         return
       }
       if (url.pathname === "/api/v0/pin/ls") {
@@ -545,10 +568,15 @@ export class IpfsHttpServer {
         // error for invalid values).
         const typeRaw = firstQueryValue(url.query?.type)
         await this.handlePinLs(res, argParam, typeRaw)
+  })
+
+        // #372: batch filter — pin/ls with multiple args returns per-CID
+        // status (kubo semantics).
+        await this.handlePinLs(res, allQueryValues(url.query.arg))
         return
       }
       if (url.pathname === "/api/v0/pin/rm") {
-        await this.handlePinRm(res, argParam)
+        await this.handlePinRm(res, allQueryValues(url.query.arg))
         return
       }
       if (url.pathname === "/api/v0/block/rm") {
@@ -564,6 +592,9 @@ export class IpfsHttpServer {
           return
         }
         await this.handleBlockRm(res, argParam)
+  })
+
+        await this.handleBlockRm(res, allQueryValues(url.query.arg))
         return
       }
       if (url.pathname === "/api/v0/repo/gc") {
@@ -1153,10 +1184,14 @@ export class IpfsHttpServer {
     }
   }
 
-  private async handlePinAdd(_req: http.IncomingMessage, res: http.ServerResponse, cid?: string): Promise<void> {
-    if (!cid || !isValidCid(cid)) {
-      res.writeHead(400)
-      res.end(JSON.stringify({ error: !cid ? "missing cid" : "invalid cid" }))
+  private async handlePinAdd(_req: http.IncomingMessage, res: http.ServerResponse, cids: string[]): Promise<void> {
+    // #372: kubo batch — pin every CID in the arg list, return all
+    // in the Pins response. Pre-fix we processed only the first arg
+    // (firstQueryValue), so a batch `pin/add?arg=cid1&arg=cid2`
+    // silently pinned only cid1 and dropped cid2.
+    if (cids.length === 0) {
+      res.writeHead(400, { "content-type": "application/json" })
+      res.end(JSON.stringify({ error: "missing cid" }))
       return
     }
     // #280: pre-fix accepted any well-formed CID without requiring the
@@ -1172,8 +1207,25 @@ export class IpfsHttpServer {
       return
     }
     await this.store.pin(cid)
+  })
+
+    if (cids.length > MAX_BATCH_ARGS) {
+      res.writeHead(400, { "content-type": "application/json" })
+      res.end(JSON.stringify({ error: `too many args: ${cids.length} > ${MAX_BATCH_ARGS}` }))
+      return
+    }
+    for (const cid of cids) {
+      if (!isValidCid(cid)) {
+        res.writeHead(400, { "content-type": "application/json" })
+        res.end(JSON.stringify({ error: "invalid cid", message: `not a valid CID: ${cid}` }))
+        return
+      }
+    }
+    for (const cid of cids) {
+      await this.store.pin(cid)
+    }
     res.writeHead(200, { "content-type": "application/json" })
-    res.end(JSON.stringify({ Pins: [cid] }))
+    res.end(JSON.stringify({ Pins: cids }))
   }
 
   /**
@@ -1182,25 +1234,44 @@ export class IpfsHttpServer {
    * file itself stays on disk; call `/api/v0/repo/gc` or
    * `/api/v0/block/rm` to evict bytes.
    */
-  private async handlePinRm(res: http.ServerResponse, cid?: string): Promise<void> {
-    if (!cid) {
+  private async handlePinRm(res: http.ServerResponse, cids: string[]): Promise<void> {
+    // #372: kubo batch — unpin every CID in the arg list. Pre-fix
+    // processed only the first arg.
+    if (cids.length === 0) {
       res.writeHead(400, { "content-type": "application/json" })
       res.end(JSON.stringify({ error: "missing cid" }))
       return
     }
-    if (!isValidCid(cid)) {
+    if (cids.length > MAX_BATCH_ARGS) {
       res.writeHead(400, { "content-type": "application/json" })
-      res.end(JSON.stringify({ error: "invalid cid" }))
+      res.end(JSON.stringify({ error: `too many args: ${cids.length} > ${MAX_BATCH_ARGS}` }))
       return
     }
-    const wasPinned = await this.store.unpin(cid)
-    if (!wasPinned) {
-      res.writeHead(404, { "content-type": "application/json" })
-      res.end(JSON.stringify({ error: "not pinned" }))
-      return
+    for (const cid of cids) {
+      if (!isValidCid(cid)) {
+        res.writeHead(400, { "content-type": "application/json" })
+        res.end(JSON.stringify({ error: "invalid cid", message: `not a valid CID: ${cid}` }))
+        return
+      }
+    }
+    // Match kubo semantics: if ANY requested CID isn't pinned, return
+    // 404 with the unpinned CID in the error message — the operation
+    // is all-or-nothing per kubo. Check before any mutation so the
+    // pin set stays consistent on failure.
+    const pinned = await this.store.listPins()
+    const pinnedSet = new Set(pinned)
+    for (const cid of cids) {
+      if (!pinnedSet.has(cid)) {
+        res.writeHead(404, { "content-type": "application/json" })
+        res.end(JSON.stringify({ error: "not pinned", message: `not pinned: ${cid}` }))
+        return
+      }
+    }
+    for (const cid of cids) {
+      await this.store.unpin(cid)
     }
     res.writeHead(200, { "content-type": "application/json" })
-    res.end(JSON.stringify({ Pins: [cid] }))
+    res.end(JSON.stringify({ Pins: cids }))
   }
 
   /**
@@ -1209,25 +1280,55 @@ export class IpfsHttpServer {
    * chaos kill-shard drill to simulate disk loss. Returns the kubo
    * `{Hash, Error}` shape; Error is empty string on success.
    */
-  private async handleBlockRm(res: http.ServerResponse, cid?: string): Promise<void> {
-    if (!cid) {
+  private async handleBlockRm(res: http.ServerResponse, cids: string[]): Promise<void> {
+    // #372: kubo batch — block/rm with multiple `arg=cid` removes each.
+    // The response is a stream of `{Hash, Error}` objects, one per line
+    // (kubo emits NDJSON). Pre-fix we processed only the first arg.
+    if (cids.length === 0) {
       res.writeHead(400, { "content-type": "application/json" })
       res.end(JSON.stringify({ error: "missing cid" }))
       return
     }
-    if (!isValidCid(cid)) {
+    if (cids.length > MAX_BATCH_ARGS) {
       res.writeHead(400, { "content-type": "application/json" })
-      res.end(JSON.stringify({ error: "invalid cid" }))
+      res.end(JSON.stringify({ error: `too many args: ${cids.length} > ${MAX_BATCH_ARGS}` }))
       return
     }
-    const result = await this.store.removeBlock(cid)
-    if (!result.removedFile && !result.wasPinned) {
-      res.writeHead(404, { "content-type": "application/json" })
-      res.end(JSON.stringify({ Hash: cid, Error: "block not found locally" }))
+    for (const cid of cids) {
+      if (!isValidCid(cid)) {
+        res.writeHead(400, { "content-type": "application/json" })
+        res.end(JSON.stringify({ error: "invalid cid", message: `not a valid CID: ${cid}` }))
+        return
+      }
+    }
+    // Single-CID: preserve the pre-fix 404-on-missing behavior so the
+    // chaos kill-shard scripts (which depend on the status code) keep
+    // working. Batch (≥2 CIDs): emit kubo's NDJSON stream where each
+    // line carries its own {Hash, Error} status — the protocol can't
+    // express "some succeeded, some failed" via a single HTTP code.
+    if (cids.length === 1) {
+      const cid = cids[0]
+      const result = await this.store.removeBlock(cid)
+      if (!result.removedFile && !result.wasPinned) {
+        res.writeHead(404, { "content-type": "application/json" })
+        res.end(JSON.stringify({ Hash: cid, Error: "block not found locally" }))
+        return
+      }
+      res.writeHead(200, { "content-type": "application/json" })
+      res.end(JSON.stringify({ Hash: cid, Error: "" }))
       return
     }
     res.writeHead(200, { "content-type": "application/json" })
-    res.end(JSON.stringify({ Hash: cid, Error: "" }))
+    const lines: string[] = []
+    for (const cid of cids) {
+      const result = await this.store.removeBlock(cid)
+      if (!result.removedFile && !result.wasPinned) {
+        lines.push(JSON.stringify({ Hash: cid, Error: "block not found locally" }))
+      } else {
+        lines.push(JSON.stringify({ Hash: cid, Error: "" }))
+      }
+    }
+    res.end(lines.join("\n"))
   }
 
   /**
@@ -1274,8 +1375,22 @@ export class IpfsHttpServer {
       if (resolvedType === "direct" || resolvedType === "indirect") {
         throw new HttpError(404, `not pinned (no ${resolvedType} pins in this store)`)
       }
+  })
+
+  private async handlePinLs(res: http.ServerResponse, cids: string[]): Promise<void> {
+    // #372: pin/ls supports a batch filter — kubo accepts multiple
+    // `arg=cid` and returns the intersection of (provided, pinned).
+    // If ANY provided CID isn't pinned, kubo returns 404 with the
+    // offending CID. Pre-fix we read only the first arg, silently
+    // ignoring subsequent filters and never noticing per-CID failures.
+    const pins = await this.store.listPins()
+    if (cids.length === 0) {
+      // No filter — return entire pin set (unchanged from pre-fix).
       res.writeHead(200, { "content-type": "application/json" })
-      res.end(JSON.stringify({ Keys: { [cid]: { Type: "recursive" } } }))
+      res.end(JSON.stringify({ Keys: pins.reduce((acc, c) => {
+        acc[c] = { Type: "recursive" }
+        return acc
+      }, {} as Record<string, { Type: string }>) }))
       return
     }
 
@@ -1286,6 +1401,22 @@ export class IpfsHttpServer {
     res.end(JSON.stringify({ Keys: showRecursive
       ? pins.reduce((acc, c) => { acc[c] = { Type: "recursive" }; return acc }, {} as Record<string, { Type: string }>)
       : {} }))
+  })
+
+    if (cids.length > MAX_BATCH_ARGS) {
+      throw new HttpError(400, "too many args", `${cids.length} > ${MAX_BATCH_ARGS}`)
+    }
+    for (const cid of cids) {
+      if (!isValidCid(cid)) throw new HttpError(400, "invalid cid", `not a valid CID: ${cid}`)
+    }
+    const pinnedSet = new Set(pins)
+    const out: Record<string, { Type: string }> = {}
+    for (const cid of cids) {
+      if (!pinnedSet.has(cid)) throw new HttpError(404, "not pinned", `not pinned: ${cid}`)
+      out[cid] = { Type: "recursive" }
+    }
+    res.writeHead(200, { "content-type": "application/json" })
+    res.end(JSON.stringify({ Keys: out }))
   }
 
   private metaPath(): string {
