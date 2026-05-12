@@ -40,7 +40,7 @@ const cfg = {
   ipfsUrl: process.env.COC_IPFS_URL || 'https://ipfs.clawchain.io',
   blockFreshnessSec: Number(process.env.COC_BLOCK_FRESHNESS_SEC || '60'),
   intervalSec: Number(process.env.CHECK_INTERVAL_SEC || '60'),
-  timeoutMs: 10_000,
+  timeoutMs: Number(process.env.CHECK_TIMEOUT_MS || '15000'),
 }
 
 // ---------- helpers ----------
@@ -287,13 +287,21 @@ const checks = [
 
 function pad(s, n) { return String(s).padEnd(n) }
 
-// On a server that's also the prod host, the very first cross-domain fetch
-// pays a hairpin-NAT / TLS-establish cost that can exceed the 10s default
-// per-check timeout. Warm the public RPC + faucet path with a throwaway
-// HEAD request before the timed checks begin.
+// On a server that's also the prod host, the first cross-domain fetch pays
+// a hairpin-NAT / TLS-establish cost that can exceed the per-check timeout.
+// Warm each public endpoint with a *real* round-trip (POST eth_chainId to
+// the RPC, GET /health to the faucet) — GET on a JSON-RPC endpoint returns
+// 405 instantly without completing TLS, which doesn't actually prime the
+// path. Run warmup twice — first attempt may itself time out under cold NAT.
 async function warmup() {
-  const urls = [cfg.rpcUrl, cfg.faucetUrl + '/health']
-  await Promise.allSettled(urls.map((u) => fetchWithTimeout(u, { method: 'GET' }, 15_000).catch(() => null)))
+  const rpcPing = () => fetchWithTimeout(cfg.rpcUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 0, method: 'eth_chainId', params: [] }),
+  }, 20_000).catch(() => null)
+  const faucetPing = () => fetchWithTimeout(cfg.faucetUrl + '/health', {}, 20_000).catch(() => null)
+  await Promise.allSettled([rpcPing(), faucetPing()])
+  await Promise.allSettled([rpcPing(), faucetPing()])
 }
 
 async function runOnce() {
