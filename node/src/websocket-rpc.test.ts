@@ -447,6 +447,53 @@ describe("WebSocket RPC", () => {
       const ok = await probe({ jsonrpc: "2.0", id: 1, method: "eth_chainId" })
       assert.equal(ok.error, undefined, "well-formed envelope must NOT error")
       assert.ok(typeof ok.result === "string", "result must be returned")
+
+      // #318: WS-RPC parity with HTTP #314/#316 — method length cap +
+      // string id length cap + control-char rejection. Pre-fix the WS
+      // envelope inherited the same amplification + log-injection
+      // surfaces as HTTP had before #314/#316: a client could send a
+      // 5000-char method or id and get it echoed in the response.
+      {
+        const longMethod = "A".repeat(129)
+        const r = await probe({ jsonrpc: "2.0", id: 1, method: longMethod })
+        assert.equal(r.error?.code, -32600, "WS method >128 chars must be -32600")
+        assert.match(r.error!.message, /too long/i, "WS error must explain length cap")
+        assert.ok(!JSON.stringify(r).includes("AAAA"),
+          "WS method-too-long error must NOT echo the input")
+      }
+      {
+        const longId = "Z".repeat(257)
+        const r = await probe({ jsonrpc: "2.0", id: longId, method: "eth_chainId" })
+        assert.equal(r.error?.code, -32600, "WS id >256 chars must be -32600")
+        assert.match(r.error!.message, /id too long/i, "WS error must name the field")
+        assert.ok(!JSON.stringify(r).includes("ZZZZZ"),
+          "WS id-too-long error must NOT echo the input")
+      }
+      // Control chars in id — same family as #312 (pubsub topic) / #316 (HTTP id)
+      for (const bad of ["line1\nline2", "with\rCR", "tab\there", "null\u0000byte", "del\u007fhere"]) {
+        const r = await probe({ jsonrpc: "2.0", id: bad, method: "eth_chainId" })
+        assert.equal(r.error?.code, -32600, `WS id with control char must be -32600 (id=${JSON.stringify(bad)})`)
+        assert.match(r.error!.message, /control character/i, "error must explain control-char rule")
+        const serialized = JSON.stringify(r)
+        for (const ch of bad) {
+          const code = ch.charCodeAt(0)
+          if (code < 0x20 || code === 0x7f) {
+            assert.ok(!serialized.includes(ch),
+              `WS response must not contain raw control char U+${code.toString(16).padStart(4, "0")} from id`)
+          }
+        }
+      }
+      // Boundary: exactly-at-cap inputs pass the envelope check. The
+      // test stub uses a generic Error in its default branch so unknown
+      // methods surface as -32603 here (vs -32601 in prod), but either
+      // way the request is dispatched, not blocked by the envelope.
+      const okMax = await probe({ jsonrpc: "2.0", id: 1, method: "z".repeat(128) })
+      assert.ok(okMax.error && (okMax.error.code === -32601 || okMax.error.code === -32603),
+        `WS method of exactly 128 chars must reach dispatch (any non-envelope code), got ${JSON.stringify(okMax)}`)
+      assert.doesNotMatch(okMax.error!.message, /too long/i,
+        "exactly 128 chars must NOT be rejected by the length cap")
+      const okMaxId = await probe({ jsonrpc: "2.0", id: "y".repeat(256), method: "eth_chainId" })
+      assert.equal(okMaxId.error, undefined, "WS id of exactly 256 chars must be accepted")
     } finally {
       ws.close()
     }
