@@ -326,11 +326,23 @@ export function handlePoseRequest(
   let body = ""
   let bodySize = 0
   let aborted = false
+  // #348: parity with #346 (RPC body timeout) — pose-http had no inactivity
+  // / total read timeout. `Content-Length: N` + 0 body bytes tied up the
+  // /pose/challenge or /pose/receipt request slot until Node's default
+  // 5-minute requestTimeout. Slowloris DoS surface.
+  const READ_TIMEOUT_MS = 30_000
+  const readTimer = setTimeout(() => {
+    if (aborted) return
+    aborted = true
+    req.destroy(new Error("pose body read timeout"))
+  }, READ_TIMEOUT_MS).unref()
+
   req.on("data", (chunk: Buffer | string) => {
     if (aborted) return
     bodySize += typeof chunk === "string" ? chunk.length : chunk.byteLength
     if (bodySize > MAX_POSE_BODY) {
       aborted = true
+      clearTimeout(readTimer)
       jsonResponse(res, 413, { error: "body too large" })
       req.destroy()
       return
@@ -338,6 +350,7 @@ export function handlePoseRequest(
     body += chunk
   })
   req.on("end", async () => {
+    clearTimeout(readTimer)
     if (aborted) return
     try {
       const parsedBody = JSON.parse(body || "{}")
