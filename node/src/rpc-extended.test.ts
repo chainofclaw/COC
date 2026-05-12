@@ -2923,6 +2923,29 @@ test("RPC Extended Methods", async (t) => {
       },
     } as Record<string, unknown>
     ;(chain as unknown as Record<string, unknown>).governance = governanceStub278
+  })
+
+  await t.test("#290: coc_voteProposal rejects non-boolean approve + non-string proposalId/voterId (no vote-direction flip)", async () => {
+    // Pre-fix Boolean(voteParams.approve) silently coerced:
+    //   approve:"false" → true (records YES when client meant NO!)
+    //   approve:"no"    → true (same)
+    //   approve:{}      → true
+    //   approve:[]      → true
+    //   approve:0       → false (incidentally correct)
+    // String(voteParams.proposalId/voterId) silently turned
+    // undefined/null/array/object into "undefined"/"null"/"x,y"/
+    // "[object Object]" and forwarded to governance.vote — caused
+    // -32603 leaks downstream when the proposal lookup threw, and
+    // crucially flipped vote direction on the YES/NO axis.
+    // Reuse the same governance stub pattern as #218/#220/#226.
+    const recordedVotes: Array<{ proposalId: string; voterId: string; approve: boolean }> = []
+    const governanceStub290 = {
+      vote: (proposalId: string, voterId: string, approve: boolean) => {
+        recordedVotes.push({ proposalId, voterId, approve })
+      },
+      getProposal: () => ({ id: "p1", status: "pending", votes: new Map() }),
+    } as Record<string, unknown>
+    ;(chain as unknown as Record<string, unknown>).governance = governanceStub290
     try {
       const probe = async (params: unknown[]) => {
         const r = await fetch(`http://127.0.0.1:${port}`, {
@@ -3043,6 +3066,45 @@ test("RPC Extended Methods", async (t) => {
         "the bounded-seen invariant under steady-state churn")
     } finally {
       ;(chain.mempool as unknown as { getAll: typeof origGetAll }).getAll = origGetAll
+  })
+
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "coc_voteProposal", params }),
+        })
+        return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+      }
+      // approve non-boolean shapes — must reject with -32602 (not silently
+      // coerce to true). The "false"/"no"/"0" string cases are the
+      // direction-flip foot-guns; "{}", "[]", "1" round out the panel.
+      for (const bad of ["false", "true", "no", "yes", "0", "1", 0, 1, {}, [], null, undefined]) {
+        const r = await probe([{ proposalId: "p1", voterId: "node-1", approve: bad }])
+        assert.equal(r.error?.code, -32602,
+          `approve=${JSON.stringify(bad)} must be -32602, got ${JSON.stringify(r)}`)
+        assert.match(r.error!.message, /invalid approve|expected boolean/i)
+      }
+      // proposalId / voterId non-string shapes — must reject (no silent
+      // String() coercion to "undefined"/"null"/"x,y").
+      for (const bad of [undefined, null, 123, true, false, {}, ["p1"], ""]) {
+        const r1 = await probe([{ proposalId: bad, voterId: "node-1", approve: true }])
+        assert.equal(r1.error?.code, -32602,
+          `proposalId=${JSON.stringify(bad)} must be -32602, got ${JSON.stringify(r1)}`)
+        const r2 = await probe([{ proposalId: "p1", voterId: bad, approve: true }])
+        assert.equal(r2.error?.code, -32602,
+          `voterId=${JSON.stringify(bad)} must be -32602, got ${JSON.stringify(r2)}`)
+      }
+      // None of the invalid inputs should have reached the stub.
+      assert.equal(recordedVotes.length, 0,
+        `no invalid vote should have reached governance.vote; got ${JSON.stringify(recordedVotes)}`)
+      // Sanity: well-shaped true/false both succeed, NOT just true.
+      const okYes = await probe([{ proposalId: "p1", voterId: "node-1", approve: true }])
+      assert.equal(okYes.error, undefined, `valid YES vote must succeed, got ${JSON.stringify(okYes)}`)
+      const okNo = await probe([{ proposalId: "p1", voterId: "node-1", approve: false }])
+      assert.equal(okNo.error, undefined, `valid NO vote must succeed, got ${JSON.stringify(okNo)}`)
+      assert.equal(recordedVotes.length, 2, "exactly 2 well-shaped votes recorded")
+      assert.equal(recordedVotes[0].approve, true, "YES vote must be exactly true")
+      assert.equal(recordedVotes[1].approve, false,
+        "NO vote must be exactly false — this is the direction-flip invariant")
+    } finally {
+      delete (chain as unknown as Record<string, unknown>).governance
     }
   })
 

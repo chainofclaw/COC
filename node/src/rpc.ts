@@ -2238,17 +2238,34 @@ async function handleRpc(
         invalidParams("invalid params: expected non-null object as first param")
       }
       const voteParams = voteRaw as Record<string, unknown>
+      // #290: pre-fix `String(...)` / `Boolean(...)` silently coerced
+      // every shape:
+      //   - String(undefined) = "undefined" → governance.vote() looked
+      //     up proposal "undefined", threw, leaked as -32603.
+      //   - Boolean("false") = true → a client passing the STRING
+      //     "false" recorded a YES vote (direction-flip on a governance
+      //     decision). Same anti-pattern as #260 (eth_getBlockBy*
+      //     includeTx Boolean coercion). Validate each field upfront so
+      //     bogus shapes get -32602 and the YES/NO direction is exact.
+      if (typeof voteParams.proposalId !== "string" || voteParams.proposalId.length === 0) {
+        invalidParams("invalid proposalId: expected non-empty string")
+      }
+      if (typeof voteParams.voterId !== "string" || voteParams.voterId.length === 0) {
+        invalidParams("invalid voterId: expected non-empty string")
+      }
+      if (typeof voteParams.approve !== "boolean") {
+        invalidParams("invalid approve: expected boolean (true|false), not coerced from string/number")
+      }
+      const proposalId = voteParams.proposalId
+      const voterId = voteParams.voterId
+      const approve = voteParams.approve
       // Only the local node can vote via RPC
       const localVoterId = (opts as Record<string, unknown>)?.nodeId as string | undefined
-      if (localVoterId && String(voteParams.voterId) !== localVoterId) {
+      if (localVoterId && voterId !== localVoterId) {
         throw { code: -32003, message: "unauthorized: can only vote as local node" }
       }
-      chain.governance.vote(
-        String(voteParams.proposalId),
-        String(voteParams.voterId),
-        Boolean(voteParams.approve),
-      )
-      const updated = chain.governance.getProposal(String(voteParams.proposalId))
+      chain.governance.vote(proposalId, voterId, approve)
+      const updated = chain.governance.getProposal(proposalId)
       return {
         id: updated?.id,
         status: updated?.status,
