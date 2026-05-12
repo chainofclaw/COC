@@ -233,6 +233,56 @@ test("#302: mkdir under an existing FILE must reject with 'not a directory'", as
       /not a directory/,
       "write with parents:true through a file path must reject — write goes through mkdir",
     )
+  })
+
+test("#304: mv/cp onto an existing DIRECTORY rejects (no type clobber)", async () => {
+  // Live-reproducible on 88780 testnet (probe iteration #38):
+  //   write /probe38/f.txt = "FILE-CONTENT"
+  //   mkdir /probe38/D
+  //   write /probe38/D/inside.txt = "DIR-CHILD-CONTENT"
+  //   mv /probe38/f.txt /probe38/D            → 200 (BUG)
+  //   ls /probe38/D                            → [{inside.txt}]   (still listed as dir)
+  //   stat /probe38/D                          → type:"directory"  (still a dir per dirs map)
+  //   read /probe38/D                          → "FILE-CONTENT"   (BUG! reads the moved file via parent entry)
+  //
+  // Pre-fix `destParent.entries.set(destBase, ...entry)` at mv:259 / cp:309
+  // overwrote a "directory" entry with a "file" entry while leaving the
+  // dir node in `this.dirs` intact. The path then responded as a directory
+  // to ls/stat AND returned the moved file's content to read — different
+  // operations see different shapes. POSIX/kubo would copy INTO the dir;
+  // for now reject so silent corruption cannot happen.
+  const { mfs, cleanup } = await createMfs()
+  try {
+    await mfs.write("/f.txt", new TextEncoder().encode("FILE-CONTENT"), { create: true })
+    await mfs.mkdir("/D")
+    await mfs.write("/D/inside.txt", new TextEncoder().encode("DIR-CHILD"), { create: true })
+
+    // KEY invariant 1: mv file onto existing dir REJECTS
+    await assert.rejects(
+      () => mfs.mv("/f.txt", "/D"),
+      /destination is a directory/,
+      "mv file onto existing dir must reject (POSIX-strict semantics, no silent clobber)",
+    )
+
+    // KEY invariant 2: after rejected mv, src + dst integrity intact
+    const srcStat = await mfs.stat("/f.txt")
+    assert.strictEqual(srcStat.type, "file", "source file must still be a file")
+    const dstStat = await mfs.stat("/D")
+    assert.strictEqual(dstStat.type, "directory", "dest must still be a directory")
+    const dstLs = await mfs.ls("/D")
+    assert.strictEqual(dstLs.length, 1, "dest must still contain its original child")
+    assert.strictEqual(dstLs[0].name, "inside.txt")
+
+    // KEY invariant 3: cp file onto existing dir REJECTS (same family)
+    await assert.rejects(
+      () => mfs.cp("/f.txt", "/D"),
+      /destination is a directory/,
+      "cp file onto existing dir must reject (same reason as mv)",
+    )
+
+    // KEY invariant 4: read /D as a file must NOT return file content
+    // (i.e. the dir was never overwritten, parent.entries still says directory)
+    await assert.rejects(() => mfs.read("/D"), /not a file|is a directory|cannot read directory/i)
   } finally {
     cleanup()
   }
@@ -252,6 +302,33 @@ test("#302: mkdir at root depth with file collision still rejects", async () => 
     await assert.rejects(
       () => mfs.mkdir("/root.txt/x", { parents: true }),
       /not a directory/,
+  })
+
+test("#304: mv/cp file onto existing DIRECTORY entry (type mismatch at leaf) rejects", async () => {
+  // Variant: dst path doesn't exist as a top-level dir but its parent
+  // already has an entry of the OTHER type (e.g. mv file onto sibling dir
+  // entry that happens to live inside a containing dir).
+  const { mfs, cleanup } = await createMfs()
+  try {
+    await mfs.write("/src.txt", new TextEncoder().encode("X"), { create: true })
+    await mfs.mkdir("/conflict")  // dir at /conflict — same as previous test
+    // mv src onto the dir
+    await assert.rejects(
+      () => mfs.mv("/src.txt", "/conflict"),
+      /destination is a directory|type mismatch/,
+    )
+    await assert.rejects(
+      () => mfs.cp("/src.txt", "/conflict"),
+      /destination is a directory|type mismatch/,
+    )
+
+    // And: mv DIR onto existing FILE rejects too (type mismatch reverse)
+    await mfs.mkdir("/srcDir")
+    await mfs.write("/destFile.txt", new TextEncoder().encode("Y"), { create: true })
+    await assert.rejects(
+      () => mfs.mv("/srcDir", "/destFile.txt"),
+      /type mismatch|destination is a directory/,
+      "mv dir onto existing file must reject (cannot replace file with dir silently)",
     )
   } finally {
     cleanup()
