@@ -49,7 +49,7 @@ module.exports = {
         FAUCET_MIN_COC: '1000',
         FAUCET_REFUND_COC: '50000',
         BLOCK_FRESHNESS_LIMIT_SEC: '300',
-        SSH_KEY: '/root/.ssh/openclaw_server_key',
+        SSH_KEY: '/root/.ssh/coc-automation',
         REMEDIATE_STATE: '/var/lib/coc-synthetic/state.json',
         // Loop cadence
         HEALTH_LOOP_INTERVAL_SEC: '1800', // 30 min

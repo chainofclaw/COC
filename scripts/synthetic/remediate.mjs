@@ -34,7 +34,7 @@ const cfg = {
   faucetMinIntervalMs: 23 * 3600 * 1000, // once per day
   restartMinIntervalMs: 55 * 60 * 1000,  // once per hour
   stateFile: process.env.REMEDIATE_STATE || '/var/lib/coc-synthetic/state.json',
-  sshKey: process.env.SSH_KEY || '/root/.ssh/openclaw_server_key',
+  sshKey: process.env.SSH_KEY || '/root/.ssh/coc-automation',
   validators: [
     { name: 'v1', host: '209.74.64.88',    unit: 'coc-node@88' },
     { name: 'v2', host: '159.198.44.136',  unit: 'coc-node@1'  },
@@ -58,7 +58,13 @@ function saveState(s) {
 }
 
 function provider() {
-  return new ethers.JsonRpcProvider(cfg.rpc, { chainId: cfg.chainId, name: 'ChainOfClaw' })
+  // staticNetwork avoids ethers' eth_chainId auto-detect 5s timeout on
+  // hairpin-NAT / TLS cold-start (prod-2 reaching its own public URL).
+  return new ethers.JsonRpcProvider(
+    cfg.rpc,
+    { chainId: cfg.chainId, name: 'ChainOfClaw' },
+    { staticNetwork: ethers.Network.from({ chainId: cfg.chainId, name: 'ChainOfClaw' }) },
+  )
 }
 
 // ---------- 1. refund-faucet ----------
