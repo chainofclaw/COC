@@ -19,10 +19,15 @@ interface ValidatorsResponse {
 interface GovernanceValidator {
   id: string
   address: string
-  stake: string
-  votingPower: number
+  stake?: string
+  votingPower?: number
   active: boolean
-  joinedAtEpoch: string
+  joinedAtEpoch?: string
+}
+
+function safeBigInt(v: string | undefined | null): bigint {
+  if (!v) return 0n
+  try { return BigInt(v) } catch { return 0n }
 }
 
 export default async function ValidatorsPage() {
@@ -55,7 +60,7 @@ export default async function ValidatorsPage() {
 
   // Calculate total stake for percentage display
   const totalStake = hasGovernance
-    ? govValidators.reduce((sum, v) => sum + BigInt(v.stake), 0n)
+    ? govValidators.reduce((sum, v) => sum + safeBigInt(v.stake), 0n)
     : 0n
 
   return (
@@ -118,7 +123,7 @@ export default async function ValidatorsPage() {
           <tbody className="divide-y divide-gray-200">
             {data.validators.map((v, i) => {
               const gov = govMap.get(v.id)
-              const stake = gov ? BigInt(gov.stake) : 0n
+              const stake = gov ? safeBigInt(gov.stake) : 0n
               const stakePercent = totalStake > 0n && stake > 0n
                 ? Number((stake * 10000n) / totalStake) / 100
                 : 0
