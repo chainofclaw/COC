@@ -53,6 +53,9 @@ module.exports = {
         REMEDIATE_STATE: '/var/lib/coc-synthetic/state.json',
         // Loop cadence
         HEALTH_LOOP_INTERVAL_SEC: '1800', // 30 min
+        HEALTH_STRESS_EVERY: '4',  // run stress probe every 4 ticks (~2 hours)
+        STRESS_N: '32',
+        STRESS_MODE: 'mixed',
         HEALTH_REPORT_DIR: '/var/log/coc-synthetic',
       },
     },

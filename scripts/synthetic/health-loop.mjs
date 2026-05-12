@@ -19,12 +19,18 @@ import { writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { runSyntheticCheck } from './check-prod.mjs'
 import { runActiveProbe } from './active-probe.mjs'
+import { runStress } from './stress-probe.mjs'
 import { refundFaucet, restartValidators } from './remediate.mjs'
 
 const cfg = {
   intervalMs: Number(process.env.HEALTH_LOOP_INTERVAL_SEC || '1800') * 1000, // 30 min
   reportDir: process.env.HEALTH_REPORT_DIR || '/var/log/coc-synthetic',
+  // Run stress every N ticks (default 4 = ~2 hours). Stress pushes ~32 txs
+  // through mempool + EVM and is heavier than the standard active probe.
+  stressEveryNTicks: Number(process.env.HEALTH_STRESS_EVERY || '4'),
 }
+
+let tickCounter = 0
 
 if (!existsSync(cfg.reportDir)) mkdirSync(cfg.reportDir, { recursive: true })
 
@@ -54,6 +60,20 @@ async function tick() {
     active = { ok: false, error: e instanceof Error ? e.message : String(e) }
   }
 
+  // 2b. stress probe — every Nth tick
+  let stress = null
+  tickCounter += 1
+  if (tickCounter % cfg.stressEveryNTicks === 0) {
+    console.log(`[health-loop] running stress probe (tick ${tickCounter}, every ${cfg.stressEveryNTicks}) ...`)
+    try {
+      stress = await runStress()
+      console.log(`[health-loop] stress: ${stress.pass ? 'PASS' : 'FAIL'} confirmed=${stress.confirmed}/${stress.cfg?.n} tps=${stress.tps} p95=${stress.latencyMs?.p95}ms`)
+    } catch (e) {
+      stress = { pass: false, error: e instanceof Error ? e.message : String(e) }
+      console.log(`[health-loop] stress probe crashed: ${stress.error}`)
+    }
+  }
+
   // 3. remediation
   const actions = []
   if (checkFailed(synth, 'faucet.balance')) {
@@ -75,6 +95,7 @@ async function tick() {
     finishedAt: new Date().toISOString(),
     synthetic: { ok: synth.ok, fails: (synth.results || []).filter((r) => !r.pass).map((r) => r.name) },
     active: { ok: active.ok, fails: (active.results || []).filter((r) => !r.pass).map((r) => r.name), error: active.error },
+    stress: stress ? { pass: stress.pass, confirmed: stress.confirmed, tps: stress.tps, p95: stress.latencyMs?.p95, error: stress.error } : null,
     actions,
   }
   const fname = join(cfg.reportDir, `tick-${startedAt.replace(/[:.]/g, '-')}.json`)
