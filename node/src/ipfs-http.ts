@@ -266,6 +266,19 @@ export class IpfsHttpServer {
         if (!isValidCid(cid)) {
           res.writeHead(400, { "content-type": "application/json", "access-control-allow-origin": "*" })
           res.end(JSON.stringify({ error: "invalid CID" }))
+  })
+
+      // #326: HEAD must be treated as GET-without-body per RFC 7231 §4.3.2.
+      // Pre-fix the gateway only matched GET, so `curl -I /ipfs/<cid>` fell
+      // through to the /api/v0/ 404 even when the block existed and a real
+      // GET succeeded. Clients use HEAD for cache validation, pre-flight,
+      // and resumable-download discovery — that capability was 100% broken.
+      const isGatewayMethod = req.method === "GET" || req.method === "HEAD"
+      if (isGatewayMethod && url.pathname?.startsWith("/ipfs/")) {
+        const cid = url.pathname.slice(6) // strip "/ipfs/"
+        if (!isValidCid(cid)) {
+          res.writeHead(400, { "content-type": "application/json" })
+          res.end(req.method === "HEAD" ? undefined : JSON.stringify({ error: "invalid CID" }))
           return
         }
         // #168: pre-fix ENOENT for valid-shape-missing CIDs propagated
@@ -319,6 +332,21 @@ export class IpfsHttpServer {
           if (isNotFoundError(err)) {
             res.writeHead(404, { "content-type": "application/json", "access-control-allow-origin": "*" })
             res.end(JSON.stringify({ error: "not found" }))
+  })
+
+          // #326: HEAD response sets Content-Length but no body, matching
+          // RFC 7231 §4.3.2 ("must not send a message body").
+          if (req.method === "HEAD") {
+            res.writeHead(200, { "content-length": String(data.length) })
+            res.end()
+          } else {
+            res.writeHead(200)
+            res.end(data)
+          }
+        } catch (err) {
+          if (isNotFoundError(err)) {
+            res.writeHead(404, { "content-type": "application/json" })
+            res.end(req.method === "HEAD" ? undefined : JSON.stringify({ error: "not found" }))
           } else {
             throw err
           }
