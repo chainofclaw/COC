@@ -66,6 +66,32 @@ function nthQueryValue(raw: string | string[] | undefined, n: number): string | 
   return n === 0 ? raw : undefined
 }
 
+/**
+ * #370: kubo's `/api/v0/*` endpoints accept the `arg` parameter as
+ * either a bare CID (`bafy…`) OR a path-form `/ipfs/<cid>[/<subpath>]`.
+ * The kubo CLI default and js-ipfs both emit the path form. Pre-fix
+ * our `isValidCid` rejected any string containing `/` so every
+ * `arg=/ipfs/<cid>` call surfaced as `400 invalid cid` — silently
+ * breaking interop with the official client tooling.
+ *
+ * Strip a leading `/ipfs/` (or `ipfs/` without leading slash for
+ * permissiveness) so the remaining string is the bare CID and falls
+ * through the normal `isValidCid` check. Subpaths under directory
+ * CIDs aren't supported here (we don't expose directory navigation),
+ * so any string containing `/` after the strip still fails `isValidCid`
+ * with the same clean 400.
+ *
+ * IPNS (`/ipns/<key>`) is NOT supported on this server; the prefix
+ * stays intact so `isValidCid` returns false with a clean "invalid cid"
+ * instead of pretending the IPNS name is a CID.
+ */
+function stripIpfsPathPrefix(arg: string | undefined): string | undefined {
+  if (arg === undefined) return undefined
+  if (arg.startsWith("/ipfs/")) return arg.slice(6)
+  if (arg.startsWith("ipfs/")) return arg.slice(5)
+  return arg
+}
+
 function isNotFoundError(err: unknown): boolean {
   if (err && typeof err === "object" && "code" in err && (err as { code: unknown }).code === "ENOENT") return true
   const msg = String(err instanceof Error ? err.message : err)
@@ -446,7 +472,12 @@ export class IpfsHttpServer {
       // #192: coalesce dup query params at the dispatcher boundary so
       // route handlers always receive `string | undefined` (not the
       // `string | string[]` Node's url-parser actually returns).
-      const argParam = firstQueryValue(url.query.arg)
+      //
+      // #370: also normalize kubo's path-form CID arg
+      // (`arg=/ipfs/<cid>`) to the bare CID at the boundary so each
+      // route's `isValidCid` check accepts both forms. kubo CLI and
+      // js-ipfs both default to the path form.
+      const argParam = stripIpfsPathPrefix(firstQueryValue(url.query.arg))
       if (url.pathname === "/api/v0/add") {
         // #353: reject unsupported kubo params *before* we read the
         // multipart body — a client requesting cid-version=0 should
