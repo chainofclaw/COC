@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { Wallet } from "ethers";
 import { loadConfig } from "./lib/config.ts";
 import { InMemoryStore } from "./lib/state.ts";
+import { recordChallengeBounded } from "./lib/bounded-challenge-store.ts";
 import { IpfsBlockstore } from "../node/src/ipfs-blockstore.ts";
 import { loadStorageProof, MerkleLeavesCache } from "./lib/storage-proof.ts";
 import { createNodeSigner, createNodeSignerV2, buildReceiptSignMessage } from "../node/src/crypto/signer.ts";
@@ -104,6 +105,19 @@ function stableStringify(value: unknown): string {
 
 const challenges = new InMemoryStore<Record<string, unknown>>();
 
+// #320: cap the in-memory challenge map to prevent unbounded growth
+// from unauthenticated POST /pose/challenge spam. Pre-fix the Map had
+// no size cap, no TTL, no LRU; coc-node also has no rate limiter at
+// the runtime layer, so an attacker spamming unique challengeIds could
+// grow the Map until the process OOMed. 100K entries × ~1 KB JSON each
+// is ~100 MB ceiling — generous for legitimate PoSe traffic (challenges
+// resolve within seconds) but bounded for adversarial spam. Eviction
+// is FIFO via insertion-order Map.keys() — older entries are typically
+// already consumed or timed out by the time the cap is hit.
+// Logic extracted to runtime/lib/bounded-challenge-store.ts so the
+// FIFO + dedup-of-existing-key behaviour is unit-tested without spinning
+// up the HTTP server.
+
 function json(res: http.ServerResponse, code: number, payload: unknown): void {
   res.writeHead(code, { "content-type": "application/json" });
   res.end(JSON.stringify(payload));
@@ -132,10 +146,22 @@ const server = http.createServer((req, res) => {
       } catch {
         return json(res, 400, { error: "invalid JSON body" });
       }
-      if (!payload.challengeId) {
-        return json(res, 400, { error: "missing challengeId" });
+      // #320: tighten challengeId shape — pre-fix the falsy check accepted
+      // objects, arrays, numbers as keys via `challenges.set(key, ...)`,
+      // and Map.set treats {} / [] as fresh references, so even a fixed
+      // JSON like {"challengeId":{}} produced a brand-new Map entry on
+      // every request. Require a non-empty string so each entry is
+      // addressable from /pose/receipt by hex/uuid.
+      if (typeof payload.challengeId !== "string" || payload.challengeId.length === 0) {
+        return json(res, 400, { error: "missing or invalid challengeId (must be non-empty string)" });
       }
-      challenges.set(payload.challengeId, payload);
+      // Cap the challenge ID length so an attacker cannot amplify the
+      // payload by spamming many giant strings — even with the FIFO cap
+      // below, each entry holds the full string as a Map key.
+      if (payload.challengeId.length > 256) {
+        return json(res, 400, { error: "challengeId too long (max 256 chars)" });
+      }
+      recordChallengeBounded(challenges, payload.challengeId, payload);
       return json(res, 200, { accepted: true });
     });
     return;
