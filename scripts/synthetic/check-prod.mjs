@@ -287,7 +287,17 @@ const checks = [
 
 function pad(s, n) { return String(s).padEnd(n) }
 
+// On a server that's also the prod host, the very first cross-domain fetch
+// pays a hairpin-NAT / TLS-establish cost that can exceed the 10s default
+// per-check timeout. Warm the public RPC + faucet path with a throwaway
+// HEAD request before the timed checks begin.
+async function warmup() {
+  const urls = [cfg.rpcUrl, cfg.faucetUrl + '/health']
+  await Promise.allSettled(urls.map((u) => fetchWithTimeout(u, { method: 'GET' }, 15_000).catch(() => null)))
+}
+
 async function runOnce() {
+  await warmup()
   const startedAt = new Date().toISOString()
   const results = []
   for (const c of checks) {
@@ -346,4 +356,9 @@ async function main() {
   }
 }
 
-main()
+// Library export — health-loop.mjs imports this to skip the child-process round-trip.
+export { runOnce as runSyntheticCheck }
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main()
+}
