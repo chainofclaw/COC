@@ -2663,8 +2663,20 @@ async function handleRpc(
       }
       const peerUrl = peerUrlRaw
       const peerId = (peerIdRaw ?? `peer-${Date.now()}`) as string
-      try { new URL(peerUrl) } catch {
-        invalidParams("invalid peer URL")
+      // #392: pre-fix only `new URL(...)` succeeded, accepting any scheme
+      // — ftp://, file://, javascript:, data:, ws://, ldap:// all passed.
+      // Downstream `normalizePeer` (peer-discovery.ts:451) silently
+      // dropped non-http(s) URLs, but the API returned `true` regardless,
+      // making the call deceptive — client thinks the peer was added but
+      // it wasn't. Worse, `file://` URLs landing here suggest a confused
+      // caller about what this API does. Reject non-http(s) at the
+      // boundary so the API contract matches downstream behaviour.
+      const parsedPeerUrl = (() => {
+        try { return new URL(peerUrl) }
+        catch { invalidParams("invalid peer URL") }
+      })()
+      if (parsedPeerUrl.protocol !== "http:" && parsedPeerUrl.protocol !== "https:") {
+        invalidParams(`invalid peer URL scheme: ${parsedPeerUrl.protocol} (must be http: or https:)`)
       }
       if (!/^[a-zA-Z0-9\-_.:]+$/.test(peerId)) {
         invalidParams("invalid peer ID: only alphanumeric, hyphens, underscores, dots, colons allowed")

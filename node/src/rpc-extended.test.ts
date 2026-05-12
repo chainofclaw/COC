@@ -2300,6 +2300,67 @@ test("RPC Extended Methods", async (t) => {
     }
   })
 
+  await t.test("#392: admin_addPeer rejects non-http(s) URL schemes (no deceptive true)", async () => {
+    // Pre-fix admin_addPeer only checked `new URL(peerUrl)` succeeded,
+    // accepting ftp://, file://, javascript:, data:, ws://, ldap:// —
+    // all returned `result:true` while peer-discovery's normalizePeer
+    // (peer-discovery.ts:451) silently dropped them downstream. The
+    // mismatch made the API deceptive: a caller saw success but the
+    // peer was never added.
+    //
+    // Live testnet 88780 reproduction (pre-fix, with admin RPC on):
+    //
+    //   $ admin_addPeer("ftp://evil.com/")     → 200 {"result":true}
+    //   $ admin_addPeer("file:///etc/passwd")  → 200 {"result":true}
+    //   $ admin_addPeer("javascript:alert(1)") → 200 {"result":true}
+    //   # All accepted at API, all silently dropped by normalizePeer.
+    //
+    // Worse, the `file://` case suggests a confused caller about what
+    // this method does; an attacker probing for an SSRF surface would
+    // see "true" and assume their URL was added.
+    const adminPort = port + 3000
+    const adminServer = startRpcServer(
+      "127.0.0.1", adminPort, chainId, evm, chain, p2p,
+      undefined, undefined, "admin-test", undefined,
+      undefined,
+      { enableAdminRpc: true },
+    )
+    try {
+      const probe = async (url: string) => {
+        const r = await fetch(`http://127.0.0.1:${adminPort}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "admin_addPeer", params: [url, "peer-x"] }),
+        })
+        return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+      }
+      // Each must fail with -32602; pre-fix all returned result:true.
+      const badSchemes = [
+        "ftp://evil.com/",
+        "file:///etc/passwd",
+        "javascript:alert(1)",
+        "data:text/plain,hello",
+        "ws://1.2.3.4/",
+        "ldap://attacker.com/",
+      ]
+      for (const url of badSchemes) {
+        const r = await probe(url)
+        assert.equal(r.error?.code, -32602,
+          `admin_addPeer(${url}) must be -32602, got ${JSON.stringify(r)}`)
+        assert.match(r.error!.message, /scheme|http:|https:/i,
+          `error must mention scheme requirement, got: ${r.error!.message}`)
+        assert.notEqual(r.result, true, "must not return true for rejected scheme")
+      }
+      // http: and https: still accepted (sanity).
+      for (const url of ["http://1.2.3.4:30303/", "https://example.com/"]) {
+        const r = await probe(url)
+        assert.notEqual(r.error?.code, -32602, `${url}: must pass scheme validation`)
+      }
+    } finally {
+      adminServer.close()
+    }
+  })
+
   await t.test("#242: DID handlers reject non-string DID/agentId/credentialId (no silent coercion)", async () => {
     // Pre-fix 7 DID/identity handlers used `String((payload.params ?? [])[0] ?? "")`.
     // String(123)="123", String(true)="true", String({})="[object Object]" — all
