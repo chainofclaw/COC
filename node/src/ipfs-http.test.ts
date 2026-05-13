@@ -384,6 +384,21 @@ describe("IpfsHttpServer", () => {
     const r7 = await fetch(`/api/v0/cat?arg=${meta.cid}`, { method: "POST" })
     assert.equal(r7.status, 200)
     assert.deepEqual(new Uint8Array(await r7.buffer()), content)
+    // (h) #426: offset > MAX_SAFE_INTEGER must reject. Pre-fix
+    // `Number.isInteger(1e21)` returned true after precision loss and the
+    // handler responded with 200 + empty body (indistinguishable from
+    // "valid offset past EOF"). 21-digit integer overflows MAX_SAFE_INTEGER.
+    const r8 = await fetch(`/api/v0/cat?arg=${meta.cid}&offset=999999999999999999999`, { method: "POST" })
+    assert.equal(r8.status, 400, "offset over MAX_SAFE_INTEGER must reject (was silent 200 + empty)")
+    assert.match((await r8.json() as { error: string }).error, /invalid offset/)
+    // (i) #426: same for length
+    const r9 = await fetch(`/api/v0/cat?arg=${meta.cid}&offset=0&length=999999999999999999999`, { method: "POST" })
+    assert.equal(r9.status, 400, "length over MAX_SAFE_INTEGER must reject")
+    assert.match((await r9.json() as { error: string }).error, /invalid length/)
+    // (j) #426 sanity: MAX_SAFE_INTEGER itself is at the boundary and accepted
+    const r10 = await fetch(`/api/v0/cat?arg=${meta.cid}&offset=${Number.MAX_SAFE_INTEGER}`, { method: "POST" })
+    assert.equal(r10.status, 200, "MAX_SAFE_INTEGER must still accept (boundary)")
+    assert.equal((await r10.buffer()).length, 0)
   })
 
   it("#353: /api/v0/add rejects unsupported kubo params with 400 (not silent ignore)", async () => {
@@ -787,6 +802,13 @@ describe("IpfsHttpServer", () => {
     // Sanity: valid offset + count still works.
     const ok = await fetch("/api/v0/files/read?arg=/probe&offset=0&count=5", { method: "POST" })
     assert.equal(ok.status, 200, "valid offset/count must succeed")
+    // #426: MFS read offset/count must reject values over MAX_SAFE_INTEGER
+    // (sibling of the cat-handler hazard). Pre-fix `Number.isInteger`
+    // accepted `1e21` after precision loss.
+    const huge = await fetch("/api/v0/files/read?arg=/probe&offset=999999999999999999999", { method: "POST" })
+    assert.equal(huge.status, 400, "MFS read offset over MAX_SAFE_INTEGER must reject")
+    const huge2 = await fetch("/api/v0/files/read?arg=/probe&count=999999999999999999999", { method: "POST" })
+    assert.equal(huge2.status, 400, "MFS read count over MAX_SAFE_INTEGER must reject")
   })
 
   it("#232: /api/v0/files/* path traversal returns 400 (not 500 'internal error')", async () => {
