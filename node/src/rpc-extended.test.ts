@@ -2860,6 +2860,62 @@ test("RPC Extended Methods", async (t) => {
     )
   })
 
+  await t.test("#448: eth_getBlockByNumber extraData is 20-byte address (not 42-byte ASCII string)", async () => {
+    // Live testnet 88780 reproduction:
+    //   $ curl ...eth_getBlockByNumber latest
+    //   {
+    //     "miner":     "0xde4e7889aa9007318ff261b1ee675f1305153590",
+    //     "extraData": "0x307864653465373838396161393030373331386666323631623165653637356631333035313533353930"
+    //   }
+    //   ↑ 84 hex chars after 0x = 42 bytes — exceeds Ethereum's 32-byte
+    //     extraData cap (consensus rule)
+    //   ↑ ASCII decodes to the proposer address rendered as TEXT STRING:
+    //     bytes.fromhex("307864...3530") = "0xde4e7889aa9007318ff261b1ee675f1305153590"
+    //
+    // formatBlockResponse used Buffer.from(proposer, "utf-8").toString("hex")
+    // which encodes each ASCII character of the "0x..." string. The result
+    // is wasteful AND a consensus-rule violation. External spec-strict
+    // block validators (L2 fraud-proof generators, geth-strict block import)
+    // reject any header with extraData > 32 bytes.
+    const res = await fetch(`http://127.0.0.1:${port}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getBlockByNumber", params: ["latest", false] }),
+    })
+    const body = await res.json() as { result?: Record<string, unknown> }
+    assert.ok(body.result, "latest block must exist")
+    const extraData = String(body.result!.extraData ?? "")
+    const miner = String(body.result!.miner ?? "")
+
+    // 1. extraData must be ≤ 32 bytes (Ethereum consensus rule).
+    const extraBytes = (extraData.length - 2) / 2
+    assert.ok(extraBytes <= 32,
+      `extraData must be ≤ 32 bytes (Ethereum consensus rule), got ${extraBytes} bytes: ${extraData}`)
+
+    // 2. extraData must NOT be the ASCII rendering of the address.
+    // The pre-fix output, decoded as latin1, would start with "0x".
+    if (extraData.length > 2) {
+      const decoded = Buffer.from(extraData.slice(2), "hex").toString("latin1")
+      assert.ok(!decoded.startsWith("0x"),
+        `extraData must not be ASCII-encoded hex string (bug signature). Decoded as latin1: "${decoded}"`)
+    }
+
+    // 3. When proposer is a 20-byte hex address (production case),
+    // extraData should equal the proposer byte-for-byte (which equals
+    // miner when miner is hex). When proposer is a test-fixture node ID
+    // (e.g. "node-1"), miner falls back to the zero address but extraData
+    // still encodes the proposer as UTF-8 bytes (truncated to ≤32 bytes).
+    //
+    // Either way, the 32-byte cap (assertion 1) and the "no ASCII-encoded
+    // 0x..." check (assertion 2) catch the original bug. Skip the
+    // byte-for-byte equality check when miner is the zero address.
+    if (miner !== "0x0000000000000000000000000000000000000000"
+      && /^0x[0-9a-fA-F]{40}$/.test(miner)) {
+      assert.equal(extraData.toLowerCase(), miner.toLowerCase(),
+        `extraData should encode proposer address as raw bytes (matching miner field)`)
+    }
+  })
+
   await t.test("#332: eth_sendRawTransaction replacement-underpriced surfaces as -32000 (not -32603)", async () => {
     // mempool.addRawTx throws plain Error("replacement tx gas price too
     // low: need at least X, got Y") when a same-nonce replacement does
