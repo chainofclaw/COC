@@ -2939,6 +2939,61 @@ test("RPC Extended Methods", async (t) => {
     assert.equal(okC.error, undefined, `well-shaped getRewardClaim must succeed: ${JSON.stringify(okC)}`)
   })
 
+  await t.test("#424: coc_getRewardManifest / coc_getRewardClaim validate epochId/nodeId before the rewardManifestDir short-circuit", async () => {
+    // Pre-fix the handler ran `if (!rewardManifestDir) return null` BEFORE
+    // `requireIntegerParam` / `requireStringParam`, so any node where the
+    // manifest dir wasn't configured (every read-only fullnode on
+    // testnet 88780) silently returned `null` for garbage epochId
+    // (`"1"`, `true`, `[1]`). Clients couldn't tell "input invalid" from
+    // "feature not configured". Validation belongs at the boundary —
+    // backend configuration is irrelevant to input shape.
+    //
+    // Spin up a second RPC server WITHOUT `rewardManifestDir` (the
+    // unconfigured shape). Same validation rules must apply.
+    const port2 = port + 1000
+    const server2 = startRpcServer("127.0.0.1", port2, chainId, evm, chain, p2p, undefined, undefined, undefined, undefined, {
+      // intentionally omit rewardManifestDir → unconfigured backend
+      getBftEquivocations: () => [],
+    })
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      const probe = async (method: string, params: unknown[]) => {
+        const r = await fetch(`http://127.0.0.1:${port2}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+        })
+        return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+      }
+      // Garbage epochId must still be -32602, NOT silent null,
+      // even though the backend has no manifest dir configured.
+      for (const bad of [true, false, "1", "5", [1], {}, 1.5, -1]) {
+        const m = await probe("coc_getRewardManifest", [bad])
+        assert.equal(m.error?.code, -32602,
+          `unconfigured backend: getRewardManifest(${JSON.stringify(bad)}) must be -32602, got ${JSON.stringify(m)}`)
+        const c = await probe("coc_getRewardClaim", [bad, `0x${"22".repeat(32)}`])
+        assert.equal(c.error?.code, -32602,
+          `unconfigured backend: getRewardClaim(${JSON.stringify(bad)}, ...) must be -32602, got ${JSON.stringify(c)}`)
+      }
+      // Garbage nodeId on otherwise valid epoch must also reject.
+      for (const bad of [123, true, {}, [1]]) {
+        const r = await probe("coc_getRewardClaim", [7, bad])
+        assert.equal(r.error?.code, -32602,
+          `unconfigured backend: getRewardClaim(7, ${JSON.stringify(bad)}) must be -32602, got ${JSON.stringify(r)}`)
+      }
+      // Sanity: VALID input on unconfigured backend returns null (the
+      // documented behaviour when no manifest dir is configured).
+      const okM = await probe("coc_getRewardManifest", [7])
+      assert.equal(okM.error, undefined, `valid input must not error, got ${JSON.stringify(okM)}`)
+      assert.equal(okM.result, null, "valid input + unconfigured dir → null")
+      const okC = await probe("coc_getRewardClaim", [7, `0x${"22".repeat(32)}`])
+      assert.equal(okC.error, undefined, `valid input must not error, got ${JSON.stringify(okC)}`)
+      assert.equal(okC.result, null, "valid input + unconfigured dir → null")
+    } finally {
+      await new Promise<void>((resolve) => server2.close(() => resolve()))
+    }
+  })
+
   await t.test("#254: coc_getTransactionsByAddress rejects non-integer limit/offset and non-boolean reverse", async () => {
     // Pre-fix `Number((params)[1] ?? 50)` silently coerced `true`→1, `"5"`→5,
     // `[3]`→3, `{}`→NaN→fallback. `(params[2] !== false)` accepted every
