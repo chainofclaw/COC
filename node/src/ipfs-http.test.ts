@@ -712,6 +712,34 @@ describe("IpfsHttpServer", () => {
     assert.deepEqual(new Uint8Array(buf), data)
   })
 
+  it("#272: GET /ipfs/<raw-block-cid> returns 200 (not 500 'internal error') — sibling /api/v0/cat already worked", async () => {
+    // Pre-fix the gateway path called `this.unixfs.readFile(cid)` directly,
+    // which throws Error("not a unixfs file") for raw blocks. The catch
+    // only handled "not found" — non-unixfs CIDs fell through to the outer
+    // 500 + log.error. The sibling /api/v0/cat path was correct because it
+    // uses readByCid() → resolveCid() which dispatches raw / erasure /
+    // unixfs uniformly. Fix: gateway now uses the same readByCid().
+    const { storeRawBlock } = await import("./ipfs-unixfs.ts")
+    const rawData = new TextEncoder().encode("raw block, not unixfs")
+    const rawBlock = await storeRawBlock(store, rawData)
+    const rawCid = rawBlock.cid
+
+    // /api/v0/cat: should already work (sanity, was correct before fix)
+    const catRes = await fetch(`/api/v0/cat?arg=${rawCid}`)
+    assert.equal(catRes.status, 200, "/api/v0/cat must return 200 for raw blocks")
+    const catBuf = await catRes.buffer()
+    assert.deepEqual(new Uint8Array(catBuf), rawData)
+
+    // /ipfs/<cid> gateway: must NOT be 500 (the bug)
+    const gwRes = await fetch(`/ipfs/${rawCid}`, { method: "GET" })
+    assert.notEqual(gwRes.status, 500,
+      `gateway must not leak 'internal error' for raw blocks, got HTTP ${gwRes.status}`)
+    assert.equal(gwRes.status, 200, `gateway must return 200 for raw blocks, got HTTP ${gwRes.status}`)
+    const gwBuf = await gwRes.buffer()
+    assert.deepEqual(new Uint8Array(gwBuf), rawData,
+      "gateway bytes must match the raw block payload")
+  })
+
   it("#192: duplicate ?arg=<x>&arg=<y> never leaks 500 \"internal error\"", async () => {
     // Pre-fix every IPFS HTTP route cast `url.query.arg` to string,
     // but Node's url parser returns string|string[]|undefined and dup

@@ -337,6 +337,14 @@ export class IpfsHttpServer {
         // #168: pre-fix ENOENT for valid-shape-missing CIDs propagated
         // to the outer 500 handler, logging a stacktrace for every probe.
         // Map to 404 explicitly so missing-block looks like missing-block.
+        //
+        // #272: pre-fix the gateway called `unixfs.readFile()` unconditionally,
+        // which throws `Error("not a unixfs file")` for raw blocks — falling
+        // through to 500. The sibling `/api/v0/cat` already routes raw /
+        // erasure via `resolveCid`. Try the same here but ONLY for the
+        // raw/erasure branches; preserve the original unixfs.readFile path
+        // (its store.get ENOENT → clean 404) so synthetic test CIDs that
+        // pass `isValidCid` but fail `CID.parse` still surface as 404.
         try {
           const data = await this.unixfs.readFile(cid)
           // #324: HTTP Range support per RFC 7233. Pre-fix the gateway
@@ -391,6 +399,22 @@ export class IpfsHttpServer {
             })
             res.end(data)
           }
+  })
+
+          let raw: Uint8Array | null = null
+          try {
+            const resolved = await resolveCid(cid, this.store)
+            if (resolved.kind === "raw") raw = resolved.bytes!
+            else if (resolved.kind === "erasure") {
+              raw = await readErasureFile(resolved.manifest!, this.store)
+            }
+          } catch {
+            // resolveCid threw (typically `invalid_cid` from synthetic CIDs).
+            // Fall through to unixfs.readFile which yields a clean ENOENT.
+          }
+          const data = raw ?? await this.unixfs.readFile(cid)
+          res.writeHead(200)
+          res.end(data)
         } catch (err) {
           if (isNotFoundError(err)) {
             res.writeHead(404, { "content-type": "application/json", "access-control-allow-origin": "*" })
