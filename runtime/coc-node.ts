@@ -4,6 +4,9 @@ import { Wallet } from "ethers";
 import { loadConfig } from "./lib/config.ts";
 import { InMemoryStore } from "./lib/state.ts";
 import { recordChallengeBounded } from "./lib/bounded-challenge-store.ts";
+  })
+
+import { validatePoseWitnessPayload } from "./lib/pose-witness-validator.ts";
 import { IpfsBlockstore } from "../node/src/ipfs-blockstore.ts";
 import { loadStorageProof, MerkleLeavesCache } from "./lib/storage-proof.ts";
 import { readBoundedBody } from "./lib/pose-body-reader.ts";
@@ -352,38 +355,47 @@ const server = http.createServer((req, res) => {
       // #222: parity with the other two POST endpoints — wrap
       // JSON.parse so a malformed body returns 400 instead of
       // crashing the process via uncaughtException.
-      let payload: {
-        challengeId?: string;
-        nodeId?: string;
-        responseBodyHash?: string;
-        witnessIndex?: number;
-      };
+      let rawPayload: unknown;
       try {
-        payload = JSON.parse(body || "{}");
+        rawPayload = JSON.parse(body || "{}");
       } catch {
         return json(res, 400, { error: "invalid JSON body" });
       }
-      if (!payload.challengeId || !payload.nodeId || !payload.responseBodyHash || payload.witnessIndex === undefined) {
-        return json(res, 400, { error: "missing required fields" });
+      // #322: validate field types + shapes BEFORE reaching the EIP-712
+      // sign path. Pre-fix only `!field` / `=== undefined` checks ran,
+      // so any truthy value (objects, arrays, non-hex strings, numbers)
+      // flowed to nodeSignerV2.eip712.signTypedData and surfaced via
+      // the .catch as 500 "witness signing failed: <leaked V8/ethers
+      // TypeError>". Same family as #214 (ethers error leak) / #294
+      // (V8 error leak).
+      const result = validatePoseWitnessPayload(rawPayload);
+      if (!result.ok) {
+        return json(res, result.status, { error: result.error });
       }
+      const fields = result.fields;
       signWitnessAttestation(
-        payload.challengeId,
-        payload.nodeId,
-        payload.responseBodyHash,
-        payload.witnessIndex,
+        fields.challengeId,
+        fields.nodeId,
+        fields.responseBodyHash,
+        fields.witnessIndex,
       )
         .then((witnessSig) => {
           return json(res, 200, {
-            challengeId: payload.challengeId,
-            nodeId: payload.nodeId,
-            responseBodyHash: payload.responseBodyHash,
-            witnessIndex: payload.witnessIndex,
+            challengeId: fields.challengeId,
+            nodeId: fields.nodeId,
+            responseBodyHash: fields.responseBodyHash,
+            witnessIndex: fields.witnessIndex,
             attestedAtMs: BigInt(Date.now()).toString(),
             witnessSig,
           });
         })
         .catch((error) => {
-          return json(res, 500, { error: `witness signing failed: ${String(error)}` });
+          // #322: input is now validated up-front, so anything that
+          // throws here is an internal signing failure — keep the
+          // String(error) (which goes to ops logs) but don't leak it
+          // to the client.
+          log.error("witness signing failed", { error: String(error) });
+          return json(res, 500, { error: "witness signing failed" });
         });
     });
     return;
