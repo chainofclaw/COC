@@ -1906,11 +1906,18 @@ async function handleRpc(
       if (!filter) return []
       // Refresh last-access time so active polls keep the filter alive.
       filter.lastAccessedAtMs = Date.now()
-      // getFilterLogs is a log-filter-only method: block and pendingTx
-      // filters have no historical "logs" to return. Match the kubo/geth
-      // behaviour of returning [] rather than confusing the caller with
-      // garbage from an unintended code path.
-      if (filter.kind && filter.kind !== "log") return []
+      // #390: pre-fix `return []` for non-log filters silently masked a
+      // client-side bug (wrong method for filter type). The comment
+      // claimed "match geth" but geth actually returns
+      // "filter not found" when the filter's typ != LogsSubscription
+      // (filters/api.go: GetFilterLogs). Polling clients that hit the
+      // wrong method see "no logs" forever instead of an error pointing
+      // at the type mismatch. Reject with -32602 + a message that names
+      // the filter's actual kind so the client can switch to the right
+      // poll method (`eth_getFilterChanges` works for any kind).
+      if (filter.kind && filter.kind !== "log") {
+        invalidParams(`eth_getFilterLogs requires a log filter, got ${filter.kind} filter — use eth_getFilterChanges instead`)
+      }
       const height = await Promise.resolve(chain.getHeight())
       const end = filter.toBlock ?? height
       if (end - filter.fromBlock > MAX_LOG_BLOCK_RANGE) {
