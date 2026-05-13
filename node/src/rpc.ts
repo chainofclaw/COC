@@ -41,6 +41,10 @@ import {
   requireIntegerParam,
   optionalIntegerParam,
   optionalBooleanParam,
+  })
+
+  optionalIntegerField,
+  optionalBooleanField,
   validateTxCallFields,
   validateLogFilter,
   sanitizeEthersError,
@@ -2533,11 +2537,18 @@ async function handleRpc(
       // #238. Validate shape FIRST so the rejection fires regardless
       // of whether the node has blockIndex enabled.
       const opts = requireFilterObject((payload.params ?? [])[0])
+      // #258: pre-fix `Number(opts.limit ?? 50) || 50` silently coerced
+      // `true`→1, `[5]`→5, `"5"`→5. `opts.reverse !== false` accepted
+      // every non-false value as reverse=true. Same anti-pattern as
+      // #254 (its positional sibling), but inside the validated object.
+      const limit = optionalIntegerField(opts, "limit", 50, { min: 1, max: 10_000 })
+      const offset = optionalIntegerField(opts, "offset", 0, { min: 0, max: 100_000 })
+      const reverse = optionalBooleanField(opts, "reverse", true)
       if (hasBlockIndex(chain)) {
         const contracts = await chain.blockIndex.getContracts({
-          limit: Math.min(Math.max(Number(opts.limit ?? 50) || 50, 1), 10_000),
-          offset: Math.min(Math.max(Number(opts.offset ?? 0) || 0, 0), 100_000),
-          reverse: opts.reverse !== false,
+          limit,
+          offset,
+          reverse,
         })
         return contracts.map((c) => ({
           address: c.address,
