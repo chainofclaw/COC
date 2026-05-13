@@ -26,11 +26,22 @@ export class ReceiptVerifier {
   }
 
   verify(challenge: ChallengeMessage, receipt: ReceiptMessage): VerificationResult {
-    if (this.deps.nonceRegistry && !this.deps.nonceRegistry.consume(challenge)) {
-      return { ok: false, reason: "nonce replay detected" }
-    }
+    // #298: verify challenger signature BEFORE consuming the nonce.
+    // Pre-fix ordering consumed first then verified — an attacker who
+    // could inject (challenge, receipt) pairs with forged sigs (e.g. via
+    // a future externally-reachable receipt endpoint) would poison the
+    // nonce registry: their bogus-sig receipt consumed the nonce, then
+    // the real challenger's later receipt got "nonce replay detected"
+    // even though it was the legitimate one. Currently all callers
+    // (node/src/pose-engine.ts, runtime/coc-agent.ts) pair receipts with
+    // locally-issued challenges so the attack isn't reachable today, but
+    // the defensive ordering is fail-fast and survives future endpoints
+    // being added that take (challenge, receipt) from clients.
     if (!this.deps.verifyChallengerSig(challenge)) {
       return { ok: false, reason: "invalid challenger signature" }
+    }
+    if (this.deps.nonceRegistry && !this.deps.nonceRegistry.consume(challenge)) {
+      return { ok: false, reason: "nonce replay detected" }
     }
     if (receipt.challengeId !== challenge.challengeId || receipt.nodeId !== challenge.nodeId) {
       return { ok: false, reason: "challenge/receipt mismatch" }
