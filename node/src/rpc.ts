@@ -1741,11 +1741,34 @@ async function handleRpc(
       })
     }
     case "eth_getUncleCountByBlockHash":
-    case "eth_getUncleCountByBlockNumber":
-    case "eth_getUncleByBlockHashAndIndex":
-    case "eth_getUncleByBlockNumberAndIndex":
-      // COC uses PoSe consensus with no uncle blocks
+    case "eth_getUncleByBlockHashAndIndex": {
+      // #396: pre-fix returned the no-uncle stub ("0x0" / null) without
+      // ever inspecting the args, so non-hex / non-string block hashes
+      // silently came back as "has no uncles" instead of -32602. Geth
+      // validates the hash shape first and rejects malformed inputs
+      // regardless of whether the chain supports uncles. Validate the
+      // hash here so spec-violating clients learn about misuse — same
+      // class as #166 (block-hash-shape validation).
+      requireBlockHashParam(payload.params ?? [], 0)
+      if (payload.method === "eth_getUncleByBlockHashAndIndex") {
+        // Second param is the uncle index; validate shape too (#198).
+        requireIndexParam(payload.params ?? [], 1, "uncle index")
+      }
       return payload.method.includes("Count") ? "0x0" : null
+    }
+    case "eth_getUncleCountByBlockNumber":
+    case "eth_getUncleByBlockNumberAndIndex": {
+      // #396: same pre-fix anti-pattern as the *byHash siblings — the
+      // block tag was never validated, so a non-string param silently
+      // got the no-uncle stub. Match geth: parseBlockTag enforces shape.
+      const tag = (payload.params ?? [])[0]
+      const height = await Promise.resolve(chain.getHeight())
+      parseBlockTag(tag, height)
+      if (payload.method === "eth_getUncleByBlockNumberAndIndex") {
+        requireIndexParam(payload.params ?? [], 1, "uncle index")
+      }
+      return payload.method.includes("Count") ? "0x0" : null
+    }
     case "eth_getWork":
       // PoW stub — COC uses PoSe consensus, no mining
       return ["0x" + "0".repeat(64), "0x" + "0".repeat(64), "0x" + "0".repeat(64)]
