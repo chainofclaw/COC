@@ -1076,14 +1076,40 @@ async function handleRpc(
         if (isEthersShapeError) {
           invalidParams("invalid raw transaction: failed to decode")
         }
-        // #332: mempool.addRawTx throws plain Error("replacement tx gas price
-        // too low: ...") when a same-nonce replacement doesn't clear the 10%
-        // bump threshold. Pre-fix this surfaced as -32603 "internal error"
-        // even though it's a clean client-input rejection — the caller just
-        // needs to retry with a higher gas price. Map to -32000 to match
-        // geth's "replacement transaction underpriced" convention.
+        // #332 + #440: mempool/chain-engine throws plain Error for every
+        // client-side rejection (replacement underpriced, mempool full, account
+        // quota exceeded, stale nonce, wrong chain id, etc.). Pre-fix they all
+        // surfaced as -32603 "internal error" — ethers.js wraps -32603 as the
+        // opaque "could not coalesce error", breaking ALL programmatic error
+        // handling on the client side. Geth uses -32000 for these (per its
+        // server-error namespace) and -32602 for input-shape errors. Map both
+        // here so callers see actionable codes.
         const msg = parseErr instanceof Error ? parseErr.message : String(parseErr)
-        if (/^replacement tx gas price too low/i.test(msg)) {
+
+        // -32602 invalid params: tx content fails replay/format pre-checks.
+        if (
+          /^invalid chain ID: expected/i.test(msg) ||
+          /^invalid tx: missing sender/i.test(msg) ||
+          /^blob transactions \(type 3\) are not supported/i.test(msg)
+        ) {
+          invalidParams(msg)
+        }
+
+        // -32000 server-side rejection: tx well-formed but the node won't
+        // accept it right now (pool capacity, account quota, nonce, gas).
+        // Same code geth uses for "transaction underpriced", "txpool is full",
+        // "exceeds account quota", "nonce too low", "intrinsic gas too low",
+        // "already known", "gas limit exceeded", etc.
+        if (
+          /^replacement tx gas price too low/i.test(msg) ||
+          /exceeds max pending tx limit/i.test(msg) ||
+          /^mempool is full$/i.test(msg) ||
+          /^nonce too low:/i.test(msg) ||
+          /^tx already confirmed$/i.test(msg) ||
+          /^intrinsic gas too low:/i.test(msg) ||
+          /^gasLimit exceeds maximum:/i.test(msg) ||
+          /is poisoned \(hung block execution/i.test(msg)
+        ) {
           throw { code: -32000, message: msg }
         }
         throw parseErr
