@@ -130,8 +130,9 @@ function validateAddParams(query: Record<string, string | string[] | undefined>)
         `${key}: expected boolean (true/false/0/1), got '${raw}'`)
     }
   }
-  })
+}
 
+/**
  * #344: gate state-destroying IPFS admin operations (repo/gc, block/rm)
  * behind either loopback origin OR a configured X-COC-IPFS-Admin-Token
  * header. Pre-fix every anonymous internet caller could destroy data.
@@ -310,23 +311,26 @@ export class IpfsHttpServer {
         return
       }
 
-      if (req.method === "GET" && url.pathname?.startsWith("/ipfs/")) {
-        const cid = url.pathname.slice(6) // strip "/ipfs/"
-        if (!isValidCid(cid)) {
-          res.writeHead(400, { "content-type": "application/json", "access-control-allow-origin": "*" })
-          res.end(JSON.stringify({ error: "invalid CID" }))
-  })
-
       // #326: HEAD must be treated as GET-without-body per RFC 7231 §4.3.2.
       // Pre-fix the gateway only matched GET, so `curl -I /ipfs/<cid>` fell
       // through to the /api/v0/ 404 even when the block existed and a real
       // GET succeeded. Clients use HEAD for cache validation, pre-flight,
       // and resumable-download discovery — that capability was 100% broken.
+      // #428: clean up stale GET-only handler stub that was supposed to be
+      // replaced by this combined isGatewayMethod path. Earlier PR merges
+      // (#326, #324, #328, #340) left both the OLD `if (req.method === "GET" …)`
+      // block AND the NEW combined handler intermixed, with bare `})` /
+      // `}` sequences between them that broke the file's syntax entirely.
+      // This rewrite collapses all of them into the single intended handler:
+      //   #326 — HEAD is identical to GET except no body
+      //   #324 — HTTP Range support (RFC 7233)
+      //   #328 — CORS `access-control-allow-origin: *` on /ipfs/ reads
+      //   #340 — MIME-type sniffing so browsers render content correctly
       const isGatewayMethod = req.method === "GET" || req.method === "HEAD"
       if (isGatewayMethod && url.pathname?.startsWith("/ipfs/")) {
         const cid = url.pathname.slice(6) // strip "/ipfs/"
         if (!isValidCid(cid)) {
-          res.writeHead(400, { "content-type": "application/json" })
+          res.writeHead(400, { "content-type": "application/json", "access-control-allow-origin": "*" })
           res.end(req.method === "HEAD" ? undefined : JSON.stringify({ error: "invalid CID" }))
           return
         }
@@ -335,12 +339,6 @@ export class IpfsHttpServer {
         // Map to 404 explicitly so missing-block looks like missing-block.
         try {
           const data = await this.unixfs.readFile(cid)
-          // #328: ACAO: * on gateway success — content addressing is
-          // immutable + read-only, so cross-origin reads carry no CSRF
-          // risk and unlock browser-side IPFS clients.
-          res.writeHead(200, { "access-control-allow-origin": "*" })
-  })
-
           // #324: HTTP Range support per RFC 7233. Pre-fix the gateway
           // returned the full body for every request, even when the
           // client sent `Range: bytes=N-M` — making resumable downloads,
@@ -357,8 +355,9 @@ export class IpfsHttpServer {
               res.writeHead(416, {
                 "content-type": "application/json",
                 "content-range": `bytes */${data.length}`,
+                "access-control-allow-origin": "*",
               })
-              res.end(JSON.stringify({ error: "range not satisfiable" }))
+              res.end(req.method === "HEAD" ? undefined : JSON.stringify({ error: "range not satisfiable" }))
               return
             }
             if (parsed !== "ignore") {
@@ -367,42 +366,34 @@ export class IpfsHttpServer {
                 "content-range": `bytes ${parsed.start}-${parsed.end}/${data.length}`,
                 "content-length": slice.length,
                 "accept-ranges": "bytes",
+                "access-control-allow-origin": "*",
+                "content-type": sniffMimeType(data),
               })
-              res.end(slice)
+              res.end(req.method === "HEAD" ? undefined : slice)
               return
             }
           }
-          // No Range header (or unsupported multi-range): advertise
-          // Accept-Ranges so well-behaved clients can re-request with
-          // Range on a subsequent fetch.
-          res.writeHead(200, { "accept-ranges": "bytes" })
-  })
-
-          // #340: sniff MIME so browsers render HTML/JSON/images instead of
-          // downloading them as application/octet-stream. kubo gateway uses
-          // a similar magic-byte sniffer (Go's http.DetectContentType). The
-          // gateway is read-only content addressing so there's no XSS risk
-          // beyond what the publishing client already accepted.
-          res.writeHead(200, { "content-type": sniffMimeType(data) })
-          res.end(data)
-        } catch (err) {
-          if (isNotFoundError(err)) {
-            res.writeHead(404, { "content-type": "application/json", "access-control-allow-origin": "*" })
-            res.end(JSON.stringify({ error: "not found" }))
-  })
-
-          // #326: HEAD response sets Content-Length but no body, matching
-          // RFC 7231 §4.3.2 ("must not send a message body").
+          // No Range header (or unsupported multi-range): full body
+          // with #328 CORS + #340 MIME sniff + #326 HEAD body suppression.
           if (req.method === "HEAD") {
-            res.writeHead(200, { "content-length": String(data.length) })
+            res.writeHead(200, {
+              "content-type": sniffMimeType(data),
+              "content-length": String(data.length),
+              "accept-ranges": "bytes",
+              "access-control-allow-origin": "*",
+            })
             res.end()
           } else {
-            res.writeHead(200)
+            res.writeHead(200, {
+              "content-type": sniffMimeType(data),
+              "accept-ranges": "bytes",
+              "access-control-allow-origin": "*",
+            })
             res.end(data)
           }
         } catch (err) {
           if (isNotFoundError(err)) {
-            res.writeHead(404, { "content-type": "application/json" })
+            res.writeHead(404, { "content-type": "application/json", "access-control-allow-origin": "*" })
             res.end(req.method === "HEAD" ? undefined : JSON.stringify({ error: "not found" }))
           } else {
             throw err

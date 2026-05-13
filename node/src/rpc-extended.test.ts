@@ -2516,17 +2516,6 @@ test("RPC Extended Methods", async (t) => {
   })
 
   await t.test("#266: eth_getLogs caps inner topic OR-set (defense-in-depth against O(blocks×logs×topics) amplification)", async () => {
-    // validateLogFilter caps the OUTER topics array at 4 (matching the EVM's
-    // 4-indexed-topics-per-log limit) but the INNER array (the OR-set for
-    // that topic slot) was unbounded. Sibling to MAX_FILTER_ADDRESSES=100;
-    // same family as #264 (eth_getProof storage keys cap).
-    const probe = async (innerN: number) => {
-      const inner = Array.from({ length: innerN }, (_, i) =>
-        `0x${i.toString(16).padStart(64, "0")}`,
-      )
-  })
-
-  await t.test("#288: eth_compileSolidity rejects oversize source (DoS gate; pre-fix 14.9 KB blocked event loop 5+ min)", async () => {
     // solc.compile is synchronous emscripten WASM. A single moderately
     // large source (500 empty contracts ≈ 15 KB) took 5m20s on 88780,
     // blocking ALL block production + RPC + PoSe for the duration. Cap
@@ -2534,7 +2523,9 @@ test("RPC Extended Methods", async (t) => {
     // is ~30 KiB) while preventing the worst-case event-loop starvation
     // a remote attacker can trigger at 100 req/min/IP. The proper fix is
     // a worker thread; this gate is the surgical interim.
-    const probe = async (source: string) => {
+    const probe = async (n: number) => {
+      // Build `n` inner topics (each a 32-byte hex) — exercises the inner-array cap.
+      const inner = Array.from({ length: n }, (_, i) => `0x${i.toString(16).padStart(64, "0")}`)
       const r = await fetch(`http://127.0.0.1:${port}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -2543,9 +2534,6 @@ test("RPC Extended Methods", async (t) => {
           id: 1,
           method: "eth_getLogs",
           params: [{ topics: [inner] }],
-  })
-
-          jsonrpc: "2.0", id: 1, method: "eth_compileSolidity", params: [source],
         }),
       })
       return await r.json() as { error?: { code: number; message: string }; result?: unknown }
@@ -2567,8 +2555,6 @@ test("RPC Extended Methods", async (t) => {
     const r1 = await probe(1)
     assert.notEqual(r1.error?.code, -32602,
       `inner topics=1 must pass shape, got ${JSON.stringify(r1)}`)
-  })
-
   })
 
   await t.test("#286: eth_call / eth_estimateGas surface revert as -32000 (geth-compatible error code 3, no silent 0x return)", async () => {
@@ -2635,6 +2621,23 @@ test("RPC Extended Methods", async (t) => {
     }
   })
 
+  await t.test("#288: eth_compileSolidity rejects oversize source (DoS gate; pre-fix 14.9 KB blocked event loop 5+ min)", async () => {
+    // solc.compile is synchronous emscripten WASM. A single moderately
+    // large source (500 empty contracts ≈ 15 KB) took 5m20s on 88780,
+    // blocking ALL block production + RPC + PoSe for the duration. Cap
+    // is 64 KiB — covers realistic single-file contracts (OZ's largest
+    // is ~30 KiB) while preventing the worst-case event-loop starvation
+    // a remote attacker can trigger at 100 req/min/IP.
+    const probe = async (source: string) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0", id: 1, method: "eth_compileSolidity", params: [source],
+        }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    }
     // 65 KiB source (1 KiB over the 64 KiB cap) — must reject with -32602.
     const oversized = "// " + "x".repeat(65 * 1024)
     const big = await probe(oversized)
