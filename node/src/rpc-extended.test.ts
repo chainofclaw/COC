@@ -618,6 +618,17 @@ test("RPC Extended Methods", async (t) => {
     const malformed = await probe({ blockHash: "0xnot-a-hash" })
     assert.equal(malformed.error?.code, -32602, `malformed blockHash must be -32602 (got ${JSON.stringify(malformed)})`)
     assert.match(malformed.error?.message ?? "", /invalid blockHash/i)
+
+    // #462: EIP-1898 explicitly forbids both blockNumber AND blockHash in
+    // the same object. Pre-fix the blockHash branch ran first and silently
+    // ignored an accompanying blockNumber field — clients could submit
+    // both shapes and get an answer keyed on whichever happened to win.
+    // Geth + Erigon reject with -32602. Match them.
+    const both = await probe({ blockHash, blockNumber: "0x1" })
+    assert.equal(both.error?.code, -32602,
+      `EIP-1898 forbids blockHash+blockNumber together; must be -32602 (got ${JSON.stringify(both)})`)
+    assert.match(both.error?.message ?? "", /EIP-1898 forbids|blockNumber and blockHash/i,
+      `error message must reference the spec rule, got: ${both.error?.message}`)
   })
 
   await t.test("txpool_status returns pool stats", async () => {

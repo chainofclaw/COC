@@ -2997,6 +2997,18 @@ async function resolveHistoricalExecutionContext(
 
   // EIP-1898 object form #1: {blockHash: "0x…", requireCanonical?: bool}.
   if (typeof input === "object" && input !== null && "blockHash" in input) {
+    // #462: EIP-1898 explicitly says "the parameters MUST not include both
+    // blockNumber and blockHash". Pre-fix the blockHash branch ran first
+    // and silently ignored an accompanying blockNumber field — clients
+    // could (intentionally or accidentally) submit both shapes and get
+    // an answer keyed on whichever happened to win. Geth + Erigon reject
+    // this with -32602. Reject upfront before the lookup.
+    if ("blockNumber" in (input as Record<string, unknown>)) {
+      throw {
+        code: -32602,
+        message: "invalid block parameter: EIP-1898 forbids blockNumber and blockHash together",
+      }
+    }
     const rawHash = (input as Record<string, unknown>).blockHash
     if (typeof rawHash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(rawHash)) {
       throw { code: -32602, message: "invalid blockHash: must match /^0x[0-9a-fA-F]{64}$/" }
