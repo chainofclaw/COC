@@ -1305,3 +1305,77 @@ describe("IpfsHttpServer C3.1 replication warning", () => {
     assert.match(warning, /got 0\/2 \(cid=/, `expected 0/2 with cid=..., got "${warning}"`)
   })
 })
+
+describe("#310 block/stat does NOT trigger fetchRemote on local miss", () => {
+  it("unknown CID returns 404 without invoking the remote-fetch hook (DoS surface fix)", async () => {
+    // Pre-fix `handleBlockStat` routed through `loadRawBlock` → `store.get`,
+    // which calls the registered fetchRemote hook on ENOENT and waits up
+    // to ~5s × fanOut for providers + fallback peers. A `block/stat` for
+    // any unknown CID therefore took ~5-10s of wall clock and held a wire
+    // connection slot for the duration — a soft DoS where an unauthenticated
+    // attacker exhausts the 100/min rate-limit budget on slow stat
+    // requests. Kubo's `block/stat` is a local metadata query; this test
+    // pins that semantics.
+    const tmpDir2 = await mkdtemp(join(tmpdir(), "ipfs-http-310-"))
+    const store2 = new IpfsBlockstore(tmpDir2)
+    await store2.init()
+    let fetchRemoteCalled = false
+    let fetchRemoteResolvedAt = 0
+    store2.setHooks({
+      fetchRemote: async () => {
+        fetchRemoteCalled = true
+        // Simulate slow DHT — if the handler awaits this we'll see it in
+        // the elapsed time. The fix should short-circuit BEFORE this
+        // resolves, so this delay never affects the response.
+        await new Promise((r) => setTimeout(r, 3000))
+        fetchRemoteResolvedAt = Date.now()
+        return null
+      },
+    })
+    const unixfs2 = new UnixFsBuilder(store2)
+    const port2 = 30000 + Math.floor(Math.random() * 10000)
+    const server2 = new IpfsHttpServer(
+      { bind: "127.0.0.1", port: port2, storageDir: tmpDir2, nodeId: "t310" },
+      store2,
+      unixfs2,
+    )
+    server2.start()
+    await new Promise((r) => setTimeout(r, 100))
+
+    const unknownCid: CidString = "bafybeiaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as CidString
+    const t0 = Date.now()
+    const res = await new Promise<{ status: number }>((resolve, reject) => {
+      const req = http.request({
+        hostname: "127.0.0.1",
+        port: port2,
+        path: `/api/v0/block/stat?arg=${unknownCid}`,
+        method: "POST",
+      }, (r) => {
+        const chunks: Buffer[] = []
+        r.on("data", (c) => chunks.push(Buffer.from(c)))
+        r.on("end", () => resolve({ status: r.statusCode ?? 0 }))
+      })
+      req.on("error", reject)
+      req.end()
+    })
+    const elapsed = Date.now() - t0
+
+    try {
+      // KEY invariant 1: response is 404 (block not found)
+      assert.equal(res.status, 404)
+      // KEY invariant 2: fetchRemote hook was NOT invoked (would have
+      // implied loadRawBlock was called for a non-local CID)
+      assert.equal(fetchRemoteCalled, false,
+        "block/stat must NOT invoke fetchRemote for an unknown CID — this is the soft-DoS fix")
+      // KEY invariant 3: response is fast — well under the simulated
+      // 3s fetchRemote delay, proving we short-circuited
+      assert.ok(elapsed < 1000,
+        `block/stat must return quickly (<1s) for an unknown CID, got ${elapsed}ms`)
+      // belt + suspenders — if fetchRemote ran to completion we'd see it
+      assert.equal(fetchRemoteResolvedAt, 0)
+    } finally {
+      await server2.stop()
+      await rm(tmpDir2, { recursive: true, force: true })
+    }
+  })
+})
