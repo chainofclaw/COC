@@ -528,6 +528,22 @@ async function handleOne(
     if (!idOk) {
       return { jsonrpc: "2.0", id: null, error: { code: -32600, message: "invalid request: id must be string, number, or null" } }
     }
+    // #316: bound the string-id surface. Pre-fix:
+    //   - 5000-char id flowed straight back into every response (1:1 echo
+    //     amplification, same family as #314 for method names)
+    //   - Control chars (\n, \r, \0) in id were echoed verbatim, opening
+    //     the same log-injection / parser-confusion surface as #312
+    //     (pubsub topic).
+    // UUIDs (36 chars) and hex hashes (66 chars) sit well under 256, so
+    // the cap doesn't break legitimate tracing tools.
+    if (typeof id === "string") {
+      if (id.length > 256) {
+        return { jsonrpc: "2.0", id: null, error: { code: -32600, message: "invalid request: id too long (max 256 chars)" } }
+      }
+      if (/[\u0000-\u001f\u007f]/.test(id)) {
+        return { jsonrpc: "2.0", id: null, error: { code: -32600, message: "invalid request: id contains control characters" } }
+      }
+    }
   }
 
   // #204: §4.2 — params, when present, MUST be a Structured value
