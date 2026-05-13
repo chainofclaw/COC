@@ -19,7 +19,14 @@ export async function startAgentMetricsServer(
   options: AgentMetricsServerOptions,
 ): Promise<AgentMetricsServerHandle> {
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
-    if (req.method === "GET" && req.url === "/metrics") {
+    // #414: HEAD must mirror GET on read-only endpoints. Pre-fix the
+    // bare GET method gate let HEAD probes fall through to the 404
+    // catch-all (Prometheus blackbox_exporter with method=HEAD,
+    // k8s livenessProbe httpHeaders HEAD). Sibling of #410 / #376 /
+    // #382. Node auto-suppresses the body for HEAD when Content-Length
+    // is set, so handlers serve both verbs unchanged.
+    const isReadMethod = req.method === "GET" || req.method === "HEAD"
+    if (isReadMethod && req.url === "/metrics") {
       const body = options.getPrometheus()
       res.writeHead(200, {
         "Content-Type": "text/plain; version=0.0.4; charset=utf-8",
@@ -29,7 +36,7 @@ export async function startAgentMetricsServer(
       return
     }
 
-    if (req.method === "GET" && req.url === "/health") {
+    if (isReadMethod && req.url === "/health") {
       res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" })
       res.end("ok\n")
       return
