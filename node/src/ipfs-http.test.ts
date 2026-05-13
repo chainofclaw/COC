@@ -443,6 +443,95 @@ describe("IpfsHttpServer", () => {
     assert.equal(res.status, 400)
   })
 
+  it("#308 GET /api/v0/pin/ls?type=invalid returns 400 (was silently ignored, returning full list)", async () => {
+    // Live-reproducible on 88780 testnet — pre-fix the `type` query param
+    // was dropped entirely. Any value including "invalidtype" returned
+    // 200 with the unfiltered pin set. kubo defines type as enum
+    // {all, direct, indirect, recursive}.
+    const res = await fetch("/api/v0/pin/ls?type=invalidtype")
+    assert.equal(res.status, 400)
+    const body = await res.json() as Record<string, string>
+    assert.match(body.error, /invalid pin type/)
+  })
+
+  it("#308 GET /api/v0/pin/ls?type=direct returns empty Keys (COC has no direct pins)", async () => {
+    // COC's pin model is recursive-only — direct/indirect filters must
+    // return an empty result, NOT the full recursive set. Pre-fix every
+    // type filter returned the same set, so a client filtering by
+    // direct got recursive pins mis-labeled.
+    // First, ensure there's at least one recursive pin in the store so
+    // the "filter returns empty" assertion is meaningful (vs. "no pins").
+    const data = new TextEncoder().encode("p308")
+    const boundary = "----P308Boundary"
+    const body = Buffer.concat([
+      Buffer.from(`--${boundary}\r\n` +
+        'Content-Disposition: form-data; name="file"; filename="p.bin"\r\n' +
+        "Content-Type: application/octet-stream\r\n\r\n"),
+      Buffer.from(data),
+      Buffer.from(`\r\n--${boundary}--\r\n`),
+    ])
+    await fetch("/api/v0/add", {
+      method: "POST",
+      headers: { "Content-Type": `multipart/form-data; boundary=${boundary}` },
+      body,
+    })
+
+    const recursive = await fetch("/api/v0/pin/ls?type=recursive")
+    assert.equal(recursive.status, 200)
+    const recursiveJson = await recursive.json() as { Keys: Record<string, unknown> }
+    assert.ok(Object.keys(recursiveJson.Keys).length > 0, "recursive filter must return some pins")
+
+    // Same store, type=direct, should be empty
+    const direct = await fetch("/api/v0/pin/ls?type=direct")
+    assert.equal(direct.status, 200)
+    const directJson = await direct.json() as { Keys: Record<string, unknown> }
+    assert.deepStrictEqual(directJson.Keys, {},
+      "type=direct must return empty Keys (COC has no direct pins) — pre-fix returned full recursive list")
+
+    // type=indirect → empty
+    const indirect = await fetch("/api/v0/pin/ls?type=indirect")
+    assert.equal(indirect.status, 200)
+    const indirectJson = await indirect.json() as { Keys: Record<string, unknown> }
+    assert.deepStrictEqual(indirectJson.Keys, {})
+
+    // type=all → same as recursive (since recursive is all we have)
+    const all = await fetch("/api/v0/pin/ls?type=all")
+    assert.equal(all.status, 200)
+    const allJson = await all.json() as { Keys: Record<string, unknown> }
+    assert.deepStrictEqual(Object.keys(allJson.Keys).sort(), Object.keys(recursiveJson.Keys).sort(),
+      "type=all and type=recursive must return the same Keys for a recursive-only store")
+  })
+
+  it("#308 GET /api/v0/pin/ls?arg=<cid>&type=direct returns 404 (kubo semantics)", async () => {
+    // Filtering an existing recursive pin by direct/indirect → 404
+    // "not pinned (no direct pins)" rather than silently returning it
+    // mis-labeled as recursive.
+    const data = new TextEncoder().encode("p308b")
+    const boundary = "----P308BBoundary"
+    const body = Buffer.concat([
+      Buffer.from(`--${boundary}\r\n` +
+        'Content-Disposition: form-data; name="file"; filename="p.bin"\r\n' +
+        "Content-Type: application/octet-stream\r\n\r\n"),
+      Buffer.from(data),
+      Buffer.from(`\r\n--${boundary}--\r\n`),
+    ])
+    const addRes = await fetch("/api/v0/add", {
+      method: "POST",
+      headers: { "Content-Type": `multipart/form-data; boundary=${boundary}` },
+      body,
+    })
+    const addText = await addRes.text()
+    const cid = JSON.parse(addText.trim().split("\n")[0]).Hash as string
+
+    // arg with type=recursive (or no type) → 200 with the pin
+    const ok = await fetch(`/api/v0/pin/ls?arg=${cid}&type=recursive`)
+    assert.equal(ok.status, 200)
+
+    // Same arg with type=direct → 404 (kubo: not pinned under that type)
+    const denied = await fetch(`/api/v0/pin/ls?arg=${cid}&type=direct`)
+    assert.equal(denied.status, 404)
+  })
+
   it("POST /api/v0/add accepts a 10 MB payload (regression: 10MB PUT was rejected by the 10MB exact cap)", async () => {
     const boundary = "----TenMbBoundary"
     const payload = Buffer.alloc(10 * 1024 * 1024, 0x61) // 10 MB of 'a'
