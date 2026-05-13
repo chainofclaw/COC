@@ -2969,6 +2969,80 @@ test("RPC Extended Methods", async (t) => {
       assert.equal(factionLookups.length, 2, "exactly 2 well-shaped lookups should have reached the stub")
     } finally {
       delete (chain as unknown as Record<string, unknown>).governance
+  })
+
+  await t.test("#282: pendingTx filter seen-set drops hashes once they leave the mempool (no unbounded growth)", async () => {
+    // Pre-fix bug: filter.seenPendingTxs grew monotonically across polls
+    // because hashes were never removed when txs left the mempool (mined,
+    // dropped, or expired). With MAX_FILTERS=1000 and sustained mempool
+    // churn an attacker could OOM the node by maintaining many long-lived
+    // pendingTx filters. Each filter's seen-set should be bounded by the
+    // current mempool size — geth's eth_getFilterChanges semantics treat a
+    // tx that leaves and re-enters mempool as a new "observed since last
+    // poll" event, so dropping departed hashes is both bound-preserving
+    // and spec-aligned.
+    const mempoolStub = { hashes: [] as string[] }
+    const origGetAll = chain.mempool.getAll.bind(chain.mempool)
+    ;(chain.mempool as unknown as { getAll: () => Array<{ hash: string }> }).getAll =
+      () => mempoolStub.hashes.map((hash) => ({ hash }))
+    try {
+      // Snapshot state: mempool has [A, B]. After newPendingTransactionFilter
+      // these are pre-seeded into `seen` so an initial poll returns [].
+      const A = `0x${"a".repeat(64)}`
+      const B = `0x${"b".repeat(64)}`
+      const C = `0x${"c".repeat(64)}`
+      const D = `0x${"d".repeat(64)}`
+      const E = `0x${"e".repeat(64)}`
+      mempoolStub.hashes = [A, B]
+      const fid = (await rpcCall(port, "eth_newPendingTransactionFilter")) as string
+      assert.match(fid, /^0x[0-9a-f]{32}$/, "filter id must be 32-hex")
+      const initial = (await rpcCall(port, "eth_getFilterChanges", [fid])) as string[]
+      assert.deepEqual(initial, [], "initial poll on filter created with pre-seeded mempool must be empty")
+      // Step 1: A leaves (mined), C and D enter.
+      mempoolStub.hashes = [B, C, D]
+      const step1 = (await rpcCall(port, "eth_getFilterChanges", [fid])) as string[]
+      assert.deepEqual([...step1].sort(), [C, D].sort(),
+        `expected [C, D] as fresh, got ${JSON.stringify(step1)}`)
+      // Step 2: B/C/D all leave; A re-enters (reorg or resubmit); E enters.
+      // KEY assertion: A must appear as fresh because it left the mempool
+      // and the fix drops departed hashes from `seen`. Pre-fix `seen`
+      // still contained A so it was suppressed (and the leak compounded
+      // over time as more mined hashes accumulated in `seen`).
+      mempoolStub.hashes = [A, E]
+      const step2 = (await rpcCall(port, "eth_getFilterChanges", [fid])) as string[]
+      assert.deepEqual([...step2].sort(), [A, E].sort(),
+        `KEY: A and E must both be fresh — A because it left then re-entered, ` +
+        `E because it arrived; pre-fix only E was returned because A was ` +
+        `still in 'seen'. Got ${JSON.stringify(step2)}`)
+      // Step 3: sustained churn smoke test — 50 disjoint mempool batches.
+      // Pre-fix each batch would have permanently grown `seen` by ≥1
+      // entries; post-fix `seen` stays bounded by the current mempool.
+      // We can't read `seen.size` from outside, so we assert the
+      // behavioural contract: a hash reported then evicted must be
+      // re-reported on re-appearance. (Step 4 verifies this; this loop
+      // just ensures the path doesn't crash under load.)
+      for (let i = 0; i < 50; i++) {
+        const tag = i.toString(16).padStart(1, "0").slice(-1)
+        mempoolStub.hashes = [
+          `0x${"1".repeat(63)}${tag}`,
+          `0x${"2".repeat(63)}${tag}`,
+        ]
+        await rpcCall(port, "eth_getFilterChanges", [fid])
+      }
+      // Step 4: empty mempool → fresh=[]. Then re-introduce A — pre-fix
+      // would have suppressed A because it was still in `seen`; post-fix
+      // reports A as fresh because the empty-mempool cleanup pass
+      // drained all departed hashes from `seen`.
+      mempoolStub.hashes = []
+      const empty = (await rpcCall(port, "eth_getFilterChanges", [fid])) as string[]
+      assert.deepEqual(empty, [], "poll on empty mempool returns []")
+      mempoolStub.hashes = [A]
+      const reappear = (await rpcCall(port, "eth_getFilterChanges", [fid])) as string[]
+      assert.deepEqual(reappear, [A],
+        "A re-enters after the mempool cleared → must be fresh; this is " +
+        "the bounded-seen invariant under steady-state churn")
+    } finally {
+      ;(chain.mempool as unknown as { getAll: typeof origGetAll }).getAll = origGetAll
     }
   })
 
