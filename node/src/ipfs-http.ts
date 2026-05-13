@@ -913,11 +913,19 @@ export class IpfsHttpServer {
     // by kubo's spec but the handler ignored them, returning the full
     // file regardless. Worse, malformed values (negative, non-numeric)
     // silently passed through. Validate + slice now.
+    // #426: `Number.isFinite(n) && Number.isInteger(n)` accepted values
+    // over `MAX_SAFE_INTEGER` (e.g. `offset=999999999999999999999`).
+    // `Number("999…")` → 1e21, and `Number.isInteger(1e21)` is true
+    // because the precision-lost value happens to be an integer in
+    // JS-number space, just not the integer the user wrote.
+    // `buf.subarray(1e21)` then returns an empty slice and the request
+    // comes back as `HTTP 200` + empty body — indistinguishable from
+    // "valid offset past EOF". Tighten to `Number.isSafeInteger`.
     let offset = 0
     let length: number | undefined
     if (range?.offset !== undefined) {
       const n = Number(range.offset)
-      if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) {
+      if (!Number.isSafeInteger(n) || n < 0) {
         res.writeHead(400, { "content-type": "application/json" })
         res.end(JSON.stringify({ error: "invalid offset: must be a non-negative integer" }))
         return
@@ -926,7 +934,7 @@ export class IpfsHttpServer {
     }
     if (range?.length !== undefined) {
       const n = Number(range.length)
-      if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) {
+      if (!Number.isSafeInteger(n) || n < 0) {
         res.writeHead(400, { "content-type": "application/json" })
         res.end(JSON.stringify({ error: "invalid length: must be a non-negative integer" }))
         return
@@ -1327,16 +1335,20 @@ export class IpfsHttpServer {
           // either surfaced as 500 "internal error" or returned surprising
           // data. Match the (already correct) handleCat rule so MFS read
           // and unixfs cat share the same kubo-compatible shape contract.
+          // #426: same MAX_SAFE_INTEGER hazard as the cat handler — values
+          // like `999999999999999999999` slipped through because
+          // `Number.isInteger(1e21)` is true after precision loss. Tighten
+          // to `Number.isSafeInteger`.
           if (offsetRaw !== undefined) {
             const n = Number(offsetRaw)
-            if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) {
+            if (!Number.isSafeInteger(n) || n < 0) {
               throw new HttpError(400, "invalid offset")
             }
             opts.offset = n
           }
           if (countRaw !== undefined) {
             const n = Number(countRaw)
-            if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) {
+            if (!Number.isSafeInteger(n) || n < 0) {
               throw new HttpError(400, "invalid count")
             }
             opts.count = n
