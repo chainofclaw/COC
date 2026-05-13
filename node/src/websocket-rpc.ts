@@ -27,6 +27,7 @@ import {
   invalidParams,
   internalError,
   limitExceeded,
+  parseBlockTag,
 } from "./rpc-validators.ts"
 
 const log = createLogger("ws-rpc")
@@ -646,58 +647,92 @@ function constantTimeEqualWs(a: string, b: string): boolean {
 }
 
 /**
- * Validate log subscription filter parameters
+ * Validate log subscription filter parameters.
+ *
+ * #274: pre-fix this divergent local validator (predates the PR-1Q
+ * extraction of validators to ./rpc-validators.ts) missed three classes
+ * of checks present in the shared HTTP validator:
+ *
+ *   - `fromBlock` / `toBlock` — not validated at all (negative numbers,
+ *     bogus strings, huge values all silently accepted)
+ *   - `blockHash` — not validated at all (any string accepted)
+ *   - Inner topic OR-array cap (100 here vs HTTP's 32 after #266) —
+ *     asymmetric DoS amplification
+ *
+ * It also threw `new Error(...)` for malformed input, which the dispatch
+ * layer surfaced as -32603 internal-error instead of -32602 invalid
+ * params. Switch to `invalidParams()` so JSON-RPC §5.1 codes match HTTP.
  */
 function validateLogFilter(params: Record<string, unknown>): LogSubscriptionFilter {
   const filter: LogSubscriptionFilter = {}
 
+  // #274: validate fromBlock/toBlock shape (sibling of HTTP eth_getLogs).
+  // Subscriptions only match future events so the values aren't stored,
+  // but the shape check rejects garbage so clients learn about typos.
+  if (params.fromBlock !== undefined && params.fromBlock !== null) {
+    parseBlockTag(params.fromBlock, 0n)
+  }
+  if (params.toBlock !== undefined && params.toBlock !== null) {
+    parseBlockTag(params.toBlock, 0n)
+  }
+  // #274: blockHash shape check (sibling of HTTP eth_getLogs / #186).
+  if (params.blockHash !== undefined && params.blockHash !== null) {
+    if (typeof params.blockHash !== "string" || !HEX_TOPIC_RE.test(params.blockHash)) {
+      invalidParams("invalid blockHash: must match /^0x[0-9a-fA-F]{64}$/")
+    }
+  }
+
   if (params.address !== undefined) {
     if (Array.isArray(params.address)) {
       if (params.address.length > 100) {
-        throw new Error("address filter array too large (max 100)")
+        invalidParams("address filter array too large (max 100)")
       }
       for (const addr of params.address) {
         if (typeof addr !== "string" || !HEX_ADDRESS_RE.test(addr)) {
-          throw new Error(`invalid address in filter: ${addr}`)
+          invalidParams(`invalid address in filter: ${addr}`)
         }
       }
       filter.address = params.address as string[]
     } else if (typeof params.address === "string") {
       if (!HEX_ADDRESS_RE.test(params.address)) {
-        throw new Error(`invalid address: ${params.address}`)
+        invalidParams(`invalid address: ${params.address}`)
       }
       filter.address = params.address
+    } else if (params.address !== null) {
+      invalidParams(`invalid address: expected string or array of strings`)
     }
   }
 
-  if (params.topics !== undefined) {
+  if (params.topics !== undefined && params.topics !== null) {
     if (!Array.isArray(params.topics)) {
-      throw new Error("topics must be an array")
+      invalidParams("topics must be an array")
     }
-    if (params.topics.length > 4) {
-      throw new Error("topics array must have at most 4 elements")
+    if ((params.topics as unknown[]).length > 4) {
+      invalidParams("topics array must have at most 4 elements")
     }
     const topics: Array<string | string[] | null> = []
-    for (const t of params.topics) {
+    for (const t of params.topics as unknown[]) {
       if (t === null || t === undefined) {
         topics.push(null)
       } else if (Array.isArray(t)) {
-        if (t.length > 100) {
-          throw new Error("topic OR-array too large (max 100)")
+        // #274/#266: cap inner OR-array at 32 (matching HTTP eth_getLogs)
+        // to prevent O(blocks×logs×inner) amplification asymmetry.
+        if (t.length > 32) {
+          invalidParams(`topic OR-array too large (max 32)`)
         }
         for (const item of t) {
           if (typeof item !== "string" || !HEX_TOPIC_RE.test(item)) {
-            throw new Error(`invalid topic in OR-array: ${item}`)
+            invalidParams(`invalid topic in OR-array: ${String(item).slice(0, 80)}`)
           }
         }
         topics.push(t as string[])
       } else if (typeof t === "string") {
         if (!HEX_TOPIC_RE.test(t)) {
-          throw new Error(`invalid topic: ${t}`)
+          invalidParams(`invalid topic: ${t.slice(0, 80)}`)
         }
         topics.push(t)
       } else {
-        throw new Error(`invalid topic type: ${typeof t}`)
+        invalidParams(`invalid topic type: ${Array.isArray(t) ? "array" : typeof t}`)
       }
     }
     filter.topics = topics
