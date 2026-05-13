@@ -640,6 +640,28 @@ export class PersistentChainEngine {
 
     const tx = this.mempool.addRawTx(rawTx, decoded)
 
+    // #444: sender balance must cover the upfront cost (gas + value) at
+    // submission time. Phase H3 already checks affordability inside
+    // pickForBlock (mempool.ts:411-432), but pre-fix nothing rejected an
+    // unfundable tx at INSERTION — eth_sendRawTransaction returned a hash
+    // for a 0-balance sender, the tx sat in the mempool until block-pick
+    // time noticed it couldn't pay, and clients saw "success" for txs that
+    // can never execute. Same family as the #438 nonce gap. Mirror geth's
+    // pre-mempool ErrInsufficientFunds for parity.
+    const effectiveGasPrice = tx.maxFeePerGas > 0n
+      ? tx.maxFeePerGas
+      : tx.gasPrice
+    const upfrontCost = effectiveGasPrice * tx.gasLimit + tx.value
+    if (upfrontCost > 0n) {
+      const senderBalance = await this.evm.getBalance(tx.from)
+      if (senderBalance < upfrontCost) {
+        this.mempool.remove(tx.hash)
+        throw new Error(
+          `insufficient funds for gas * price + value: address ${tx.from} have ${senderBalance} want ${upfrontCost}`,
+        )
+      }
+    }
+
     // Emit pending transaction event
     this.events.emitPendingTx({
       hash: tx.hash,

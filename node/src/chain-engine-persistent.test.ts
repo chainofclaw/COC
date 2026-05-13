@@ -332,7 +332,74 @@ test("#438: PersistentChainEngine.addRawTx rejects stale-nonce txs (parity with 
       chainId: 2077,
     })
     await engine.addRawTx(next as `0x${string}`)
+    await engine.close()
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true })
+  }
+})
 
+test("#444: addRawTx rejects insufficient-funds tx at submission (parity with geth ErrInsufficientFunds)", async () => {
+  // Live testnet 88780 reproduction:
+  //   const w = new Wallet('0x' + '42'.repeat(32))  // fresh, 0 balance
+  //   const signed = await w.signTransaction({
+  //     to: '0x70997970...', value: 1n, gasLimit: 21000n,
+  //     gasPrice: 0x77359400n, nonce: 0, chainId: 88780,
+  //   })
+  //   await provider.send('eth_sendRawTransaction', [signed])
+  //   → returns success hash; pending nonce advances 0→1
+  //   await provider.send('eth_getTransactionByHash', [hash])
+  //   → present in mempool with blockHash:null forever
+  //
+  // Phase H3's affordability check inside pickForBlock prevents the tx
+  // from being included in a block, but pre-fix nothing rejected it at
+  // submission. Clients see a success hash for a tx that will never
+  // execute, and the mempool fills with permanently-unfundable txs (a
+  // DoS surface using throwaway wallets).
+  const tmpDir = mkdtempSync(join(tmpdir(), "coc-engine-test-"))
+  try {
+    const evm = await EvmChain.create(2077)
+    // Wallet is intentionally NOT prefunded.
+    const wallet = Wallet.createRandom()
+    const engine = new PersistentChainEngine(
+      {
+        dataDir: tmpDir,
+        nodeId: "node1",
+        chainId: 2077,
+        validators: [],
+        finalityDepth: 3,
+        maxTxPerBlock: 100,
+        minGasPriceWei: 1n,
+      },
+      evm
+    )
+    await engine.init()
+
+    const tx = await wallet.signTransaction({
+      to: Wallet.createRandom().address,
+      value: parseEther("1"),
+      gasLimit: 21_000,
+      gasPrice: 1_000_000_000,
+      nonce: 0,
+      chainId: 2077,
+    })
+    await assert.rejects(
+      async () => await engine.addRawTx(tx as `0x${string}`),
+      /insufficient funds for gas \* price \+ value/i,
+      "0-balance sender must reject at submission, not silently fill mempool",
+    )
+
+    // Once funded, the same shape (different nonce since wallet is single-shot)
+    // must succeed — pin the positive case so the check stays narrow.
+    await evm.prefund([{ address: wallet.address, balanceWei: parseEther("10").toString() }])
+    const tx2 = await wallet.signTransaction({
+      to: Wallet.createRandom().address,
+      value: parseEther("1"),
+      gasLimit: 21_000,
+      gasPrice: 1_000_000_000,
+      nonce: 0,
+      chainId: 2077,
+    })
+    await engine.addRawTx(tx2 as `0x${string}`)
     await engine.close()
   } finally {
     rmSync(tmpDir, { recursive: true, force: true })
