@@ -3754,9 +3754,19 @@ async function formatPersistentReceipt(
     tx.receipt.transactionHash,
   )
   const normalizedTo = normalizePersistedTo(tx.receipt.to)
-  const contractAddress = normalizedTo === null && tx.receipt.status === 1n
+  // #466: viem.getCreateAddress returns the address in EIP-55 mixed case.
+  // Geth + Erigon always lowercase addresses in JSON-RPC responses, and
+  // the rest of COC's receipt body (from / to / log.address) is already
+  // lowercase. Pre-fix the deploy receipts returned a mixed-case
+  // contractAddress while every other field was lowercase — dApps that
+  // string-compared the deploy receipt's contractAddress vs the address
+  // they later passed to eth_call / eth_getCode (typically lowercased)
+  // saw false-mismatch and treated the contract as undeployed. Same
+  // family as #456 (eth_getTransactionByHash from/to mixed case).
+  const rawContractAddress = normalizedTo === null && tx.receipt.status === 1n
     ? getCreateAddress({ from: tx.receipt.from, nonce: parsed.nonce as string })
     : null
+  const contractAddress = rawContractAddress ? rawContractAddress.toLowerCase() : null
   const logsBloom = aggregateBlockLogsBloom([
     {
       transactionHash: tx.receipt.transactionHash,
