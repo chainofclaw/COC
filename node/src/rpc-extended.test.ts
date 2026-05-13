@@ -525,6 +525,101 @@ test("RPC Extended Methods", async (t) => {
     }
   })
 
+  await t.test("#368: eth_getBalance accepts EIP-1898 BlockNumberOrHash (bare hash + {blockNumber} + {blockHash})", async () => {
+    // Per EIP-1898, methods that take a block parameter must accept
+    // FIVE shapes — tag, hex number, bare 32-byte hash, {blockHash},
+    // {blockNumber}. Pre-fix only {blockHash} object form worked.
+    // Bare hash strings sailed through parseBlockTag → safeBigInt(hash)
+    // → BigInt(huge) → -32001 "block not found: 0x<huge-number>".
+    // {blockNumber} objects tripped parseBlockTag → -32602 "invalid
+    // block tag." Ethers / viem / hardhat fork-detection use both
+    // shapes for reorg-safe historicals — silently failing one of
+    // them breaks them.
+    //
+    // The fixture's `proposeNextBlock()` produces a block without
+    // computing the EVM state-trie root (the chain-engine path that
+    // populates `stateRoot` runs only in full-mode). So historical
+    // execution at any non-tip block surfaces as -32001 "state root
+    // unavailable for block <N>". We use the *error message* shape
+    // to verify routing — pre-fix the hash form would error with
+    // "block not found: 0x<huge>"; post-fix it errors with "state
+    // root unavailable for block 1," proving the hash resolved to
+    // block-number 1 before the stateRoot check fired.
+    await chain.proposeNextBlock()
+    const block = await rpcCall(port, "eth_getBlockByNumber", ["0x1", false]) as { hash: string } | null
+    assert.ok(block, "fixture needs block 0x1")
+    const blockHash = block!.hash
+    const addr = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+
+    // Baseline: by tag "latest" — skips the stateRoot check.
+    const byTag = await rpcCall(port, "eth_getBalance", [addr, "latest"])
+    assert.match(byTag as string, /^0x/, "tag form must work as baseline")
+
+    // For the new shapes, use raw fetch + assert on the error MESSAGE
+    // to distinguish "routed to hash-lookup" from "routed to number-lookup."
+    const probe = async (blockParam: unknown): Promise<{ error?: { code: number; message: string } }> => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0", id: 1, method: "eth_getBalance",
+          params: [addr, blockParam],
+        }),
+      })
+      return await r.json() as { error?: { code: number; message: string } }
+    }
+
+    // Shape 1: bare hex number "0x1" — routes to number-lookup.
+    const byNumber = await probe("0x1")
+    assert.match(
+      byNumber.error?.message ?? "",
+      /state root unavailable for block /,
+      `hex-number form must hit number-lookup branch (got ${JSON.stringify(byNumber)})`,
+    )
+
+    // Shape 2: bare 32-byte block hash — POST-FIX routes to hash-lookup
+    // → resolves to block 1 → same "state root unavailable" message.
+    // PRE-FIX: error message would be "block not found: 0x<hash>" because
+    // the hash was BigInt-parsed as a giant block number.
+    const byBareHash = await probe(blockHash)
+    assert.match(
+      byBareHash.error?.message ?? "",
+      /state root unavailable for block /,
+      `bare-hash form must hit hash-lookup branch (got ${JSON.stringify(byBareHash)})`,
+    )
+
+    // Shape 3: EIP-1898 {blockHash: ...} — pre-existing, same destination.
+    const byHashObj = await probe({ blockHash })
+    assert.match(
+      byHashObj.error?.message ?? "",
+      /state root unavailable for block /,
+      `{blockHash} object form (got ${JSON.stringify(byHashObj)})`,
+    )
+
+    // Shape 4: EIP-1898 {blockNumber: "0x1"} — NEW post-fix path.
+    // PRE-FIX: parseBlockTag rejected the object with -32602.
+    const byNumberObj = await probe({ blockNumber: "0x1" })
+    assert.match(
+      byNumberObj.error?.message ?? "",
+      /state root unavailable for block /,
+      `{blockNumber} object form (got ${JSON.stringify(byNumberObj)})`,
+    )
+
+    // Mixed-case bare hash (parity with #364 lowercase normalization).
+    const mixedHash = "0x" + blockHash.slice(2).split("").map((c, i) => i % 2 === 0 ? c.toUpperCase() : c).join("")
+    const byMixedHash = await probe(mixedHash)
+    assert.match(
+      byMixedHash.error?.message ?? "",
+      /state root unavailable for block /,
+      `mixed-case bare hash (got ${JSON.stringify(byMixedHash)})`,
+    )
+
+    // Malformed {blockHash} → -32602, not -32603 (no V8 leak).
+    const malformed = await probe({ blockHash: "0xnot-a-hash" })
+    assert.equal(malformed.error?.code, -32602, `malformed blockHash must be -32602 (got ${JSON.stringify(malformed)})`)
+    assert.match(malformed.error?.message ?? "", /invalid blockHash/i)
+  })
+
   await t.test("txpool_status returns pool stats", async () => {
     const status = await rpcCall(port, "txpool_status")
     assert.ok(typeof status === "object")
