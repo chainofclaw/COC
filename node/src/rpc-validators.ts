@@ -514,6 +514,15 @@ export function validateLogFilter(query: Record<string, unknown>): {
     if (typeof query.blockHash !== "string" || !FILTER_TOPIC_RE.test(query.blockHash)) {
       invalidParams("invalid blockHash: must match /^0x[0-9a-fA-F]{64}$/")
     }
+    // #464: EIP-234 — blockHash is mutually exclusive with fromBlock /
+    // toBlock. eth_getLogs already enforces this at its call site (rpc.ts
+    // line ~1096), but eth_newFilter and eth_subscribe("logs") share the
+    // same filter shape and silently accepted both — taking the blockHash
+    // path and ignoring fromBlock/toBlock. Centralize the check here so
+    // all three callsites reject identically per geth + erigon.
+    if (query.fromBlock !== undefined || query.toBlock !== undefined) {
+      invalidParams("blockHash is mutually exclusive with fromBlock/toBlock (EIP-234)")
+    }
     query.blockHash = (query.blockHash as string).toLowerCase()
   }
   const validateFilterAddr = (raw: unknown, idx: number): Hex => {
