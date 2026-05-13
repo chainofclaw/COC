@@ -2142,6 +2142,34 @@ async function handleRpc(
       const limit = optionalIntegerParam(payload.params ?? [], 1, "limit", 50, { min: 1, max: 10_000 })
       const reverse = optionalBooleanParam(payload.params ?? [], 2, "reverse", true)
       const offset = optionalIntegerParam(payload.params ?? [], 3, "offset", 0, { min: 0, max: 100_000 })
+  })
+
+      const rawAddr = String((payload.params ?? [])[0] ?? "")
+      if (!/^0x[0-9a-fA-F]{40}$/.test(rawAddr)) {
+        invalidParams("invalid address: must match /^0x[0-9a-fA-F]{40}$/")
+      }
+      const addr = rawAddr.toLowerCase() as Hex
+      // #408: pre-fix `Math.min(Math.max(rawLimit, 1), 10_000)` silently
+      // clamped `limit=0` → 1 (so clients asking for zero results got
+      // one back), `limit=-5` → 1, and `limit=1.5` → 1.5 (preserved
+      // because Math.max doesn't truncate). Same for offset: `-10` →
+      // 0 instead of -32602. The sibling #254 fix rejected NaN/Infinity
+      // but not these — clients with off-by-one paging logic get
+      // silently mis-aligned results. Reject upfront so spec-violating
+      // clients learn about misuse instead of acting on the wrong page.
+      const rawLimit = (payload.params ?? [])[1]
+      const limitVal = rawLimit === undefined || rawLimit === null ? 50 : Number(rawLimit)
+      if (!Number.isInteger(limitVal) || limitVal < 1 || limitVal > 10_000) {
+        invalidParams("invalid limit: must be an integer in [1, 10000]")
+      }
+      const limit = limitVal
+      const reverse = (payload.params ?? [])[2] !== false
+      const rawOffset = (payload.params ?? [])[3]
+      const offsetVal = rawOffset === undefined || rawOffset === null ? 0 : Number(rawOffset)
+      if (!Number.isInteger(offsetVal) || offsetVal < 0 || offsetVal > 100_000) {
+        invalidParams("invalid offset: must be an integer in [0, 100000]")
+      }
+      const offset = offsetVal
 
       if (typeof chain.getTransactionsByAddress === "function") {
         const txs = await chain.getTransactionsByAddress(addr, { limit, reverse, offset })

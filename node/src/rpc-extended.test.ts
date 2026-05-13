@@ -534,6 +534,47 @@ test("RPC Extended Methods", async (t) => {
     assert.ok(Array.isArray(ok), "valid address must return an array")
   })
 
+  await t.test("#408: coc_getTransactionsByAddress rejects limit/offset silent clamping", async () => {
+    // Pre-fix `Math.min(Math.max(rawLimit, 1), 10_000)` silently
+    // clamped `limit=0` → 1 (so clients asking for zero results got
+    // one back), `limit=-5` → 1, and `offset=-10` → 0 (no error).
+    // The sibling #254 fix rejected NaN/Infinity but not these.
+    // Reject upfront so clients with off-by-one paging logic don't
+    // act on silently-realigned results.
+    const validAddr = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+    const probe = async (params: unknown[]) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0", id: 1, method: "coc_getTransactionsByAddress", params,
+        }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    }
+    // limit edge cases
+    for (const badLimit of [0, -1, -100, 1.5, 10_001]) {
+      const r = await probe([validAddr, badLimit, true, 0])
+      assert.equal(r.error?.code, -32602,
+        `limit=${badLimit} must be -32602, got ${JSON.stringify(r)}`)
+      assert.match(r.error!.message, /limit/i, "error must name limit")
+    }
+    // offset edge cases
+    for (const badOffset of [-1, -100, 1.5, 100_001]) {
+      const r = await probe([validAddr, 50, true, badOffset])
+      assert.equal(r.error?.code, -32602,
+        `offset=${badOffset} must be -32602, got ${JSON.stringify(r)}`)
+      assert.match(r.error!.message, /offset/i, "error must name offset")
+    }
+    // Sanity: valid limit/offset still works
+    const okValid = await probe([validAddr, 50, true, 0])
+    assert.equal(okValid.error, undefined, "valid limit=50 offset=0 must work")
+    assert.ok(Array.isArray(okValid.result), "must return array")
+    // Sanity: omitted limit/offset still uses defaults (no error)
+    const okDefaults = await probe([validAddr])
+    assert.equal(okDefaults.error, undefined, "default limit/offset must work")
+  })
+
   await t.test("#118: eth_getStorageAt rejects malformed slots with -32602", async () => {
     // Pre-fix: invalid slots either leaked the evm's padded hex back
     // ("0x000…-1") or silently returned zero. Now each malformed shape
