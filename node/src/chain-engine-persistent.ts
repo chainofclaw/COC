@@ -612,14 +612,33 @@ export class PersistentChainEngine {
   }
 
   async addRawTx(rawTx: Hex): Promise<MempoolTx> {
-    const tx = this.mempool.addRawTx(rawTx)
+    // #438: pre-check stale nonce BEFORE mempool insertion. The in-memory
+    // ChainEngine (chain-engine.ts:181-186) has this guard, but the
+    // persistent variant (used in production) was missing it — so on
+    // testnet 88780 an attacker could pollute the mempool with txs whose
+    // nonce is already mined: eth_sendRawTransaction would return a hash,
+    // the tx would sit in the pool until evicted, and the user would see
+    // "success" for a tx that can never confirm. Mirror the in-memory
+    // engine's check so behavior is uniform across both backends. Reading
+    // nonce via evm.getNonce hits the live state manager, which reflects
+    // the latest applied block.
+    const decoded = Transaction.from(rawTx)
 
-    // Check if tx already confirmed using nonce store
-    const nonce = `tx:${tx.hash}`
-    if (await this.txNonceStore.isUsed(nonce)) {
-      this.mempool.remove(tx.hash)
+    // Mirror in-memory engine order: hash dedup first (more specific error
+    // for same-tx replay), then stale-nonce check (catches different-tx-same-
+    // -nonce). Both run before mempool insertion so we never accept a tx that
+    // can't make it on-chain.
+    if (await this.txNonceStore.isUsed(`tx:${decoded.hash}`)) {
       throw new Error("tx already confirmed")
     }
+    if (decoded.from) {
+      const onchainNonce = await this.evm.getNonce(decoded.from.toLowerCase() as Hex)
+      if (BigInt(decoded.nonce) < onchainNonce) {
+        throw new Error(`nonce too low: tx nonce ${decoded.nonce}, on-chain nonce ${onchainNonce}`)
+      }
+    }
+
+    const tx = this.mempool.addRawTx(rawTx, decoded)
 
     // Emit pending transaction event
     this.events.emitPendingTx({
