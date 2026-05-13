@@ -2396,10 +2396,13 @@ async function handleRpc(
     }
     case "coc_getFaction": {
       if (!hasGovernance(chain)) return null
-      const address = (payload.params ?? [])[0]
-      if (typeof address !== "string" || !address.startsWith("0x")) {
-        invalidParams("invalid address: expected hex string")
-      }
+      // #278: pre-fix only checked `typeof string` + `startsWith("0x")`,
+      // so "0x", "0x1", "0xZZZ..." and any non-40-hex string slipped
+      // through. governance.getFaction() is keyed on the full address
+      // string, so invalid inputs silently returned null — clients
+      // couldn't tell typos from "no faction registered". Same class as
+      // #260/#262/#264; tighten to strict 20-byte address validation.
+      const address = requireAddressParam(payload.params ?? [], 0)
       const factionInfo = chain.governance.getFaction?.(address)
       if (!factionInfo) return null
       return {

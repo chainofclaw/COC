@@ -2905,6 +2905,73 @@ test("RPC Extended Methods", async (t) => {
       `error must preserve "invalid chain ID" surface, got: ${JSON.stringify(body)}`)
   })
 
+  await t.test("#278: coc_getFaction rejects malformed address (strict 20-byte, no silent null for typos)", async () => {
+    // Pre-fix only checked `typeof string` + `startsWith("0x")`, so "0x",
+    // "0x1", "0xZZZ..." (40 non-hex chars) and any wrong-length hex slipped
+    // through. governance.getFaction() is keyed on the exact address
+    // string, so invalid input silently returned null — clients couldn't
+    // tell typos from "no faction registered." Same class as #260/#262.
+    const factionLookups: string[] = []
+    const governanceStub278 = {
+      getFaction: (addr: string) => {
+        factionLookups.push(addr)
+        // Stub: only the canonical anvil-0 address has a faction.
+        if (addr.toLowerCase() === "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266") {
+          return { address: addr, faction: "HUMAN", joinedAtEpoch: 7n }
+        }
+        return null
+      },
+    } as Record<string, unknown>
+    ;(chain as unknown as Record<string, unknown>).governance = governanceStub278
+    try {
+      const probe = async (params: unknown[]) => {
+        const r = await fetch(`http://127.0.0.1:${port}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "coc_getFaction", params }),
+        })
+        return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+      }
+      // Pre-fix accepted-but-invalid inputs → must now be -32602.
+      const badAddrs = [
+        "0x",                                            // empty
+        "0x1",                                           // too short
+        "0x12",                                          // too short
+        "0xZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ",   // 40 non-hex
+        "0xf39fd6e51aad88f6f4ce6ab8827279cfffb9226",    // 39 hex (1 short)
+        "0xf39fd6e51aad88f6f4ce6ab8827279cfffb922666",  // 41 hex (1 long)
+        "f39fd6e51aad88f6f4ce6ab8827279cfffb92266",     // missing 0x
+      ]
+      for (const bad of badAddrs) {
+        const r = await probe([bad])
+        assert.equal(r.error?.code, -32602,
+          `coc_getFaction(${JSON.stringify(bad)}) must be -32602, got ${JSON.stringify(r)}`)
+        assert.match(r.error!.message, /address|0x\[0-9a-fA-F\]\{40\}/i,
+          "error must name the field and/or canonical regex")
+      }
+      // Non-string shapes → -32602.
+      for (const bad of [123, true, false, 1.5, {}, [], null, undefined]) {
+        const r = await probe([bad])
+        assert.equal(r.error?.code, -32602,
+          `coc_getFaction(${JSON.stringify(bad)}) must be -32602, got ${JSON.stringify(r)}`)
+      }
+      // None of the rejects should have reached the stub.
+      assert.equal(factionLookups.length, 0,
+        "no invalid address should have reached governance.getFaction()")
+      // Sanity: well-shaped 40-hex address passes shape validation, returns the stub's faction.
+      const ok = await probe(["0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"])
+      assert.equal(ok.error, undefined, `valid address must NOT error, got ${JSON.stringify(ok)}`)
+      assert.equal((ok.result as { faction?: string } | null)?.faction, "HUMAN")
+      // Sanity: well-shaped but unknown address → null (the stub's miss path).
+      const miss = await probe(["0x0000000000000000000000000000000000000001"])
+      assert.equal(miss.error, undefined, `valid-but-unknown address must NOT error, got ${JSON.stringify(miss)}`)
+      assert.equal(miss.result, null)
+      assert.equal(factionLookups.length, 2, "exactly 2 well-shaped lookups should have reached the stub")
+    } finally {
+      delete (chain as unknown as Record<string, unknown>).governance
+    }
+  })
+
   if (prevDevAccounts === undefined) {
     delete process.env.COC_DEV_ACCOUNTS
   } else {
