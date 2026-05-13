@@ -302,8 +302,14 @@ async function warmup() {
     body: JSON.stringify({ jsonrpc: '2.0', id: 0, method: 'eth_chainId', params: [] }),
   }, 20_000).catch(() => null)
   const faucetPing = () => fetchWithTimeout(cfg.faucetUrl + '/health', {}, 20_000).catch(() => null)
-  await Promise.allSettled([rpcPing(), faucetPing()])
-  await Promise.allSettled([rpcPing(), faucetPing()])
+  // Each distinct hostname needs its own TLS warm — hairpin-NAT cold-start
+  // hits per-host. ipfs / explorer / website were skipped previously, so
+  // their first synthetic check kept tripping undici's 10s connect timeout.
+  const ipfsPing = () => fetchWithTimeout(cfg.ipfsUrl + '/', {}, 20_000).catch(() => null)
+  const explorerPing = () => fetchWithTimeout(cfg.explorerUrl + '/', {}, 20_000).catch(() => null)
+  const websitePing = () => fetchWithTimeout(cfg.websiteUrl + '/zh', {}, 20_000).catch(() => null)
+  await Promise.allSettled([rpcPing(), faucetPing(), ipfsPing(), explorerPing(), websitePing()])
+  await Promise.allSettled([rpcPing(), faucetPing(), ipfsPing(), explorerPing(), websitePing()])
 }
 
 async function runOnce() {
