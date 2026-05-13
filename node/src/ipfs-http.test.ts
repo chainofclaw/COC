@@ -1854,3 +1854,36 @@ describe("#324 IPFS gateway honors HTTP Range header", () => {
     assert.equal(res.headers["accept-ranges"], "bytes")
   })
 })
+
+// #312/#313 restoration: PR #429's IPFS rewrite accidentally dropped the
+// control-character check in handlePubsubRoute. Without it, topics like
+// "alpha\x00beta" round-trip through libp2p but cause string-equality
+// subscribers to silently mismatch (publish drops, no error to client).
+describe("#312 pubsub topic rejects control characters", () => {
+  it("POST /api/v0/pubsub/pub with null byte in topic returns 400", async () => {
+    const { IpfsPubsub } = await import("./ipfs-pubsub.ts")
+    const pubsub = new IpfsPubsub({ nodeId: "ctrl-test" })
+    server.attachSubsystems({ pubsub })
+    try {
+      const probes = [
+        "topic%00null",   // NUL
+        "topic%01soh",    // SOH
+        "topic%1F",       // unit separator
+        "topic%7F",       // DEL
+        "%0Atopic",       // leading LF
+        "topic%09tab",    // tab
+      ]
+      for (const arg of probes) {
+        const res = await fetch(`/api/v0/pubsub/pub?arg=${arg}`, { method: "POST", body: new TextEncoder().encode("payload") })
+        assert.equal(res.status, 400, `topic=${arg}: must reject with 400, got ${res.status}`)
+        const body = await res.json() as { error?: string }
+        assert.match(body.error ?? "", /control characters/i, `topic=${arg}: error must mention control characters`)
+      }
+      // Sanity: legal topic still works.
+      const ok = await fetch("/api/v0/pubsub/pub?arg=normal-topic", { method: "POST", body: new TextEncoder().encode("payload") })
+      assert.equal(ok.status, 200, "legal topic must still accept (regression sentinel)")
+    } finally {
+      pubsub.stop()
+    }
+  })
+})
