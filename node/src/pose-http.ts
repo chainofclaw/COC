@@ -345,6 +345,22 @@ export function handlePoseRequest(
       clearTimeout(readTimer)
       jsonResponse(res, 413, { error: "body too large" })
       req.destroy()
+  })
+
+      // #360: pre-fix `req.destroy()` ran inline right after
+      // `jsonResponse(...)`, racing the response write — when the
+      // client was mid-stream the destroy sent RST before the 413
+      // made it to the wire, so clients saw "Connection reset by
+      // peer" instead of the body. Use the res.end flush callback
+      // to defer socket destroy until the response is on the wire.
+      // Mirror of node/src/rpc.ts:317.
+      res.writeHead(413, {
+        "content-type": "application/json",
+        "connection": "close",
+      })
+      res.end(JSON.stringify({ error: "body too large" }), () => {
+        req.socket?.destroy()
+      })
       return
     }
     body += chunk
