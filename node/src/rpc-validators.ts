@@ -416,6 +416,12 @@ const TX_HEX_FIELD_CAPS: Record<string, number> = {
   maxFeePerGas: 64 + 2,
   maxPriorityFeePerGas: 64 + 2,
   nonce: 16 + 2,
+  // #475: EIP-4844 + tx-type fields. type=uint8 (2 hex), chainId=uint256
+  // for parity with sendRawTx (but the chain rejects mismatched chainId
+  // at signature recovery), maxFeePerBlobGas=uint256.
+  maxFeePerBlobGas: 64 + 2,
+  chainId: 64 + 2,
+  type: 2 + 2,
 }
 
 /**
@@ -429,7 +435,14 @@ const TX_HEX_FIELD_CAPS: Record<string, number> = {
  * so a giant hex blob can't trigger O(n²) BigInt conversion.
  */
 export function validateTxCallFields(callParams: Record<string, unknown>): void {
-  for (const field of ["value", "gas", "gasPrice", "maxFeePerGas", "maxPriorityFeePerGas", "nonce"] as const) {
+  for (const field of [
+    "value", "gas", "gasPrice", "maxFeePerGas", "maxPriorityFeePerGas", "nonce",
+    // #475: EIP-4844 + EIP-2930 typed-tx hex-quantity fields. Pre-fix
+    // eth_call/estimateGas/sendTx silently accepted any-shape garbage in
+    // these — non-hex strings, oversize blobs, etc. — and the EVM call
+    // dropped them, surfacing as 200 OK with bogus simulation results.
+    "maxFeePerBlobGas", "chainId", "type",
+  ] as const) {
     const v = callParams[field]
     if (v === undefined || v === null || v === "") continue
     if (typeof v !== "string" || !HEX_QUANTITY_RE.test(v)) {
@@ -437,7 +450,11 @@ export function validateTxCallFields(callParams: Record<string, unknown>): void 
     }
     const maxLen = TX_HEX_FIELD_CAPS[field]
     if (maxLen !== undefined && v.length > maxLen) {
-      const bits = field === "gas" || field === "nonce" ? 64 : 256
+      const bits = field === "gas" || field === "nonce"
+        ? 64
+        : field === "type"
+          ? 8
+          : 256
       invalidParams(`${field} too large: ${v.length} chars > ${maxLen} (uint${bits} max)`)
     }
   }
@@ -511,6 +528,30 @@ export function validateTxCallFields(callParams: Record<string, unknown>): void 
           invalidParams(`invalid accessList[${idx}].storageKeys[${ki}]: must match /^0x[0-9a-fA-F]{64}$/`)
         }
       })
+    })
+  }
+
+  // #475: EIP-4844 blobVersionedHashes shape validation. Each entry must
+  // be a 32-byte (66-char) hex string. Cap entries at 16 to bound CPU at
+  // the JSON-RPC boundary (geth/erigon enforce protocol-level MAX_BLOBS_
+  // PER_BLOCK in the mining path; we use a soft cap that exceeds current
+  // Pectra MAX_BLOB_COUNT but stays sub-DoS). We deliberately do NOT
+  // validate the version byte (first hex pair == "01" per EIP-4844 KZG
+  // versioning) at this layer: future hard forks may introduce new
+  // VERSIONED_HASH_VERSION values, and the chain-side check enforces
+  // the current version anyway.
+  const blobHashes = callParams.blobVersionedHashes
+  if (blobHashes !== undefined && blobHashes !== null) {
+    if (!Array.isArray(blobHashes)) {
+      invalidParams("invalid blobVersionedHashes: expected array of 32-byte hex strings")
+    }
+    if (blobHashes.length > 16) {
+      invalidParams(`blobVersionedHashes too large: ${blobHashes.length} > 16`)
+    }
+    blobHashes.forEach((h, idx) => {
+      if (typeof h !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(h)) {
+        invalidParams(`invalid blobVersionedHashes[${idx}]: must match /^0x[0-9a-fA-F]{64}$/`)
+      }
     })
   }
 }
