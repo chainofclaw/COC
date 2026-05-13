@@ -1773,6 +1773,63 @@ test("RPC Extended Methods", async (t) => {
     assert.equal(ok.error, undefined, "omitted blockHash must NOT error")
   })
 
+  await t.test("#406: EIP-1898 {blockNumber:...} object form accepted alongside {blockHash:...}", async () => {
+    // Per EIP-1898 a BlockNumberOrHash param may take the explicit
+    // object forms `{blockNumber: QUANTITY}` or
+    // `{blockHash: DATA, requireCanonical?: BOOLEAN}` for callers who
+    // want to be unambiguous. Pre-fix only the `blockHash` branch was
+    // recognised, so `{blockNumber: "0x0"}` fell through to
+    // parseBlockTag(input, ...), which received an object and emitted
+    // -32602 "invalid block tag" — divergent from geth / erigon /
+    // every reference implementation. Extract the inner QUANTITY and
+    // reuse the parseBlockTag path so the same shape contract applies.
+    const probe = async (method: string, params: unknown[]) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    }
+    const addr = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+    // {blockNumber:"latest"} should behave like "latest"
+    const r1 = await probe("eth_getBalance", [addr, { blockNumber: "latest" }])
+    assert.equal(r1.error, undefined,
+      `{blockNumber:"latest"} must be accepted, got ${JSON.stringify(r1)}`)
+    assert.match(r1.result as string, /^0x[0-9a-f]+$/i)
+    // {blockNumber:"0x1"} must reach the same code path as plain "0x1":
+    // either success OR -32001 "state root unavailable" from the
+    // historical-context check (test fixture's in-memory chain doesn't
+    // persist stateRoots for old blocks). The key is the call must NOT
+    // surface as -32602 "invalid block tag" — that's the pre-fix bug.
+    const r2 = await probe("eth_getTransactionCount", [addr, { blockNumber: "0x1" }])
+    assert.notEqual(r2.error?.code, -32602,
+      `{blockNumber:"0x1"} must pass shape validation (not -32602), got ${JSON.stringify(r2)}`)
+    // Parity: plain "0x1" hits the same path.
+    const r2plain = await probe("eth_getTransactionCount", [addr, "0x1"])
+    assert.deepEqual(r2.error?.code, r2plain.error?.code,
+      `{blockNumber:"0x1"} must behave identically to "0x1" (same code), got obj=${JSON.stringify(r2)} plain=${JSON.stringify(r2plain)}`)
+    // Bad inner shape (object as QUANTITY) → -32602 from parseBlockTag
+    const rBad = await probe("eth_getBalance", [addr, { blockNumber: {} }])
+    assert.equal(rBad.error?.code, -32602,
+      `{blockNumber:{}} must surface as -32602, got ${JSON.stringify(rBad)}`)
+    // Out-of-range number → -32001 block not found (matches plain
+    // hex-tag path).
+    const rOOB = await probe("eth_getBalance", [addr, { blockNumber: "0xFFFFFFFF" }])
+    assert.equal(rOOB.error?.code, -32001,
+      `out-of-range blockNumber must be -32001, got ${JSON.stringify(rOOB)}`)
+    // Sanity: existing {blockHash:...} branch still works (or fails
+    // with the same -32001 stateRoot-unavailable as the by-number form
+    // when the in-memory fixture doesn't persist past-block state).
+    const blockHashRes = await probe("eth_getBlockByNumber", ["0x1", false]) as Record<string, unknown>
+    const result = blockHashRes.result as Record<string, unknown> | undefined
+    if (result?.hash) {
+      const rHashForm = await probe("eth_getBalance", [addr, { blockHash: result.hash }])
+      assert.notEqual(rHashForm.error?.code, -32602,
+        `{blockHash:"..."} (sanity) must NOT surface as -32602, got ${JSON.stringify(rHashForm)}`)
+    }
+  })
+
   await t.test("#188: parseBlockTag rejects fractional block numbers (no silent floor)", async () => {
     // Pre-fix `BigInt(Math.floor(input))` silently truncated fractional
     // values: a client passing `1.5` got block 1 with no error. On a

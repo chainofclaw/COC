@@ -3228,6 +3228,22 @@ async function resolveHistoricalExecutionContext(
       blockNumber,
       ...buildExecutionContextFromBlock(block),
     }
+  })
+
+  // #406: EIP-1898 also defines the sibling object form
+  // `{ blockNumber: QUANTITY|TAG }` for callers who want to be
+  // explicit about whether they mean number-or-tag (this branch) vs
+  // hash (the branch above). Pre-fix only the `blockHash` form was
+  // recognised, so geth/erigon callers passing `{blockNumber:"0x0"}`
+  // dropped through to `parseBlockTag(input, ...)` which received an
+  // object and emitted -32602 "invalid block tag" — divergent from
+  // every other EIP-1898 implementation. Unwrap to the inner QUANTITY
+  // and recurse so the same shape contract + same fallbacks (latest /
+  // pending bypasses stateRoot check; out-of-range → -32001) apply —
+  // the EIP-1898 form is no more or less special than the bare tag.
+  if (typeof input === "object" && input !== null && "blockNumber" in input) {
+    const inner = (input as Record<string, unknown>).blockNumber
+    return await resolveHistoricalExecutionContext(inner, chain)
   }
 
   const height = await Promise.resolve(chain.getHeight())
