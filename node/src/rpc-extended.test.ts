@@ -3209,6 +3209,55 @@ test("RPC Extended Methods", async (t) => {
       assert.equal(extraData.toLowerCase(), miner.toLowerCase(),
         `extraData should encode proposer address as raw bytes (matching miner field)`)
     }
+
+  await t.test("#466: receipt.contractAddress is lowercase (parity with from/to/log.address)", async () => {
+    // Live testnet 88780 reproduction:
+    //   $ curl ...eth_getTransactionReceipt <deploy-tx-hash>
+    //   {
+    //     "from":            "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+    //     "contractAddress": "0xeF31027350Be2c7439C1b0BE022d49421488b72C",
+    //     ...
+    //   }
+    //
+    // viem.getCreateAddress returns EIP-55 mixed case; the formatter
+    // relayed it without lowercasing while every other receipt address
+    // field (from, to, log.address) was already lowercase. dApps that
+    // string-compared `receipt.contractAddress === addr.toLowerCase()`
+    // saw false-mismatch for deploy receipts and treated the contract
+    // as undeployed. Same family as #456.
+    const { Wallet: EW466, parseEther } = await import("ethers")
+    const wallet = new EW466(`0x${"0f".repeat(32)}`)
+    await evm.prefund([{ address: wallet.address, balanceWei: parseEther("10").toString() }])
+    const startN = await evm.getNonce(wallet.address.toLowerCase() as `0x${string}`)
+
+    // 5-byte init that returns empty runtime — minimal valid CREATE.
+    const deployTx = await wallet.signTransaction({
+      type: 0, to: null, value: 0n, data: "0x60006000f3",
+      gasLimit: 100_000n, gasPrice: 1_000_000_000n,
+      nonce: Number(startN), chainId,
+    })
+    const submit = async (raw: string) => {
+      const res = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_sendRawTransaction", params: [raw] }),
+      })
+      return await res.json() as { result?: string; error?: { code: number; message: string } }
+    }
+    const deployRes = await submit(deployTx)
+    assert.ok(deployRes.result, `deploy must succeed: ${JSON.stringify(deployRes)}`)
+    if (chain.proposeNextBlock) await chain.proposeNextBlock()
+
+    const receipt = await rpcCall(port, "eth_getTransactionReceipt", [deployRes.result]) as {
+      contractAddress: string | null
+      from: string
+    }
+    assert.ok(receipt.contractAddress, `deploy must yield a contractAddress: ${JSON.stringify(receipt)}`)
+    assert.equal(
+      receipt.contractAddress, receipt.contractAddress!.toLowerCase(),
+      `contractAddress must be lowercase (parity with from), got ${receipt.contractAddress}`,
+    )
+    assert.equal(receipt.from, receipt.from.toLowerCase(), "from must be lowercase (sanity)")
+  })
   })
 
   await t.test("#332: eth_sendRawTransaction replacement-underpriced surfaces as -32000 (not -32603)", async () => {
