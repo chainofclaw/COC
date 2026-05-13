@@ -3666,6 +3666,13 @@ function formatRawTransaction(
 ): Record<string, unknown> | null {
   try {
     const parsed = Transaction.from(rawTx)
+    // #456: ethers v6 returns EIP-55 mixed-case for parsed.from/to. Geth +
+    // Erigon emit addresses lowercased in JSON-RPC responses, and the rest
+    // of COC's API (receipts, block.miner, eth_getLogs) already lowercases.
+    // Pre-fix eth_getTransactionByHash returned mixed case while
+    // eth_getTransactionReceipt returned lowercase for the SAME tx — same-
+    // -value comparisons across endpoints failed string-equality checks
+    // in dApps/wallets/indexers. Lowercase both fields to match.
     // #442: include accessList for EIP-2930 (type 1) and EIP-1559 (type 2)
     // transactions. Pre-fix every type-1/2 tx returned by
     // eth_getTransactionByHash / eth_getBlockByNumber omitted the field,
@@ -3680,8 +3687,8 @@ function formatRawTransaction(
       : (parsed.type === 1 || parsed.type === 2 ? [] : undefined)
     return {
       hash: parsed.hash,
-      from: parsed.from,
-      to: toRpcHexOrNull(parsed.to ?? null),
+      from: parsed.from ? parsed.from.toLowerCase() : parsed.from,
+      to: toRpcHexOrNull(parsed.to ? parsed.to.toLowerCase() : (parsed.to ?? null)),
       nonce: toRpcQuantity(parsed.nonce),
       value: toRpcQuantity(parsed.value ?? 0n),
       gas: toRpcQuantity(parsed.gasLimit ?? 21_000n),
