@@ -386,6 +386,66 @@ describe("IpfsHttpServer", () => {
     assert.deepEqual(new Uint8Array(await r7.buffer()), content)
   })
 
+  it("#353: /api/v0/add rejects unsupported kubo params with 400 (not silent ignore)", async () => {
+    // Pre-fix the server hard-codes cid-version=1 / sha2-256 /
+    // chunker=size-262144 / raw-leaves=false, but accepted any
+    // value for these params and produced its default CID
+    // regardless. A client requesting `cid-version=0` got a v1
+    // `bafy...` CID back and their content-address verification
+    // silently broke — they expected `Qm...` (v0).
+    const boundary = "----T353"
+    const mkBody = () => [
+      `--${boundary}`,
+      'Content-Disposition: form-data; name="file"; filename="x.txt"',
+      "Content-Type: application/octet-stream",
+      "",
+      "x",
+      `--${boundary}--`,
+      "",
+    ].join("\r\n")
+    const post = async (qs: string) => fetch(`/api/v0/add?${qs}`, {
+      method: "POST",
+      headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+      body: mkBody(),
+    })
+
+    // Hash-shape params that demand a value we don't produce.
+    for (const qs of [
+      "cid-version=0",
+      "cid-version=2",
+      "cid-version=999",
+      "hash=blake2b-256",
+      "hash=sha3-256",
+      "chunker=size-1024",
+      "chunker=rabin-512-1024-2048",
+      "chunker=buzhash",
+    ]) {
+      const r = await post(qs)
+      assert.equal(r.status, 400, `${qs}: expected 400 (got ${r.status})`)
+      const body = await r.json() as { error: string; message?: string }
+      assert.equal(body.error, "unsupported_param", qs)
+    }
+
+    // Boolean opt-ins we don't honor.
+    for (const key of ["raw-leaves", "wrap-with-directory", "nocopy", "inline", "trickle"]) {
+      const r = await post(`${key}=true`)
+      assert.equal(r.status, 400, `${key}=true: expected 400 (got ${r.status})`)
+      // Case-insensitive `1` form also rejects.
+      const r2 = await post(`${key}=1`)
+      assert.equal(r2.status, 400, `${key}=1: expected 400 (got ${r2.status})`)
+    }
+
+    // Garbage boolean value must reject too (kubo flag parser does).
+    const rg = await post("raw-leaves=maybe")
+    assert.equal(rg.status, 400, "raw-leaves=maybe: expected 400")
+
+    // Defaults must still work (no params + matching values).
+    const ok = await post("cid-version=1&hash=sha2-256&chunker=size-262144&raw-leaves=false&trickle=false")
+    assert.equal(ok.status, 200, "matching-defaults must succeed")
+    const okBody = await ok.json() as { Hash: string }
+    assert.ok(okBody.Hash?.startsWith("bafy"), "should still return v1 bafy CID")
+  })
+
   it("#180: /api/v0/add?erasure=N+M rejects N or M above MAX_DATA/PARITY_SHARDS with 400 (not 500)", async () => {
     // Pre-fix parseErasureSpec only checked the lower bound (n>=1,
     // m>=1). Values above MAX_DATA_SHARDS / MAX_PARITY_SHARDS (24
