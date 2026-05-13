@@ -737,6 +737,84 @@ describe("IpfsHttpServer", () => {
     const body = await r.json() as { error?: string }
     assert.match(body.error ?? "", /invalid CID/i, "error must explain shape")
   })
+
+  // #328: gateway has no CORS support — browser-based IPFS clients can
+  // not read /ipfs/<cid> from a different origin. RFC + kubo conventions:
+  // /ipfs/* is read-only content addressing, ACAO: *; /api/v0/* is
+  // CSRF-protected (POST-only, no ACAO) so cross-origin POST is denied.
+  describe("#328 gateway CORS support", () => {
+    it("OPTIONS /ipfs/<cid> → 204 with full CORS preflight headers", async () => {
+      const data = new TextEncoder().encode("cors target")
+      const meta = await unixfs.addFile("c.bin", data)
+      const res = await fetch(`/ipfs/${meta.cid}`, {
+        method: "OPTIONS",
+        headers: {
+          "origin": "https://example.com",
+          "access-control-request-method": "GET",
+          "access-control-request-headers": "range",
+        },
+      })
+      assert.equal(res.status, 204, "OPTIONS preflight must return 204 No Content")
+      assert.equal(res.headers["access-control-allow-origin"], "*", "gateway must allow any origin")
+      assert.match(String(res.headers["access-control-allow-methods"] ?? ""), /GET/, "must advertise GET")
+      assert.match(String(res.headers["access-control-allow-methods"] ?? ""), /HEAD/, "must advertise HEAD")
+      assert.match(String(res.headers["access-control-allow-headers"] ?? ""), /Range/i, "must allow Range header")
+      const body = await res.buffer()
+      assert.equal(body.length, 0, "OPTIONS 204 response must have no body")
+    })
+
+    it("GET /ipfs/<cid> sets Access-Control-Allow-Origin: * on success", async () => {
+      const data = new TextEncoder().encode("acao body")
+      const meta = await unixfs.addFile("acao.bin", data)
+      const res = await fetch(`/ipfs/${meta.cid}`, {
+        headers: { "origin": "https://example.com" },
+      })
+      assert.equal(res.status, 200)
+      assert.equal(res.headers["access-control-allow-origin"], "*", "gateway success must set ACAO: *")
+    })
+
+    it("GET /ipfs/<invalid> sets ACAO: * on 400 error too", async () => {
+      // Browsers also need ACAO on the error path or they reject the
+      // response and can't surface the error to JS.
+      const res = await fetch("/ipfs/not-a-cid!!!", {
+        headers: { "origin": "https://example.com" },
+      })
+      assert.equal(res.status, 400)
+      assert.equal(res.headers["access-control-allow-origin"], "*", "400 response must also set ACAO: *")
+    })
+
+    it("OPTIONS /api/v0/cat → 204 with NO Access-Control-Allow-Origin (CSRF lock)", async () => {
+      const res = await fetch("/api/v0/cat?arg=x", {
+        method: "OPTIONS",
+        headers: {
+          "origin": "https://attacker.example",
+          "access-control-request-method": "POST",
+        },
+      })
+      assert.equal(res.status, 204, "preflight must return 204 (not 405) to stay browser-spec-compliant")
+      assert.equal(res.headers["access-control-allow-origin"], undefined, "API must NOT advertise ACAO — preserves #136 CSRF lock")
+      const body = await res.buffer()
+      assert.equal(body.length, 0, "OPTIONS body must be empty")
+    })
+
+    it("OPTIONS /ipfs/<cid> Max-Age caches preflight for browsers", async () => {
+      const res = await fetch("/ipfs/bafybeibwzifw52ttrkqlikfzext5akxu7lz4xiu5pq6gv2bnpyxw2jc35a", {
+        method: "OPTIONS",
+      })
+      assert.equal(res.status, 204)
+      const maxAge = String(res.headers["access-control-max-age"] ?? "")
+      assert.ok(Number(maxAge) >= 3600, `preflight cache must be ≥1h, got ${maxAge}`)
+    })
+
+    it("OPTIONS /ipfs/<cid> exposes Content-Length and Content-Range to JS", async () => {
+      const res = await fetch("/ipfs/bafybeibwzifw52ttrkqlikfzext5akxu7lz4xiu5pq6gv2bnpyxw2jc35a", {
+        method: "OPTIONS",
+      })
+      const expose = String(res.headers["access-control-expose-headers"] ?? "")
+      assert.match(expose, /Content-Length/i, "JS must be able to read Content-Length for size discovery")
+      assert.match(expose, /Content-Range/i, "JS must be able to read Content-Range for Range request handling")
+    })
+  })
 })
 
 // Phase Q.4 — Reed-Solomon erasure coding integration tests.
