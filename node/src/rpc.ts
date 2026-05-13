@@ -65,6 +65,13 @@ const MAX_FILTERS = 1000
 // p99 latency < ~2 s on a fresh chain.
 const MAX_PROOF_KEYS = 256
 export const FILTER_TTL_MS = 5 * 60 * 1000 // 5 minutes
+// #288: cap on eth_compileSolidity source size. solc.compile is synchronous
+// emscripten WASM and blocks the Node event loop. Without this cap, a
+// single ~15 KB source with many empty contracts blocked the 88780 testnet
+// validator for >5 min. 64 KiB covers realistic single-file contracts (OZ's
+// largest single-file is ~30 KiB) and bounds the worst-case event-loop
+// starvation. The real fix is offloading solc to a worker thread.
+const MAX_COMPILE_SOURCE_SIZE = 64 * 1024
 const CHAIN_STATS_CACHE_TTL_MS = 5_000
 let chainStatsCache: { result: unknown; height: bigint; cachedAtMs: number } | null = null
 let chainStatsComputing: Promise<unknown> | null = null
@@ -1831,6 +1838,19 @@ async function handleRpc(
       const source = rawSource
       if (source.trim().length === 0) {
         invalidParams("invalid Solidity source: expected non-empty source string")
+      }
+      // #288: cap source size. solc.compile is synchronous WASM and
+      // blocks the Node event loop for the duration of compilation —
+      // a single ~15 KB source with 500 empty contracts took >5 min
+      // on the 88780 testnet, during which block production, PoSe,
+      // and all other RPC are starved. With the 100 req/min/IP rate
+      // limit, a single attacker can keep the event loop blocked
+      // indefinitely. Until the compile path is moved to a worker
+      // thread, enforce a hard ceiling. 64 KiB comfortably covers
+      // realistic single-file contracts (OpenZeppelin's largest
+      // single-file is ~30 KiB) while preventing the worst-case DoS.
+      if (source.length > MAX_COMPILE_SOURCE_SIZE) {
+        invalidParams(`Solidity source too large: ${source.length} bytes (max ${MAX_COMPILE_SOURCE_SIZE})`)
       }
       return await compileSoliditySource(source)
     }

@@ -2269,6 +2269,17 @@ test("RPC Extended Methods", async (t) => {
       const inner = Array.from({ length: innerN }, (_, i) =>
         `0x${i.toString(16).padStart(64, "0")}`,
       )
+  })
+
+  await t.test("#288: eth_compileSolidity rejects oversize source (DoS gate; pre-fix 14.9 KB blocked event loop 5+ min)", async () => {
+    // solc.compile is synchronous emscripten WASM. A single moderately
+    // large source (500 empty contracts ≈ 15 KB) took 5m20s on 88780,
+    // blocking ALL block production + RPC + PoSe for the duration. Cap
+    // is 64 KiB — covers realistic single-file contracts (OZ's largest
+    // is ~30 KiB) while preventing the worst-case event-loop starvation
+    // a remote attacker can trigger at 100 req/min/IP. The proper fix is
+    // a worker thread; this gate is the surgical interim.
+    const probe = async (source: string) => {
       const r = await fetch(`http://127.0.0.1:${port}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -2277,6 +2288,9 @@ test("RPC Extended Methods", async (t) => {
           id: 1,
           method: "eth_getLogs",
           params: [{ topics: [inner] }],
+  })
+
+          jsonrpc: "2.0", id: 1, method: "eth_compileSolidity", params: [source],
         }),
       })
       return await r.json() as { error?: { code: number; message: string }; result?: unknown }
@@ -2364,6 +2378,25 @@ test("RPC Extended Methods", async (t) => {
     } finally {
       ;(evm as unknown as { callRaw: typeof origCallRaw }).callRaw = origCallRaw
     }
+  })
+
+    // 65 KiB source (1 KiB over the 64 KiB cap) — must reject with -32602.
+    const oversized = "// " + "x".repeat(65 * 1024)
+    const big = await probe(oversized)
+    assert.equal(big.error?.code, -32602,
+      `oversized compile must be -32602, got ${JSON.stringify(big)}`)
+    assert.match(big.error!.message, /source too large/i,
+      "error must name the field and the size cap")
+    // Sanity: a small valid source still compiles (no regression).
+    const small = await probe(
+      "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.0;\ncontract T { uint x; }"
+    )
+    assert.equal(small.error, undefined,
+      `small valid source must succeed, got ${JSON.stringify(small)}`)
+    assert.ok(small.result && typeof small.result === "object",
+      "successful compile returns an object")
+    assert.ok("T" in (small.result as Record<string, unknown>),
+      "contract T must be in compile output")
   })
 
   if (prevDevAccounts === undefined) {
