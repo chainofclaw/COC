@@ -300,6 +300,74 @@ export function requireStringParam(params: unknown[], index: number, name: strin
   return raw as string
 }
 
+/**
+ * #252: Generic non-negative integer-param validator. Pre-fix
+ * `Number((params)[idx] ?? -1)` silently coerced `true`→1, `[1]`→1,
+ * `"1"`→1, `null`→0 so callers got hits for non-integer inputs.
+ * Used for epochId in `coc_getRewardManifest` / `coc_getRewardClaim`.
+ * Same anti-pattern as #120/#220/#226/#240/#242.
+ */
+export function requireIntegerParam(params: unknown[], index: number, name: string): number {
+  const raw = (params ?? [])[index]
+  if (raw === undefined || raw === null) {
+    invalidParams(`missing ${name} parameter`)
+  }
+  if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 0) {
+    invalidParams(`invalid ${name}: expected non-negative integer, got ${Array.isArray(raw) ? "array" : typeof raw}`)
+  }
+  return raw as number
+}
+
+/**
+ * #254: Optional non-negative integer with default. Treats `undefined`
+ * and `null` as "omitted" and returns the supplied default; rejects
+ * any other non-integer shape with -32602. Pre-fix the
+ * `Number((params)[idx] ?? N)` idiom in `coc_getTransactionsByAddress`
+ * (and similar paginated handlers) silently coerced `true`→1, `"5"`→5,
+ * `[3]`→3, `{}`→NaN→fallback. Same family as #252/#251/#224.
+ */
+export function optionalIntegerParam(
+  params: unknown[],
+  index: number,
+  name: string,
+  defaultValue: number,
+  opts?: { min?: number; max?: number },
+): number {
+  const raw = (params ?? [])[index]
+  if (raw === undefined || raw === null) return defaultValue
+  if (typeof raw !== "number" || !Number.isFinite(raw) || !Number.isInteger(raw)) {
+    invalidParams(`invalid ${name}: expected integer or omitted, got ${Array.isArray(raw) ? "array" : typeof raw}`)
+  }
+  const min = opts?.min ?? 0
+  const max = opts?.max ?? Number.MAX_SAFE_INTEGER
+  if (raw < min || raw > max) {
+    invalidParams(`invalid ${name}: must be between ${min} and ${max}`)
+  }
+  return raw as number
+}
+
+/**
+ * #254: Strict optional boolean. Pre-fix `(params[idx] !== false)` was
+ * the worst kind of silent coercion — every non-`false` value (`0`,
+ * `"false"`, `null`, `{}`, `[]`) parsed as `true`, which is usually the
+ * opposite of what a sloppy client meant when sending `0` or `"false"`.
+ * Returns the supplied default for `undefined`/`null`; rejects every
+ * non-boolean shape with -32602.
+ */
+export function optionalBooleanParam(
+  params: unknown[],
+  index: number,
+  name: string,
+  defaultValue: boolean,
+): boolean {
+  const raw = (params ?? [])[index]
+  if (raw === undefined || raw === null) return defaultValue
+  if (typeof raw !== "boolean") {
+    invalidParams(`invalid ${name}: expected boolean or omitted, got ${Array.isArray(raw) ? "array" : typeof raw}`)
+  }
+  return raw as boolean
+}
+
 // ---------------------------------------------------------------------------
 // Tx-call field validators
 // ---------------------------------------------------------------------------
