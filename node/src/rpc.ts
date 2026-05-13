@@ -3799,16 +3799,20 @@ async function splitMempoolPendingQueued(
     const onchainNonce = await evm.getNonce(sender)
     let expected = onchainNonce
     for (const mtx of senderTxs) {
-      const parsed = Transaction.from(mtx.rawTx)
-      const entry = {
+      // #450: reuse formatRawTransaction so txpool_content entries have
+      // the same shape as eth_getTransactionByHash — including type,
+      // maxFeePerGas, maxPriorityFeePerGas, accessList (#442/#443), chainId,
+      // v/r/s. Pre-fix the bespoke literal omitted every EIP-1559 / EIP-2930
+      // field, breaking indexers that expect parity with mined-tx output.
+      // Block context is omitted (mempool txs): formatRawTransaction emits
+      // blockHash: null, blockNumber: null, transactionIndex: null.
+      const entry = formatRawTransaction(mtx.rawTx as Hex) ?? {
         hash: mtx.hash,
         nonce: `0x${mtx.nonce.toString(16)}`,
         from: mtx.from,
-        to: parsed.to ?? null,
-        value: `0x${(parsed.value ?? 0n).toString(16)}`,
         gas: `0x${mtx.gasLimit.toString(16)}`,
         gasPrice: `0x${mtx.gasPrice.toString(16)}`,
-        input: parsed.data ?? "0x",
+        input: "0x",
       }
       const bucket = mtx.nonce === expected ? pending : queued
       if (!bucket[sender]) bucket[sender] = {}
