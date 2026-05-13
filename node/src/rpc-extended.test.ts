@@ -702,6 +702,76 @@ test("RPC Extended Methods", async (t) => {
     )
   })
 
+  await t.test("#450: txpool_content entries carry full EIP-1559/EIP-2930 fields (parity with eth_getTransactionByHash)", async () => {
+    // Live testnet 88780 reproduction:
+    //   $ curl ...txpool_content
+    //   {
+    //     "queued": {
+    //       "0xf39f...": {
+    //         "411": {
+    //           "hash": "0xf6094f...", "nonce": "0x19b", "from": "0xf39f...",
+    //           "to": "0x70997970...", "value": "0x1", "gas": "0x5208",
+    //           "gasPrice": "0x77359400", "input": "0x"
+    //           // MISSING: maxFeePerGas, maxPriorityFeePerGas, accessList,
+    //           //          type, chainId, v, r, s, blockHash, blockNumber,
+    //           //          transactionIndex
+    //         }
+    //       }
+    //     }
+    //   }
+    //
+    // splitMempoolPendingQueued was hand-rolling a per-entry literal with
+    // legacy fields only. Indexers that compare in-pool vs mined-tx shape
+    // (etherscan-clones, mempool dashboards) saw mismatched fields. Reuse
+    // formatRawTransaction so the entries match eth_getTransactionByHash.
+    const { Wallet: EW, Transaction: ET } = await import("ethers")
+    const wallet = new EW(`0x${"0b".repeat(32)}`)
+    await evm.prefund([{ address: wallet.address, balanceWei: "1000000000000000000" }])
+    const startNonce = await evm.getNonce(wallet.address.toLowerCase() as `0x${string}`)
+
+    // Send an EIP-1559 tx with a gap nonce so it lands in `queued`.
+    const tx1559 = ET.from({
+      type: 2,
+      to: `0x${"0c".repeat(20)}`,
+      value: 1n,
+      nonce: Number(startNonce) + 3, // gap → queued bucket
+      maxFeePerGas: 2_000_000_000n,
+      maxPriorityFeePerGas: 100_000_000n,
+      gasLimit: 50_000n,
+      chainId,
+      data: "0x",
+    })
+    const sig = wallet.signingKey.sign(tx1559.unsignedHash)
+    const clone = tx1559.clone()
+    clone.signature = sig
+    const raw = clone.serialized
+    await rpcCall(port, "eth_sendRawTransaction", [raw])
+
+    const content = await rpcCall(port, "txpool_content") as {
+      pending: Record<string, Record<string, Record<string, unknown>>>
+      queued: Record<string, Record<string, Record<string, unknown>>>
+    }
+    const senderAddr = wallet.address.toLowerCase()
+    const queuedForSender = content.queued[senderAddr] ?? {}
+    const entry = queuedForSender[String(Number(startNonce) + 3)]
+    assert.ok(entry, `EIP-1559 tx must appear in queued bucket: ${JSON.stringify(Object.keys(queuedForSender))}`)
+
+    // The full set of fields that geth's txpool_content includes (parity
+    // with eth_getTransactionByHash):
+    assert.equal(entry.type, "0x2", `type must be 0x2 for EIP-1559, got ${entry.type}`)
+    assert.equal(entry.maxFeePerGas, "0x77359400", `maxFeePerGas must be present`)
+    assert.equal(entry.maxPriorityFeePerGas, "0x5f5e100", `maxPriorityFeePerGas must be present`)
+    assert.equal(entry.chainId, `0x${chainId.toString(16)}`)
+    // Mempool txs report null for these three (per geth):
+    assert.equal(entry.blockHash, null, "blockHash null for mempool")
+    assert.equal(entry.blockNumber, null, "blockNumber null for mempool")
+    assert.equal(entry.transactionIndex, null, "transactionIndex null for mempool")
+    // Signature fields must be present:
+    assert.ok(typeof entry.v === "string", `v must be present, got ${entry.v}`)
+    assert.ok(typeof entry.r === "string", `r must be present, got ${entry.r}`)
+    assert.ok(typeof entry.s === "string", `s must be present, got ${entry.s}`)
+  })
+
   await t.test("coc_nodeInfo returns node metadata", async () => {
     const info = await rpcCall(port, "coc_nodeInfo")
     assert.ok(typeof info === "object")
