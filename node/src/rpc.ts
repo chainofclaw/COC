@@ -2118,17 +2118,19 @@ async function handleRpc(
       // §5.1, -32603 is for server faults; "feature not enabled on
       // this node" is a method-availability concern → -32601. Same
       // class as #132 (unknown-method fallback fix).
-      if (!hasGovernance(chain)) {
-        methodNotFound("coc_submitProposal: governance module not enabled on this node")
-      }
       // #220: pre-fix `(payload.params ?? [])[0] as Record<string,string>`
       // was a no-op cast. With params=[] or params=[null] the first param
       // was undefined/null; the next line then accessed `.proposer` and
       // threw a V8 TypeError ("Cannot read properties of undefined/null
       // (reading 'proposer')") which leaked through the outer catch.
+      // #432: validate input BEFORE governance-module check so garbage
+      // gets -32602 even on read-only fullnodes (same anti-pattern as #424).
       const rawParams = (payload.params ?? [])[0]
       if (!rawParams || typeof rawParams !== "object" || Array.isArray(rawParams)) {
         invalidParams("invalid params: expected non-null object as first param")
+      }
+      if (!hasGovernance(chain)) {
+        methodNotFound("coc_submitProposal: governance module not enabled on this node")
       }
       const proposalParams = rawParams as Record<string, string>
       // Only the local node can submit proposals via RPC
@@ -2171,15 +2173,16 @@ async function handleRpc(
     }
     case "coc_voteProposal": {
       // #234: same -32601 mapping as coc_submitProposal.
-      if (!hasGovernance(chain)) {
-        methodNotFound("coc_voteProposal: governance module not enabled on this node")
-      }
       // #220: same null-check as coc_submitProposal — params=[] / [null]
       // pre-fix bubbled "Cannot read properties of null (reading 'voterId')"
       // through the outer catch as a -32603 V8 leak.
+      // #432: validate input BEFORE governance-module check (same as #424).
       const voteRaw = (payload.params ?? [])[0]
       if (!voteRaw || typeof voteRaw !== "object" || Array.isArray(voteRaw)) {
         invalidParams("invalid params: expected non-null object as first param")
+      }
+      if (!hasGovernance(chain)) {
+        methodNotFound("coc_voteProposal: governance module not enabled on this node")
       }
       const voteParams = voteRaw as Record<string, unknown>
       // Only the local node can vote via RPC
@@ -2244,12 +2247,16 @@ async function handleRpc(
     }
     case "coc_getDaoProposal": {
       // #234: same -32601 mapping as coc_submitProposal.
-      if (!hasGovernance(chain)) {
-        methodNotFound("coc_getDaoProposal: governance module not enabled on this node")
-      }
+      // #432: validate proposalId BEFORE governance-module check so
+      // garbage input (number, boolean, missing) gets -32602 even on
+      // read-only fullnodes where governance isn't enabled. Same
+      // anti-pattern as #424 (reward handlers).
       const proposalId = (payload.params ?? [])[0]
       if (typeof proposalId !== "string" || !proposalId) {
         invalidParams("invalid proposal id: expected non-empty string")
+      }
+      if (!hasGovernance(chain)) {
+        methodNotFound("coc_getDaoProposal: governance module not enabled on this node")
       }
       const gov = chain.governance
       const proposal = gov.getProposal(proposalId)
@@ -2788,56 +2795,64 @@ async function handleRpc(
     }
     // ── DID Identity Layer ──────────────────────────────────────
     case "coc_resolveDid": {
+      // #432: validate input BEFORE backend-config check so garbage params
+      // (numbers, booleans, objects, missing) get -32602 even on nodes
+      // where the DID resolver isn't configured. Pre-fix the
+      // `if (!didResolver) -32601` ran first, masking input-shape errors
+      // behind a misleading "method not found" on every read-only fullnode.
+      // Same anti-pattern as #424 (reward handlers).
+      const did = requireStringParam(payload.params ?? [], 0, "DID")
       const didResolver = opts?.didResolver as { resolve: (did: string) => Promise<{ didDocument: unknown; didResolutionMetadata: unknown }> } | undefined
       if (!didResolver) methodNotFound("DID resolver not configured on this node (requires soulRegistryAddress + didRegistryAddress)")
-      // #242: pre-fix `String(... ?? "")` silently coerced numbers/bools/
-      // objects to "123"/"true"/"[object Object]" — bogus identifiers
-      // that downstream resolvers couldn't tell apart from real DIDs.
-      // Same anti-pattern as #120/#220/#226/#240.
-      const did = requireStringParam(payload.params ?? [], 0, "DID")
       return didResolver.resolve(did)
     }
     case "coc_getDIDDocument": {
+      // #432: same — validate before backend-config check.
+      const agentId = requireStringParam(payload.params ?? [], 0, "agentId")
       const didResolver = opts?.didResolver as { resolve: (did: string) => Promise<{ didDocument: unknown }> } | undefined
       if (!didResolver) methodNotFound("DID resolver not configured on this node")
-      const agentId = requireStringParam(payload.params ?? [], 0, "agentId")
       const result = await didResolver.resolve(`did:coc:${agentId}`)
       return result.didDocument ?? null
     }
     case "coc_getAgentCapabilities": {
+      // #432: same — validate before backend-config check.
+      const agentId = requireStringParam(payload.params ?? [], 0, "agentId")
       const didProvider = opts?.didDataProvider
       if (!didProvider) methodNotFound("DID data provider not configured on this node")
-      const agentId = requireStringParam(payload.params ?? [], 0, "agentId")
       const bitmask = await didProvider.getCapabilities(agentId)
       // Import inline to avoid top-level dependency
       const { capabilityBitmaskToNames } = await import("./did/did-types.ts")
       return { capabilities: capabilityBitmaskToNames(bitmask), bitmask }
     }
     case "coc_getDelegations": {
+      // #432: same — validate before backend-config check.
+      const agentId = requireStringParam(payload.params ?? [], 0, "agentId")
       const didProvider = opts?.didDataProvider
       if (!didProvider) methodNotFound("DID data provider not configured on this node")
-      const agentId = requireStringParam(payload.params ?? [], 0, "agentId")
       return didProvider.getFullDelegations(agentId)
     }
     case "coc_getAgentLineage": {
+      // #432: same — validate before backend-config check.
+      const agentId = requireStringParam(payload.params ?? [], 0, "agentId")
       const didProvider = opts?.didDataProvider
       if (!didProvider?.getLineage) methodNotFound("DID data provider not configured on this node")
-      const agentId = requireStringParam(payload.params ?? [], 0, "agentId")
       return didProvider.getLineage(agentId)
     }
     case "coc_getVerificationMethods": {
+      // #432: same — validate before backend-config check.
+      const agentId = requireStringParam(payload.params ?? [], 0, "agentId")
       const didProvider = opts?.didDataProvider
       if (!didProvider?.getVerificationMethods) methodNotFound("DID data provider not configured on this node")
-      const agentId = requireStringParam(payload.params ?? [], 0, "agentId")
       return didProvider.getVerificationMethods(agentId)
     }
     case "coc_getCredentialAnchor": {
       // Checks the on-chain credential anchor only: existence, revocation, expiry.
       // Does NOT verify VC content, signatures, or proofs — use verifiable-credentials.ts
       // for full credential verification.
+      // #432: same — validate before backend-config check.
+      const credentialId = requireStringParam(payload.params ?? [], 0, "credentialId")
       const didProvider = opts?.didDataProvider
       if (!didProvider?.getCredentialAnchor) methodNotFound("DID data provider not configured on this node")
-      const credentialId = requireStringParam(payload.params ?? [], 0, "credentialId")
       return didProvider.getCredentialAnchor(credentialId)
     }
     default:
