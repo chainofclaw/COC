@@ -1175,6 +1175,14 @@ export class IpfsHttpServer {
           /^missing /i.test(msg) ||
           /^write would exceed/i.test(msg) ||
           /^max mfs depth/i.test(msg) ||
+          // #268: pre-fix `/^max mfs depth/i` was the only depth-cap regex
+          // but normalizePath actually throws "path too deep (max N
+          // components)" and the recursive helpers throw "directory
+          // nesting too deep (max N)". Neither matched the existing regex,
+          // so deep paths surfaced as 500 "internal error" + an ERROR log
+          // line per probe. Same regex-mismatch family as #232.
+          /^path too deep/i.test(msg) ||
+          /^directory nesting too deep/i.test(msg) ||
           /^path too long/i.test(msg) ||
           /^null byte in path/i.test(msg) ||
           // #232: pre-fix normalizePath threw `Error("path traversal not
