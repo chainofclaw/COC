@@ -173,10 +173,38 @@ export class IpfsHttpServer {
       }
 
       const url = parseUrl(req.url ?? "", true)
+
+      // #328: CORS support. The gateway (/ipfs/<cid>) is read-only content
+      // addressing and intentionally cross-origin-friendly, so it advertises
+      // ACAO: * + the methods/headers browsers need (Range, conditional
+      // headers, etc.) and exposes Content-Length / Content-Range / etc.
+      // /api/v0/* is intentionally CORS-locked: kubo's POST-only rule
+      // (#136) plus the absence of ACAO denies cross-origin POSTs, which
+      // is the existing CSRF protection. The OPTIONS preflight here just
+      // returns 204 with no ACAO so the browser denies the actual POST.
+      if (req.method === "OPTIONS") {
+        if (url.pathname?.startsWith("/ipfs/")) {
+          res.writeHead(204, {
+            "access-control-allow-origin": "*",
+            "access-control-allow-methods": "GET, HEAD, OPTIONS",
+            "access-control-allow-headers": "Range, If-None-Match, If-Match, If-Modified-Since",
+            "access-control-expose-headers": "Content-Length, Content-Range, Accept-Ranges, ETag",
+            "access-control-max-age": "86400",
+          })
+          res.end()
+          return
+        }
+        // /api/v0/* and everything else: 204 no-CORS — preflight denied,
+        // browser will not send the actual POST.
+        res.writeHead(204)
+        res.end()
+        return
+      }
+
       if (req.method === "GET" && url.pathname?.startsWith("/ipfs/")) {
         const cid = url.pathname.slice(6) // strip "/ipfs/"
         if (!isValidCid(cid)) {
-          res.writeHead(400, { "content-type": "application/json" })
+          res.writeHead(400, { "content-type": "application/json", "access-control-allow-origin": "*" })
           res.end(JSON.stringify({ error: "invalid CID" }))
           return
         }
@@ -185,11 +213,14 @@ export class IpfsHttpServer {
         // Map to 404 explicitly so missing-block looks like missing-block.
         try {
           const data = await this.unixfs.readFile(cid)
-          res.writeHead(200)
+          // #328: ACAO: * on gateway success — content addressing is
+          // immutable + read-only, so cross-origin reads carry no CSRF
+          // risk and unlock browser-side IPFS clients.
+          res.writeHead(200, { "access-control-allow-origin": "*" })
           res.end(data)
         } catch (err) {
           if (isNotFoundError(err)) {
-            res.writeHead(404, { "content-type": "application/json" })
+            res.writeHead(404, { "content-type": "application/json", "access-control-allow-origin": "*" })
             res.end(JSON.stringify({ error: "not found" }))
           } else {
             throw err
