@@ -437,11 +437,23 @@ describe("requireStringParam (#242)", () => {
 })
 
 describe("validateTxCallFields (#148)", () => {
-  test("accepts all hex quantity fields", () => {
+  test("accepts all hex quantity fields (legacy-only)", () => {
+    // #394: legacy and EIP-1559 fee fields can't coexist — pre-fix the
+    // test mixed all three (gasPrice + maxFeePerGas + maxPriorityFeePerGas).
+    // After the EIP-1559 combination check, those combinations now reject,
+    // so this sanity case covers legacy-only.
     validateTxCallFields({
       value: "0x10",
       gas: "0x5208",
       gasPrice: "0x1",
+      data: "0xabcd",
+    })
+  })
+
+  test("accepts all hex quantity fields (EIP-1559)", () => {
+    validateTxCallFields({
+      value: "0x10",
+      gas: "0x5208",
       maxFeePerGas: "0x2",
       maxPriorityFeePerGas: "0x1",
       data: "0xabcd",
@@ -512,6 +524,50 @@ describe("validateTxCallFields (#148)", () => {
   test("#352: accepts exactly uint64-max gas (regression guard)", () => {
     const max64 = "0x" + "f".repeat(16)
     validateTxCallFields({ gas: max64, nonce: max64 })
+  })
+
+  test("#394: rejects gasPrice + maxFeePerGas combo (legacy/1559 mix)", () => {
+    const e = captureThrow(() =>
+      validateTxCallFields({ gasPrice: "0x1", maxFeePerGas: "0x2" }),
+    )
+    assert.equal(e.code, -32602)
+    assert.match(e.message ?? "", /both gasPrice and \(maxFeePerGas or maxPriorityFeePerGas\)/i)
+  })
+
+  test("#394: rejects gasPrice + maxPriorityFeePerGas combo", () => {
+    const e = captureThrow(() =>
+      validateTxCallFields({ gasPrice: "0x1", maxPriorityFeePerGas: "0x1" }),
+    )
+    assert.equal(e.code, -32602)
+    assert.match(e.message ?? "", /both gasPrice and/i)
+  })
+
+  test("#394: rejects maxFeePerGas < maxPriorityFeePerGas (tip > total)", () => {
+    const e = captureThrow(() =>
+      validateTxCallFields({ maxFeePerGas: "0x1", maxPriorityFeePerGas: "0x100" }),
+    )
+    assert.equal(e.code, -32602)
+    assert.match(e.message ?? "", /maxPriorityFeePerGas.*>.*maxFeePerGas/i)
+  })
+
+  test("#394: accepts maxFeePerGas >= maxPriorityFeePerGas (sane EIP-1559 tx)", () => {
+    validateTxCallFields({ maxFeePerGas: "0x100", maxPriorityFeePerGas: "0x10" })
+    validateTxCallFields({ maxFeePerGas: "0x10", maxPriorityFeePerGas: "0x10" })
+  })
+
+  test("#394: accepts legacy-only (gasPrice without maxFee)", () => {
+    validateTxCallFields({ gasPrice: "0x3b9aca00" })
+  })
+
+  test("#394: accepts EIP-1559-only (maxFee without gasPrice)", () => {
+    validateTxCallFields({ maxFeePerGas: "0x3b9aca00", maxPriorityFeePerGas: "0x1" })
+  })
+
+  test("#394: empty string EIP-1559 fields don't trigger combo check", () => {
+    // value="" / null are common from ethers serialization for optional fields;
+    // they should be treated as "field absent" for combo validation.
+    validateTxCallFields({ gasPrice: "0x1", maxFeePerGas: "" })
+    validateTxCallFields({ gasPrice: "", maxFeePerGas: "0x1", maxPriorityFeePerGas: "0x1" })
   })
 })
 
