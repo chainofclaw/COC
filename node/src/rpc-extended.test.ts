@@ -920,6 +920,39 @@ test("RPC Extended Methods", async (t) => {
     assert.equal(zeroTag.hash, earliest!.hash)
   })
 
+  await t.test("#384: state-query RPCs at \"earliest\"/\"0x0\" return zero/empty (not 'block not found')", async () => {
+    // Pre-fix: eth_getBlockByNumber("earliest") synthesised a genesis
+    // block (#112) but every state-query RPC threw `-32001 block not
+    // found: earliest` because resolveHistoricalExecutionContext lacked
+    // the parallel synthesis path. ethers/viem/web3.js wallets that
+    // probe genesis state during initialisation (balance check, chainId
+    // smoke test, fork-detection) hit the error and failed to connect.
+    //
+    // Fix mirrors #112: when block 0 is requested but the chain has
+    // no persisted block 0 and height ≥ 1, return the empty default —
+    // zero balance / no code / nonce 0 / zero storage — matching what
+    // geth and anvil return for genesis state queries.
+    const proposed = await chain.proposeNextBlock()
+    assert.ok(proposed, "need at least one real block so height ≥ 1")
+    const sampleAddr = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+    for (const tag of ["earliest", "0x0"]) {
+      const bal = await rpcCall(port, "eth_getBalance", [sampleAddr, tag])
+      assert.equal(bal, "0x0", `eth_getBalance(${tag}) must return 0x0, got ${JSON.stringify(bal)}`)
+      const code = await rpcCall(port, "eth_getCode", [sampleAddr, tag])
+      assert.equal(code, "0x", `eth_getCode(${tag}) must return 0x, got ${JSON.stringify(code)}`)
+      const nonce = await rpcCall(port, "eth_getTransactionCount", [sampleAddr, tag])
+      assert.equal(nonce, "0x0", `eth_getTransactionCount(${tag}) must return 0x0, got ${JSON.stringify(nonce)}`)
+      const storage = await rpcCall(port, "eth_getStorageAt", [sampleAddr, "0x0", tag])
+      assert.equal(storage, `0x${"0".repeat(64)}`, `eth_getStorageAt(${tag}) must return 32-byte zero, got ${JSON.stringify(storage)}`)
+      const callRet = await rpcCall(port, "eth_call", [{ to: sampleAddr, data: "0x" }, tag])
+      assert.equal(callRet, "0x", `eth_call(${tag}) must return 0x (no code), got ${JSON.stringify(callRet)}`)
+    }
+    // Sanity: non-genesis tags still go through the normal path. Use
+    // "latest" — should not throw.
+    const balLatest = await rpcCall(port, "eth_getBalance", [sampleAddr, "latest"])
+    assert.match(String(balLatest), /^0x[0-9a-f]+$/, "eth_getBalance(latest) still works")
+  })
+
   await t.test("#108 part-2: coc_getPeers exposes the public peer list (id + url)", async () => {
     const peers = await rpcCall(port, "coc_getPeers") as Array<{ id: string; url: string }>
     assert.ok(Array.isArray(peers), "must return an array")
