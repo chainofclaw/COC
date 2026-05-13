@@ -339,10 +339,19 @@ export class IpfsMfs {
     // Check if it's a directory
     const dir = this.dirs.get(normalized)
     if (dir) {
+      // kubo's files/stat returns the directory's content-addressed CID,
+      // not an empty string. Reuse flush()'s listing-based CID build so
+      // stat and flush agree on the same hash for the same directory.
+      // CumulativeSize is the sum of immediate-child sizes — a coarse
+      // approximation of kubo's dag-pb cumulative size, but non-zero so
+      // clients can spot the dir has content.
+      const hash = await this.flush(normalized)
+      let cumulativeSize = 0
+      for (const entry of dir.entries.values()) cumulativeSize += entry.size
       return {
-        hash: "",
+        hash,
         size: 0,
-        cumulativeSize: 0,
+        cumulativeSize,
         type: "directory",
         blocks: dir.entries.size,
       }

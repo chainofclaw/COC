@@ -169,6 +169,45 @@ test("MFS: stat returns directory info", async () => {
   }
 })
 
+test("#434: stat on directory returns non-empty CID + cumulativeSize, matches flush()", async () => {
+  // Pre-fix stat() hard-coded hash:"" and cumulativeSize:0 for every directory.
+  // Kubo's files/stat returns the dir's content-addressed CID and a non-zero
+  // cumulative size for non-empty dirs — clients (and our own ls vs stat
+  // consumers) rely on the CID being present to chase the DAG. Pin both fields.
+  const { mfs, cleanup } = await createMfs()
+  try {
+    await mfs.mkdir("/d")
+    await mfs.write("/d/a.txt", new TextEncoder().encode("hello"), { create: true })
+    await mfs.write("/d/b.txt", new TextEncoder().encode("world!"), { create: true })
+
+    const stat = await mfs.stat("/d")
+    assert.strictEqual(stat.type, "directory")
+    assert.ok(stat.hash && stat.hash.length > 0, `directory stat must return a non-empty CID, got ${JSON.stringify(stat)}`)
+    assert.strictEqual(stat.cumulativeSize, 5 + 6, "cumulativeSize must sum immediate-child sizes (5 + 6 = 11)")
+    assert.strictEqual(stat.blocks, 2, "blocks must reflect entry count")
+
+    // stat() and flush() must agree on the same CID for the same dir.
+    const flushed = await mfs.flush("/d")
+    assert.strictEqual(stat.hash, flushed, "stat() and flush() must return the same CID")
+  } finally {
+    cleanup()
+  }
+})
+
+test("#434: stat on empty directory returns non-empty CID + zero cumulativeSize", async () => {
+  const { mfs, cleanup } = await createMfs()
+  try {
+    await mfs.mkdir("/empty")
+    const stat = await mfs.stat("/empty")
+    assert.strictEqual(stat.type, "directory")
+    assert.ok(stat.hash && stat.hash.length > 0, "empty directory must still get a CID (empty-listing CID)")
+    assert.strictEqual(stat.cumulativeSize, 0)
+    assert.strictEqual(stat.blocks, 0)
+  } finally {
+    cleanup()
+  }
+})
+
 test("MFS: flush returns CID", async () => {
   const { mfs, cleanup } = await createMfs()
   try {
