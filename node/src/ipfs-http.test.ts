@@ -1021,6 +1021,57 @@ describe("IpfsHttpServer", () => {
       const expose = String(res.headers["access-control-expose-headers"] ?? "")
       assert.match(expose, /Content-Length/i, "JS must be able to read Content-Length for size discovery")
       assert.match(expose, /Content-Range/i, "JS must be able to read Content-Range for Range request handling")
+  })
+
+  // #326: HEAD /ipfs/<cid> was returning 404 (handler only matched GET).
+  // RFC 7231 §4.3.2 — HEAD is identical to GET except no message body.
+  // Clients use HEAD for cache probes, pre-flight, size discovery; entire
+  // capability was 100% broken.
+  describe("#326 gateway HEAD method", () => {
+    async function addFile(content: Uint8Array): Promise<CidString> {
+      const meta = await unixfs.addFile("head-test.bin", content)
+      return meta.cid
+    }
+
+    it("HEAD /ipfs/<cid> returns 200 with no body when block exists", async () => {
+      const cid = await addFile(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]))
+      const res = await fetch(`/ipfs/${cid}`, { method: "HEAD" })
+      assert.equal(res.status, 200, "HEAD must return 200 when GET would")
+      const body = await res.buffer()
+      assert.equal(body.length, 0, "HEAD must not include message body per RFC 7231")
+      assert.equal(res.headers["content-length"], "10", "Content-Length must reflect resource size")
+    })
+
+    it("HEAD /ipfs/<cid> returns 404 (no body) for missing block", async () => {
+      // Valid CID shape but never stored
+      const ghostCid = "bafybeibwzifw52ttrkqlikfzext5akxu7lz4xiu5pq6gv2bnpyxw2jc35a"
+      const res = await fetch(`/ipfs/${ghostCid}`, { method: "HEAD" })
+      assert.equal(res.status, 404, "HEAD must surface 404 like GET")
+      const body = await res.buffer()
+      assert.equal(body.length, 0, "HEAD 404 must have no body")
+    })
+
+    it("HEAD /ipfs/<cid> returns 400 (no body) for invalid CID", async () => {
+      const res = await fetch("/ipfs/not-a-real-cid!!!", { method: "HEAD" })
+      assert.equal(res.status, 400, "HEAD must validate CID shape")
+      const body = await res.buffer()
+      assert.equal(body.length, 0, "HEAD 400 must have no body")
+    })
+
+    it("GET /ipfs/<cid> still returns body (regression guard)", async () => {
+      const content = new Uint8Array([42, 43, 44])
+      const cid = await addFile(content)
+      const res = await fetch(`/ipfs/${cid}`)
+      assert.equal(res.status, 200)
+      const buf = await res.buffer()
+      assert.deepEqual(new Uint8Array(buf), content, "GET must still return full body")
+    })
+
+    it("HEAD agrees with GET status code on all paths", async () => {
+      const cid = await addFile(new Uint8Array([9, 9, 9]))
+      const getRes = await fetch(`/ipfs/${cid}`)
+      const headRes = await fetch(`/ipfs/${cid}`, { method: "HEAD" })
+      assert.equal(headRes.status, getRes.status, "HEAD and GET must agree on status code (RFC 7231)")
     })
   })
 })
