@@ -2946,6 +2946,20 @@ async function resolveHistoricalExecutionContext(
   // Bare 32-byte hash string (66 chars total): treat as {blockHash}.
   if (typeof input === "string" && /^0x[0-9a-fA-F]{64}$/.test(input)) {
     const blockHash = input.toLowerCase() as Hex
+  })
+
+  if (typeof input === "object" && input !== null && "blockHash" in input) {
+    // #262: pre-fix `String((input).blockHash ?? "")` silently coerced
+    // `{blockHash: [VALID_HASH]}` → unwrapped to the inner string and
+    // routed the call to that historical block (silent array-unwrap);
+    // `{blockHash: 123}` / `true` surfaced as `-32001 "block not found"`
+    // with the malformed value reflected back, hiding that the input
+    // shape was wrong. Same anti-pattern family as #250/#260.
+    const raw = (input as Record<string, unknown>).blockHash
+    if (typeof raw !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(raw)) {
+      invalidParams("invalid blockHash in execution context: must match /^0x[0-9a-fA-F]{64}$/")
+    }
+    const blockHash = (raw as string).toLowerCase() as Hex
     const block = await Promise.resolve(chain.getBlockByHash(blockHash))
     if (!block) {
       throw { code: -32001, message: `block not found: ${blockHash}` }
