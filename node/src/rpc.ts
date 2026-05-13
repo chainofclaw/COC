@@ -1001,7 +1001,10 @@ async function handleRpc(
           invalidParams(`invalid storage key at index ${index}`)
         }
         const normalized = slot.replace(/^0x/, "")
-        if (!/^[0-9a-fA-F]*$/.test(normalized) || normalized.length > 64) {
+        // Match eth_getStorageAt's slot regex (/^0x[0-9a-fA-F]{1,64}$/):
+        // empty "0x" was silently padded to slot 0 pre-fix, masking client
+        // bugs (e.g. ethers.toBeHex(undefined) → "0x"). Require ≥1 hex char.
+        if (normalized.length === 0 || !/^[0-9a-fA-F]+$/.test(normalized) || normalized.length > 64) {
           invalidParams(`invalid storage key at index ${index}`)
         }
         return `0x${normalized.padStart(64, "0")}`
