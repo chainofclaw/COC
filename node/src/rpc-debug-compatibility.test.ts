@@ -1348,4 +1348,75 @@ describe("RPC debug compatibility", () => {
     assert.ok(Array.isArray(decoded.txs))
     assert.equal(decoded.txs.length, 1)
   })
+
+  it("#294: debug_/trace_ tx-hash handlers reject malformed shapes upfront (no String() coercion → -32603 leak)", async () => {
+    // Pre-fix 6 tx-hash-taking debug/trace handlers used
+    //   `const txHash = String((payload.params ?? [])[0] ?? "") as Hex`
+    // which silently coerced numbers/arrays/objects/undefined to
+    // "123"/"x,y"/"[object Object]"/"". Some then threw plain Error
+    // ("transaction not found: <coerced garbage>") which leaked
+    // through the outer -32603 catch with the coerced input echoed back.
+    // Post-fix: requireTxHashParam → -32602 with /^0x[0-9a-fA-F]{64}$/
+    // error, structured -32004 for legitimate-shape-but-not-found.
+    const txHashMethods = [
+      "debug_traceTransaction",
+      "trace_transaction",
+      "trace_replayTransaction",
+      "trace_get",
+      "debug_getRawTransaction",
+    ]
+    const badShapes = [
+      undefined, null, 123, true, false, 1.5, {}, [],
+      "0x", "0x123", "0x" + "g".repeat(64), "not-a-hex",
+    ]
+    for (const method of txHashMethods) {
+      for (const bad of badShapes) {
+        const params = method === "trace_get" ? [bad, []] : [bad]
+        try {
+          await rpc.handleRpcMethod(method, params, CHAIN_ID, evm, engine, p2p)
+          assert.fail(`${method}(${JSON.stringify(bad)}) should have thrown`)
+        } catch (err) {
+          const rpcErr = err as { code?: number; message?: string }
+          assert.equal(rpcErr.code, -32602,
+            `${method}(${JSON.stringify(bad)}) must be -32602, got ${JSON.stringify(err)}`)
+          assert.match(rpcErr.message ?? "", /transaction hash|expected string/i,
+            `${method} error must name the field; got: ${rpcErr.message}`)
+        }
+      }
+    }
+    // Block-tag handlers: same family, but they were already lenient via
+    // resolveBlockNumber/parseBlockTag. The pre-fix String() wrapper let
+    // single-element arrays through (#256 family); dropping it routes
+    // them to parseBlockTag's strict rejection.
+    const blockTagMethods = [
+      "debug_traceBlockByNumber",
+      "trace_replayBlockTransactions",
+      "trace_block",
+    ]
+    const badTags = [{}, true, [123], { foo: "bar" }]
+    for (const method of blockTagMethods) {
+      for (const bad of badTags) {
+        const params = method === "trace_replayBlockTransactions" ? [bad, []] : [bad]
+        try {
+          await rpc.handleRpcMethod(method, params, CHAIN_ID, evm, engine, p2p)
+          assert.fail(`${method}(${JSON.stringify(bad)}) should have thrown`)
+        } catch (err) {
+          const rpcErr = err as { code?: number; message?: string }
+          assert.equal(rpcErr.code, -32602,
+            `${method}(${JSON.stringify(bad)}) must be -32602, got ${JSON.stringify(err)}`)
+        }
+      }
+    }
+    // trace_rawTransaction: strict 0x-hex string.
+    for (const bad of [undefined, null, 123, true, "not-hex", "0xZZ", "0x1"]) {
+      try {
+        await rpc.handleRpcMethod("trace_rawTransaction", [bad, []], CHAIN_ID, evm, engine, p2p)
+        assert.fail(`trace_rawTransaction(${JSON.stringify(bad)}) should have thrown`)
+      } catch (err) {
+        const rpcErr = err as { code?: number; message?: string }
+        assert.equal(rpcErr.code, -32602,
+          `trace_rawTransaction(${JSON.stringify(bad)}) must be -32602, got ${JSON.stringify(err)}`)
+      }
+    }
+  })
 })

@@ -1186,7 +1186,12 @@ async function handleRpc(
     }
     case "debug_traceTransaction": {
       if (!DEBUG_RPC_ENABLED) methodNotFound("debug methods disabled (set COC_DEBUG_RPC=1)")
-      const txHash = String((payload.params ?? [])[0] ?? "") as Hex
+      // #294: pre-fix `String((payload.params)[0] ?? "") as Hex` silently
+      // coerced number/array/object inputs to "123"/"x,y"/"[object Object]"
+      // — none of which match any real tx hash, so the lookup returned
+      // "tx not found" with the coerced garbage leaked back. Same family
+      // as #260/#262.
+      const txHash = requireTxHashParam(payload.params ?? [], 0)
       const traceOpts = ((payload.params ?? [])[1] ?? {}) as Record<string, unknown>
       const traceResult = await traceTransactionResult(txHash, chain, evm, {
         disableStorage: Boolean(traceOpts.disableStorage),
@@ -1198,8 +1203,13 @@ async function handleRpc(
     }
     case "debug_traceBlockByNumber": {
       if (!DEBUG_RPC_ENABLED) methodNotFound("debug methods disabled (set COC_DEBUG_RPC=1)")
-      const blockTag = String((payload.params ?? [])[0] ?? "latest")
-      const traceBlockNum = await resolveBlockNumber(blockTag, chain)
+      // #294: drop the String() coercion wrapper — resolveBlockNumber
+      // (via parseBlockTag) already enforces the spec shape and rejects
+      // arrays/objects/numbers per JSON-RPC #194. Pre-fix `String([42])`
+      // = "42" silently became block 42; `String({})` = "[object Object]"
+      // surfaced as "invalid block number" but with the coerced garbage
+      // leaked into the error message.
+      const traceBlockNum = await resolveBlockNumber((payload.params ?? [])[0], chain)
       const traceOpts2 = ((payload.params ?? [])[1] ?? {}) as Record<string, unknown>
       const traced = await traceBlockTransactions(traceBlockNum, chain, evm, {
         disableStorage: Boolean(traceOpts2.disableStorage),
@@ -1214,10 +1224,14 @@ async function handleRpc(
     }
     case "trace_transaction": {
       if (!DEBUG_RPC_ENABLED) methodNotFound("debug methods disabled (set COC_DEBUG_RPC=1)")
-      const txHash = String((payload.params ?? [])[0] ?? "") as Hex
+      // #294: strict shape + structured -32004 for not-found. Pre-fix
+      // `String(...) as Hex` accepted garbage and the plain Error
+      // (`transaction not found: <coerced input>`) bubbled as -32603
+      // with the input leaked back to the caller.
+      const txHash = requireTxHashParam(payload.params ?? [], 0)
       const txContext = await locateTraceTransactionContext(chain, txHash)
       if (!txContext) {
-        throw new Error(`transaction not found: ${txHash}`)
+        throw { code: -32004, message: `transaction not found: ${txHash}` }
       }
       const result = await traceTransactionResult(txHash, chain, evm)
       return formatLocalizedOpenEthereumCallTraces(result.callTraces, txContext)
@@ -1251,33 +1265,44 @@ async function handleRpc(
     }
     case "trace_replayTransaction": {
       if (!DEBUG_RPC_ENABLED) methodNotFound("debug methods disabled (set COC_DEBUG_RPC=1)")
-      const txHash = String((payload.params ?? [])[0] ?? "") as Hex
+      // #294: strict tx-hash validation (same family as trace_transaction).
+      const txHash = requireTxHashParam(payload.params ?? [], 0)
       const traceTypes = normalizeReplayTraceTypes((payload.params ?? [])[1])
       const result = await traceTransactionResult(txHash, chain, evm)
       return formatTraceReplayResult(result, traceTypes)
     }
     case "trace_replayBlockTransactions": {
       if (!DEBUG_RPC_ENABLED) methodNotFound("debug methods disabled (set COC_DEBUG_RPC=1)")
-      const blockTag = String((payload.params ?? [])[0] ?? "latest")
+      // #294: drop String() coercion wrapper (same as debug_traceBlockByNumber).
       const traceTypes = normalizeReplayTraceTypes((payload.params ?? [])[1])
-      const blockNumber = await resolveBlockNumber(blockTag, chain)
+      const blockNumber = await resolveBlockNumber((payload.params ?? [])[0], chain)
       const results = await traceBlockTransactions(blockNumber, chain, evm)
       return results.map((result) => formatTraceReplayResult(result, traceTypes))
     }
     case "trace_rawTransaction": {
       if (!DEBUG_RPC_ENABLED) methodNotFound("debug methods disabled (set COC_DEBUG_RPC=1)")
-      const rawTx = String((payload.params ?? [])[0] ?? "")
+      // #294: strict 0x-hex string; pre-fix String() let bool/number/array
+      // through and traceRawTxOnState failed downstream with a leaked
+      // V8 / ethers error.
+      const rawTxParam = (payload.params ?? [])[0]
+      if (typeof rawTxParam !== "string" || rawTxParam.length === 0) {
+        invalidParams("invalid raw transaction: expected non-empty 0x-prefixed hex string")
+      }
+      if (!/^0x[0-9a-fA-F]+$/.test(rawTxParam) || rawTxParam.length % 2 !== 0) {
+        invalidParams("invalid raw transaction: must be even-length 0x-prefixed hex")
+      }
+      const rawTx = rawTxParam
       const traceTypes = normalizeReplayTraceTypes((payload.params ?? [])[1])
       const result = await evm.traceRawTxOnState(rawTx)
       return formatTraceReplayResult(result, traceTypes)
     }
     case "trace_block": {
       if (!DEBUG_RPC_ENABLED) methodNotFound("debug methods disabled (set COC_DEBUG_RPC=1)")
-      const blockTag = String((payload.params ?? [])[0] ?? "latest")
-      const blockNumber = await resolveBlockNumber(blockTag, chain)
+      // #294: drop String() coercion; structured -32004 for not-found.
+      const blockNumber = await resolveBlockNumber((payload.params ?? [])[0], chain)
       const block = await Promise.resolve(chain.getBlockByNumber(blockNumber))
       if (!block) {
-        throw new Error(`block not found: ${blockTag}`)
+        throw { code: -32004, message: `block not found: ${blockNumber}` }
       }
       const traces = await traceBlockTransactions(blockNumber, chain, evm)
       return traces.flatMap((traceResult, txIndex) =>
@@ -1296,11 +1321,12 @@ async function handleRpc(
     }
     case "trace_get": {
       if (!DEBUG_RPC_ENABLED) methodNotFound("debug methods disabled (set COC_DEBUG_RPC=1)")
-      const txHash = String((payload.params ?? [])[0] ?? "") as Hex
+      // #294: strict tx-hash validation + structured -32004 for not-found.
+      const txHash = requireTxHashParam(payload.params ?? [], 0)
       const traceAddress = normalizeTraceAddressPath((payload.params ?? [])[1])
       const txContext = await locateTraceTransactionContext(chain, txHash)
       if (!txContext) {
-        throw new Error(`transaction not found: ${txHash}`)
+        throw { code: -32004, message: `transaction not found: ${txHash}` }
       }
       const result = await traceTransactionResult(txHash, chain, evm)
       const matched = result.callTraces.find((callTrace) =>
@@ -1320,7 +1346,8 @@ async function handleRpc(
       }
     case "debug_getRawTransaction": {
       if (!DEBUG_RPC_ENABLED) methodNotFound("debug methods disabled (set COC_DEBUG_RPC=1)")
-      const rawTxHash = String((payload.params ?? [])[0] ?? "") as Hex
+      // #294: strict tx-hash validation (same family as debug_traceTransaction).
+      const rawTxHash = requireTxHashParam(payload.params ?? [], 0)
       // Find block containing the transaction
       if (typeof chain.getTransactionByHash === "function") {
         const txRecord = await chain.getTransactionByHash(rawTxHash)
