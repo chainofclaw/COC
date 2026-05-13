@@ -2300,6 +2300,72 @@ test("RPC Extended Methods", async (t) => {
       `inner topics=1 must pass shape, got ${JSON.stringify(r1)}`)
   })
 
+  })
+
+  await t.test("#286: eth_call / eth_estimateGas surface revert as -32000 (geth-compatible error code 3, no silent 0x return)", async () => {
+    // Pre-fix bug: evm.callRaw's declared return type omitted `failed`
+    // (even though runCall populated it), so the eth_call handler
+    // returned `returnValue` regardless of revert state. Reverted calls
+    // were indistinguishable from view functions returning empty bytes —
+    // ethers.js / viem / foundry cast all rely on error.code===3 to
+    // surface revert reasons. Live PoC on 88780: eth_call with selector
+    // 0xdeadbeef on a real contract returned result:"0x" instead of a
+    // -32000 error.
+    //
+    // The reliable way to trigger a revert from this test fixture is to
+    // stub evm.callRaw to return failed:true with a canonical
+    // Error(string) revert payload. We then verify the rpc dispatcher:
+    //   (a) emits code 3 (not 0x success), and
+    //   (b) decodes the Error(string) payload into the message, and
+    //   (c) preserves the raw payload as `data` for client decoding.
+    const validAddr = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+    const origCallRaw = evm.callRaw.bind(evm)
+    // Canonical Error(string) revert: selector 0x08c379a0 + ABI(string "Hard!"),
+    // 0x20 offset, length 5, then "Hard!" right-padded to 32 bytes.
+    const revertPayload =
+      "0x08c379a0" +
+      "0000000000000000000000000000000000000000000000000000000000000020" +
+      "0000000000000000000000000000000000000000000000000000000000000005" +
+      "4861726421000000000000000000000000000000000000000000000000000000"
+    ;(evm as unknown as { callRaw: unknown }).callRaw = async () => ({
+      returnValue: revertPayload,
+      gasUsed: 21_000n,
+      failed: true,
+    })
+    try {
+      const probe = async (method: string) => {
+        const r = await fetch(`http://127.0.0.1:${port}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0", id: 1, method,
+            params: [{ to: validAddr, data: "0xdeadbeef" }, "latest"],
+          }),
+        })
+        return await r.json() as { result?: unknown; error?: { code: number; message: string; data?: string } }
+      }
+      // eth_call must emit code 3 with decoded reason.
+      const callRes = await probe("eth_call")
+      assert.equal(callRes.error?.code, 3,
+        `eth_call revert must be code 3, got ${JSON.stringify(callRes)}`)
+      assert.match(callRes.error!.message, /execution reverted: Hard!/,
+        "message must include decoded Error(string) reason 'Hard!'")
+      assert.equal(callRes.error!.data, revertPayload,
+        "data field must echo the raw revert payload so clients can ABI-decode it themselves")
+      assert.equal(callRes.result, undefined, "must NOT return a success result")
+      // eth_estimateGas must mirror — pre-fix it returned a gas estimate
+      // for the failed path, leading clients to broadcast txs that are
+      // guaranteed to revert on-chain.
+      const estRes = await probe("eth_estimateGas")
+      assert.equal(estRes.error?.code, 3,
+        `eth_estimateGas revert must be code 3, got ${JSON.stringify(estRes)}`)
+      assert.match(estRes.error!.message, /execution reverted: Hard!/)
+      assert.equal(estRes.result, undefined, "must NOT return a gas estimate for a reverting call")
+    } finally {
+      ;(evm as unknown as { callRaw: typeof origCallRaw }).callRaw = origCallRaw
+    }
+  })
+
   if (prevDevAccounts === undefined) {
     delete process.env.COC_DEV_ACCOUNTS
   } else {

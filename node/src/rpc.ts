@@ -5,6 +5,7 @@ import { SigningKey, keccak256, hashMessage, Transaction, TypedDataEncoder, getC
 import type { IChainEngine } from "./chain-engine-types.ts"
 import { hasGovernance, hasConfig, hasBlockIndex } from "./chain-engine-types.ts"
 import type { EvmChain, ExecutionContext } from "./evm.ts"
+import { decodeRevertReason } from "./evm.ts"
 import type { Hex, PendingFilter } from "./blockchain-types.ts"
 import type { P2PNode } from "./p2p.ts"
 import type { PoSeEngine } from "./pose-engine.ts"
@@ -664,7 +665,7 @@ async function handleOne(
     if (isNotification) return null
     // Support structured RPC errors (e.g. { code, message } from param validation)
     if (error && typeof error === "object" && "code" in error && "message" in error) {
-      const rpcErr = error as { code: unknown; message: unknown }
+      const rpcErr = error as { code: unknown; message: unknown; data?: unknown }
       // JSON-RPC 2.0 §5.1 requires error.code to be a number. Our internal
       // handlers throw { code: -32xxx, ... } objects (legitimate), but
       // downstream libraries like ethers throw errors with string codes
@@ -674,7 +675,21 @@ async function handleOne(
       const numericCode =
         typeof rpcErr.code === "number" && Number.isInteger(rpcErr.code) ? rpcErr.code : -32603
       const message = typeof rpcErr.message === "string" ? rpcErr.message : "internal error"
-      return { jsonrpc: "2.0", id: payload.id ?? null, error: { code: numericCode, message } }
+      // #286: JSON-RPC 2.0 §5.1 allows an optional `data` field for
+      // additional error info. eth_call's "execution reverted" error
+      // returns the raw revert payload as `data` so ethers.js / viem /
+      // foundry cast can ABI-decode it client-side. Preserve `data` when
+      // present and structured (string, number, boolean, plain object, or
+      // array) — drop hostile shapes like functions / symbols which would
+      // break JSON serialization.
+      const errOut: { code: number; message: string; data?: unknown } = { code: numericCode, message }
+      if (rpcErr.data !== undefined) {
+        const dt = typeof rpcErr.data
+        if (dt === "string" || dt === "number" || dt === "boolean" || (rpcErr.data !== null && (dt === "object"))) {
+          errOut.data = rpcErr.data
+        }
+      }
+      return { jsonrpc: "2.0", id: payload.id ?? null, error: errOut }
     }
     return { jsonrpc: "2.0", id: payload.id ?? null, error: { code: -32603, message: error instanceof Error ? error.message : "internal error" } }
   }
@@ -851,6 +866,23 @@ async function handleRpc(
       // Default gas cap to block gas limit (30M) to prevent DoS via unbounded execution
       const gasForEstimate = estParams.gas ?? "0x1c9c380"
       const executionContext = await resolveHistoricalExecutionContext((payload.params ?? [])[1], chain)
+      // #286: pre-fix eth_estimateGas (which delegates to callRaw under the
+      // hood) ignored the underlying call's `failed` flag and returned a
+      // gas estimate even when execution reverted — clients would then
+      // submit a tx that's guaranteed to revert because the estimate was
+      // for a non-revert path that never existed. Probe the call first
+      // and surface the revert as -32000 "execution reverted" matching
+      // geth's JSON-RPC contract.
+      const estProbe = await evm.callRaw({
+        from: estParams.from,
+        to: estParams.to ?? "",
+        data: estParams.data,
+        value: estParams.value,
+        gas: gasForEstimate,
+      }, executionContext.stateRoot, executionContext)
+      if (estProbe.failed) {
+        throwExecutionReverted(estProbe.returnValue)
+      }
       const estimated = await evm.estimateGas({
         from: estParams.from,
         to: estParams.to ?? "",
@@ -893,6 +925,17 @@ async function handleRpc(
         value: callParams.value,
         gas: callParams.gas,
       }, executionContext.stateRoot, executionContext)
+      // #286: pre-fix eth_call returned `returnValue` regardless of
+      // `failed`, so reverted calls were indistinguishable from view
+      // functions returning empty bytes / false. Geth's JSON-RPC contract
+      // requires -32000 "execution reverted" with the revert payload as
+      // `data`; ethers.js / viem / foundry's `cast call` all rely on this
+      // error shape to surface revert reasons to users. The 88780 testnet
+      // returned 200 OK with result:"0x" for any contract call with an
+      // unknown selector before this fix.
+      if (callResult.failed) {
+        throwExecutionReverted(callResult.returnValue)
+      }
       return callResult.returnValue
     }
     case "eth_getStorageAt": {
@@ -2748,6 +2791,18 @@ async function handleRpc(
 }
 
 // safeBigInt + parseBlockTag — extracted to ./rpc-validators.ts (PR-1Q, 2026-05-12).
+
+// #286: emit a geth-compatible "execution reverted" error. Code 3 matches
+// geth's eth/JSON-RPC error.go ReturnTypeError; clients (ethers.js, viem,
+// foundry cast) detect reverts on `error.code === 3` and decode the
+// payload from `error.data`. Decoded reason is appended to the message
+// when available (`Error(string)` → "execution reverted: <reason>";
+// `Panic(uint)` → "execution reverted: Panic(N)").
+function throwExecutionReverted(returnValue: string): never {
+  const reason = decodeRevertReason(returnValue)
+  const message = reason ? `execution reverted: ${reason}` : "execution reverted"
+  throw { code: 3, message, data: returnValue || "0x" }
+}
 
 async function resolveBlockNumber(input: unknown, chain: IChainEngine): Promise<bigint> {
   const height = await Promise.resolve(chain.getHeight())
