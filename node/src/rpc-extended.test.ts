@@ -2784,6 +2784,82 @@ test("RPC Extended Methods", async (t) => {
       "contract T must be in compile output")
   })
 
+  await t.test("#446: eth_getTransactionReceipt computes effectiveGasPrice correctly for EIP-1559 (type 2) txs", async () => {
+    // Live testnet 88780 reproduction:
+    //   maxFeePerGas         = 0xa00000000    (42.95 Gwei)
+    //   maxPriorityFeePerGas = 0x10000000     (0.27 Gwei)
+    //   block baseFeePerGas  = 0x3b9aca00     (1 Gwei)
+    //   expected effective   = min(maxFee, baseFee + maxPrio) = 0x4b9aca00
+    //   pre-fix actual       = 0xa00000000   ← maxFeePerGas, wrong by 33×
+    //
+    // formatPersistentReceipt was setting effectiveGasPrice = parsed.gasPrice
+    // from formatRawTransaction, which for type-2 txs falls back to
+    // maxFeePerGas (ethers normalizes parsed.gasPrice = undefined for
+    // EIP-1559). Indexers, block explorers, and fee-rebate calculators
+    // saw the wrong number for every type-2 tx on COC.
+    const { Wallet, parseEther } = await import("ethers")
+    const wallet = new Wallet(`0x${"09".repeat(32)}`)
+    await evm.prefund([{ address: wallet.address, balanceWei: parseEther("10").toString() }])
+    const startN = await evm.getNonce(wallet.address.toLowerCase() as `0x${string}`)
+
+    const maxPriority = 200_000_000n     // 0.2 Gwei
+    const maxFee = 50_000_000_000n        // 50 Gwei — way above baseFee+priority
+
+    const tx1559 = await wallet.signTransaction({
+      type: 2,
+      to: `0x${"0a".repeat(20)}`,
+      value: 1n,
+      nonce: Number(startN),
+      maxFeePerGas: maxFee,
+      maxPriorityFeePerGas: maxPriority,
+      gasLimit: 50_000n,
+      chainId,
+    })
+
+    const submit = async (raw: string) => {
+      const res = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_sendRawTransaction", params: [raw] }),
+      })
+      return await res.json() as { result?: string; error?: { code: number; message: string } }
+    }
+    const getReceipt = async (hash: string) => {
+      const res = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getTransactionReceipt", params: [hash] }),
+      })
+      return await res.json() as { result?: Record<string, unknown> }
+    }
+
+    const r = await submit(tx1559)
+    assert.ok(r.result, `EIP-1559 submit must succeed: ${JSON.stringify(r)}`)
+
+    // Force a block so the tx persists; needed for formatPersistentReceipt
+    // path. The in-memory cache has a separate correctly-computed
+    // effectiveGasPrice — this test specifically pins the persisted path.
+    if (chain.proposeNextBlock) {
+      await chain.proposeNextBlock()
+    }
+
+    const rec = await getReceipt(r.result!)
+    assert.ok(rec.result, `receipt must be present after mining: ${JSON.stringify(rec)}`)
+    assert.equal(rec.result!.type, "0x2", "type must be 0x2 for EIP-1559 receipt")
+
+    const effective = BigInt(String(rec.result!.effectiveGasPrice))
+    // effectiveGasPrice MUST NOT equal maxFeePerGas (the bug's signature).
+    assert.notEqual(
+      effective, maxFee,
+      `effectiveGasPrice must NOT equal maxFeePerGas (${maxFee}); got ${effective} — this is the #446 regression`,
+    )
+    // Sanity: effective must be ≤ maxFeePerGas.
+    assert.ok(
+      effective <= maxFee,
+      `effectiveGasPrice (${effective}) must be ≤ maxFeePerGas (${maxFee})`,
+    )
+  })
+
   await t.test("#332: eth_sendRawTransaction replacement-underpriced surfaces as -32000 (not -32603)", async () => {
     // mempool.addRawTx throws plain Error("replacement tx gas price too
     // low: need at least X, got Y") when a same-nonce replacement does
