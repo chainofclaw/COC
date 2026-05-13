@@ -473,7 +473,15 @@ export class P2PNode {
     if (this.server) return
     this.startedAtMs = Date.now()
     const server = http.createServer(async (req, res) => {
-      if (req.method === "GET" && req.url === "/health") {
+      // #414: HEAD must mirror GET on read-only endpoints. Pre-fix the
+      // bare GET method gate let HEAD probes (Prometheus, k8s
+      // livenessProbe httpHeaders HEAD) fall through to other branches
+      // and finally the 405 catch-all. Sibling of #410 / #376 / #382.
+      // Node auto-suppresses the body for HEAD when Content-Length is
+      // set, so the same handler serves both verbs unchanged. Only the
+      // /health endpoint widens here — the other P2P GET routes need
+      // request-body or signed-challenge inputs that HEAD never sends.
+      if ((req.method === "GET" || req.method === "HEAD") && req.url === "/health") {
         res.writeHead(200, { "content-type": "application/json" })
         res.end(serializeJson({ ok: true, ts: Date.now() }))
         return
