@@ -56,6 +56,13 @@ const log = createLogger("rpc")
 const sendTxLocks = new Map<string, Promise<unknown>>()
 
 const MAX_FILTERS = 1000
+// #264: cap eth_getProof storage keys to bound per-request CPU + bandwidth.
+// Pre-fix N=10000 keys held the server for ~2.5 min and emitted a 2.4 MB
+// response from a single rate-limit hit; an attacker could fully take the
+// RPC offline with ~5 concurrent requests. 256 fits typical indexer
+// workloads (a contract with hundreds of mapped storage slots) and keeps
+// p99 latency < ~2 s on a fresh chain.
+const MAX_PROOF_KEYS = 256
 export const FILTER_TTL_MS = 5 * 60 * 1000 // 5 minutes
 const CHAIN_STATS_CACHE_TTL_MS = 5_000
 let chainStatsCache: { result: unknown; height: bigint; cachedAtMs: number } | null = null
@@ -911,6 +918,15 @@ async function handleRpc(
       const rawSlots = (payload.params ?? [])[1]
       if (!Array.isArray(rawSlots)) {
         invalidParams("invalid storage keys: expected array")
+      }
+      // #264: cap storage keys to prevent single-request DoS. Pre-fix
+      // an unbounded array let one request hold the server hostage for
+      // ~2.5 min (N=10000 keys → 153 s blocking + 2.4 MB response).
+      // Geth caps at MaxBytes=524288 + per-request budgets; we cap at
+      // a generous-but-bounded MAX_PROOF_KEYS slots which fits indexer
+      // workloads while keeping p99 latency under ~2 s.
+      if (rawSlots.length > MAX_PROOF_KEYS) {
+        invalidParams(`storage keys array too large: ${rawSlots.length} > ${MAX_PROOF_KEYS}`)
       }
       const proofSlots = rawSlots.map((slot, index) => {
         if (typeof slot !== "string" || !slot.startsWith("0x")) {
