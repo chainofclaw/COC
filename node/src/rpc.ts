@@ -2665,10 +2665,16 @@ async function handleRpc(
       }
     }
     case "coc_getRewardManifest": {
+      // #252: reject non-integer epochId (was: Number(true)→1, Number([1])→1, Number("1")→1)
+      // #424: validate BEFORE short-circuiting on missing rewardManifestDir.
+      // Pre-fix the dir check ran first, so on any node where the manifest
+      // dir wasn't configured (every read-only fullnode on testnet 88780)
+      // garbage epochId (`"1"`, `true`, `[1]`) silently returned `null` —
+      // indistinguishable from "valid id, no manifest". Validation belongs
+      // at the boundary, regardless of backend configuration.
+      const epochId = requireIntegerParam(payload.params ?? [], 0, "epochId")
       const rewardManifestDir = typeof opts?.rewardManifestDir === "string" ? opts.rewardManifestDir : ""
       if (!rewardManifestDir) return null
-      // #252: reject non-integer epochId (was: Number(true)→1, Number([1])→1, Number("1")→1)
-      const epochId = requireIntegerParam(payload.params ?? [], 0, "epochId")
       const manifest = readBestRewardManifest(rewardManifestDir, epochId)
       if (!manifest) return null
       return {
@@ -2684,14 +2690,17 @@ async function handleRpc(
       }
     }
     case "coc_getRewardClaim": {
-      const rewardManifestDir = typeof opts?.rewardManifestDir === "string" ? opts.rewardManifestDir : ""
-      if (!rewardManifestDir) return null
       // #252: reject non-integer epochId and non-string nodeId
+      // #424: same as coc_getRewardManifest — validate at the boundary
+      // before checking backend configuration so garbage input never
+      // returns silent `null`.
       const epochId = requireIntegerParam(payload.params ?? [], 0, "epochId")
       const nodeId = requireStringParam(payload.params ?? [], 1, "nodeId")
       if (!/^0x[0-9a-fA-F]+$/.test(nodeId)) {
         invalidParams("invalid nodeId")
       }
+      const rewardManifestDir = typeof opts?.rewardManifestDir === "string" ? opts.rewardManifestDir : ""
+      if (!rewardManifestDir) return null
       const manifest = readBestRewardManifest(rewardManifestDir, epochId)
       if (!manifest) return null
       return lookupRewardClaim(manifest, nodeId)
