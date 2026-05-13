@@ -161,6 +161,45 @@ describe("IpfsHttpServer", () => {
     assert.equal(res.status, 400)
   })
 
+  it("#370: /api/v0/cat accepts arg=/ipfs/<cid> path form (kubo default)", async () => {
+    // kubo CLI and js-ipfs default to the `/ipfs/<cid>` path form for
+    // the `arg` parameter. Pre-fix our `isValidCid` rejected any string
+    // containing `/`, so every kubo-default call surfaced as 400
+    // "invalid cid" — silently breaking official-client interop.
+    const data = new TextEncoder().encode("hello-prefix")
+    const meta = await unixfs.addFile("p.txt", data)
+    const cid = meta.cid
+
+    // Both path forms must produce the same bytes as the bare-CID form.
+    const r1 = await fetch(`/api/v0/cat?arg=${cid}`)
+    assert.equal(r1.status, 200)
+    const buf1 = await r1.buffer()
+    assert.deepEqual(new Uint8Array(buf1), data, "bare CID baseline")
+
+    const r2 = await fetch(`/api/v0/cat?arg=${encodeURIComponent("/ipfs/" + cid)}`)
+    assert.equal(r2.status, 200, "/ipfs/<cid> path form must succeed")
+    const buf2 = await r2.buffer()
+    assert.deepEqual(new Uint8Array(buf2), data)
+
+    // Same prefix works for /api/v0/get + /api/v0/block/get + /api/v0/pin/ls
+    // since the strip happens at the dispatcher boundary, not per-route.
+    await store.pin(cid)
+    const r3 = await fetch(`/api/v0/pin/ls?arg=${encodeURIComponent("/ipfs/" + cid)}`)
+    assert.equal(r3.status, 200, "/ipfs/<cid> on pin/ls must succeed")
+    const pinBody = await r3.json() as { Keys: Record<string, { Type: string }> }
+    assert.ok(pinBody.Keys[cid], "pin should be returned")
+
+    // Variant: "ipfs/<cid>" without leading slash (permissive).
+    const r4 = await fetch(`/api/v0/cat?arg=${encodeURIComponent("ipfs/" + cid)}`)
+    assert.equal(r4.status, 200, "ipfs/<cid> without leading / must succeed")
+
+    // /ipns/<key> is NOT supported and the prefix must NOT be stripped —
+    // a plain CID lookup would silently succeed if we stripped /ipns/
+    // and the remaining text happened to look like a CID. Force 400.
+    const r5 = await fetch(`/api/v0/cat?arg=${encodeURIComponent("/ipns/some-name")}`)
+    assert.equal(r5.status, 400, "/ipns/<key> must still 400 (not supported)")
+  })
+
   it("POST /api/v0/block/put and GET /api/v0/block/get round-trip", async () => {
     const data = new TextEncoder().encode("raw block data")
     const putRes = await fetch("/api/v0/block/put", {
