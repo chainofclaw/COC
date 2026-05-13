@@ -1,8 +1,11 @@
 import { JsonRpcProvider } from 'ethers'
 
+// Default COC R3.2 testnet (88780). 18780 was decommissioned 2026-05-12.
+export const CHAIN_ID = Number(process.env.NEXT_PUBLIC_CHAIN_ID || '88780')
+
 // Public RPC endpoints (for client-side and display)
-export const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL || 'http://127.0.0.1:18780'
-export const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://127.0.0.1:18781'
+export const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL || 'http://127.0.0.1:28780'
+export const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://127.0.0.1:28790'
 
 // Server-side RPC endpoint (for SSR and server operations)
 // Falls back to RPC_URL so both code paths always hit the same node.
@@ -13,10 +16,9 @@ export function getEffectiveRpcUrl(): string {
   return typeof window === 'undefined' ? SERVER_RPC_URL : RPC_URL
 }
 
-// 创建 ethers.js Provider - 使用服务器端地址进行 SSR 调用
 export const provider = new JsonRpcProvider(SERVER_RPC_URL, {
-  chainId: 18780, // COC chainId
-  name: 'ChainOfClaw'
+  chainId: CHAIN_ID,
+  name: 'ChainOfClaw',
 })
 
 // 格式化工具函数

@@ -267,14 +267,41 @@ export function startRpcServer(
   const poseRoutes = pose ? registerPoseRoutes(pose) : []
 
   const server = http.createServer(async (req, res) => {
-    // CORS headers (restrict origin via COC_CORS_ORIGIN env, default localhost)
-    const allowedOrigin = process.env.COC_CORS_ORIGIN ?? "http://localhost:3000"
+    // #330: CORS supports comma-separated COC_CORS_ORIGIN whitelist + "*"
+    // wildcard + per-request Origin echo. Pre-fix the env was treated as a
+    // single value and defaulted to "http://localhost:3000" — every prod
+    // deployment that forgot to set the env hardcoded this single dev
+    // origin, blocking all other browser clients. Spec-compliant pattern:
+    // when whitelist matches request Origin, echo it back + add Vary: Origin
+    // so intermediate caches don't serve the wrong origin.
+    const corsConfig = process.env.COC_CORS_ORIGIN ?? "http://localhost:3000"
+    const reqOrigin = typeof req.headers.origin === "string" ? req.headers.origin : null
+    let allowedOrigin: string
+    if (corsConfig === "*") {
+      allowedOrigin = "*"
+    } else {
+      const whitelist = corsConfig.split(",").map((s) => s.trim()).filter(Boolean)
+      if (reqOrigin && whitelist.includes(reqOrigin)) {
+        allowedOrigin = reqOrigin
+      } else {
+        // Fall back to the first whitelist entry so existing single-origin
+        // dev setups keep working unchanged (back-compat).
+        allowedOrigin = whitelist[0] ?? "http://localhost:3000"
+      }
+    }
     res.setHeader("Access-Control-Allow-Origin", allowedOrigin)
+    if (allowedOrigin !== "*") {
+      // Tell shared caches the response varies by the request Origin —
+      // otherwise the cache may serve the ACAO for origin A to origin B.
+      res.setHeader("Vary", "Origin")
+    }
     res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS")
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
     if (req.method === "OPTIONS") {
-      res.writeHead(200)
+      // #330: 204 No Content matches RFC + Fetch spec for preflight; 200
+      // was tolerated by browsers but 204 is the canonical preflight code.
+      res.writeHead(204)
       res.end()
       return
     }
