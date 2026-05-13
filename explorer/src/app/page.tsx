@@ -11,6 +11,8 @@ interface ChainStatsRpc {
   latestBlockTime: number
   blocksPerMinute: number
   pendingTxCount: number
+  queuedTxCount?: number
+  mempoolSize?: number
   recentTxCount: number
   validatorCount: number
   chainId: string
@@ -55,6 +57,10 @@ async function getChainStats() {
     recentTxCount: chainStats?.recentTxCount ?? 0,
     blocksPerMinute: chainStats?.blocksPerMinute ?? 0,
     pendingTxCount: chainStats?.pendingTxCount ?? 0,
+    // #479: queuedTxCount + mempoolSize are new fields. Default to 0 when
+    // the node hasn't been upgraded yet — old nodes only sent pendingTxCount.
+    queuedTxCount: chainStats?.queuedTxCount ?? 0,
+    mempoolSize: chainStats?.mempoolSize ?? chainStats?.pendingTxCount ?? 0,
     validatorCount: chainStats?.validatorCount ?? 0,
   }
 }
@@ -84,7 +90,11 @@ export default async function HomePage() {
         />
         <StatCard label="Peers" value={stats.peerCount.toString()} />
         <StatCard label="Gas Price" value={`${(stats.gasPrice / 1e9).toFixed(0)} Gwei`} />
-        <StatCard label="Pending Txs" value={stats.pendingTxCount.toString()} />
+        <StatCard
+          label="Pending Txs"
+          value={stats.pendingTxCount.toString()}
+          sub={stats.queuedTxCount > 0 ? `+${stats.queuedTxCount} queued` : undefined}
+        />
         <StatCard
           label="Recent Txs"
           value={stats.recentTxCount.toLocaleString()}
