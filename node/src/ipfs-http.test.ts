@@ -635,6 +635,34 @@ describe("IpfsHttpServer", () => {
     }
   })
 
+  it("#268: /api/v0/files/* path-too-deep returns 400 (not 500 'internal error')", async () => {
+    // Pre-fix the route-level catch had `/^max mfs depth/i` regex but the
+    // actual messages thrown were "path too deep (max 64 components): ..."
+    // and "directory nesting too deep (max 64): ...". Neither matched, so
+    // deep paths fell through to 500 with `log.error("MFS route failed")` —
+    // every probe spammed an ERROR log. Same regex-mismatch family as #232.
+    const { IpfsMfs } = await import("./ipfs-mfs.ts")
+    const mfs = new IpfsMfs(store, unixfs)
+    server.attachSubsystems({ mfs })
+    // Build path with > MAX_MFS_DEPTH (64) components
+    const deepPath = "/" + Array.from({ length: 100 }, () => "a").join("/")
+    const probes = [
+      `/api/v0/files/ls?arg=${encodeURIComponent(deepPath)}`,
+      `/api/v0/files/stat?arg=${encodeURIComponent(deepPath)}`,
+      `/api/v0/files/mkdir?arg=${encodeURIComponent(deepPath)}`,
+      `/api/v0/files/rm?arg=${encodeURIComponent(deepPath)}`,
+    ]
+    for (const path of probes) {
+      const res = await fetch(path, { method: "POST" })
+      assert.equal(res.status, 400, `${path}: must be 400, got ${res.status}`)
+      const body = await res.json() as { error?: string; message?: string }
+      assert.notEqual(body.error, "internal error",
+        `${path}: must not leak 'internal error', got ${JSON.stringify(body)}`)
+      assert.match(`${body.error} ${body.message ?? ""}`, /too deep|bad request/i,
+        `${path}: error must reference depth, got ${JSON.stringify(body)}`)
+    }
+  })
+
   it("#236: /api/v0/files/cp + /files/mv read second ?arg= for destination (kubo compat)", async () => {
     // Pre-fix the handlers read `?dest=<path>` but kubo HTTP RPC sends
     // dest as a second `?arg=` value. Result: every kubo-CLI / ipfs-http-
