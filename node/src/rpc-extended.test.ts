@@ -1053,6 +1053,63 @@ test("RPC Extended Methods", async (t) => {
     assert.equal(zeroTag.hash, earliest!.hash)
   })
 
+  await t.test("#452: synthesised genesis block matches non-genesis block shape (Cancun fields + empty-trie roots)", async () => {
+    // Pre-fix:
+    //   - transactionsRoot / receiptsRoot were ZERO_HASH instead of the
+    //     canonical empty-trie root (rlp(empty) keccak). Geth/erigon use
+    //     EMPTY_TRIE_ROOT for empty blocks; some validity checkers reject
+    //     zero roots, and shape diff vs block 1 broke ethers' block parser.
+    //   - withdrawals / withdrawalsRoot / blobGasUsed / excessBlobGas /
+    //     parentBeaconBlockRoot were missing entirely; every post-Cancun
+    //     block on the chain has them. Shape bifurcation broke clients.
+    //   - `uncles` was emitted only on genesis; non-genesis blocks omit it.
+    //   - `finalized` was missing; genesis is by definition finalized.
+    const proposed = await chain.proposeNextBlock()
+    assert.ok(proposed, "need at least one real block")
+    const genesis = await rpcCall(port, "eth_getBlockByNumber", ["earliest", false]) as Record<string, unknown>
+    const block1 = await rpcCall(port, "eth_getBlockByNumber", ["0x1", false]) as Record<string, unknown>
+
+    // 1. Empty-trie roots, not zero hash.
+    const EMPTY_TRIE_ROOT = "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421"
+    assert.equal(
+      genesis.transactionsRoot, EMPTY_TRIE_ROOT,
+      "genesis transactionsRoot must be EMPTY_TRIE_ROOT (not zero hash) — required for spec-strict validators",
+    )
+    assert.equal(
+      genesis.receiptsRoot, EMPTY_TRIE_ROOT,
+      "genesis receiptsRoot must be EMPTY_TRIE_ROOT",
+    )
+
+    // 2. Cancun post-fork fields must be present on genesis (so the
+    // response shape matches block 1+ — bifurcation breaks block parsers).
+    assert.equal(genesis.blobGasUsed, "0x0", "genesis.blobGasUsed must be present (matches Cancun blocks)")
+    assert.equal(genesis.excessBlobGas, "0x0", "genesis.excessBlobGas must be present")
+    assert.deepEqual(genesis.withdrawals, [], "genesis.withdrawals must be present (empty)")
+    assert.equal(
+      genesis.withdrawalsRoot, EMPTY_TRIE_ROOT,
+      "genesis.withdrawalsRoot must be present (empty trie root)",
+    )
+    assert.equal(
+      genesis.parentBeaconBlockRoot, "0x" + "0".repeat(64),
+      "genesis.parentBeaconBlockRoot must be present (zero hash)",
+    )
+    assert.equal(genesis.finalized, true, "genesis must be finalized=true (it's the oldest block)")
+
+    // 3. Field-set parity with non-genesis (no `uncles` only on genesis).
+    assert.ok(!("uncles" in genesis), "uncles must NOT be on genesis (chain is post-PoW)")
+    assert.ok(!("uncles" in block1), "uncles must NOT be on non-genesis either (consistency)")
+
+    // 4. Genesis must declare every field block 1 does. Difference set must
+    // be empty modulo totalDifficulty (some chains omit it on later blocks).
+    const block1Keys = new Set(Object.keys(block1))
+    const genesisKeys = new Set(Object.keys(genesis))
+    const missingFromGenesis = [...block1Keys].filter((k) => !genesisKeys.has(k))
+    assert.deepEqual(
+      missingFromGenesis, [],
+      `genesis missing keys present in block 1: ${missingFromGenesis.join(", ")} (shape bifurcation)`,
+    )
+  })
+
   await t.test("#108 part-2: coc_getPeers exposes the public peer list (id + url)", async () => {
     const peers = await rpcCall(port, "coc_getPeers") as Array<{ id: string; url: string }>
     assert.ok(Array.isArray(peers), "must return an array")
