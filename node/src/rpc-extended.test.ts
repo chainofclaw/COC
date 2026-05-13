@@ -3317,6 +3317,95 @@ test("RPC Extended Methods", async (t) => {
     if (receipt.to && got.to) {
       assert.equal(receipt.to, got.to, "receipt.to must equal tx.to byte-for-byte")
     }
+
+  await t.test("#454: receipt logIndex is block-global (running count across all prior txs in block)", async () => {
+    // Per Ethereum spec: "logIndex: log index position in the BLOCK".
+    // Pre-fix every tx's logs restarted logIndex at 0, so a block with
+    // 2 txs each emitting 1 log reported [0, 0] instead of geth-spec
+    // [0, 1]. Indexers / subgraphs keyed on (blockHash, logIndex) saw
+    // duplicate keys and dropped entries.
+    //
+    // Minimal log-emitting contract (no constructor args, runtime emits
+    // one LOG0 then stops). CODECOPY stack order (top first): destOffset,
+    // codeOffset, size — so push size first (bottom), then codeOffset,
+    // then destOffset (top).
+    //   constructor (12 bytes):
+    //     60 06    PUSH1 6     (runtime size, bottom)
+    //     60 0c    PUSH1 12    (code offset where runtime starts)
+    //     60 00    PUSH1 0     (memory dest, top)
+    //     39       CODECOPY    (mem[0..6] = code[12..18])
+    //     60 06    PUSH1 6     (return length)
+    //     60 00    PUSH1 0     (return offset)
+    //     f3       RETURN
+    //   runtime (6 bytes):
+    //     60 00    PUSH1 0     (data length)
+    //     60 00    PUSH1 0     (data offset)
+    //     a0       LOG0
+    //     00       STOP
+    const DEPLOY_BYTECODE = "0x6006600c60003960066000f360006000a000"
+
+    const { Wallet: EW454 } = await import("ethers")
+    const wallet = new EW454(`0x${"0d".repeat(32)}`)
+    await evm.prefund([{ address: wallet.address, balanceWei: "1000000000000000000" }])
+    const startN = await evm.getNonce(wallet.address.toLowerCase() as `0x${string}`)
+
+    // Deploy the contract.
+    const deployTx = await wallet.signTransaction({
+      type: 0, to: null, value: 0n, data: DEPLOY_BYTECODE,
+      gasLimit: 500_000n, gasPrice: 1_000_000_000n,
+      nonce: Number(startN), chainId,
+    })
+    const submit454 = async (raw: string) => {
+      const res = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_sendRawTransaction", params: [raw] }),
+      })
+      return await res.json() as { result?: string; error?: { code: number; message: string } }
+    }
+    const deployBody = await submit454(deployTx)
+    assert.ok(deployBody.result, `deploy must succeed: ${JSON.stringify(deployBody)}`)
+    if (chain.proposeNextBlock) await chain.proposeNextBlock()
+    const deployReceipt = await rpcCall(port, "eth_getTransactionReceipt", [deployBody.result]) as {
+      contractAddress: string
+    }
+    assert.ok(deployReceipt.contractAddress, "deploy must yield contract address")
+    const contractAddr = deployReceipt.contractAddress
+
+    // Submit two txs that each call the contract (each emits 1 LOG0).
+    // They MUST land in the same block for the offset assertion to apply.
+    const call1 = await wallet.signTransaction({
+      type: 0, to: contractAddr, value: 0n, data: "0x",
+      gasLimit: 50_000n, gasPrice: 1_000_000_000n,
+      nonce: Number(startN) + 1, chainId,
+    })
+    const call2 = await wallet.signTransaction({
+      type: 0, to: contractAddr, value: 0n, data: "0x",
+      gasLimit: 50_000n, gasPrice: 1_000_000_000n,
+      nonce: Number(startN) + 2, chainId,
+    })
+    const r1 = await submit454(call1)
+    const r2 = await submit454(call2)
+    assert.ok(r1.result && r2.result, "both calls must submit successfully")
+    if (chain.proposeNextBlock) await chain.proposeNextBlock()
+
+    const rec1 = await rpcCall(port, "eth_getTransactionReceipt", [r1.result]) as {
+      logs: Array<{ logIndex: string }>
+      blockNumber: string
+    }
+    const rec2 = await rpcCall(port, "eth_getTransactionReceipt", [r2.result]) as {
+      logs: Array<{ logIndex: string }>
+      blockNumber: string
+    }
+
+    assert.equal(rec1.blockNumber, rec2.blockNumber,
+      "both calls must land in the same block (test pre-condition)")
+    assert.equal(rec1.logs.length, 1, "call 1 must emit exactly 1 log")
+    assert.equal(rec2.logs.length, 1, "call 2 must emit exactly 1 log")
+    assert.equal(rec1.logs[0].logIndex, "0x0",
+      `first tx's first log must have logIndex 0x0 (got ${rec1.logs[0].logIndex})`)
+    assert.equal(rec2.logs[0].logIndex, "0x1",
+      `second tx's first log must have logIndex 0x1 (block-global), not 0x0 (per-tx). got ${rec2.logs[0].logIndex} — this is the #454 regression`)
+  })
   })
 
   await t.test("#332: eth_sendRawTransaction replacement-underpriced surfaces as -32000 (not -32603)", async () => {

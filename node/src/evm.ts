@@ -824,7 +824,31 @@ export class EvmChain {
   }
 
   getReceipt(txHash: string): TxReceipt | null {
-    return this.receipts.get(txHash) ?? null
+    const r = this.receipts.get(txHash)
+    if (!r) return null
+    if (!r.logs || r.logs.length === 0) return r
+    // #454: logIndex on receipt logs MUST be block-global per Ethereum
+    // spec ("log index position in the block"). The storage path
+    // (lines 339/423/650 above) writes logs with per-tx logIndex —
+    // restarting at 0 for each tx. Recompute the cumulative offset from
+    // prior receipts in the same block at read time so the public RPC
+    // surface is spec-compliant without rewriting the storage format.
+    let offset = 0
+    const blockReceipts = [...this.receipts.values()]
+      .filter((rr) => rr.blockNumber === r.blockNumber)
+      .sort((a, b) => parseInt(a.transactionIndex, 16) - parseInt(b.transactionIndex, 16))
+    for (const br of blockReceipts) {
+      if (br.transactionHash.toLowerCase() === txHash.toLowerCase()) break
+      offset += (br.logs ?? []).length
+    }
+    if (offset === 0) return r
+    return {
+      ...r,
+      logs: r.logs.map((log, idx) => ({
+        ...log,
+        logIndex: `0x${(offset + idx).toString(16)}`,
+      })),
+    }
   }
 
   getTransaction(txHash: string): TxInfo | null {
