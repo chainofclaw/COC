@@ -1726,6 +1726,17 @@ async function handleRpc(
       // the raw input through so parseBlockTag's invalidParams branch
       // catches every non-string/non-number shape. Same fix as #250.
       const num = await resolveBlockNumber((payload.params ?? [])[0], chain)
+  })
+
+      // #404: pre-fix `String((payload.params ?? [])[0] ?? "latest")`
+      // collapsed `12345` to "12345" and `["0x64"]` to "0x64", letting
+      // both silently flow through parseBlockTag → real block lookup
+      // instead of -32602. Same anti-pattern as #250 (eth_getBlockByNumber)
+      // and #256 (3 other block-tag handlers). parseBlockTag accepts
+      // unknown and rejects non-string / non-number shapes — pass the
+      // raw param through.
+      const height = await Promise.resolve(chain.getHeight())
+      const num = parseBlockTag((payload.params ?? [])[0], height)
       const block = await Promise.resolve(chain.getBlockByNumber(num))
       return block ? `0x${block.txs.length.toString(16)}` : null
     }
@@ -1827,6 +1838,12 @@ async function handleRpc(
       // === "1500"` silently coerce a single-element array to block 1500.
       // Pass raw through resolveBlockNumber so non-string/non-number shapes
       // hit parseBlockTag's invalidParams branch. Same fix as #250.
+  })
+
+      // #404: pre-fix `String((payload.params ?? [])[1] ?? "latest")`
+      // silently coerced `100` to "100" and `["0x64"]` to "0x64"
+      // (#256/#250 anti-pattern). Pass the raw param so parseBlockTag
+      // rejects non-string / non-number shapes at -32602.
       const newestBlock = (payload.params ?? [])[1]
       // #224: `as number[]` was a TS runtime no-op so an object/string/
       // bool silently passed through (`{}.length === undefined`
@@ -2055,6 +2072,16 @@ async function handleRpc(
       // #256: pre-fix `String((params)[0] ?? "latest")` made `String([1500])
       // === "1500"` silently coerce a single-element array to block 1500.
       // Pass raw through resolveBlockNumber. Same fix as #250.
+  })
+
+      // #404: pre-fix `String((payload.params ?? [])[0] ?? "latest")`
+      // collapsed `12345` to "12345" and `["0x64"]` to "0x64", letting
+      // both silently flow through parseBlockTag → real block #100 lookup
+      // and clients got back the empty-receipts answer (the bug below
+      // returns `[]` for any block with 0 txs). Same anti-pattern as
+      // #250 (eth_getBlockByNumber) and #256 (3 other block-tag handlers).
+      // resolveBlockNumber accepts unknown and parseBlockTag rejects
+      // non-string / non-number shapes — pass the raw param through.
       const num = await resolveBlockNumber((payload.params ?? [])[0], chain)
       const block = await Promise.resolve(chain.getBlockByNumber(num))
       if (!block) return null

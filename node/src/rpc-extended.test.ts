@@ -2364,6 +2364,64 @@ test("RPC Extended Methods", async (t) => {
     assert.equal(ok3.error, undefined, "empty object filter must succeed")
   })
 
+  await t.test("#404: 3 block-tag handlers reject non-string tags (no silent String() coercion)", async () => {
+    // Pre-fix `String((payload.params ?? [])[0] ?? "latest")` collapsed
+    // `12345` → "12345" and `["0x64"]` → "0x64", letting both flow
+    // through parseBlockTag → real block lookup. Sibling of #250
+    // (eth_getBlockByNumber) and #256 (3 other block-tag handlers).
+    // The three handlers that missed that migration are:
+    //   - eth_getBlockReceipts (#114 added block-hash support but kept String())
+    //   - eth_getBlockTransactionCountByNumber
+    //   - eth_feeHistory[1] (newestBlock)
+    // Each handler should reject non-string/non-number shapes at -32602.
+    const probe = async (method: string, params: unknown[]) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    }
+    // Each handler with the same anti-pattern. true/false collapse to
+    // "true"/"false" pre-fix; ["0x1"] collapses to "0x1"; {} → "[object Object]"
+    // (already rejected so used as the *correct* control case).
+    const cases: Array<{ method: string; paramAt: 0 | 1 }> = [
+      { method: "eth_getBlockReceipts", paramAt: 0 },
+      { method: "eth_getBlockTransactionCountByNumber", paramAt: 0 },
+      { method: "eth_feeHistory", paramAt: 1 },
+    ]
+    for (const { method, paramAt } of cases) {
+      const make = (badTag: unknown): unknown[] => {
+        if (method === "eth_feeHistory") return ["0x4", badTag, [25]]
+        return paramAt === 0 ? [badTag] : [null, badTag]
+      }
+      // ["0x64"] is the most damning — pre-fix returned a real-looking
+      // result for block 100 instead of -32602.
+      const rArray = await probe(method, make(["0x64"]))
+      assert.equal(rArray.error?.code, -32602,
+        `${method}(["0x64"]) must be -32602, got ${JSON.stringify(rArray)}`)
+      // booleans must reject too
+      const rBool = await probe(method, make(true))
+      assert.equal(rBool.error?.code, -32602,
+        `${method}(true) must be -32602, got ${JSON.stringify(rBool)}`)
+      // {} stays rejected — control case
+      const rObj = await probe(method, make({}))
+      assert.equal(rObj.error?.code, -32602,
+        `${method}({}) must be -32602, got ${JSON.stringify(rObj)}`)
+      // Sanity: a well-formed string tag still works.
+      const rOk = await probe(method, make("latest"))
+      assert.equal(rOk.error, undefined,
+        `${method}("latest") must succeed, got ${JSON.stringify(rOk)}`)
+      // Numbers MUST work — parseBlockTag accepts them (kubo/clients
+      // sometimes send raw integers for "block N"). This is the part
+      // that String() coercion turned into a problem: number-as-input
+      // is valid, but bare arrays/booleans are not.
+      const rNum = await probe(method, make(0))
+      assert.equal(rNum.error, undefined,
+        `${method}(0 numeric) must succeed, got ${JSON.stringify(rNum)}`)
+    }
+  })
+
   await t.test("#248: coc_erasureStatus rejects non-string manifest CID", async () => {
     // Pre-fix `String((payload.params ?? [])[0] ?? "")` silently coerced
     // 123 → "123", true → "true", {} → "[object Object]" and forwarded
