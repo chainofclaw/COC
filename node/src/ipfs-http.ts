@@ -1520,6 +1520,16 @@ export class IpfsHttpServer {
         return
       }
 
+      // Reject control characters (#312/#313): a NUL byte or other control codes in the
+      // topic round-trip through libp2p but cause subscribers' string-based topic filters
+      // to silently mismatch, masking publish drops. Reapplied after PR #429's rewrite of
+      // the IPFS handler accidentally dropped the original check.
+      if (topic && /[\x00-\x1F\x7F]/.test(topic)) {
+        res.writeHead(400, { "content-type": "application/json" })
+        res.end(JSON.stringify({ error: "topic contains control characters" }))
+        return
+      }
+
       switch (route) {
         case "pub": {
           if (!topic) {
