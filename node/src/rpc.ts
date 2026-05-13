@@ -73,7 +73,7 @@ export const FILTER_TTL_MS = 5 * 60 * 1000 // 5 minutes
 // starvation. The real fix is offloading solc to a worker thread.
 const MAX_COMPILE_SOURCE_SIZE = 64 * 1024
 const CHAIN_STATS_CACHE_TTL_MS = 5_000
-let chainStatsCache: { result: unknown; height: bigint; cachedAtMs: number } | null = null
+let chainStatsCache: { result: unknown; height: bigint; mempoolSize: number; cachedAtMs: number } | null = null
 let chainStatsComputing: Promise<unknown> | null = null
 let solcLoaderPromise: Promise<{ compile(input: string): string; version(): string }> | null = null
 
@@ -2520,7 +2520,17 @@ async function handleRpc(
     case "coc_chainStats": {
       const height = await Promise.resolve(chain.getHeight())
       const now = Date.now()
-      if (chainStatsCache && chainStatsCache.height === height && now - chainStatsCache.cachedAtMs < CHAIN_STATS_CACHE_TTL_MS) {
+      // #479: include mempool size in cache key so that pendingTxCount /
+      // queuedTxCount / mempoolSize stay fresh as txs arrive within a
+      // block height. Pre-fix the cache was keyed by height only and
+      // gave stale pool stats for up to 5s after every accept/eject.
+      const currentMempoolSize = chain.mempool.stats().size
+      if (
+        chainStatsCache &&
+        chainStatsCache.height === height &&
+        chainStatsCache.mempoolSize === currentMempoolSize &&
+        now - chainStatsCache.cachedAtMs < CHAIN_STATS_CACHE_TTL_MS
+      ) {
         return chainStatsCache.result
       }
       // Thundering herd protection: coalesce concurrent requests
@@ -2529,6 +2539,13 @@ async function handleRpc(
         const latest = await Promise.resolve(chain.getBlockByNumber(height))
         const poolStats = chain.mempool.stats()
         const validators = hasConfig(chain) ? chain.cfg.validators : []
+        // #479: split pending vs queued per geth semantic so the
+        // dashboard stops reporting stuck gap-nonce queued txs as
+        // "pending". Live 88780 had `pendingTxCount: 65` while
+        // txpool_status reported `{pending: 0, queued: 0x41}` —
+        // contradictory across two endpoints from the same node.
+        const allTxs = chain.mempool.getAll()
+        const { pendingCount, queuedCount } = await classifyMempoolPendingQueued(allTxs, evm)
 
         // Calculate blocks per minute from last 10 blocks
         let blocksPerMin = 0
@@ -2557,7 +2574,15 @@ async function handleRpc(
           blockHeight: `0x${height.toString(16)}`,
           latestBlockTime: latest?.timestampMs ?? 0,
           blocksPerMinute: Math.round(blocksPerMin * 100) / 100,
-          pendingTxCount: poolStats.size,
+          // #479: pendingTxCount now matches txpool_status.pending
+          // (contiguous-from-onchain-nonce includable-now). queuedTxCount
+          // (gap-nonce, awaiting earlier nonces) and mempoolSize (total)
+          // are exposed separately so the dashboard can report all three
+          // without ambiguity. Pre-fix pendingTxCount aliased mempoolSize
+          // and lied about includable count to any caller using the name.
+          pendingTxCount: pendingCount,
+          queuedTxCount: queuedCount,
+          mempoolSize: poolStats.size,
           recentTxCount,
           validatorCount: validators.length,
           // #184: pre-fix the inner ternary assumed chain.cfg.chainId
@@ -2568,7 +2593,7 @@ async function handleRpc(
           // as -32603 "Cannot read properties of undefined".
           chainId: `0x${chain.cfg?.chainId?.toString(16) ?? "1"}`,
         }
-        chainStatsCache = { result: statsResult, height, cachedAtMs: now }
+        chainStatsCache = { result: statsResult, height, mempoolSize: poolStats.size, cachedAtMs: now }
         return statsResult
       })().finally(() => { chainStatsComputing = null })
       return await chainStatsComputing

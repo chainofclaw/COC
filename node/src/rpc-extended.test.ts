@@ -1928,6 +1928,75 @@ test("RPC Extended Methods", async (t) => {
     assert.doesNotMatch(JSON.stringify(stats), /Cannot read properties|undefined.*reading/, "must not leak TypeError")
   })
 
+  await t.test("#479: coc_chainStats pendingTxCount matches txpool_status.pending semantic (not raw mempool size)", async () => {
+    // Pre-fix `coc_chainStats.pendingTxCount = chain.mempool.stats().size`
+    // returned the total mempool size — pending + queued lumped together.
+    // Meanwhile txpool_status correctly split pending (contiguous-from-
+    // onchain-nonce) and queued (gap-nonce) per #386. The two endpoints
+    // from the same node disagreed on what "pending" meant.
+    //
+    // Live testnet 88780 reproduction (server-1):
+    //   coc_chainStats → {"pendingTxCount":65,...}
+    //   txpool_status  → {"pending":"0x0","queued":"0x41"}    (0x41 = 65)
+    // → all 65 txs were stuck gap-queued, none includable now, yet the
+    //   explorer dashboard showed "Pending Txs: 65" misleading users.
+    //
+    // Fix: pendingTxCount adopts geth semantic (includable-now only),
+    // adds queuedTxCount + mempoolSize as separate fields. Build a gap-
+    // queued tx in the fixture and verify the new split.
+    const { Wallet: EthersWallet, Transaction: EthersTransaction } = await import("ethers")
+    const TEST_PK = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+    const wallet = new EthersWallet(TEST_PK)
+
+    const startNonce = parseInt(
+      await rpcCall(port, "eth_getTransactionCount", [wallet.address, "latest"]) as string,
+      16,
+    )
+    // Skip the next contiguous nonce, inject one at startNonce + 5 → gap-queued.
+    const tx = EthersTransaction.from({
+      to: "0x0000000000000000000000000000000000000001",
+      value: 1n, gasLimit: 21000n, gasPrice: 1_000_000_000n,
+      nonce: startNonce + 5, chainId: 18780,
+    })
+    const signed = await wallet.signTransaction(tx)
+    await rpcCall(port, "eth_sendRawTransaction", [signed])
+
+    const stats = await rpcCall(port, "coc_chainStats") as {
+      pendingTxCount: number
+      queuedTxCount: number
+      mempoolSize: number
+    }
+
+    // The injected tx is gap-queued (nonce gap of 5), so:
+    //   pendingTxCount  == 0  (nothing contiguous from on-chain nonce)
+    //   queuedTxCount   >= 1  (at least our injected gap tx)
+    //   mempoolSize     >= 1
+    assert.equal(typeof stats.pendingTxCount, "number", "pendingTxCount must be number")
+    assert.equal(typeof stats.queuedTxCount, "number", "queuedTxCount must be number (new field)")
+    assert.equal(typeof stats.mempoolSize, "number", "mempoolSize must be number (new field)")
+    assert.equal(stats.pendingTxCount, 0, `gap-queued tx must not count as pending, got ${stats.pendingTxCount}`)
+    assert.ok(stats.queuedTxCount >= 1, `gap-queued tx must count as queued, got ${stats.queuedTxCount}`)
+    assert.equal(
+      stats.mempoolSize,
+      stats.pendingTxCount + stats.queuedTxCount,
+      "mempoolSize must equal pending + queued",
+    )
+
+    // Cross-check parity with txpool_status (both endpoints must agree
+    // on the split now).
+    const status = await rpcCall(port, "txpool_status") as { pending: string; queued: string }
+    assert.equal(
+      parseInt(status.pending, 16),
+      stats.pendingTxCount,
+      `coc_chainStats.pendingTxCount (${stats.pendingTxCount}) must match txpool_status.pending (${parseInt(status.pending, 16)})`,
+    )
+    assert.equal(
+      parseInt(status.queued, 16),
+      stats.queuedTxCount,
+      `coc_chainStats.queuedTxCount (${stats.queuedTxCount}) must match txpool_status.queued (${parseInt(status.queued, 16)})`,
+    )
+  })
+
   await t.test("#186: eth_getLogs validates blockHash field shape (parity with address+topics #162)", async () => {
     // Pre-fix the blockHash field was accepted as anything — "0x123",
     // "bogus", null, 42 all returned `result: []` indistinguishable
