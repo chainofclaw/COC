@@ -1659,6 +1659,61 @@ async function readBody(req: http.IncomingMessage, maxSize = DEFAULT_MAX_UPLOAD_
   }
 }
 
+/**
+ * #338: RFC 2046 §5.1.1-compliant multipart split.
+ *
+ * Pre-fix used `raw.split("--" + boundary)` which split on the boundary
+ * substring ANYWHERE in the body — file content containing those bytes
+ * silently truncated the upload. The CID then pointed to partial data
+ * and the user didn't know.
+ *
+ * Per RFC 2046, the delimiter is one of:
+ *   - Initial:    "--" + boundary                  (allowed at start of body)
+ *   - Encapsulating:  CRLF + "--" + boundary + CRLF
+ *   - Closing:    CRLF + "--" + boundary + "--"
+ *
+ * The CRLF prefix on subsequent boundaries (RFC §5.1.1: "The body
+ * must therefore include an additional CRLF preceding the boundary
+ * delimiter line") is the bit that turns a substring match into a
+ * delimiter match. Match it.
+ *
+ * Returns the indices of each part's start (after the leading
+ * CRLF/initial-marker) so the caller can extract the slice.
+ */
+function findMultipartParts(raw: Buffer, boundary: string): Array<{ start: number; end: number }> {
+  const delim = Buffer.from(`--${boundary}`, "binary")
+  const crlfDelim = Buffer.from(`\r\n--${boundary}`, "binary")
+  const parts: Array<{ start: number; end: number }> = []
+  // First boundary may start at byte 0 OR be preceded by CRLF; check both.
+  let cursor = 0
+  if (raw.length >= delim.length && raw.compare(delim, 0, delim.length, 0, delim.length) === 0) {
+    cursor = delim.length
+  } else {
+    const firstIdx = raw.indexOf(crlfDelim)
+    if (firstIdx === -1) return parts
+    cursor = firstIdx + crlfDelim.length
+  }
+  while (cursor < raw.length) {
+    // After the delimiter, we expect either CRLF (next part), "--"
+    // (close boundary), or nothing-recognized (malformed → stop).
+    if (raw[cursor] === 0x2d /* '-' */ && raw[cursor + 1] === 0x2d /* '-' */) {
+      // Close boundary — no more parts.
+      break
+    }
+    // Require CRLF after delimiter for regular boundary.
+    if (raw[cursor] !== 0x0d /* '\r' */ || raw[cursor + 1] !== 0x0a /* '\n' */) {
+      // Not a valid delimiter trail; bail.
+      break
+    }
+    const partStart = cursor + 2
+    const nextDelimIdx = raw.indexOf(crlfDelim, partStart)
+    if (nextDelimIdx === -1) break
+    parts.push({ start: partStart, end: nextDelimIdx })
+    cursor = nextDelimIdx + crlfDelim.length
+  }
+  return parts
+}
+
 async function readMultipartFile(req: http.IncomingMessage): Promise<{ filename?: string; bytes: Uint8Array }> {
   const contentType = req.headers["content-type"] ?? ""
   // Limit boundary length to prevent split amplification DoS
@@ -1668,22 +1723,21 @@ async function readMultipartFile(req: http.IncomingMessage): Promise<{ filename?
     return { bytes: raw }
   }
 
-  const boundary = `--${boundaryMatch[1]}`
+  const boundary = boundaryMatch[1]
   const raw = Buffer.from(await readBody(req))
-  const parts = raw.toString("binary").split(boundary)
-  for (const part of parts) {
-    if (!part || part === "--\r\n") continue
-    // Use indexOf to split only at the FIRST \r\n\r\n (body may contain \r\n\r\n)
-    const separatorIdx = part.indexOf("\r\n\r\n")
-    if (separatorIdx === -1) continue
-    const headerRaw = part.slice(0, separatorIdx)
-    let body = part.slice(separatorIdx + 4)
+  const parts = findMultipartParts(raw, boundary)
+  for (const { start, end } of parts) {
+    const part = raw.subarray(start, end)
+    // Headers/body separator is the FIRST \r\n\r\n inside the part.
+    const sepIdx = part.indexOf("\r\n\r\n")
+    if (sepIdx === -1) continue
+    const headerRaw = part.subarray(0, sepIdx).toString("binary")
+    const body = part.subarray(sepIdx + 4)
     const filenameMatch = /filename="([^"]+)"/.exec(headerRaw)
     const rawFilename = filenameMatch ? filenameMatch[1] : undefined
     // Strip path components to prevent directory traversal in metadata
     const filename = rawFilename ? rawFilename.replace(/.*[/\\]/, "").slice(0, 255) || undefined : undefined
-    if (body.endsWith("\r\n")) body = body.slice(0, -2)
-    return { filename, bytes: Buffer.from(body, "binary") }
+    return { filename, bytes: new Uint8Array(body) }
   }
 
   return { bytes: new Uint8Array() }
