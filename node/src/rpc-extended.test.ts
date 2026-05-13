@@ -484,6 +484,43 @@ test("RPC Extended Methods", async (t) => {
     assert.match(json.error!.message, /mutually exclusive/i, "message must mention the mutual-exclusivity rule")
   })
 
+  await t.test("#464: eth_newFilter rejects blockHash + fromBlock/toBlock too (sibling of #116)", async () => {
+    // EIP-234's mutex applies to every endpoint that takes a log-filter shape.
+    // #116 fixed eth_getLogs; eth_newFilter and eth_subscribe("logs") were
+    // missed by that audit and silently accepted both fields, taking the
+    // blockHash path and ignoring fromBlock/toBlock. Centralize the check
+    // inside validateLogFilter so all three callsites reject identically.
+    const probe = async (params: unknown[]) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_newFilter", params }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: string }
+    }
+    // blockHash + fromBlock → reject
+    const r1 = await probe([{ blockHash: "0x" + "00".repeat(32), fromBlock: "0x0" }])
+    assert.equal(r1.error?.code, -32602,
+      `eth_newFilter blockHash+fromBlock must be -32602 (got ${JSON.stringify(r1)})`)
+    assert.match(r1.error!.message, /mutually exclusive|EIP-234/i)
+
+    // blockHash + toBlock → reject
+    const r2 = await probe([{ blockHash: "0x" + "00".repeat(32), toBlock: "latest" }])
+    assert.equal(r2.error?.code, -32602,
+      `eth_newFilter blockHash+toBlock must be -32602 (got ${JSON.stringify(r2)})`)
+
+    // blockHash + both → reject
+    const r3 = await probe([{ blockHash: "0x" + "00".repeat(32), fromBlock: "0x0", toBlock: "latest" }])
+    assert.equal(r3.error?.code, -32602, "blockHash+fromBlock+toBlock must reject")
+
+    // Sanity: blockHash alone is OK.
+    const ok = await probe([{ blockHash: "0x" + "00".repeat(32) }])
+    assert.ok(ok.result, `blockHash alone must succeed: ${JSON.stringify(ok)}`)
+    // Sanity: fromBlock alone is OK.
+    const ok2 = await probe([{ fromBlock: "0x0", toBlock: "latest" }])
+    assert.ok(ok2.result, `fromBlock+toBlock alone must succeed: ${JSON.stringify(ok2)}`)
+  })
+
   await t.test("#114: eth_getBlockReceipts shape matches eth_getTransactionReceipt", async () => {
     // Pre-fix bug: getBlockReceipts returned a stripped-down 9-field shape
     // (no contractAddress / cumulativeGasUsed / effectiveGasPrice / logsBloom
