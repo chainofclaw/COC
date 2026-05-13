@@ -868,6 +868,18 @@ export class IpfsHttpServer {
       res.end(JSON.stringify({ error: !cid ? "missing cid" : "invalid cid" }))
       return
     }
+    // #280: pre-fix accepted any well-formed CID without requiring the
+    // block to be stored locally. Attackers could mass-submit valid-format
+    // CIDs to grow pins.json unboundedly (each pin add rewrites the whole
+    // file → disk-fill + write-amplification DoS). Kubo's offline mode
+    // returns "block not found locally" in the same scenario; mirror
+    // that: pinning is allowed only for blocks already present in the
+    // local store (put + pin → pin/add must check existence first).
+    if (!(await this.store.has(cid))) {
+      res.writeHead(404, { "content-type": "application/json" })
+      res.end(JSON.stringify({ error: "block not found locally" }))
+      return
+    }
     await this.store.pin(cid)
     res.writeHead(200, { "content-type": "application/json" })
     res.end(JSON.stringify({ Pins: [cid] }))
