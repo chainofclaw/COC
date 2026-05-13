@@ -130,6 +130,49 @@ function validateAddParams(query: Record<string, string | string[] | undefined>)
         `${key}: expected boolean (true/false/0/1), got '${raw}'`)
     }
   }
+  })
+
+ * #344: gate state-destroying IPFS admin operations (repo/gc, block/rm)
+ * behind either loopback origin OR a configured X-COC-IPFS-Admin-Token
+ * header. Pre-fix every anonymous internet caller could destroy data.
+ *
+ * Mirrors the RPC admin gate (#336): defaults to loopback-only so
+ * unconfigured production deployments are secure-by-default; operators
+ * who need remote access set COC_IPFS_ADMIN_TOKEN and pass it via
+ * X-COC-IPFS-Admin-Token header.
+ */
+export function isIpfsAdminAuthorized(
+  req: http.IncomingMessage,
+  clientIp: string,
+  cfg: IpfsServerConfig,
+): boolean {
+  // 1) Loopback always allowed (typical operator workflow via SSH tunnel
+  //    or local CLI).
+  const stripped = clientIp.startsWith("::ffff:") ? clientIp.slice(7) : clientIp
+  if (stripped === "::1" || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(stripped)) return true
+  // 2) Configured admin token via header. Constant-time comparison so the
+  //    token length isn't a timing oracle.
+  if (cfg.adminAuthToken) {
+    const headerRaw = req.headers["x-coc-ipfs-admin-token"]
+    const provided = typeof headerRaw === "string" ? headerRaw : ""
+    return safeStringEq(provided, cfg.adminAuthToken)
+  }
+  return false
+}
+
+function safeStringEq(a: string, b: string): boolean {
+  if (a.length !== b.length) {
+    // Still iterate one of the strings so the timing leak is bounded
+    // by the longer of the two — not by the shorter, which would
+    // disclose length cheaply.
+    let acc = 1
+    const longer = a.length > b.length ? a : b
+    for (let i = 0; i < longer.length; i++) acc |= 1
+    return acc === 0
+  }
+  let diff = 0
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i)
+  return diff === 0
 }
 
 export interface IpfsServerConfig {
@@ -137,6 +180,12 @@ export interface IpfsServerConfig {
   port: number
   storageDir: string
   nodeId?: string
+  /**
+   * #344: optional Bearer-token (via X-COC-IPFS-Admin-Token header) that
+   * authorizes destructive ops (repo/gc, block/rm) from non-loopback
+   * origins. When unset, those ops are loopback-only (secure default).
+   */
+  adminAuthToken?: string
   /**
    * Phase C3.1: the uploader blocks on replication results and gets a
    * warning header when fewer than `minReplicas` peers acknowledged the
@@ -457,10 +506,30 @@ export class IpfsHttpServer {
         return
       }
       if (url.pathname === "/api/v0/block/rm") {
+        // #344: block/rm destroys arbitrary blocks (pinned ones too:
+        // removeBlock unpins as part of removal). Pre-fix any anonymous
+        // internet caller could enumerate pin/ls and then block/rm each
+        // CID to wipe the node's content. Restrict to loopback / configured
+        // admin token so the operator workflow (chaos drill, manual cleanup)
+        // still works without exposing the surface publicly.
+        if (!isIpfsAdminAuthorized(req, clientIp, this.cfg)) {
+          res.writeHead(403, { "content-type": "application/json" })
+          res.end(JSON.stringify({ error: "forbidden", message: "block/rm requires loopback or X-COC-IPFS-Admin-Token" }))
+          return
+        }
         await this.handleBlockRm(res, argParam)
         return
       }
       if (url.pathname === "/api/v0/repo/gc") {
+        // #344: same auth gate as block/rm. repo/gc walks the entire pin
+        // set under a blockstore lock — concurrent reads/writes block
+        // during the scan. Unauth'd repeated GC = persistent disk thrash
+        // + every in-flight unpinned block gets swept.
+        if (!isIpfsAdminAuthorized(req, clientIp, this.cfg)) {
+          res.writeHead(403, { "content-type": "application/json" })
+          res.end(JSON.stringify({ error: "forbidden", message: "repo/gc requires loopback or X-COC-IPFS-Admin-Token" }))
+          return
+        }
         await this.handleRepoGc(res)
         return
       }
