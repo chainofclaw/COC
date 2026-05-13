@@ -569,6 +569,82 @@ describe("validateTxCallFields (#148)", () => {
     validateTxCallFields({ gasPrice: "0x1", maxFeePerGas: "" })
     validateTxCallFields({ gasPrice: "", maxFeePerGas: "0x1", maxPriorityFeePerGas: "0x1" })
   })
+
+  test("#473: accepts well-shaped accessList (EIP-2930)", () => {
+    const addr = "0x" + "a".repeat(40)
+    const key = "0x" + "1".repeat(64)
+    validateTxCallFields({
+      accessList: [
+        { address: addr, storageKeys: [] },
+        { address: addr, storageKeys: [key, key] },
+      ],
+    })
+    validateTxCallFields({ accessList: [] })          // empty array is valid
+    validateTxCallFields({ accessList: undefined })   // absent is valid
+    validateTxCallFields({ accessList: null })        // null is treated as absent
+  })
+
+  test("#473: rejects non-array accessList", () => {
+    const e = captureThrow(() => validateTxCallFields({ accessList: "not-array" as unknown as never }))
+    assert.equal(e.code, -32602)
+    assert.match(e.message ?? "", /accessList.*array/i)
+  })
+
+  test("#473: rejects accessList entry missing address", () => {
+    const e = captureThrow(() => validateTxCallFields({
+      accessList: [{ storageKeys: [] }] as unknown as never,
+    }))
+    assert.equal(e.code, -32602)
+    assert.match(e.message ?? "", /accessList\[0\]\.address/i)
+  })
+
+  test("#473: rejects accessList entry with bad address shape", () => {
+    const e = captureThrow(() => validateTxCallFields({
+      accessList: [{ address: "0xtoo-short", storageKeys: [] }] as unknown as never,
+    }))
+    assert.equal(e.code, -32602)
+    assert.match(e.message ?? "", /accessList\[0\]\.address/i)
+  })
+
+  test("#473: rejects accessList entry missing storageKeys", () => {
+    const e = captureThrow(() => validateTxCallFields({
+      accessList: [{ address: "0x" + "a".repeat(40) }] as unknown as never,
+    }))
+    assert.equal(e.code, -32602)
+    assert.match(e.message ?? "", /accessList\[0\]\.storageKeys/i)
+  })
+
+  test("#473: rejects accessList entry with non-array storageKeys", () => {
+    const e = captureThrow(() => validateTxCallFields({
+      accessList: [{ address: "0x" + "a".repeat(40), storageKeys: "not-array" }] as unknown as never,
+    }))
+    assert.equal(e.code, -32602)
+    assert.match(e.message ?? "", /accessList\[0\]\.storageKeys/i)
+  })
+
+  test("#473: rejects accessList storage key not matching 32-byte hex", () => {
+    const e = captureThrow(() => validateTxCallFields({
+      accessList: [{ address: "0x" + "a".repeat(40), storageKeys: ["0xZZ"] }] as unknown as never,
+    }))
+    assert.equal(e.code, -32602)
+    assert.match(e.message ?? "", /accessList\[0\]\.storageKeys\[0\]/i)
+  })
+
+  test("#473: rejects accessList over 256 entries (DoS cap)", () => {
+    const addr = "0x" + "a".repeat(40)
+    const list = Array.from({ length: 257 }, () => ({ address: addr, storageKeys: [] }))
+    const e = captureThrow(() => validateTxCallFields({ accessList: list }))
+    assert.equal(e.code, -32602)
+    assert.match(e.message ?? "", /accessList too large/i)
+  })
+
+  test("#473: rejects accessList entry with primitive value", () => {
+    const e = captureThrow(() => validateTxCallFields({
+      accessList: ["not-an-object"] as unknown as never,
+    }))
+    assert.equal(e.code, -32602)
+    assert.match(e.message ?? "", /accessList\[0\]/i)
+  })
 })
 
 describe("validateLogFilter", () => {
