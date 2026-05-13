@@ -266,8 +266,16 @@ export class IpfsMfs {
     const srcNorm = normalizePath(source)
     const destNorm = normalizePath(dest)
 
-    // No-op when source and destination are identical
-    if (srcNorm === destNorm) return
+    // #420: pre-fix `if (srcNorm === destNorm) return` silently
+    // succeeded for `mv /a /a`, masking client typos. POSIX `mv` and
+    // kubo's MFS reject same-path mv with an error; do the same so
+    // a buggy client (variable confusion, accidental copy-paste)
+    // learns about misuse instead of getting a 200 ok for what they
+    // probably meant to be a real rename. Same class as #380 / #418
+    // silent-success in MFS.
+    if (srcNorm === destNorm) {
+      throw new Error(`source and destination are the same: ${srcNorm}`)
+    }
 
     // Prevent moving a directory into its own subtree
     if (destNorm.startsWith(srcNorm + "/")) {
@@ -337,8 +345,15 @@ export class IpfsMfs {
     const srcNorm = normalizePath(source)
     const destNorm = normalizePath(dest)
 
-    // No-op when source and destination are identical
-    if (srcNorm === destNorm) return
+    // #420: pre-fix `if (srcNorm === destNorm) return` silently
+    // succeeded for `cp /a /a`, masking client typos. POSIX `cp` and
+    // kubo's MFS reject same-path cp with an error; do the same so a
+    // buggy client (variable confusion, accidental copy-paste) learns
+    // about misuse instead of getting a 200 ok for what they probably
+    // meant to be a real copy.
+    if (srcNorm === destNorm) {
+      throw new Error(`source and destination are the same: ${srcNorm}`)
+    }
 
     // Prevent copying a directory into its own subtree (infinite recursion)
     if (destNorm.startsWith(srcNorm + "/")) {
