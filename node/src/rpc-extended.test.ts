@@ -3209,6 +3209,7 @@ test("RPC Extended Methods", async (t) => {
       assert.equal(extraData.toLowerCase(), miner.toLowerCase(),
         `extraData should encode proposer address as raw bytes (matching miner field)`)
     }
+  })
 
   await t.test("#466: receipt.contractAddress is lowercase (parity with from/to/log.address)", async () => {
     // Live testnet 88780 reproduction:
@@ -3258,6 +3259,64 @@ test("RPC Extended Methods", async (t) => {
     )
     assert.equal(receipt.from, receipt.from.toLowerCase(), "from must be lowercase (sanity)")
   })
+
+  await t.test("#456: eth_getTransactionByHash returns from/to in lowercase (parity with receipt + geth)", async () => {
+    // Live testnet 88780 reproduction:
+    //   eth_getTransactionReceipt → from = "0xf39fd6e51aad88..."   (lowercase)
+    //   eth_getTransactionByHash  → from = "0xf39Fd6e51aad88..."   (EIP-55 mixed)
+    //   eth_getBlockByNumber      → miner = "0xde4e7889aa..."     (lowercase)
+    //
+    // ethers v6 Transaction.from() returns parsed.from/to in EIP-55
+    // checksum case; formatRawTransaction relayed it untouched. Geth +
+    // Erigon always lowercase addresses in JSON-RPC responses; the rest
+    // of COC's API (receipts, block.miner, eth_getLogs, eth_getBalance)
+    // also lowercases. dApps that string-compare `tx.from === receipt.from`
+    // fail for every non-all-lowercase address.
+    const { Wallet: EW456 } = await import("ethers")
+    const wallet = new EW456(`0x${"0e".repeat(32)}`)
+    await evm.prefund([{ address: wallet.address, balanceWei: "1000000000000000000" }])
+    const startN = await evm.getNonce(wallet.address.toLowerCase() as `0x${string}`)
+    // Use any 20-byte address. ethers.Transaction.from(rawTx).to returns
+    // it in EIP-55 mixed case post-parse, so the normalization in
+    // formatRawTransaction is what the test pins.
+    const to = "0xabcdef0123456789abcdef0123456789abcdef01"
+
+    const tx = await wallet.signTransaction({
+      type: 0, to, value: 1n,
+      nonce: Number(startN),
+      gasPrice: 1_000_000_000n, gasLimit: 21_000n,
+      chainId,
+    })
+    const submitRes = await fetch(`http://127.0.0.1:${port}`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_sendRawTransaction", params: [tx] }),
+    })
+    const submitBody = await submitRes.json() as { result?: string }
+    assert.ok(submitBody.result, `submit must succeed: ${JSON.stringify(submitBody)}`)
+    if (chain.proposeNextBlock) await chain.proposeNextBlock()
+
+    const got = await rpcCall(port, "eth_getTransactionByHash", [submitBody.result]) as {
+      from: string
+      to: string | null
+    }
+    assert.ok(got, "tx must be findable by hash")
+    assert.equal(got.from, got.from.toLowerCase(),
+      `eth_getTransactionByHash from must be lowercase, got ${got.from}`)
+    if (got.to) {
+      assert.equal(got.to, got.to.toLowerCase(),
+        `eth_getTransactionByHash to must be lowercase, got ${got.to}`)
+    }
+
+    // Cross-check: receipt for the same tx returns matching from/to.
+    const receipt = await rpcCall(port, "eth_getTransactionReceipt", [submitBody.result]) as {
+      from: string
+      to: string | null
+    }
+    assert.equal(receipt.from, got.from,
+      `receipt.from must equal tx.from byte-for-byte (post-lowercase): receipt=${receipt.from} tx=${got.from}`)
+    if (receipt.to && got.to) {
+      assert.equal(receipt.to, got.to, "receipt.to must equal tx.to byte-for-byte")
+    }
   })
 
   await t.test("#332: eth_sendRawTransaction replacement-underpriced surfaces as -32000 (not -32603)", async () => {
