@@ -493,6 +493,16 @@ export class IpfsHttpServer {
         return
       }
       if (url.pathname === "/api/v0/pin/rm") {
+        // #460: pin/rm is destructive. Pre-fix any anonymous internet
+        // caller could enumerate pin/ls (intentionally public) and then
+        // pin/rm each CID. Once unpinned, the next repo/gc cycle deletes
+        // the blocks — permanent data loss. Same attack surface as
+        // block/rm (#344), same auth gate.
+        if (!isIpfsAdminAuthorized(req, clientIp, this.cfg)) {
+          res.writeHead(403, { "content-type": "application/json" })
+          res.end(JSON.stringify({ error: "forbidden", message: "pin/rm requires loopback or X-COC-IPFS-Admin-Token" }))
+          return
+        }
         await this.handlePinRm(res, argParam)
         return
       }
