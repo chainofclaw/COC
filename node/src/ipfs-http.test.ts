@@ -7,7 +7,7 @@ import { randomBytes } from "node:crypto"
 import http from "node:http"
 import { IpfsBlockstore } from "./ipfs-blockstore.ts"
 import { UnixFsBuilder } from "./ipfs-unixfs.ts"
-import { IpfsHttpServer } from "./ipfs-http.ts"
+import { IpfsHttpServer, isIpfsAdminAuthorized } from "./ipfs-http.ts"
 import type { CidString } from "./ipfs-types.ts"
 
 // The IPFS HTTP server uses a module-level rate limiter (100 req/min/IP).
@@ -1237,6 +1237,61 @@ describe("IpfsHttpServer", () => {
       opaque[2] = 0
       const { ct } = await addAndFetch(opaque, "blob.bin")
       assert.equal(ct, "application/octet-stream")
+  })
+
+  // #344: repo/gc and block/rm were callable by any anonymous internet
+  // client — repo/gc thrashes disk with GC scans + can wipe in-flight
+  // unpinned blocks; block/rm deletes arbitrary blocks (including
+  // pinned ones, since removeBlock unpins as part of removal). Restrict
+  // to loopback by default; opt-in via X-COC-IPFS-Admin-Token header.
+  describe("#344 IPFS admin endpoint auth gate", () => {
+    it("repo/gc from loopback (default test client) succeeds", async () => {
+      // Test client connects to 127.0.0.1 → loopback path → no token needed
+      const res = await fetch("/api/v0/repo/gc", { method: "POST" })
+      assert.equal(res.status, 200, "loopback caller must succeed by default")
+    })
+
+    it("block/rm from loopback (default test client) succeeds", async () => {
+      // Upload a block first
+      const data = new TextEncoder().encode("delete me")
+      const meta = await unixfs.addFile("x.bin", data)
+      const res = await fetch(`/api/v0/block/rm?arg=${meta.cid}`, { method: "POST" })
+      assert.equal(res.status, 200, "loopback block/rm must succeed by default")
+    })
+
+    it("isIpfsAdminAuthorized: loopback variants accepted", () => {
+      const baseCfg = { bind: "0.0.0.0", port: 0, storageDir: "/tmp" }
+      const fakeReq = { headers: {} } as http.IncomingMessage
+      assert.equal(isIpfsAdminAuthorized(fakeReq, "127.0.0.1", baseCfg), true)
+      assert.equal(isIpfsAdminAuthorized(fakeReq, "127.255.255.255", baseCfg), true)
+      assert.equal(isIpfsAdminAuthorized(fakeReq, "::1", baseCfg), true)
+      assert.equal(isIpfsAdminAuthorized(fakeReq, "::ffff:127.0.0.1", baseCfg), true)
+    })
+
+    it("isIpfsAdminAuthorized: non-loopback rejected without token", () => {
+      const baseCfg = { bind: "0.0.0.0", port: 0, storageDir: "/tmp" }
+      const fakeReq = { headers: {} } as http.IncomingMessage
+      assert.equal(isIpfsAdminAuthorized(fakeReq, "8.8.8.8", baseCfg), false)
+      assert.equal(isIpfsAdminAuthorized(fakeReq, "192.168.1.5", baseCfg), false)
+      assert.equal(isIpfsAdminAuthorized(fakeReq, "209.74.64.88", baseCfg), false)
+      // 128.0.0.1 must NOT match the 127.x loopback regex (off-by-one guard)
+      assert.equal(isIpfsAdminAuthorized(fakeReq, "128.0.0.1", baseCfg), false)
+    })
+
+    it("isIpfsAdminAuthorized: non-loopback with matching token accepted", () => {
+      const cfgWithToken = { bind: "0.0.0.0", port: 0, storageDir: "/tmp", adminAuthToken: "secret-token-xyz" }
+      // matching token
+      const reqOk = { headers: { "x-coc-ipfs-admin-token": "secret-token-xyz" } } as unknown as http.IncomingMessage
+      assert.equal(isIpfsAdminAuthorized(reqOk, "203.0.113.7", cfgWithToken), true)
+      // wrong token rejected
+      const reqBad = { headers: { "x-coc-ipfs-admin-token": "wrong-token" } } as unknown as http.IncomingMessage
+      assert.equal(isIpfsAdminAuthorized(reqBad, "203.0.113.7", cfgWithToken), false)
+      // missing header rejected
+      const reqMissing = { headers: {} } as http.IncomingMessage
+      assert.equal(isIpfsAdminAuthorized(reqMissing, "203.0.113.7", cfgWithToken), false)
+      // header present but config token unset → still loopback-only
+      const cfgNoToken = { bind: "0.0.0.0", port: 0, storageDir: "/tmp" }
+      assert.equal(isIpfsAdminAuthorized(reqOk, "203.0.113.7", cfgNoToken), false)
     })
   })
 })
