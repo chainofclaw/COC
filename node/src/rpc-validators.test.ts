@@ -458,6 +458,45 @@ describe("validateTxCallFields (#148)", () => {
   test("accepts empty data (0x)", () => {
     validateTxCallFields({ data: "0x" })
   })
+
+  test("#352: rejects gas hex over 16-digit uint64 cap (BigInt O(n²) DoS)", () => {
+    const overlong = "0x" + "a".repeat(17) // 19 chars total > 18 cap
+    const e = captureThrow(() => validateTxCallFields({ gas: overlong }))
+    assert.equal(e.code, -32602)
+    assert.match(e.message ?? "", /gas too large.*uint64/)
+  })
+
+  test("#352: rejects nonce hex over 16-digit uint64 cap", () => {
+    const overlong = "0x" + "f".repeat(20)
+    const e = captureThrow(() => validateTxCallFields({ nonce: overlong }))
+    assert.equal(e.code, -32602)
+    assert.match(e.message ?? "", /nonce too large.*uint64/)
+  })
+
+  test("#352: rejects value hex over 64-digit uint256 cap", () => {
+    const overlong = "0x" + "1".repeat(65)
+    const e = captureThrow(() => validateTxCallFields({ value: overlong }))
+    assert.equal(e.code, -32602)
+    assert.match(e.message ?? "", /value too large.*uint256/)
+  })
+
+  test("#352: rejects 100k-char hex gas (CPU DoS payload)", () => {
+    const huge = "0x" + "a".repeat(100_000)
+    const e = captureThrow(() => validateTxCallFields({ gas: huge }))
+    assert.equal(e.code, -32602)
+    assert.match(e.message ?? "", /gas too large/)
+  })
+
+  test("#352: accepts exactly uint256-max value (regression guard)", () => {
+    const max256 = "0x" + "f".repeat(64)
+    validateTxCallFields({ value: max256 })
+    validateTxCallFields({ gasPrice: max256 })
+  })
+
+  test("#352: accepts exactly uint64-max gas (regression guard)", () => {
+    const max64 = "0x" + "f".repeat(16)
+    validateTxCallFields({ gas: max64, nonce: max64 })
+  })
 })
 
 describe("validateLogFilter", () => {
