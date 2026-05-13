@@ -105,7 +105,13 @@ test("#330 RPC CORS — whitelist echoes matched Origin + sets Vary", async (t) 
     "second whitelist entry must echo too")
 })
 
-test("#330 RPC CORS — unknown Origin falls back to first whitelist entry (back-compat)", async (t) => {
+test("#458 RPC CORS — unknown Origin gets NO ACAO header (fail-closed, no whitelist leak)", async (t) => {
+  // #458: pre-fix every non-whitelisted Origin was answered with
+  // Access-Control-Allow-Origin: <first whitelist entry>. Browsers blocked
+  // the response anyway (mismatch), so the practical effect was leaking
+  // the server's preferred origin to every probe (e.g. an attacker scanning
+  // testnets could enumerate which origins each node trusts). CORS-spec
+  // fail-closed pattern: omit the header entirely when Origin isn't allowed.
   const prev = process.env.COC_CORS_ORIGIN
   process.env.COC_CORS_ORIGIN = "https://prod.coc.example,https://staging.coc.example"
   process.env.COC_RPC_RATE_LIMIT_DISABLED = "1"
@@ -116,8 +122,28 @@ test("#330 RPC CORS — unknown Origin falls back to first whitelist entry (back
     await close()
   })
   const { headers } = await probe(port, "POST", "https://attacker.example")
+  assert.equal(headers["access-control-allow-origin"], undefined,
+    "unmatched Origin must NOT receive ACAO header (no whitelist leak)")
+  assert.equal(headers["vary"], "Origin",
+    "Vary: Origin still set so caches don't reuse a whitelisted-origin response")
+})
+
+test("#458 RPC CORS — no-Origin request (curl/server-to-server) still gets whitelist[0] back-compat", async (t) => {
+  // For non-browser callers (curl, monitoring, server-to-server) CORS
+  // doesn't apply — emitting a default ACAO is harmless. Pin the legacy
+  // behavior so existing tooling that grep-matches ACAO doesn't break.
+  const prev = process.env.COC_CORS_ORIGIN
+  process.env.COC_CORS_ORIGIN = "https://prod.coc.example,https://staging.coc.example"
+  process.env.COC_RPC_RATE_LIMIT_DISABLED = "1"
+  const { port, close } = await startTestRpc()
+  t.after(async () => {
+    if (prev === undefined) delete process.env.COC_CORS_ORIGIN
+    else process.env.COC_CORS_ORIGIN = prev
+    await close()
+  })
+  const { headers } = await probe(port, "POST") // no Origin
   assert.equal(headers["access-control-allow-origin"], "https://prod.coc.example",
-    "unmatched Origin falls back to first whitelist entry (browser denies cross-origin)")
+    "no-Origin request emits whitelist[0] for back-compat")
 })
 
 test("#330 RPC CORS — OPTIONS preflight returns 204 No Content", async (t) => {
@@ -150,7 +176,8 @@ test("#330 RPC CORS — default (env unset) preserves localhost dev fallback", a
   const r1 = await probe(port, "POST", "http://localhost:3000")
   assert.equal(r1.headers["access-control-allow-origin"], "http://localhost:3000",
     "default env unset must echo localhost:3000 for back-compat")
+  // #458: non-matching Origin no longer leaks the dev default. ACAO is omitted.
   const r2 = await probe(port, "POST", "https://prod.example")
-  assert.equal(r2.headers["access-control-allow-origin"], "http://localhost:3000",
-    "non-matching Origin falls back to default — browser denies cross-origin")
+  assert.equal(r2.headers["access-control-allow-origin"], undefined,
+    "non-matching Origin must NOT leak the configured default (#458 fail-closed)")
 })
