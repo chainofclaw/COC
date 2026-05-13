@@ -277,6 +277,43 @@ export class IpfsHttpServer {
           // immutable + read-only, so cross-origin reads carry no CSRF
           // risk and unlock browser-side IPFS clients.
           res.writeHead(200, { "access-control-allow-origin": "*" })
+  })
+
+          // #324: HTTP Range support per RFC 7233. Pre-fix the gateway
+          // returned the full body for every request, even when the
+          // client sent `Range: bytes=N-M` — making resumable downloads,
+          // video seek, and partial-content fetches all impossible.
+          // kubo's gateway honors Range; ours had not. Parse a SINGLE
+          // bytes-range request; multi-range (comma-separated) is
+          // uncommon and falls back to 200 full body to avoid a
+          // multipart/byteranges response generator. Malformed Range
+          // → 416 Range Not Satisfiable per spec.
+          const rangeHeader = req.headers["range"]
+          if (typeof rangeHeader === "string" && rangeHeader.length > 0 && !rangeHeader.includes(",")) {
+            const parsed = parseRangeBytes(rangeHeader, data.length)
+            if (parsed === "invalid") {
+              res.writeHead(416, {
+                "content-type": "application/json",
+                "content-range": `bytes */${data.length}`,
+              })
+              res.end(JSON.stringify({ error: "range not satisfiable" }))
+              return
+            }
+            if (parsed !== "ignore") {
+              const slice = data.subarray(parsed.start, parsed.end + 1)
+              res.writeHead(206, {
+                "content-range": `bytes ${parsed.start}-${parsed.end}/${data.length}`,
+                "content-length": slice.length,
+                "accept-ranges": "bytes",
+              })
+              res.end(slice)
+              return
+            }
+          }
+          // No Range header (or unsupported multi-range): advertise
+          // Accept-Ranges so well-behaved clients can re-request with
+          // Range on a subsequent fetch.
+          res.writeHead(200, { "accept-ranges": "bytes" })
           res.end(data)
         } catch (err) {
           if (isNotFoundError(err)) {
@@ -1481,6 +1518,60 @@ function isValidCid(cid: string): boolean {
     return /^[bB][a-z2-7]+$/.test(cid)
   }
   return false
+}
+
+/**
+ * #324: parse a single bytes-range request per RFC 7233.
+ * Returns:
+ *   { start, end }   — valid single-range (inclusive bounds)
+ *   "invalid"        — syntactically valid but unsatisfiable (e.g.
+ *                      start > total-1, or both endpoints absent)
+ *                      → caller returns 416
+ *   "ignore"         — does not look like a `bytes=` range; treat as
+ *                      no Range header → caller returns full 200
+ *
+ * Forms supported:
+ *   bytes=N-M    (start N, end M; M defaults to total-1 when absent)
+ *   bytes=N-     (start N, end is total-1)
+ *   bytes=-N     (suffix; last N bytes; clamped to file size)
+ * Multi-range (comma-separated) is rejected at the caller before we
+ * get here, so we don't generate multipart/byteranges responses.
+ */
+function parseRangeBytes(header: string, totalSize: number):
+  | { start: number; end: number }
+  | "invalid"
+  | "ignore"
+{
+  // RFC 7233 §3.1 — units are case-insensitive
+  const trimmed = header.trim()
+  const match = /^bytes\s*=\s*(\d*)\s*-\s*(\d*)$/i.exec(trimmed)
+  if (!match) return "ignore"
+  const startStr = match[1]
+  const endStr = match[2]
+  if (startStr === "" && endStr === "") return "invalid"
+
+  let start: number, end: number
+  if (startStr === "") {
+    // suffix-byte-range-spec: last N bytes
+    const suffix = Number(endStr)
+    if (!Number.isFinite(suffix) || !Number.isInteger(suffix) || suffix <= 0) return "invalid"
+    if (totalSize === 0) return "invalid"
+    start = Math.max(0, totalSize - suffix)
+    end = totalSize - 1
+  } else {
+    start = Number(startStr)
+    if (!Number.isFinite(start) || !Number.isInteger(start) || start < 0) return "invalid"
+    if (start >= totalSize) return "invalid"
+    if (endStr === "") {
+      end = totalSize - 1
+    } else {
+      end = Number(endStr)
+      if (!Number.isFinite(end) || !Number.isInteger(end) || end < start) return "invalid"
+      // Per RFC 7233, clamp end to total-1 when client requests beyond EOF
+      if (end > totalSize - 1) end = totalSize - 1
+    }
+  }
+  return { start, end }
 }
 
 /**
