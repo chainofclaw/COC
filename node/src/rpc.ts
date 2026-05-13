@@ -3934,7 +3934,20 @@ async function formatBlock(block: Awaited<ReturnType<IChainEngine["getBlockByNum
     miner: block.proposer.startsWith("0x") ? block.proposer : "0x0000000000000000000000000000000000000000",
     difficulty: "0x0",
     totalDifficulty: "0x0",
-    extraData: `0x${Buffer.from(block.proposer, "utf-8").toString("hex")}`,
+    // #448: encode extraData as the proposer's address BYTES (20 bytes),
+    // not the ASCII representation of the hex string. Pre-fix
+    // `Buffer.from(block.proposer, "utf-8").toString("hex")` encoded the
+    // 42-char "0x..." string char-by-char, producing 42 BYTES of extraData
+    // — both wasteful AND a violation of Ethereum's 32-byte extraData cap
+    // (consensus rule). External spec-strict validators (L2 fraud-proof
+    // generators, geth-strict block import) rejected COC blocks.
+    //
+    // When proposer is a 20-byte hex address, use it directly. Otherwise
+    // (test fixtures, non-address node IDs) fall back to UTF-8 encoding
+    // but truncate to 32 bytes to stay within the consensus cap.
+    extraData: /^0x[0-9a-fA-F]{40}$/.test(block.proposer)
+      ? block.proposer.toLowerCase()
+      : `0x${Buffer.from(block.proposer, "utf-8").toString("hex").slice(0, 64)}`,
     mixHash: "0x" + "0".repeat(64),
     size: `0x${blockSize.toString(16)}`,
     gasLimit: `0x${BLOCK_GAS_LIMIT.toString(16)}`,
