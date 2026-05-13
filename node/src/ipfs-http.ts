@@ -475,7 +475,14 @@ export class IpfsHttpServer {
       }
 
       if (!url.pathname?.startsWith("/api/v0/")) {
-        res.writeHead(404)
+        // #382: bare `res.writeHead(404); res.end()` triggers Node's
+        // chunked Transfer-Encoding because headers commit before body
+        // length is known. HEAD requests then wait for a terminating
+        // chunk that Node suppresses, hanging the client for the full
+        // 5 s keep-alive timeout. Same pattern as #376 (rpc.ts) / #378
+        // (p2p.ts) — set Content-Length: 0 explicitly so HEAD/GET
+        // terminate immediately.
+        res.writeHead(404, { "content-length": "0" })
         res.end()
         return
       }
@@ -486,8 +493,18 @@ export class IpfsHttpServer {
       // visited webpage trigger state-changing operations (pin/add,
       // block/rm, repo/gc) against a victim's local IPFS daemon.
       if (req.method !== "POST") {
-        res.writeHead(405, { "allow": "POST", "content-type": "application/json" })
-        res.end(JSON.stringify({ error: "method not allowed: /api/v0/* requires POST" }))
+        // #382: pre-fix the body was passed to res.end() after writeHead
+        // had already committed headers, so Node defaulted to chunked
+        // encoding (no Content-Length). HEAD requests then hung 5 s on
+        // keep-alive waiting for the chunked terminator. Compute the body
+        // first and set Content-Length so HEAD/GET behave identically.
+        const body405 = JSON.stringify({ error: "method not allowed: /api/v0/* requires POST" })
+        res.writeHead(405, {
+          "allow": "POST",
+          "content-type": "application/json",
+          "content-length": String(Buffer.byteLength(body405)),
+        })
+        res.end(body405)
         return
       }
 
@@ -627,8 +644,16 @@ export class IpfsHttpServer {
         return
       }
 
-      res.writeHead(404)
-      res.end(JSON.stringify({ error: "not found" }))
+      // #382: same chunked-without-terminator HEAD hang. Compute body
+      // first + Content-Length so HEAD requests terminate immediately.
+      {
+        const body404 = JSON.stringify({ error: "not found" })
+        res.writeHead(404, {
+          "content-type": "application/json",
+          "content-length": String(Buffer.byteLength(body404)),
+        })
+        res.end(body404)
+      }
       } catch (err) {
         // #180: defensively map ErasureError to 4xx — the inline
         // handleCat path already does this for read-side ErasureError,
