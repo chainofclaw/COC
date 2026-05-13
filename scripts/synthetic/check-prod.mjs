@@ -184,7 +184,9 @@ const checks = [
     async run() {
       const { status, latency_ms } = await wsHandshake(cfg.wsUrl)
       if (status !== 101) throw new Error(`WS upgrade status=${status} (expected 101)`)
-      if (latency_ms > 2000) throw new Error(`WS handshake ${latency_ms}ms > 2000ms`)
+      // Threshold sized for cold-start TLS hairpin-NAT (5s observed) +
+      // headroom. Warm reconnects measure 30-50ms on prod-2 to itself.
+      if (latency_ms > 5000) throw new Error(`WS handshake ${latency_ms}ms > 5000ms`)
       return `101 in ${latency_ms}ms`
     },
   },
