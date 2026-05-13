@@ -31,7 +31,7 @@ export function NetworkStats() {
         const [blockNumber, gasPrice, chainId, syncing, peerCount] = await Promise.all([
           provider.getBlockNumber(),
           rpcCall<string>('eth_gasPrice').catch(() => '0x0'),
-          rpcCall<string>('eth_chainId').catch(() => '0x495c'),
+          rpcCall<string>('eth_chainId').catch(() => '0x15acc'),
           rpcCall<boolean>('eth_syncing').catch(() => false),
           rpcCall<string>('net_peerCount').catch(() => '0x0'),
         ])

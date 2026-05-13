@@ -10,7 +10,7 @@ export async function GET() {
 
     // Chain stats from RPC
     const { governanceDAO, treasury, factionRegistry } = getContractAddresses()
-    const rpcUrl = process.env.COC_RPC_URL || 'http://127.0.0.1:18780'
+    const rpcUrl = process.env.COC_RPC_URL || 'http://127.0.0.1:28780'
 
     let totalProposals = 0
     let activeProposals = 0
