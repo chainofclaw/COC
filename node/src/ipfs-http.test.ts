@@ -489,6 +489,92 @@ describe("IpfsHttpServer", () => {
     assert.ok(okBody.Hash?.startsWith("bafy"), "should still return v1 bafy CID")
   })
 
+  it("#356: /api/v0/add rejects empty multipart (no parts) with 400 (not silent empty-CID)", async () => {
+    // Pre-fix the parser dropped the `""` and `"--\r\n"` parts from
+    // split() and fell through to `return { bytes: new Uint8Array() }`,
+    // so an empty multipart body returned the empty-file CID with 200.
+    const boundary = "----Empty356"
+    const body = `--${boundary}--\r\n`
+    const res = await fetch("/api/v0/add", {
+      method: "POST",
+      headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+      body,
+    })
+    assert.equal(res.status, 400, `empty multipart must reject (got ${res.status})`)
+    const j = await res.json() as { error: string }
+    assert.equal(j.error, "invalid_multipart")
+  })
+
+  it("#356: /api/v0/add rejects multi-file multipart with 400 (not silent drop of N-1 files)", async () => {
+    // Pre-fix the for-loop `return`ed on the first parseable part,
+    // silently DROPPING every subsequent file's bytes — data loss
+    // for any client that thought /add accepted batches (kubo's
+    // actual /add streams NDJSON for each file). Now reject loud.
+    const boundary = "----Multi356"
+    const body = [
+      `--${boundary}`,
+      'Content-Disposition: form-data; name="file"; filename="a.txt"',
+      "Content-Type: application/octet-stream",
+      "",
+      "alpha-bytes",
+      `--${boundary}`,
+      'Content-Disposition: form-data; name="file"; filename="b.txt"',
+      "Content-Type: application/octet-stream",
+      "",
+      "beta-bytes",
+      `--${boundary}--`,
+      "",
+    ].join("\r\n")
+    const res = await fetch("/api/v0/add", {
+      method: "POST",
+      headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+      body,
+    })
+    assert.equal(res.status, 400, `multi-file multipart must reject (got ${res.status})`)
+    const j = await res.json() as { error: string; message?: string }
+    assert.equal(j.error, "unsupported_multipart")
+    assert.match(j.message ?? "", /2 parts/)
+  })
+
+  it("#356: /api/v0/add rejects multipart/* Content-Type missing the boundary param with 400", async () => {
+    // Pre-fix the `!boundaryMatch` branch fell back to the raw-body
+    // path even for multipart/* content-types — the entire envelope
+    // (`--XYZ\r\nContent-Disposition: ...\r\n\r\nfile-bytes\r\n--XYZ--`)
+    // got stored as one opaque blob. Reject the malformed CT instead.
+    const body = [
+      "--XYZ",
+      'Content-Disposition: form-data; name="file"; filename="a.txt"',
+      "Content-Type: application/octet-stream",
+      "",
+      "alpha-bytes",
+      "--XYZ--",
+      "",
+    ].join("\r\n")
+    const res = await fetch("/api/v0/add", {
+      method: "POST",
+      headers: { "content-type": "multipart/form-data" }, // no boundary=
+      body,
+    })
+    assert.equal(res.status, 400, `missing boundary must reject (got ${res.status})`)
+    const j = await res.json() as { error: string }
+    assert.equal(j.error, "invalid_multipart")
+  })
+
+  it("#356: /api/v0/add raw-body (non-multipart Content-Type) still accepted", async () => {
+    // Regression guard: the new boundary-required check should only
+    // fire for `multipart/*` Content-Types. Raw uploads (octet-stream,
+    // no CT, etc.) must still go through the readBody fallback so
+    // existing kubo CLI / curl --data-binary flows keep working.
+    const res = await fetch("/api/v0/add", {
+      method: "POST",
+      headers: { "content-type": "application/octet-stream" },
+      body: "raw-bytes-go-here",
+    })
+    assert.equal(res.status, 200, `raw octet-stream must still work (got ${res.status})`)
+    const j = await res.json() as { Hash: string; Size: string }
+    assert.equal(j.Size, "17")
+  })
+
   it("#180: /api/v0/add?erasure=N+M rejects N or M above MAX_DATA/PARITY_SHARDS with 400 (not 500)", async () => {
     // Pre-fix parseErasureSpec only checked the lower bound (n>=1,
     // m>=1). Values above MAX_DATA_SHARDS / MAX_PARITY_SHARDS (24
