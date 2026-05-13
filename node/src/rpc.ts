@@ -1076,6 +1076,16 @@ async function handleRpc(
         if (isEthersShapeError) {
           invalidParams("invalid raw transaction: failed to decode")
         }
+        // #332: mempool.addRawTx throws plain Error("replacement tx gas price
+        // too low: ...") when a same-nonce replacement doesn't clear the 10%
+        // bump threshold. Pre-fix this surfaced as -32603 "internal error"
+        // even though it's a clean client-input rejection — the caller just
+        // needs to retry with a higher gas price. Map to -32000 to match
+        // geth's "replacement transaction underpriced" convention.
+        const msg = parseErr instanceof Error ? parseErr.message : String(parseErr)
+        if (/^replacement tx gas price too low/i.test(msg)) {
+          throw { code: -32000, message: msg }
+        }
         throw parseErr
       }
       await p2p.receiveTx(raw)
