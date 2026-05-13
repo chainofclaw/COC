@@ -120,7 +120,7 @@ export default async function NetworkPage() {
           </div>
           <div className="flex items-center gap-2">
             <span className="font-medium w-28">Chain ID:</span>
-            <code className="bg-blue-100 px-3 py-1 rounded">{nodeInfo ? nodeInfo.chainId : 18780}</code>
+            <code className="bg-blue-100 px-3 py-1 rounded">{nodeInfo ? nodeInfo.chainId : 88780}</code>
           </div>
           <div className="flex items-center gap-2">
             <span className="font-medium w-28">Network:</span>

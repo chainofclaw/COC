@@ -30,7 +30,7 @@ async function getChainStats() {
     : await provider.getBlockNumber()
   const chainId = chainStats
     ? parseInt(chainStats.chainId, 16)
-    : 18780
+    : 88780
 
   // Calculate avg block time from newest and 10th-newest block
   let avgBlockTimeMs = 0

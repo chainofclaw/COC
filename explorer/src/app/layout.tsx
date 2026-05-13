@@ -69,7 +69,7 @@ export default function RootLayout({
           </main>
           <footer className="bg-gray-800 text-white py-4">
             <div className="container mx-auto px-4 text-center text-sm">
-              <p>&copy; 2026 COC Explorer | ChainID: 18780</p>
+              <p>&copy; 2026 COC Explorer | ChainID: 88780</p>
             </div>
           </footer>
         </div>
