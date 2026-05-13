@@ -100,7 +100,12 @@ export async function formatNewHeadsNotification(event: BlockEvent): Promise<Rec
     receiptsRoot: headerView.receiptsRoot,
     miner: block.proposer.startsWith("0x") ? block.proposer : "0x0000000000000000000000000000000000000000",
     difficulty: "0x0",
-    extraData: `0x${Buffer.from(block.proposer, "utf-8").toString("hex")}`,
+    // #448: encode proposer as address bytes (20 bytes), not ASCII string.
+    // See rpc.ts:formatBlockResponse for context. Falls back to UTF-8
+    // (truncated to 32 bytes) when proposer isn't a hex address.
+    extraData: /^0x[0-9a-fA-F]{40}$/.test(block.proposer)
+      ? block.proposer.toLowerCase()
+      : `0x${Buffer.from(block.proposer, "utf-8").toString("hex").slice(0, 64)}`,
     gasLimit: "0x1c9c380",
     gasUsed: `0x${headerView.gasUsed.toString(16)}`,
     timestamp: `0x${Math.floor(block.timestampMs / 1000).toString(16)}`,
