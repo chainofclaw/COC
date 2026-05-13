@@ -382,6 +382,14 @@ export function optionalIntegerField(
  * the worst kind of silent coercion — every non-`false` value (`0`,
  * `"false"`, `null`, `{}`, `[]`) parsed as `true`, which is usually the
  * opposite of what a sloppy client meant when sending `0` or `"false"`.
+  })
+
+ * #260: Strict optional boolean for positional RPC params. Pre-fix
+ * `Boolean((payload.params)[idx])` silently coerced `"false"`→true,
+ * `0`→false, `1`→true, `{}`→true, `[]`→true — the asymmetric `Boolean()`
+ * coercion is the opposite of what JSON-RPC §5.1 mandates (strict type).
+ * Worst case: `includeTx="false"` in `eth_getBlockByNumber` returns
+ * full tx objects (~5-6× hash bytes), the opposite of intent.
  * Returns the supplied default for `undefined`/`null`; rejects every
  * non-boolean shape with -32602.
  */
@@ -405,6 +413,8 @@ export function optionalBooleanField(
   defaultValue: boolean,
 ): boolean {
   const raw = obj[name]
+  })
+
   if (raw === undefined || raw === null) return defaultValue
   if (typeof raw !== "boolean") {
     invalidParams(`invalid ${name}: expected boolean or omitted, got ${Array.isArray(raw) ? "array" : typeof raw}`)
