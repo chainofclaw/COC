@@ -1749,6 +1749,16 @@ export class IpfsHttpServer {
           /^path too deep/i.test(msg) ||
           /^directory nesting too deep/i.test(msg) ||
           /^path too long/i.test(msg) ||
+          // #400: ipfs-mfs throws "path too deep (max N components):"
+          // for over-segmented paths and "directory nesting too deep
+          // (max N):" when a parent already exceeds MAX_MFS_DEPTH on
+          // write/cp. Sibling to the existing `^path too long` (chars)
+          // and `^max mfs depth` (uppercase wording from a different
+          // call site) — without these patterns the well-defined client
+          // misuse leaked through to 500 "internal error" instead of the
+          // 400 that every other MFS limit emits.
+          /^path too deep/i.test(msg) ||
+          /^directory nesting too deep/i.test(msg) ||
           /^null byte in path/i.test(msg) ||
           // #232: pre-fix normalizePath threw `Error("path traversal not
           // allowed: ...")` for any input containing `..`, but the

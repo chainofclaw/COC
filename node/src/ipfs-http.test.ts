@@ -1157,6 +1157,27 @@ describe("IpfsHttpServer", () => {
       `/api/v0/files/stat?arg=${encodeURIComponent(deepPath)}`,
       `/api/v0/files/mkdir?arg=${encodeURIComponent(deepPath)}`,
       `/api/v0/files/rm?arg=${encodeURIComponent(deepPath)}`,
+  })
+
+  it("#400: /api/v0/files/* path-too-deep + directory-nesting-too-deep return 400 (not 500)", async () => {
+    // ipfs-mfs throws `path too deep (max N components): ...` for
+    // over-segmented paths and `directory nesting too deep (max N): ...`
+    // when a parent already exceeds MAX_MFS_DEPTH during write/cp.
+    // #268 mapped sibling `^path too long` (char count) and
+    // `^max mfs depth` (uppercase wording) to 400 but missed these two
+    // — they leaked as 500 "internal error" even though both come from
+    // caller-supplied input. Same client-input-error class as the rest.
+    const { IpfsMfs } = await import("./ipfs-mfs.ts")
+    const mfs = new IpfsMfs(store, unixfs)
+    server.attachSubsystems({ mfs })
+    // 100 segments — exceeds MAX_MFS_DEPTH (64), but each segment is
+    // 1 char so total path stays well under MAX_PATH_LENGTH (4096) and
+    // does NOT match `^path too long`. Pre-fix this surfaced as 500.
+    const tooDeep = "/" + "a/".repeat(100)
+    const probes = [
+      `/api/v0/files/ls?arg=${encodeURIComponent(tooDeep)}`,
+      `/api/v0/files/stat?arg=${encodeURIComponent(tooDeep)}`,
+      `/api/v0/files/mkdir?arg=${encodeURIComponent(tooDeep)}&parents=true`,
     ]
     for (const path of probes) {
       const res = await fetch(path, { method: "POST" })
@@ -1195,6 +1216,8 @@ describe("IpfsHttpServer", () => {
       `must not leak 'internal error', got ${JSON.stringify(body)}`)
     assert.match(`${body.error} ${body.message ?? ""}`, /cannot move|bad request/i,
       `error must reference move, got ${JSON.stringify(body)}`)
+  })
+
   })
 
   it("#236: /api/v0/files/cp + /files/mv read second ?arg= for destination (kubo compat)", async () => {
