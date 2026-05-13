@@ -341,6 +341,21 @@ export class WsRpcServer {
       })
       return
     }
+    // #318: WS-RPC envelope is a parallel code path to the HTTP RPC envelope
+    // (rpc.ts:dispatchOne). The same method-length and id-shape caps that #314
+    // / #316 added on the HTTP side are missing here. WS-RPC also echoes the
+    // id in every response and forwards the method into "method not supported:
+    // ${method}" via methodNotFound, so the same amplification +
+    // log-injection / parser-confusion surfaces apply. Mirror the HTTP rules
+    // verbatim so a client cannot bypass the caps by switching transport.
+    if (payload.method.length > 128) {
+      this.send(ws, {
+        jsonrpc: "2.0",
+        id: null,
+        error: { code: -32600, message: "invalid request: method name too long (max 128 chars)" },
+      })
+      return
+    }
     if ("id" in payload) {
       const id = payload.id
       const idOk = id === null || typeof id === "string" || (typeof id === "number" && Number.isFinite(id))
@@ -351,6 +366,28 @@ export class WsRpcServer {
           error: { code: -32600, message: "invalid request: id must be string, number, or null" },
         })
         return
+      }
+      // #318: bound string-id surface — parallel to #316 on the HTTP side.
+      // 256 chars accommodates UUIDs (36) and hex hashes (66). Regex uses
+      // Unicode-escape form to avoid NUL bytes in the source file (lesson
+      // from the #312 / #316 PR experience).
+      if (typeof id === "string") {
+        if (id.length > 256) {
+          this.send(ws, {
+            jsonrpc: "2.0",
+            id: null,
+            error: { code: -32600, message: "invalid request: id too long (max 256 chars)" },
+          })
+          return
+        }
+        if (/[\u0000-\u001f\u007f]/.test(id)) {
+          this.send(ws, {
+            jsonrpc: "2.0",
+            id: null,
+            error: { code: -32600, message: "invalid request: id contains control characters" },
+          })
+          return
+        }
       }
     }
     const rawParams = (payload as { params?: unknown }).params
