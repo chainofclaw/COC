@@ -105,6 +105,7 @@ describe("P8: Block/receipt format standardization", () => {
       txs: [],
       gasUsed: 0n,
       baseFee: 1_000_000_000n,
+      finalized: true,
     },
     {
       number: 1n,
@@ -115,6 +116,7 @@ describe("P8: Block/receipt format standardization", () => {
       txs: [tx1],
       gasUsed: 21000n,
       baseFee: 1_000_000_000n,
+      finalized: true,
     },
   ]
 
@@ -158,6 +160,62 @@ describe("P8: Block/receipt format standardization", () => {
 
     const block = await rpcCall(port, "eth_getBlockByNumber", ["0x1", false]) as Record<string, unknown>
     assert.equal(block.gasLimit, `0x${BLOCK_GAS_LIMIT.toString(16)}`)
+
+    await new Promise<void>((resolve, reject) => {
+      (server as any).close((err: Error | undefined) => err ? reject(err) : resolve())
+    })
+  })
+
+  it("#481: genesis block has identical field set to regular blocks (no uncles, full Cancun + finalized)", async () => {
+    // Pre-fix formatBlock emitted `finalized: block.finalized` without a
+    // fallback. For any chain block stored without an explicit finalized
+    // flag (genesis-as-real-block on older chain versions, pre-BFT-
+    // finalization blocks), the value was undefined and JSON.stringify
+    // dropped the entire key. Result: same-endpoint shape drift — block
+    // 0 omitted `finalized` while block N (finalized post-BFT) carried
+    // it. Tools that introspect blocks (ethers/viem/hardhat-fork) trip.
+    //
+    // Live 88780 reproduction (pre-fix):
+    //   eth_getBlockByNumber("0x0",false).keys() — no "finalized"
+    //   eth_getBlockByNumber("0xb200",false).keys() — has "finalized"
+    //
+    // Sibling Cancun fields (blobGasUsed, parentBeaconBlockRoot, etc.)
+    // all use `?? <default>` fallbacks; finalized was the only one missed.
+    const chain = createMockChain(blocks)
+    const port = 38700 + Math.floor(Math.random() * 1000)
+    const server = startRpcServer("127.0.0.1", port, 31337, createMockEvm() as any, chain as any, createMockP2P() as any)
+    await new Promise((r) => setTimeout(r, 100))
+
+    const genesis = await rpcCall(port, "eth_getBlockByNumber", ["0x0", false]) as Record<string, unknown>
+    const regular = await rpcCall(port, "eth_getBlockByNumber", ["0x1", false]) as Record<string, unknown>
+
+    const gkeys = new Set(Object.keys(genesis))
+    const rkeys = new Set(Object.keys(regular))
+
+    // No uncles[] on either (deprecated post-merge); always finalized key.
+    assert.equal(gkeys.has("uncles"), false, "genesis must not expose uncles[]")
+    assert.equal(rkeys.has("uncles"), false, "regular block must not expose uncles[]")
+    assert.equal(gkeys.has("finalized"), true, "genesis must always include finalized as a boolean")
+    assert.equal(rkeys.has("finalized"), true, "regular block must always include finalized")
+    assert.equal(typeof genesis.finalized, "boolean", "finalized must be a boolean")
+    assert.equal(typeof regular.finalized, "boolean", "finalized must be a boolean")
+
+    // Cancun fields must be present on both.
+    for (const required of ["blobGasUsed", "excessBlobGas", "parentBeaconBlockRoot", "withdrawals", "withdrawalsRoot", "mixHash"]) {
+      assert.equal(gkeys.has(required), true, `genesis must include ${required}`)
+      assert.equal(rkeys.has(required), true, `regular block must include ${required}`)
+    }
+
+    // Symmetric diff must be empty — exact field-set parity.
+    const diff = [
+      ...[...gkeys].filter((k) => !rkeys.has(k)),
+      ...[...rkeys].filter((k) => !gkeys.has(k)),
+    ]
+    assert.deepEqual(
+      diff,
+      [],
+      `genesis and regular block field sets must match exactly (symmetric diff: ${diff.join(",")})`,
+    )
 
     await new Promise<void>((resolve, reject) => {
       (server as any).close((err: Error | undefined) => err ? reject(err) : resolve())
