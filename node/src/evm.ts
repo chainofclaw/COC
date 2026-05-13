@@ -431,8 +431,11 @@ export class EvmChain {
       if (first !== undefined) this.receipts.delete(first)
     }
 
+    // #466: lowercase contractAddress to match the rest of the JSON-RPC
+    // address convention (from / to / log.address). result.createdAddress
+    // is an Address object whose toString() returns EIP-55 mixed case.
     const contractAddress = result.createdAddress
-      ? result.createdAddress.toString()
+      ? result.createdAddress.toString().toLowerCase()
       : undefined
 
     this.receipts.set(txHash, {
@@ -652,8 +655,9 @@ export class EvmChain {
       }
     })
 
+    // #466: lowercase contractAddress (see prior site for context).
     const contractAddress = result.createdAddress
-      ? result.createdAddress.toString()
+      ? result.createdAddress.toString().toLowerCase()
       : undefined
 
     // Use pre-computed sender when available (locally proposed blocks) to skip ECDSA recovery
