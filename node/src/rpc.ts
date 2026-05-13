@@ -2186,7 +2186,31 @@ async function handleRpc(
       if (!rawParams || typeof rawParams !== "object" || Array.isArray(rawParams)) {
         invalidParams("invalid params: expected non-null object as first param")
       }
-      const proposalParams = rawParams as Record<string, string>
+      const proposalParams = rawParams as Record<string, unknown>
+      // #296: pre-fix `as Record<string, string>` was a runtime no-op so
+      // type:123/targetId:[]/targetAddress:{} silently flowed into
+      // governance.submitProposal() — the resulting proposal record
+      // stored a non-string in its type field, and downstream filters
+      // / serializers either rejected via -32603 V8 errors or echoed
+      // the coerced garbage back. Same anti-pattern family as #290
+      // (coc_voteProposal Boolean(approve) flip). Validate each
+      // required string field upfront so bogus shapes get -32602.
+      if (typeof proposalParams.type !== "string" || proposalParams.type.length === 0) {
+        invalidParams("invalid type: expected non-empty string")
+      }
+      if (typeof proposalParams.targetId !== "string" || proposalParams.targetId.length === 0) {
+        invalidParams("invalid targetId: expected non-empty string")
+      }
+      if (typeof proposalParams.proposer !== "string" || proposalParams.proposer.length === 0) {
+        invalidParams("invalid proposer: expected non-empty string")
+      }
+      // targetAddress is optional; when present must be a strict 20-byte hex.
+      if (proposalParams.targetAddress !== undefined && proposalParams.targetAddress !== null) {
+        if (typeof proposalParams.targetAddress !== "string" ||
+            !/^0x[0-9a-fA-F]{40}$/.test(proposalParams.targetAddress)) {
+          invalidParams("invalid targetAddress: must match /^0x[0-9a-fA-F]{40}$/ or be omitted")
+        }
+      }
       // Only the local node can submit proposals via RPC
       const localNodeId = (opts as Record<string, unknown>)?.nodeId as string | undefined
       if (localNodeId && proposalParams.proposer !== localNodeId) {
@@ -2210,11 +2234,11 @@ async function handleRpc(
         stakeAmount = BigInt(stakeRaw as string | number)
       }
       const proposal = chain.governance.submitProposal(
-        proposalParams.type,
-        proposalParams.targetId,
-        proposalParams.proposer,
+        proposalParams.type as string,
+        proposalParams.targetId as string,
+        proposalParams.proposer as string,
         {
-          targetAddress: proposalParams.targetAddress,
+          targetAddress: proposalParams.targetAddress as string | undefined,
           stakeAmount,
         },
       )
