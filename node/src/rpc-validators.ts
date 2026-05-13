@@ -381,18 +381,53 @@ const HEX_QUANTITY_RE = /^0x[0-9a-fA-F]+$/
 const HEX_DATA_RE = /^0x([0-9a-fA-F]{2})*$/
 
 /**
+ * #352: per-field hex max-length caps. The pre-fix shape regex
+ * `^0x[0-9a-fA-F]+$` was unbounded — a client could pass `gas: "0x" +
+ * "a".repeat(100_000)` and the downstream `BigInt(...)` ran O(n²) on a
+ * 50KB hex blob, blocking the event loop ~1s per request. With 10
+ * concurrent such calls, the entire single-threaded V8 event loop
+ * saturates. RPC body cap (1 MB) bounds the total payload, but a
+ * single 1 MB call with 16 large fields can still cost > 5s of pure
+ * BigInt allocation.
+ *
+ * Per Ethereum types:
+ *   - gas, nonce          : uint64 → at most 16 hex digits (+ "0x")
+ *   - value, gasPrice,
+ *     maxFeePerGas,
+ *     maxPriorityFeePerGas: uint256 → at most 64 hex digits (+ "0x")
+ *
+ * Add a small slack ("+2") to allow the "0x" prefix.
+ */
+const TX_HEX_FIELD_CAPS: Record<string, number> = {
+  value: 64 + 2,
+  gas: 16 + 2,
+  gasPrice: 64 + 2,
+  maxFeePerGas: 64 + 2,
+  maxPriorityFeePerGas: 64 + 2,
+  nonce: 16 + 2,
+}
+
+/**
  * #148: validate the numeric/data fields of an eth_call / estimateGas /
  * sendTransaction-shaped object. Pre-fix, malformed `value`/`gas`/etc
  * either flowed through to the EVM (which silently treated non-hex as
  * 0) or surfaced as -32603 internal-error with the V8 message leaked.
  * Rejects each field at the boundary with -32602.
+ *
+ * #352: each numeric field now also has a magnitude (hex-length) cap
+ * so a giant hex blob can't trigger O(n²) BigInt conversion.
  */
 export function validateTxCallFields(callParams: Record<string, unknown>): void {
-  for (const field of ["value", "gas", "gasPrice", "maxFeePerGas", "maxPriorityFeePerGas"] as const) {
+  for (const field of ["value", "gas", "gasPrice", "maxFeePerGas", "maxPriorityFeePerGas", "nonce"] as const) {
     const v = callParams[field]
     if (v === undefined || v === null || v === "") continue
     if (typeof v !== "string" || !HEX_QUANTITY_RE.test(v)) {
       invalidParams(`invalid ${field}: must match /^0x[0-9a-fA-F]+$/`)
+    }
+    const maxLen = TX_HEX_FIELD_CAPS[field]
+    if (maxLen !== undefined && v.length > maxLen) {
+      const bits = field === "gas" || field === "nonce" ? 64 : 256
+      invalidParams(`${field} too large: ${v.length} chars > ${maxLen} (uint${bits} max)`)
     }
   }
   const data = callParams.data
