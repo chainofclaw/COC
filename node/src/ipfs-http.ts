@@ -1736,6 +1736,16 @@ export class IpfsHttpServer {
           // IS in the alternation. /files/mv with that shape fell through
           // to 500 + ERROR log. Same regex-mismatch family as #232/#268.
           /^cannot (remove|operate on|copy|move)/i.test(msg) ||
+  })
+
+          /^cannot (remove|operate on|copy)/i.test(msg) ||
+          // #420: cp/mv with src===dest pre-fix silently returned 200
+          // ok (line 239 of ipfs-mfs.ts said `return` for same-path).
+          // After tightening to throw, the message starts with
+          // "source and destination are the same:" — neither
+          // /^cannot/ nor any other existing alternation catches it,
+          // so without this regex the new error would leak as 500.
+          /^source and destination are the same/i.test(msg) ||
           /must be/i.test(msg) ||
           /^missing /i.test(msg) ||
           /^write would exceed/i.test(msg) ||

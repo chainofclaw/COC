@@ -342,6 +342,32 @@ test("#418: normalizePath rejects whitespace-only path components", async () => 
     const entries = await mfs.ls("/")
     assert.ok(entries.some((e) => e.name === " leading-space"),
       "non-whitespace-only names with spaces still allowed")
+  })
+
+test("#420: mv with src===dest rejects instead of silent no-op", async () => {
+  // Pre-fix `mv("/a", "/a")` silently returned (line 239 of mfs.ts:
+  // `if (srcNorm === destNorm) return`), masking client typos where
+  // someone meant to rename /a → /b but typed /a → /a. POSIX `mv` +
+  // kubo MFS both reject; align so a buggy client (variable
+  // confusion, accidental copy-paste) learns about misuse.
+  // Live on 88780: `files/mv?arg=/cp-test&arg=/cp-test` returned
+  // `{"ok":true}` status=200.
+  const { mfs, cleanup } = await createMfs()
+  try {
+    await mfs.write("/file.txt", new TextEncoder().encode("data"), { create: true })
+    await assert.rejects(
+      () => mfs.mv("/file.txt", "/file.txt"),
+      /source and destination are the same/,
+    )
+    // Sanity: file is still present after the rejected mv.
+    const data = await mfs.read("/file.txt")
+    assert.strictEqual(new TextDecoder().decode(data), "data",
+      "rejected mv must leave source intact")
+    // Sanity: real rename still works.
+    await mfs.mv("/file.txt", "/renamed.txt")
+    await assert.rejects(() => mfs.read("/file.txt"), /not found/)
+    const data2 = await mfs.read("/renamed.txt")
+    assert.strictEqual(new TextDecoder().decode(data2), "data")
   } finally {
     cleanup()
   }
@@ -474,6 +500,28 @@ test("#418: write rejects whitespace-only path components", async () => {
       () => mfs.write("\t", new TextEncoder().encode("data"), { create: true }),
       /whitespace-only/,
     )
+  })
+
+test("#420: cp with src===dest rejects instead of silent no-op", async () => {
+  // Same silent-no-op class as mv. POSIX `cp /a /a` is "same file"
+  // error; kubo MFS rejects too.
+  const { mfs, cleanup } = await createMfs()
+  try {
+    await mfs.write("/file.txt", new TextEncoder().encode("data"), { create: true })
+    await assert.rejects(
+      () => mfs.cp("/file.txt", "/file.txt"),
+      /source and destination are the same/,
+    )
+    // Sanity: file is still present after the rejected cp.
+    const data = await mfs.read("/file.txt")
+    assert.strictEqual(new TextDecoder().decode(data), "data",
+      "rejected cp must leave source intact")
+    // Sanity: real copy still works.
+    await mfs.cp("/file.txt", "/copy.txt")
+    const orig = await mfs.read("/file.txt")
+    const copy = await mfs.read("/copy.txt")
+    assert.strictEqual(new TextDecoder().decode(orig), "data")
+    assert.strictEqual(new TextDecoder().decode(copy), "data")
   } finally {
     cleanup()
   }
