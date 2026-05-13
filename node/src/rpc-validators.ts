@@ -474,6 +474,45 @@ export function validateTxCallFields(callParams: Record<string, unknown>): void 
       invalidParams(`maxPriorityFeePerGas (${maxTip}) > maxFeePerGas (${maxFee})`)
     }
   }
+  // #473: EIP-2930 accessList shape validation. Pre-fix eth_call /
+  // eth_estimateGas / eth_sendTransaction silently dropped ALL accessList
+  // input (callRaw only forwards from/to/data/value/gas — see rpc.ts:928).
+  // Any malformed shape — not-an-array, missing fields, bad address, bad
+  // storage key — was accepted with a 200 OK result, masking client bugs.
+  // geth/erigon both reject malformed accessList at the JSON-RPC layer.
+  // We don't yet plumb accessList through to the EVM simulator, but
+  // shape-enforcement at the boundary still surfaces caller bugs that
+  // would otherwise hit eth_sendRawTransaction with a misleading downstream
+  // error.
+  const accessList = callParams.accessList
+  if (accessList !== undefined && accessList !== null) {
+    if (!Array.isArray(accessList)) {
+      invalidParams("invalid accessList: expected array of {address, storageKeys}")
+    }
+    if (accessList.length > 256) {
+      invalidParams(`accessList too large: ${accessList.length} > 256`)
+    }
+    accessList.forEach((entry, idx) => {
+      if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+        invalidParams(`invalid accessList[${idx}]: expected object with address+storageKeys`)
+      }
+      const e = entry as Record<string, unknown>
+      if (typeof e.address !== "string" || !/^0x[0-9a-fA-F]{40}$/.test(e.address)) {
+        invalidParams(`invalid accessList[${idx}].address: must match /^0x[0-9a-fA-F]{40}$/`)
+      }
+      if (!Array.isArray(e.storageKeys)) {
+        invalidParams(`invalid accessList[${idx}].storageKeys: expected array`)
+      }
+      if ((e.storageKeys as unknown[]).length > 256) {
+        invalidParams(`accessList[${idx}].storageKeys too large: ${(e.storageKeys as unknown[]).length} > 256`)
+      }
+      ;(e.storageKeys as unknown[]).forEach((key, ki) => {
+        if (typeof key !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(key)) {
+          invalidParams(`invalid accessList[${idx}].storageKeys[${ki}]: must match /^0x[0-9a-fA-F]{64}$/`)
+        }
+      })
+    })
+  }
 }
 
 // ---------------------------------------------------------------------------
