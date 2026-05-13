@@ -208,6 +208,98 @@ test("BlockIndex: put and get logs", async () => {
   assert.strictEqual(byTopic[0].address, "0xbbbb")
 })
 
+test("#300: getLogs accepts OR-set topic slot (Array<Hex>) without TypeError", async () => {
+  // Pre-fix: matchLogFilter called expected.toLowerCase() unconditionally, so
+  // any caller passing a Hex[] OR-set (standard Ethereum eth_getLogs form,
+  // e.g. "topic[0] is Transfer OR Approval") crashed with
+  //   TypeError: expected.toLowerCase is not a function
+  // surfaced as JSON-RPC -32603 to the client. The bug shipped to 88780 testnet.
+  const db = new MemoryDatabase()
+  const index = new BlockIndex(db)
+
+  const logs: IndexedLog[] = [
+    {
+      address: "0xaaaa" as Hex,
+      topics: ["0xTRANSFER" as Hex, "0xfrom1" as Hex],
+      data: "0x01" as Hex,
+      blockNumber: 1n,
+      blockHash: "0xbh1" as Hex,
+      transactionHash: "0xtx1" as Hex,
+      transactionIndex: 0,
+      logIndex: 0,
+    },
+    {
+      address: "0xbbbb" as Hex,
+      topics: ["0xAPPROVAL" as Hex, "0xfrom2" as Hex],
+      data: "0x02" as Hex,
+      blockNumber: 1n,
+      blockHash: "0xbh1" as Hex,
+      transactionHash: "0xtx2" as Hex,
+      transactionIndex: 1,
+      logIndex: 1,
+    },
+    {
+      address: "0xcccc" as Hex,
+      topics: ["0xMINT" as Hex, "0xfrom3" as Hex],
+      data: "0x03" as Hex,
+      blockNumber: 1n,
+      blockHash: "0xbh1" as Hex,
+      transactionHash: "0xtx3" as Hex,
+      transactionIndex: 2,
+      logIndex: 2,
+    },
+  ]
+  await index.putBlock(createTestBlock(1))
+  await index.putLogs(1n, logs)
+
+  // OR-set at slot 0: should match Transfer OR Approval, NOT Mint
+  const orResult = await index.getLogs({
+    fromBlock: 1n,
+    toBlock: 1n,
+    topics: [["0xTRANSFER" as Hex, "0xAPPROVAL" as Hex]],
+  })
+  assert.strictEqual(orResult.length, 2,
+    `OR-set must match both Transfer and Approval; got ${orResult.length}`)
+  const addrs = orResult.map((l) => l.address).sort()
+  assert.deepStrictEqual(addrs, ["0xaaaa", "0xbbbb"])
+
+  // Single-element OR-set must behave like exact match
+  const singletonOr = await index.getLogs({
+    fromBlock: 1n,
+    toBlock: 1n,
+    topics: [["0xMINT" as Hex]],
+  })
+  assert.strictEqual(singletonOr.length, 1)
+  assert.strictEqual(singletonOr[0].address, "0xcccc")
+
+  // Empty OR-set must NOT crash and must NOT exclude (treated as null/any)
+  const emptyOr = await index.getLogs({
+    fromBlock: 1n,
+    toBlock: 1n,
+    topics: [[]],
+  })
+  assert.strictEqual(emptyOr.length, 3, "empty OR-set should not filter anything")
+
+  // Mixed: slot 0 OR-set + slot 1 exact must AND across slots
+  const mixed = await index.getLogs({
+    fromBlock: 1n,
+    toBlock: 1n,
+    topics: [["0xTRANSFER" as Hex, "0xAPPROVAL" as Hex], "0xfrom2" as Hex],
+  })
+  assert.strictEqual(mixed.length, 1,
+    "OR-set on slot 0 AND exact on slot 1 must yield only Approval-from2")
+  assert.strictEqual(mixed[0].address, "0xbbbb")
+
+  // KEY invariant: case-insensitive match still works inside OR-set
+  const caseInsensitive = await index.getLogs({
+    fromBlock: 1n,
+    toBlock: 1n,
+    topics: [["0xtransfer" as Hex, "0xAPPROVAL" as Hex]],
+  })
+  assert.strictEqual(caseInsensitive.length, 2,
+    "OR-set match must be case-insensitive like the single-topic path")
+})
+
 test("BlockIndex: getLogs across multiple blocks", async () => {
   const db = new MemoryDatabase()
   const index = new BlockIndex(db)
