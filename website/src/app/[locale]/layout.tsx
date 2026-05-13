@@ -78,6 +78,7 @@ export default async function LocaleLayout({
                     <NavLink href="/network">{tCommon('network')}</NavLink>
                     <NavLink href="/roadmap">{tCommon('roadmap')}</NavLink>
                     <NavLink href="/governance">DAO</NavLink>
+                    <NavLink href="/services">{tCommon('services')}</NavLink>
                     <NavLink href="/testnet">Testnet</NavLink>
                     <NavLink href="/forum">Forum</NavLink>
                     <NavLink href="/docs">{tCommon('docs')}</NavLink>
@@ -96,6 +97,7 @@ export default async function LocaleLayout({
                       { href: '/network', label: tCommon('network') },
                       { href: '/roadmap', label: tCommon('roadmap') },
                       { href: '/governance', label: 'DAO' },
+                      { href: '/services', label: tCommon('services') },
                       { href: '/testnet', label: 'Testnet' },
                       { href: '/forum', label: 'Forum' },
                       { href: '/docs', label: tCommon('docs') },

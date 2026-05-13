@@ -19,7 +19,7 @@ export async function GET(
       return NextResponse.json({ error: 'Governance contract not deployed' }, { status: 404 })
     }
 
-    const rpcUrl = process.env.COC_RPC_URL || 'http://127.0.0.1:18780'
+    const rpcUrl = process.env.COC_RPC_URL || 'http://127.0.0.1:28780'
     const provider = new ethers.JsonRpcProvider(rpcUrl)
     const contract = new ethers.Contract(governanceDAO, GOVERNANCE_DAO_ABI, provider)
 

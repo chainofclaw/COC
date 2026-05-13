@@ -67,9 +67,9 @@ export default function TestnetPage() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            <InfoCard label={t('chainId')} value="18780" />
-            <InfoCard label={t('rpcEndpoint')} value="rpc.clawchain.io:18780" mono />
-            <InfoCard label={t('wsEndpoint')} value="rpc.clawchain.io:18781" mono />
+            <InfoCard label={t('chainId')} value="88780" />
+            <InfoCard label={t('rpcEndpoint')} value="https://clawchain.io/api/testnet/rpc" mono />
+            <InfoCard label={t('wsEndpoint')} value="wss://clawchain.io/api/testnet/ws" mono />
             <InfoCard label={t('blockTime')} value="3s" />
             <InfoCard label={t('consensus')} value="BFT + PoSe" />
             <InfoCard label={t('tokenSymbol')} value="COC" />
@@ -78,11 +78,26 @@ export default function TestnetPage() {
 
         {/* Quick Start */}
         <section className="mb-16">
-          <div className="text-center mb-12 fade-in-up">
+          <div className="text-center mb-6 fade-in-up">
             <h2 className="text-3xl md:text-4xl font-display font-bold mb-2">
               <span className="gradient-text">{t('quickStart')}</span>
             </h2>
             <div className="w-24 h-1 bg-gradient-cyber mx-auto mt-4 rounded-full" />
+          </div>
+
+          {/* Recommended deploy via coc-node skill */}
+          <div className="max-w-3xl mx-auto mb-10">
+            <div className="rounded-xl border border-accent-cyan/30 bg-accent-cyan/5 backdrop-blur-sm px-5 py-4 flex items-start gap-3">
+              <span className="font-display text-xs text-accent-cyan tracking-wider px-2 py-0.5 rounded border border-accent-cyan/40 bg-accent-cyan/10 shrink-0 whitespace-nowrap mt-0.5">
+                {t('cocNodeBadge')}
+              </span>
+              <p className="text-text-secondary text-sm font-body leading-relaxed">
+                {t('cocNodeNote')}{' '}
+                <Link href="/services" className="text-accent-cyan hover:text-accent-cyan/80 underline underline-offset-2">
+                  {t('cocNodeNoteLink')}
+                </Link>
+              </p>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -117,9 +132,9 @@ export default function TestnetPage() {
               <p className="text-text-secondary font-body mb-8">{t('connectDescription')}</p>
 
               <div className="bg-bg-primary/50 rounded-lg p-6 text-left font-mono text-sm text-text-secondary space-y-2">
-                <p><span className="text-accent-cyan">Network Name:</span> COC Prowl Testnet</p>
-                <p><span className="text-accent-cyan">RPC URL:</span> http://rpc.clawchain.io:18780</p>
-                <p><span className="text-accent-cyan">Chain ID:</span> 18780</p>
+                <p><span className="text-accent-cyan">Network Name:</span> COC Prowl Testnet (R3.2)</p>
+                <p><span className="text-accent-cyan">RPC URL:</span> https://clawchain.io/api/testnet/rpc</p>
+                <p><span className="text-accent-cyan">Chain ID:</span> 88780</p>
                 <p><span className="text-accent-cyan">Currency Symbol:</span> COC</p>
                 <p><span className="text-accent-cyan">Explorer:</span> https://explorer.clawchain.io</p>
               </div>
