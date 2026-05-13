@@ -3858,10 +3858,24 @@ async function classifyMempoolPendingQueued(
  * already uses on the wire (parentHash = 0x000…000, timestamp = 0). Empty txs,
  * empty proposer, default 30M gasLimit. Hash is all-zeros — the same value
  * block 1 carries as parentHash, so chain integrity checks line up.
+ *
+ * #452: shape must match non-genesis blocks (formatBlockResponse) so client
+ * libraries don't bifurcate on field set. Specifically:
+ *   - transactionsRoot / receiptsRoot use the empty-trie root (the canonical
+ *     keccak of rlp(empty)), not zero hash — geth, parity, erigon all use
+ *     this for empty blocks; some block-validity checkers reject zero roots.
+ *   - withdrawals / withdrawalsRoot / blobGasUsed / excessBlobGas /
+ *     parentBeaconBlockRoot were missing entirely — every post-Cancun block
+ *     in the chain has them, so genesis must too.
+ *   - uncles[] was emitted only for genesis; non-genesis blocks omit it.
+ *     Drop it for consistency (we're a post-PoW chain).
+ *   - finalized field was missing — genesis is by definition finalized.
  */
 function formatGenesisBlock(includeTx: boolean) {
   const ZERO_HASH = `0x${"0".repeat(64)}`
   const ZERO_ADDR = `0x${"0".repeat(40)}`
+  // keccak256(rlp([])) — the canonical empty Merkle Patricia Trie root.
+  const EMPTY_TRIE_ROOT = "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421"
   return {
     number: "0x0",
     hash: ZERO_HASH,
@@ -3869,21 +3883,26 @@ function formatGenesisBlock(includeTx: boolean) {
     nonce: "0x0000000000000000",
     sha3Uncles: ZERO_HASH,
     logsBloom: `0x${"0".repeat(512)}`,
-    transactionsRoot: ZERO_HASH,
+    transactionsRoot: EMPTY_TRIE_ROOT,
     stateRoot: ZERO_HASH,
-    receiptsRoot: ZERO_HASH,
+    receiptsRoot: EMPTY_TRIE_ROOT,
     miner: ZERO_ADDR,
     difficulty: "0x0",
     totalDifficulty: "0x0",
     extraData: "0x",
+    mixHash: ZERO_HASH,
     size: "0x0",
     gasLimit: "0x1c9c380",
     gasUsed: "0x0",
     timestamp: "0x0",
-    transactions: includeTx ? [] : [],
-    uncles: [],
-    mixHash: ZERO_HASH,
     baseFeePerGas: "0x0",
+    withdrawals: [],
+    withdrawalsRoot: EMPTY_TRIE_ROOT,
+    blobGasUsed: "0x0",
+    excessBlobGas: "0x0",
+    parentBeaconBlockRoot: ZERO_HASH,
+    finalized: true,
+    transactions: includeTx ? [] : [],
   }
 }
 
