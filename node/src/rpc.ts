@@ -3730,10 +3730,44 @@ async function formatPersistentReceipt(
       logIndex: toRpcQuantity(idx),
       removed: false,
     })),
-    effectiveGasPrice: String((parsed as Record<string, unknown>).gasPrice ?? "0x0"),
+    // #446: prefer the stored effectiveGasPrice (already computed correctly by
+    // evm.ts:404-413 during block execution). Fall back to recomputing from
+    // the parsed tx + block baseFee only when the stored field is absent
+    // (older blocks or non-EVM-produced receipts).
+    effectiveGasPrice: tx.receipt.effectiveGasPrice
+      && tx.receipt.effectiveGasPrice !== "0x0"
+      ? tx.receipt.effectiveGasPrice
+      : toRpcQuantity(computeEffectiveGasPrice(parsed, block?.baseFee ?? 0n)),
     contractAddress,
     type: String((parsed as Record<string, unknown>).type ?? "0x0"),
   }
+}
+
+/**
+ * Receipt `effectiveGasPrice` per EIP-1559:
+ *   - Legacy (type 0) / EIP-2930 (type 1): gasPrice (whatever the tx signed).
+ *   - EIP-1559 (type 2): min(maxFeePerGas, baseFeePerGas + maxPriorityFeePerGas).
+ *
+ * #446: pre-fix the receipt formatter set effectiveGasPrice = parsed.gasPrice,
+ * which for type-2 txs that ethers normalizes to maxFeePerGas. Live testnet
+ * 88780 reproduction: tx with maxFee=0xa00000000 (42.95 Gwei), maxPriority=
+ * 0x10000000 (0.27 Gwei), baseFee=0x3b9aca00 (1 Gwei) reported
+ * effectiveGasPrice=0xa00000000 instead of the correct 0x4b9aca00
+ * (~1.27 Gwei) — a 33x overstatement. Block explorers, gas tracking, and
+ * fee-rebate calculations all see the wrong number.
+ */
+function computeEffectiveGasPrice(
+  parsed: Record<string, unknown>,
+  baseFeePerGas: bigint,
+): bigint {
+  const txType = Number(parsed.type ?? "0x0")
+  if (txType === 2) {
+    const maxFee = BigInt(String(parsed.maxFeePerGas ?? "0x0"))
+    const maxPrio = BigInt(String(parsed.maxPriorityFeePerGas ?? "0x0"))
+    const dynamic = baseFeePerGas + maxPrio
+    return maxFee < dynamic ? maxFee : dynamic
+  }
+  return BigInt(String(parsed.gasPrice ?? "0x0"))
 }
 
 /**
