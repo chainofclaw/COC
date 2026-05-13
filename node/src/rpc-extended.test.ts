@@ -1621,6 +1621,23 @@ test("RPC Extended Methods", async (t) => {
       const r = await probe({ jsonrpc: "2.0", id: 1, method: m })
       assert.equal(r.error?.code, -32600, `method=${JSON.stringify(m)} must be -32600, got ${JSON.stringify(r)}`)
     }
+    // #314: method length must be capped to prevent N-byte echo amplification
+    // via the default "method not supported: <method>" -32601 path. Pre-fix
+    // a 1KB method name flowed through and the full string was echoed back.
+    {
+      const longMethod = "A".repeat(129)
+      const r = await probe({ jsonrpc: "2.0", id: 1, method: longMethod })
+      assert.equal(r.error?.code, -32600, "method >128 chars must be -32600 invalid request")
+      assert.match(r.error!.message, /too long/i, "error must explain length cap")
+      // KEY invariant: the response must NOT echo the malicious method name
+      assert.ok(!r.error!.message.includes("AAAA"),
+        "method-too-long error must NOT echo the input — that's the amplification we're closing")
+      // Boundary: exactly 128 chars must still be accepted at the envelope
+      // layer (it'll surface as -32601 method-not-supported instead, which
+      // is the right shape for a real-but-unknown method).
+      const max = await probe({ jsonrpc: "2.0", id: 1, method: "z".repeat(128) })
+      assert.equal(max.error?.code, -32601, "exactly 128 chars must pass envelope check and reach dispatch")
+    }
     // Sanity: well-formed envelope still works.
     const ok = await probe({ jsonrpc: "2.0", id: 1, method: "eth_chainId" })
     assert.equal(ok.error, undefined, "well-formed envelope must NOT error")
