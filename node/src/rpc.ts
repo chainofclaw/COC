@@ -311,23 +311,41 @@ export function startRpcServer(
     // so intermediate caches don't serve the wrong origin.
     const corsConfig = process.env.COC_CORS_ORIGIN ?? "http://localhost:3000"
     const reqOrigin = typeof req.headers.origin === "string" ? req.headers.origin : null
-    let allowedOrigin: string
+    // #458: when request Origin is provided but NOT in the whitelist, do NOT
+    // emit Access-Control-Allow-Origin. Pre-fix code echoed `whitelist[0]`
+    // (e.g. "http://localhost:3000") regardless of the actual Origin —
+    // browsers saw a mismatch and blocked the response anyway, AND the
+    // server leaked which origin it considered "primary" to every probe.
+    // CORS spec: omit ACAO to fail-closed (browser blocks correctly without
+    // disclosing config).
+    let allowedOrigin: string | null
     if (corsConfig === "*") {
       allowedOrigin = "*"
     } else {
       const whitelist = corsConfig.split(",").map((s) => s.trim()).filter(Boolean)
       if (reqOrigin && whitelist.includes(reqOrigin)) {
+        // Browser request from a whitelisted origin: echo it back.
         allowedOrigin = reqOrigin
-      } else {
-        // Fall back to the first whitelist entry so existing single-origin
-        // dev setups keep working unchanged (back-compat).
+      } else if (!reqOrigin) {
+        // No Origin header (curl, server-to-server, monitoring). CORS
+        // doesn't apply; emit whitelist[0] for back-compat (legacy dev
+        // tooling expects the header).
         allowedOrigin = whitelist[0] ?? "http://localhost:3000"
+      } else {
+        // Origin provided but not whitelisted → fail-closed (omit header).
+        allowedOrigin = null
       }
     }
-    res.setHeader("Access-Control-Allow-Origin", allowedOrigin)
-    if (allowedOrigin !== "*") {
-      // Tell shared caches the response varies by the request Origin —
-      // otherwise the cache may serve the ACAO for origin A to origin B.
+    if (allowedOrigin !== null) {
+      res.setHeader("Access-Control-Allow-Origin", allowedOrigin)
+      if (allowedOrigin !== "*") {
+        // Tell shared caches the response varies by the request Origin —
+        // otherwise the cache may serve the ACAO for origin A to origin B.
+        res.setHeader("Vary", "Origin")
+      }
+    } else {
+      // Still set Vary: Origin so caches don't serve a cached ACAO from a
+      // different origin's earlier (whitelisted) request.
       res.setHeader("Vary", "Origin")
     }
     res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS")
