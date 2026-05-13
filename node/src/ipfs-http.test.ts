@@ -1587,6 +1587,53 @@ describe("IpfsHttpServer", () => {
       assert.equal(isIpfsAdminAuthorized(reqOk, "203.0.113.7", cfgNoToken), false)
     })
   })
+
+  it("#380: /api/v0/files/mkdir with empty or root arg returns 400 (not silent 200 ok)", async () => {
+    // Pre-fix: the handler passed empty `arg` straight to mfs.mkdir("").
+    // normalizePath("") rewrites it to "/", `dirs.has("/")` is always
+    // true, and the call returns as a silent no-op — the client sees
+    // 200 `{ok:true}` and believes the directory exists. Later
+    // `files/write` into the path fails with "parent directory not
+    // found", masking the original mistake.
+    //
+    // Live testnet 88780 reproduction (pre-fix):
+    //
+    //   $ curl -X POST 'http://node:28800/api/v0/files/mkdir'
+    //   → 200 {"ok":true}
+    //   $ curl -X POST 'http://node:28800/api/v0/files/mkdir?arg='
+    //   → 200 {"ok":true}
+    //   $ curl -X POST 'http://node:28800/api/v0/files/mkdir?arg=/'
+    //   → 200 {"ok":true}    # root is no-op, but still claims success
+    //
+    // kubo's CLI rejects all three with "argument 'path' is required" /
+    // "cannot create root". This test pins parity.
+    const { IpfsMfs } = await import("./ipfs-mfs.ts")
+    const mfs = new IpfsMfs(store, unixfs)
+    server.attachSubsystems({ mfs })
+
+    const probes = [
+      { path: "/api/v0/files/mkdir", label: "no ?arg= at all" },
+      { path: "/api/v0/files/mkdir?arg=", label: "empty ?arg=" },
+      { path: "/api/v0/files/mkdir?arg=/", label: "root ?arg=/" },
+    ]
+    for (const { path, label } of probes) {
+      const res = await fetch(path, { method: "POST" })
+      assert.equal(res.status, 400, `${label}: must be 400, got ${res.status}`)
+      const body = await res.json() as { error?: string; message?: string }
+      assert.equal(body.error, "bad request", `${label}: error must be 'bad request', got ${JSON.stringify(body)}`)
+      assert.match(
+        `${body.message ?? ""}`,
+        /missing path argument|cannot mkdir root/i,
+        `${label}: message must name the missing-path / root problem, got ${JSON.stringify(body)}`,
+      )
+    }
+
+    // Sanity: a real path still works.
+    const okRes = await fetch("/api/v0/files/mkdir?arg=/probe-380", { method: "POST" })
+    assert.equal(okRes.status, 200, "valid path must succeed")
+    const statRes = await fetch("/api/v0/files/stat?arg=/probe-380", { method: "POST" })
+    assert.equal(statRes.status, 200, "directory must actually be created")
+  })
 })
 
 // Phase Q.4 — Reed-Solomon erasure coding integration tests.
