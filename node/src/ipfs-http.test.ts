@@ -1021,6 +1021,7 @@ describe("IpfsHttpServer", () => {
       const expose = String(res.headers["access-control-expose-headers"] ?? "")
       assert.match(expose, /Content-Length/i, "JS must be able to read Content-Length for size discovery")
       assert.match(expose, /Content-Range/i, "JS must be able to read Content-Range for Range request handling")
+    })
   })
 
   // #326: HEAD /ipfs/<cid> was returning 404 (handler only matched GET).
@@ -1072,6 +1073,7 @@ describe("IpfsHttpServer", () => {
       const getRes = await fetch(`/ipfs/${cid}`)
       const headRes = await fetch(`/ipfs/${cid}`, { method: "HEAD" })
       assert.equal(headRes.status, getRes.status, "HEAD and GET must agree on status code (RFC 7231)")
+    })
   })
 
   // #338: multipart parser used raw.split("--" + boundary) without RFC
@@ -1149,6 +1151,7 @@ describe("IpfsHttpServer", () => {
       assert.equal(res.status, 200)
       const json = await res.json() as { Hash: string; Size: string }
       assert.equal(Number(json.Size), content.length, "normal upload byte count must match")
+    })
   })
 
   // #340: gateway omitted Content-Type — browsers default to
@@ -1237,6 +1240,7 @@ describe("IpfsHttpServer", () => {
       opaque[2] = 0
       const { ct } = await addAndFetch(opaque, "blob.bin")
       assert.equal(ct, "application/octet-stream")
+    })
   })
 
   // #344: repo/gc and block/rm were callable by any anonymous internet
