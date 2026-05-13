@@ -257,6 +257,88 @@ test("PersistentChainEngine: transaction deduplication", async () => {
   }
 })
 
+test("#438: PersistentChainEngine.addRawTx rejects stale-nonce txs (parity with in-memory ChainEngine)", async () => {
+  // Live testnet 88780 reproduction (pre-fix):
+  //   1. Send tx with nonce=N, wait for it to mine. On-chain nonce becomes N+1.
+  //   2. Send a different signed tx with nonce=N (or N-1, N-5 — any used value).
+  //   3. eth_sendRawTransaction returns a hash. The tx silently sits in the
+  //      mempool (txByHash shows blockHash:null) forever — it can never confirm.
+  //
+  // The in-memory ChainEngine (chain-engine.ts:181-186) rejects with
+  // "nonce too low: tx nonce X, on-chain nonce Y" before mempool insertion.
+  // The persistent variant (used in production) was missing the same guard,
+  // creating both a DoS surface (mempool pollution) and a UX problem
+  // (clients think the tx was accepted).
+  const tmpDir = mkdtempSync(join(tmpdir(), "coc-engine-test-"))
+
+  try {
+    const evm = await EvmChain.create(2077)
+    const wallet = Wallet.createRandom()
+    await evm.prefund([
+      { address: wallet.address, balanceWei: parseEther("10").toString() },
+    ])
+
+    const engine = new PersistentChainEngine(
+      {
+        dataDir: tmpDir,
+        nodeId: "node1",
+        chainId: 2077,
+        validators: [],
+        finalityDepth: 3,
+        maxTxPerBlock: 100,
+        minGasPriceWei: 1n,
+      },
+      evm
+    )
+    await engine.init()
+
+    // Build + apply tx with nonce 0 so on-chain nonce advances to 1.
+    const tx0 = await wallet.signTransaction({
+      to: Wallet.createRandom().address,
+      value: parseEther("1"),
+      gasLimit: 21000,
+      gasPrice: 1000000000,
+      nonce: 0,
+      chainId: 2077,
+    })
+    await engine.addRawTx(tx0 as `0x${string}`)
+    await engine.proposeNextBlock()
+
+    // Now try a DIFFERENT tx (different recipient → different hash) reusing
+    // nonce 0. Pre-fix this slipped past the dedup check (different hash) and
+    // landed in the mempool silently. Post-fix it must reject with "nonce too
+    // low" before reaching mempool.
+    const stale = await wallet.signTransaction({
+      to: Wallet.createRandom().address,
+      value: parseEther("2"), // different value → different hash
+      gasLimit: 21000,
+      gasPrice: 1000000000,
+      nonce: 0, // same nonce — already used on-chain
+      chainId: 2077,
+    })
+    await assert.rejects(
+      async () => await engine.addRawTx(stale as `0x${string}`),
+      /nonce too low/,
+      "stale-nonce tx must reject, not silently pollute the mempool",
+    )
+
+    // Also pin a sanity case: same-sender at the CORRECT nonce still works.
+    const next = await wallet.signTransaction({
+      to: Wallet.createRandom().address,
+      value: parseEther("1"),
+      gasLimit: 21000,
+      gasPrice: 1000000000,
+      nonce: 1, // current next nonce
+      chainId: 2077,
+    })
+    await engine.addRawTx(next as `0x${string}`)
+
+    await engine.close()
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true })
+  }
+})
+
 test("PersistentChainEngine: get transaction by hash", async () => {
   const tmpDir = mkdtempSync(join(tmpdir(), "coc-engine-test-"))
 
