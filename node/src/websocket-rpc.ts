@@ -407,12 +407,19 @@ export class WsRpcServer {
     }
     if ("id" in payload) {
       const id = payload.id
-      const idOk = id === null || typeof id === "string" || (typeof id === "number" && Number.isFinite(id))
+      // #398: same as HTTP RPC — reject fractional ids ("Numbers SHOULD
+      // NOT contain fractional parts", §4) AND numeric ids beyond
+      // Number.MAX_SAFE_INTEGER (silently lose precision through V8
+      // JSON.parse). Without this, a WS client tracking sequential 64-bit
+      // ids gets back an off-by-one echo and can't correlate the response.
+      const idOk = id === null
+        || typeof id === "string"
+        || (typeof id === "number" && Number.isSafeInteger(id))
       if (!idOk) {
         this.send(ws, {
           jsonrpc: "2.0",
           id: null,
-          error: { code: -32600, message: "invalid request: id must be string, number, or null" },
+          error: { code: -32600, message: "invalid request: id must be a safe integer, string, or null (no fractions, no precision-losing ints)" },
         })
         return
       }

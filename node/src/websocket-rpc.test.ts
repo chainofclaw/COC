@@ -631,6 +631,39 @@ describe("WebSocket RPC", () => {
     }
   })
 
+  it("#398: WS reject fractional ids and numeric ids past MAX_SAFE_INTEGER", async () => {
+    // Parity with HTTP RPC #398. Pre-fix Number.isFinite let both
+    // through, and the id silently lost precision through V8 JSON.parse.
+    // Same correlation-breaking class as the HTTP path; tighten WS to
+    // Number.isSafeInteger.
+    const ws = await connectWs(WS_PORT)
+    try {
+      const probeRaw = (rawJson: string): Promise<{ error?: { code: number; message: string }; result?: unknown; id?: unknown }> =>
+        new Promise((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error("probe timeout")), 2000)
+          const handler = (data: Buffer | string) => {
+            clearTimeout(timer)
+            ws.removeListener("message", handler)
+            try { resolve(JSON.parse(data.toString())) } catch (e) { reject(e) }
+          }
+          ws.on("message", handler)
+          ws.send(rawJson)
+        })
+      // Fractional id rejected.
+      const fractional = await probeRaw('{"jsonrpc":"2.0","id":1.5,"method":"eth_chainId","params":[]}')
+      assert.equal(fractional.error?.code, -32600, "id=1.5 must be -32600")
+      // 2^53 (one past MAX_SAFE_INTEGER) rejected.
+      const overSafe = await probeRaw('{"jsonrpc":"2.0","id":9007199254740993,"method":"eth_chainId","params":[]}')
+      assert.equal(overSafe.error?.code, -32600, "id past MAX_SAFE_INTEGER must be -32600")
+      // Valid id still works.
+      const ok = await probeRaw('{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}')
+      assert.equal(ok.error, undefined, "well-formed id must work")
+      assert.equal(ok.id, 1, "id echoed verbatim")
+    } finally {
+      ws.close()
+    }
+  })
+
   it("#208: eth_subscribe/eth_unsubscribe reject malformed params (no silent String() coercion)", async () => {
     // Pre-fix `String(params[0] ?? "")` silently coerced any input.
     // For subscribe: `[["newHeads"]]` joined the single-element array
