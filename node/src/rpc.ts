@@ -3790,6 +3790,20 @@ async function formatPersistentReceipt(
     },
   ])
 
+  // #454: logIndex MUST be block-global (running count across all prior
+  // txs' logs in this block), not per-tx-local. Spec: ethereum.org JSON-RPC
+  // "logIndex: log index position in the BLOCK". Pre-fix, every tx's logs
+  // restarted at 0 (`.map((log, idx) => ...)` with idx 0-based), so a
+  // block with 3 txs each emitting 2 logs reported logIndex sequence
+  // [0,1, 0,1, 0,1] instead of geth-spec [0,1, 2,3, 4,5]. Indexers /
+  // subgraphs that key on (blockHash, logIndex) saw duplicate keys and
+  // dropped entries.
+  let logIndexOffset = 0
+  for (const r of receipts) {
+    if (r.transactionHash.toLowerCase() === tx.receipt.transactionHash.toLowerCase()) break
+    logIndexOffset += (r.logs ?? []).length
+  }
+
   return {
     transactionHash: tx.receipt.transactionHash,
     transactionIndex: transactionIndex !== null ? toRpcQuantity(transactionIndex) : "0x0",
@@ -3809,7 +3823,7 @@ async function formatPersistentReceipt(
       blockHash: tx.receipt.blockHash,
       transactionHash: tx.receipt.transactionHash,
       transactionIndex: transactionIndex !== null ? toRpcQuantity(transactionIndex) : "0x0",
-      logIndex: toRpcQuantity(idx),
+      logIndex: toRpcQuantity(logIndexOffset + idx),
       removed: false,
     })),
     // #446: prefer the stored effectiveGasPrice (already computed correctly by
