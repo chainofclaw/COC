@@ -3601,6 +3601,18 @@ function formatRawTransaction(
 ): Record<string, unknown> | null {
   try {
     const parsed = Transaction.from(rawTx)
+    // #442: include accessList for EIP-2930 (type 1) and EIP-1559 (type 2)
+    // transactions. Pre-fix every type-1/2 tx returned by
+    // eth_getTransactionByHash / eth_getBlockByNumber omitted the field,
+    // even though it's part of the signed RLP and required by spec. Indexers
+    // that decode accessList (for gas-cost analysis, MEV scoring, etc.)
+    // silently saw `undefined` for every type-1/2 tx on COC.
+    const accessList = Array.isArray(parsed.accessList) && parsed.accessList.length > 0
+      ? parsed.accessList.map((entry) => ({
+          address: entry.address,
+          storageKeys: Array.isArray(entry.storageKeys) ? entry.storageKeys : [],
+        }))
+      : (parsed.type === 1 || parsed.type === 2 ? [] : undefined)
     return {
       hash: parsed.hash,
       from: parsed.from,
@@ -3615,6 +3627,7 @@ function formatRawTransaction(
       ...(parsed.maxPriorityFeePerGas !== null && parsed.maxPriorityFeePerGas !== undefined
         ? { maxPriorityFeePerGas: toRpcQuantity(parsed.maxPriorityFeePerGas) }
         : {}),
+      ...(accessList !== undefined ? { accessList } : {}),
       input: parsed.data ?? "0x",
       blockHash: context?.blockHash ?? null,
       blockNumber: context?.blockNumber != null ? toRpcQuantity(context.blockNumber) : null,

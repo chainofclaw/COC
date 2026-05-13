@@ -2920,6 +2920,107 @@ test("RPC Extended Methods", async (t) => {
     }
   })
 
+  await t.test("#442: eth_getTransactionByHash includes accessList for EIP-2930/EIP-1559 txs", async () => {
+    // Live testnet 88780 reproduction:
+    //   1. Submit a type-1 (EIP-2930) tx carrying accessList=[{addr, [slot0,slot7]}].
+    //   2. GET via eth_getTransactionByHash.
+    //   3. Pre-fix the response omits the accessList field entirely; the
+    //      formatRawTransaction helper never copied it from the parsed RLP.
+    // Indexers, MEV bots, gas-cost tooling all silently saw `undefined` for
+    // every type-1/2 tx on COC, treating them as if they had no access list.
+    const { Wallet } = await import("ethers")
+    const wallet = new Wallet(`0x${"07".repeat(32)}`)
+    await evm.prefund([{ address: wallet.address, balanceWei: "1000000000000000000" }])
+    const startN = await evm.getNonce(wallet.address.toLowerCase() as `0x${string}`)
+
+    const targetAddr = `0x${"08".repeat(20)}`
+    const slot0 = `0x${"00".repeat(32)}`
+    const slot7 = `0x${"00".repeat(31)}07`
+
+    const submit = async (raw: string) => {
+      const res = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_sendRawTransaction", params: [raw] }),
+      })
+      return await res.json() as { result?: string; error?: { code: number; message: string } }
+    }
+    const get = async (hash: string) => {
+      const res = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getTransactionByHash", params: [hash] }),
+      })
+      return await res.json() as { result?: Record<string, unknown> }
+    }
+
+    // EIP-2930 (type 1)
+    const tx2930 = await wallet.signTransaction({
+      type: 1,
+      to: targetAddr,
+      value: 1n,
+      nonce: Number(startN),
+      gasPrice: 1_000_000_000n,
+      gasLimit: 50_000n,
+      chainId,
+      accessList: [{ address: targetAddr, storageKeys: [slot0, slot7] }],
+    })
+    const r2930 = await submit(tx2930)
+    assert.ok(r2930.result, `EIP-2930 submit must succeed: ${JSON.stringify(r2930)}`)
+    const g2930 = await get(r2930.result!)
+    assert.ok(g2930.result, `EIP-2930 must be findable by hash: ${JSON.stringify(g2930)}`)
+    assert.equal(g2930.result!.type, "0x1", "type field must be 0x1 for EIP-2930")
+    const acl = g2930.result!.accessList as Array<{ address: string; storageKeys: string[] }> | undefined
+    assert.ok(Array.isArray(acl),
+      `accessList must be an array for EIP-2930 tx, got ${typeof acl} (${JSON.stringify(g2930.result)})`)
+    assert.equal(acl!.length, 1, "accessList must have 1 entry")
+    assert.equal(acl![0].address.toLowerCase(), targetAddr.toLowerCase())
+    assert.deepEqual(
+      acl![0].storageKeys.map((k) => k.toLowerCase()),
+      [slot0, slot7],
+    )
+
+    // EIP-1559 (type 2)
+    const tx1559 = await wallet.signTransaction({
+      type: 2,
+      to: targetAddr,
+      value: 1n,
+      nonce: Number(startN) + 1,
+      maxFeePerGas: 2_000_000_000n,
+      maxPriorityFeePerGas: 100_000_000n,
+      gasLimit: 50_000n,
+      chainId,
+      accessList: [{ address: targetAddr, storageKeys: [slot0] }],
+    })
+    const r1559 = await submit(tx1559)
+    assert.ok(r1559.result, `EIP-1559 submit must succeed: ${JSON.stringify(r1559)}`)
+    const g1559 = await get(r1559.result!)
+    assert.ok(g1559.result, `EIP-1559 must be findable by hash`)
+    assert.equal(g1559.result!.type, "0x2", "type field must be 0x2 for EIP-1559")
+    const acl1559 = g1559.result!.accessList as Array<{ address: string; storageKeys: string[] }> | undefined
+    assert.ok(Array.isArray(acl1559), "accessList must be array for EIP-1559 too")
+    assert.equal(acl1559!.length, 1)
+    assert.equal(acl1559![0].address.toLowerCase(), targetAddr.toLowerCase())
+
+    // Legacy (type 0) txs MUST NOT carry an accessList field (per geth).
+    const txLegacy = await wallet.signTransaction({
+      type: 0,
+      to: targetAddr,
+      value: 1n,
+      nonce: Number(startN) + 2,
+      gasPrice: 1_000_000_000n,
+      gasLimit: 21_000n,
+      chainId,
+    })
+    const rLegacy = await submit(txLegacy)
+    assert.ok(rLegacy.result, "legacy tx submit must succeed")
+    const gLegacy = await get(rLegacy.result!)
+    assert.equal(
+      gLegacy.result!.accessList, undefined,
+      `legacy (type 0) tx must NOT have accessList field, got ${JSON.stringify(gLegacy.result!.accessList)}`,
+    )
+  })
+
   if (prevDevAccounts === undefined) {
     delete process.env.COC_DEV_ACCOUNTS
   } else {
