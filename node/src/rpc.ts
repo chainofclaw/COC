@@ -1879,9 +1879,26 @@ async function handleRpc(
       // Strategy: walk block.txs, parse each to derive its hash, then route
       // through the same persistent / evm fallback as eth_getTransactionReceipt
       // so a single receipt formatter is used for both methods.
-      const tag = String((payload.params ?? [])[0] ?? "latest")
-      const num = await resolveBlockNumber(tag, chain)
-      const block = await Promise.resolve(chain.getBlockByNumber(num))
+      //
+      // #366: geth's `eth_getBlockReceipts` accepts `BlockNumberOrHash`
+      // — both a hex/tag block number AND a bare 32-byte block hash.
+      // Pre-fix we only resolved as block number: passing a hash like
+      // `0xb51f36bb…` (66 chars) sailed through `BigInt(hash)` as a
+      // gigantic integer, `chain.getBlockByNumber(huge)` returned null,
+      // and the caller saw `null` indistinguishable from "block hash
+      // doesn't exist." Detect the 66-char hash shape and route to
+      // `getBlockByHash` instead. Indexers that bulk-fetch receipts
+      // by block hash (Etherscan-clones, The Graph, etc.) need this.
+      const rawParam = (payload.params ?? [])[0]
+      let block: Awaited<ReturnType<typeof chain.getBlockByNumber>> | null = null
+      if (typeof rawParam === "string" && /^0x[0-9a-fA-F]{64}$/.test(rawParam)) {
+        // 32-byte block hash — case-insensitive, mirroring #364 normalization.
+        block = await Promise.resolve(chain.getBlockByHash(rawParam.toLowerCase() as Hex))
+      } else {
+        const tag = String(rawParam ?? "latest")
+        const num = await resolveBlockNumber(tag, chain)
+        block = await Promise.resolve(chain.getBlockByNumber(num))
+      }
       if (!block) return null
       const receipts: unknown[] = []
       for (const rawTx of block.txs) {
