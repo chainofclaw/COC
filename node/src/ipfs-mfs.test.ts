@@ -312,6 +312,36 @@ test("#306: write to NEW file with offset pads with zeros (sparse-style)", async
       assert.strictEqual(read[i], 0, `byte ${i} must be zero (zero-padded prefix)`)
     }
     assert.strictEqual(new TextDecoder().decode(read.slice(100)), "TAIL")
+  })
+
+test("#418: normalizePath rejects whitespace-only path components", async () => {
+  // Pre-fix `mkdir " "` (single space), `mkdir "\t\t"`, `mkdir "   "`
+  // silently created directories named with whitespace under root —
+  // a sibling silent-success class to the #380 empty-arg case. Reject
+  // in normalizePath so every MFS route (mkdir, write, cp, mv, stat,
+  // ls, rm) inherits the check instead of duplicating it per-route.
+  // Live on 88780: `curl -X POST $IPFS/api/v0/files/mkdir?arg=%20`
+  // returned `{"ok":true}` and `files/ls /` showed a directory named " ".
+  const { mfs, cleanup } = await createMfs()
+  try {
+    // Single-space component → reject
+    await assert.rejects(() => mfs.mkdir(" "), /whitespace-only/)
+    // Tab-only component → reject
+    await assert.rejects(() => mfs.mkdir("\t\t"), /whitespace-only/)
+    // Multi-space component → reject
+    await assert.rejects(() => mfs.mkdir("   "), /whitespace-only/)
+    // Whitespace component nested in a path → reject
+    await assert.rejects(() => mfs.mkdir("/valid/ /child", { parents: true }), /whitespace-only/)
+    // Mixed-whitespace component → reject
+    await assert.rejects(() => mfs.mkdir(" \t "), /whitespace-only/)
+    // Sanity: normal directory names with leading/trailing whitespace
+    // are NOT rejected (the validator only catches *entirely*
+    // whitespace components — to avoid breaking legitimately-named
+    // entries like "hello world.txt" or " filename").
+    await mfs.mkdir(" leading-space")
+    const entries = await mfs.ls("/")
+    assert.ok(entries.some((e) => e.name === " leading-space"),
+      "non-whitespace-only names with spaces still allowed")
   } finally {
     cleanup()
   }
@@ -429,6 +459,21 @@ test("#306: existing-file overwrite at offset preserves tail (regression for old
     const read = await mfs.read("/o.bin")
     assert.strictEqual(new TextDecoder().decode(read), "ABCXYZGHIJ",
       "overwrite at offset must preserve bytes before+after the written slice")
+  })
+
+test("#418: write rejects whitespace-only path components", async () => {
+  // Same class as mkdir — write would otherwise create files named
+  // " " or "\t" under root.
+  const { mfs, cleanup } = await createMfs()
+  try {
+    await assert.rejects(
+      () => mfs.write(" ", new TextEncoder().encode("data"), { create: true }),
+      /whitespace-only/,
+    )
+    await assert.rejects(
+      () => mfs.write("\t", new TextEncoder().encode("data"), { create: true }),
+      /whitespace-only/,
+    )
   } finally {
     cleanup()
   }

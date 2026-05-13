@@ -505,6 +505,18 @@ function normalizePath(path: string): string {
     if (part === ".." || part === ".") {
       throw new Error(`path traversal not allowed: ${path}`)
     }
+    // #418: non-root path components must contain at least one
+    // non-whitespace character. Pre-fix `arg=%20` (single space)
+    // and `arg=%09` (tab) silently created directories / files named
+    // " " or "\t" under root — same class of silent garbage as the
+    // #380 empty-arg case the previous fix already rejected for
+    // mkdir. Reject in the shared normalizer so every MFS route
+    // (mkdir, write, cp, mv, stat, ls, rm) inherits the check
+    // instead of duplicating it per-route. Skip the root slot
+    // (parts[0] is always "" by construction).
+    if (part !== "" && /^\s+$/.test(part)) {
+      throw new Error(`invalid path: component cannot be whitespace-only: ${JSON.stringify(part)}`)
+    }
   }
   return path
 }
