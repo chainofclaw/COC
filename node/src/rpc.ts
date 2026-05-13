@@ -386,7 +386,24 @@ export function startRpcServer(
     }
 
     if (req.method !== "POST") {
-      res.writeHead(405)
+      // #376: pre-fix `res.writeHead(405); res.end()` left the response
+      // without an explicit Content-Length. Node defaulted to chunked
+      // Transfer-Encoding, and for HEAD requests it suppresses the body
+      // but still advertises chunked — the client (curl, every LB
+      // health probe) then waits for a terminating chunk that never
+      // arrives, hanging until the 5 s keepAliveTimeout fires. Live
+      // testnet 88780 reproduction:
+      //
+      //   $ time curl -X HEAD http://node:28780
+      //   → 6.47 s  (5 s keep-alive + RTT)
+      //
+      // Set `Content-Length: 0` + `Allow: POST, OPTIONS` (RFC 7231
+      // §6.5.5 requires Allow on 405) so HEAD/GET/PUT/DELETE all
+      // terminate immediately.
+      res.writeHead(405, {
+        "allow": "POST, OPTIONS",
+        "content-length": "0",
+      })
       res.end()
       return
     }
