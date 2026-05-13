@@ -843,6 +843,34 @@ describe("IpfsHttpServer", () => {
     }
   })
 
+  it("#270: /api/v0/files/mv into own subtree returns 400 (not 500 'internal error')", async () => {
+    // Pre-fix `/^cannot (remove|operate on|copy)/i` was missing `move` from
+    // the alternation. ipfs-mfs throws "cannot move directory into its own
+    // subdirectory" (line 243) — sibling to "cannot copy …" which IS
+    // matched (since `copy` is in the alternation). So /files/cp returned
+    // 400 but /files/mv with the same shape fell through to 500 +
+    // log.error. Same family as #232/#268.
+    const { IpfsMfs } = await import("./ipfs-mfs.ts")
+    const mfs = new IpfsMfs(store, unixfs)
+    server.attachSubsystems({ mfs })
+    // Create /parent/child first
+    let res = await fetch(`/api/v0/files/mkdir?arg=${encodeURIComponent("/parent")}`, { method: "POST" })
+    assert.equal(res.status, 200, "setup mkdir /parent")
+    res = await fetch(`/api/v0/files/mkdir?arg=${encodeURIComponent("/parent/child")}`, { method: "POST" })
+    assert.equal(res.status, 200, "setup mkdir /parent/child")
+    // Try to move /parent into its own subtree → must be 400 (not 500)
+    res = await fetch(
+      `/api/v0/files/mv?arg=${encodeURIComponent("/parent")}&arg=${encodeURIComponent("/parent/child/grandchild")}`,
+      { method: "POST" },
+    )
+    assert.equal(res.status, 400, `mv-into-own-subtree must be 400, got ${res.status}`)
+    const body = await res.json() as { error?: string; message?: string }
+    assert.notEqual(body.error, "internal error",
+      `must not leak 'internal error', got ${JSON.stringify(body)}`)
+    assert.match(`${body.error} ${body.message ?? ""}`, /cannot move|bad request/i,
+      `error must reference move, got ${JSON.stringify(body)}`)
+  })
+
   it("#236: /api/v0/files/cp + /files/mv read second ?arg= for destination (kubo compat)", async () => {
     // Pre-fix the handlers read `?dest=<path>` but kubo HTTP RPC sends
     // dest as a second `?arg=` value. Result: every kubo-CLI / ipfs-http-

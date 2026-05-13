@@ -1442,7 +1442,12 @@ export class IpfsHttpServer {
         } else if (
           /is a directory/i.test(msg) ||
           /directory not empty/i.test(msg) ||
-          /^cannot (remove|operate on|copy)/i.test(msg) ||
+          // #270: alternation was missing `move`. ipfs-mfs throws
+          // "cannot move directory into its own subdirectory" (line 243)
+          // for mv-into-own-subtree, sibling to "cannot copy …" which
+          // IS in the alternation. /files/mv with that shape fell through
+          // to 500 + ERROR log. Same regex-mismatch family as #232/#268.
+          /^cannot (remove|operate on|copy|move)/i.test(msg) ||
           /must be/i.test(msg) ||
           /^missing /i.test(msg) ||
           /^write would exceed/i.test(msg) ||
