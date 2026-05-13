@@ -2217,7 +2217,9 @@ async function handleRpc(
       }
     }
     case "coc_getProposals": {
-      if (!hasGovernance(chain)) return []
+      // #436: validate shape BEFORE backend-config short-circuit so
+      // garbage input returns -32602, not a silent `[]`. Same family
+      // as #432 / PR #431 (which fixed the methodNotFound variant).
       // #226: pre-fix `as string | undefined` was a runtime no-op so
       // bool/number/object/array silently slipped through and the
       // `validStatuses.includes(...)` always returned false → silent
@@ -2230,6 +2232,7 @@ async function handleRpc(
       if (typeof rawStatusFilter === "string" && rawStatusFilter !== "" && !validStatuses.includes(rawStatusFilter)) {
         invalidParams(`invalid status filter: must be one of ${validStatuses.join(", ")}`)
       }
+      if (!hasGovernance(chain)) return []
       const filter = typeof rawStatusFilter === "string" && rawStatusFilter !== "" ? rawStatusFilter as "pending" | "approved" | "rejected" | "expired" : undefined
       const proposals = chain.governance.getProposals(filter)
       return proposals.map((p) => ({
@@ -2281,9 +2284,9 @@ async function handleRpc(
       return { id: proposal.id, status: proposal.status, votes: Object.fromEntries(proposal.votes) }
     }
     case "coc_getDaoProposals": {
-      if (!hasGovernance(chain)) return []
-      const gov2 = chain.governance
-      if (!gov2.getProposals) return []
+      // #436: validate shape BEFORE backend-config short-circuit (same
+      // family as #432 / PR #431). Without this, garbage filter shapes
+      // silently get `[]` instead of -32602 on read-only nodes.
       // #226: pre-fix the `as` cast was a runtime no-op so booleans,
       // numbers, and arrays silently bypassed both string/object
       // branches → all filters undefined → silent "return all" path.
@@ -2320,6 +2323,9 @@ async function handleRpc(
       if (statusFilter2 && !validStatuses2.includes(statusFilter2)) {
         invalidParams(`invalid status filter: must be one of ${validStatuses2.join(", ")}`)
       }
+      if (!hasGovernance(chain)) return []
+      const gov2 = chain.governance
+      if (!gov2.getProposals) return []
       const sFilter = statusFilter2 && validStatuses2.includes(statusFilter2) ? statusFilter2 : undefined
       let results = gov2.getProposals(sFilter)
       if (typeFilter) results = results.filter((p: { type: string }) => p.type === typeFilter)
@@ -2360,11 +2366,14 @@ async function handleRpc(
       return { balance: `0x${treasury2.toString(16)}` }
     }
     case "coc_getFaction": {
-      if (!hasGovernance(chain)) return null
+      // #436: validate shape BEFORE backend-config short-circuit (same
+      // family as #432 / PR #431). Without this, garbage address shapes
+      // silently get `null` instead of -32602 on read-only nodes.
       const address = (payload.params ?? [])[0]
       if (typeof address !== "string" || !address.startsWith("0x")) {
         invalidParams("invalid address: expected hex string")
       }
+      if (!hasGovernance(chain)) return null
       const factionInfo = chain.governance.getFaction?.(address)
       if (!factionInfo) return null
       return {
