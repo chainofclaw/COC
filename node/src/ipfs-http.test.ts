@@ -1072,6 +1072,83 @@ describe("IpfsHttpServer", () => {
       const getRes = await fetch(`/ipfs/${cid}`)
       const headRes = await fetch(`/ipfs/${cid}`, { method: "HEAD" })
       assert.equal(headRes.status, getRes.status, "HEAD and GET must agree on status code (RFC 7231)")
+  })
+
+  // #338: multipart parser used raw.split("--" + boundary) without RFC
+  // 2046's mandatory CRLF prefix — file content containing the boundary
+  // string anywhere silently truncated the upload. CID then pointed to
+  // partial data. Data-integrity bug. Verify boundary-in-content uploads
+  // round-trip byte-exact.
+  describe("#338 multipart parser CRLF-anchored boundary", () => {
+    it("file content containing the boundary string is preserved", async () => {
+      const boundary = "----TestBoundary338"
+      // File data deliberately includes the boundary substring (no CRLF
+      // prefix — RFC says this is NOT a delimiter).
+      const content = Buffer.from(`hello --${boundary} embedded mid-file payload`)
+      const body = Buffer.concat([
+        Buffer.from(`--${boundary}\r\n`),
+        Buffer.from(`Content-Disposition: form-data; name="file"; filename="x.bin"\r\n`),
+        Buffer.from(`Content-Type: application/octet-stream\r\n\r\n`),
+        content,
+        Buffer.from(`\r\n--${boundary}--\r\n`),
+      ])
+      const res = await fetch("/api/v0/add", {
+        method: "POST",
+        headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+        body: body.toString("binary"),
+      })
+      assert.equal(res.status, 200)
+      const json = await res.json() as { Hash: string; Size: string }
+      assert.equal(Number(json.Size), content.length,
+        `upload must preserve full ${content.length} bytes including boundary substring, got Size=${json.Size}`)
+      // Cat back and verify byte-exact
+      const cat = await fetch(`/api/v0/cat?arg=${json.Hash}`)
+      const got = await cat.buffer()
+      assert.deepEqual(new Uint8Array(got), new Uint8Array(content),
+        "round-tripped content must match original byte-for-byte")
+    })
+
+    it("malformed mid-content `--boundary` without CRLF prefix is ignored", async () => {
+      // Subtle variant: boundary appears mid-content with no CRLF prefix,
+      // only a space prefix. Pre-fix split here too; post-fix should not.
+      const boundary = "----TestB338Subtle"
+      const content = Buffer.from(`prefix --${boundary} foo  --${boundary} bar suffix`)
+      const body = Buffer.concat([
+        Buffer.from(`--${boundary}\r\n`),
+        Buffer.from(`Content-Disposition: form-data; name="file"; filename="x.bin"\r\n`),
+        Buffer.from(`Content-Type: application/octet-stream\r\n\r\n`),
+        content,
+        Buffer.from(`\r\n--${boundary}--\r\n`),
+      ])
+      const res = await fetch("/api/v0/add", {
+        method: "POST",
+        headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+        body: body.toString("binary"),
+      })
+      assert.equal(res.status, 200)
+      const json = await res.json() as { Hash: string; Size: string }
+      assert.equal(Number(json.Size), content.length,
+        `multiple boundary substrings mid-content must not truncate; expected ${content.length}, got ${json.Size}`)
+    })
+
+    it("well-formed multipart still works (regression guard)", async () => {
+      const boundary = "----RegressionBoundary"
+      const content = Buffer.from("ordinary file content, no boundary substring")
+      const body = Buffer.concat([
+        Buffer.from(`--${boundary}\r\n`),
+        Buffer.from(`Content-Disposition: form-data; name="file"; filename="r.bin"\r\n`),
+        Buffer.from(`Content-Type: application/octet-stream\r\n\r\n`),
+        content,
+        Buffer.from(`\r\n--${boundary}--\r\n`),
+      ])
+      const res = await fetch("/api/v0/add", {
+        method: "POST",
+        headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+        body: body.toString("binary"),
+      })
+      assert.equal(res.status, 200)
+      const json = await res.json() as { Hash: string; Size: string }
+      assert.equal(Number(json.Size), content.length, "normal upload byte count must match")
     })
   })
 })
