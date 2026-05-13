@@ -1272,6 +1272,42 @@ describe("IpfsHttpServer", () => {
     assert.equal(legacyRes.status, 200, `legacy ?dest= cp must still succeed, got ${legacyRes.status}`)
   })
 
+  it("#416: /api/v0/pubsub/peers rejects empty topic + all routes reject control chars in topic", async () => {
+    // Pre-fix `pubsub/peers` had no empty-topic guard (the sibling
+    // `pub` and `sub` cases did), so `?arg=` flowed through and
+    // returned `{Strings:[], count:0}` — same as a real topic with
+    // no subscribers, so the caller couldn't tell their topic was
+    // missing. Separately, all three routes accepted topics with
+    // null bytes / ASCII control chars, which kubo's pubsub rejects
+    // as malformed UTF-8 routing keys.
+    const { IpfsPubsub } = await import("./ipfs-pubsub.ts")
+    const pubsub = new IpfsPubsub()
+    server.attachSubsystems({ pubsub })
+    // (a) pubsub/peers with empty topic now rejects with 400
+    const emptyPeers = await fetch("/api/v0/pubsub/peers?arg=", { method: "POST" })
+    assert.equal(emptyPeers.status, 400, "pubsub/peers with empty topic must be 400")
+    const emptyPeersBody = await emptyPeers.json() as { error?: string }
+    assert.match(emptyPeersBody.error ?? "", /missing topic/i, "error must name missing topic")
+    // (b) control char (null byte) rejected on every pubsub route
+    for (const route of ["pub", "sub", "peers"]) {
+      const url = `/api/v0/pubsub/${route}?arg=${encodeURIComponent("topic with-null")}`
+      const r = await fetch(url, { method: "POST" })
+      assert.equal(r.status, 400,
+        `pubsub/${route} with null byte must be 400, got ${r.status}`)
+      const body = await r.json() as { error?: string }
+      assert.match(body.error ?? "", /control character|invalid topic/i,
+        `pubsub/${route} error must name the topic`)
+    }
+    // (c) sanity: well-formed topic still accepted on pub + peers
+    const okPub = await fetch("/api/v0/pubsub/pub?arg=valid-topic", { method: "POST" })
+    assert.equal(okPub.status, 200, "well-formed pub must be 200")
+    const okPeers = await fetch("/api/v0/pubsub/peers?arg=valid-topic", { method: "POST" })
+    assert.equal(okPeers.status, 200, "well-formed peers must be 200")
+    const okPeersBody = await okPeers.json() as { Strings: string[]; count: number }
+    assert.deepEqual(okPeersBody.Strings, [], "no peers means empty array")
+    assert.equal(typeof okPeersBody.count, "number")
+  })
+
   it("#210: /api/v0/erasure/status maps ErasureError codes to 4xx (no 500 leak)", async () => {
     // Pre-fix the outer catch in IpfsHttpServer only mapped
     // ErasureError "invalid_params" → 400 and "not_found" → 404. The

@@ -1810,6 +1810,18 @@ export class IpfsHttpServer {
         res.end(JSON.stringify({ error: "topic too long (max 512 chars)" }))
         return
       }
+      // #416: topic must not contain null bytes / control chars. Pre-fix
+      // a `topic` like "valid\x00trailing" silently flowed into pubsub
+      // subscribers (and any downstream store keyed on the string). Per
+      // kubo topics are non-empty UTF-8 with no control characters; line
+      // up so a buggy client learns about the malformed topic instead of
+      // pub-ing or peer-counting a partially-named topic.
+      const topicHasControlChar = topic.length > 0 && /[\x00-\x1f]/.test(topic)
+      if (topicHasControlChar) {
+        res.writeHead(400, { "content-type": "application/json" })
+        res.end(JSON.stringify({ error: "invalid topic: must not contain control characters" }))
+        return
+      }
 
       // #312: reject control characters in topic name. Pre-fix, a topic
       // like `evil\0null` was accepted by pub AND sub; pubsub/ls then
@@ -1907,6 +1919,18 @@ export class IpfsHttpServer {
           break
         }
         case "peers": {
+          // #416: pre-fix the empty-topic case fell through and called
+          // `getSubscribers("")` which always returns 0 — same response
+          // as a real topic with no peers, so a client probing
+          // `pubsub/peers?arg=` couldn't tell their topic was missing.
+          // The sibling `pub` and `sub` cases reject empty topic with
+          // 400; line `peers` up so all three pubsub routes share the
+          // same contract.
+          if (!topic) {
+            res.writeHead(400, { "content-type": "application/json" })
+            res.end(JSON.stringify({ error: "missing topic" }))
+            break
+          }
           const count = this.pubsub.getSubscribers(topic)
           res.writeHead(200, { "content-type": "application/json" })
           res.end(JSON.stringify({ Strings: [], count }))
