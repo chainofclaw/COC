@@ -114,7 +114,12 @@ const server = http.createServer((req, res) => {
     return json(res, 404, { error: "not found" });
   }
 
-  if (req.method === "GET" && req.url === "/health") {
+  // #410: HEAD must mirror GET on /health so uptime monitors that
+  // prefer HEAD (Prometheus blackbox_exporter, k8s livenessProbe with
+  // httpHeaders HEAD) don't fall through to the 404 catch-all and
+  // report the node down. Node auto-suppresses the body when
+  // Content-Length is set, so the same handler serves both verbs.
+  if ((req.method === "GET" || req.method === "HEAD") && req.url === "/health") {
     return json(res, 200, { ok: true, ts: Date.now() });
   }
 

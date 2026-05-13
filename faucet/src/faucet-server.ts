@@ -91,9 +91,18 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
     return
   }
 
+  // #410: HEAD must mirror GET for read-only endpoints. Pre-fix every
+  // method-check tested the bare GET verb in isolation, so a HEAD probe
+  // (used by uptime monitors, Prometheus blackbox, k8s livenessProbe
+  // with `httpHeaders` HEAD) fell through to the 404 catch-all and the
+  // monitor reported the service down. Node.js automatically suppresses
+  // the response body when responding to a HEAD request as long as
+  // Content-Length is set, so the same handlers work for both verbs.
+  const isReadMethod = req.method === "GET" || req.method === "HEAD"
+
   try {
     // Serve web UI at root
-    if ((req.url === "/" || req.url === "/index.html") && req.method === "GET") {
+    if ((req.url === "/" || req.url === "/index.html") && isReadMethod) {
       res.writeHead(200, {
         "Content-Type": "text/html; charset=utf-8",
         "Content-Length": Buffer.byteLength(INDEX_HTML),
@@ -102,12 +111,12 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
       return
     }
 
-    if (req.url === "/health" && req.method === "GET") {
+    if (req.url === "/health" && isReadMethod) {
       jsonResponse(res, 200, { status: "ok", faucetAddress: faucet.address })
       return
     }
 
-    if (req.url === "/faucet/status" && req.method === "GET") {
+    if (req.url === "/faucet/status" && isReadMethod) {
       const status = await faucet.getStatus()
       jsonResponse(res, 200, status)
       return

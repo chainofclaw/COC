@@ -69,4 +69,29 @@ describe("Faucet server static serving", () => {
     assert.ok(serverSrc.includes('text/html'), "should serve as text/html")
     assert.ok(serverSrc.includes('req.url === "/"'), "should handle root path")
   })
+
+  it('#410: HEAD request must mirror GET for read-only endpoints (no 404 to monitors)', () => {
+    // Pre-fix every read-side handler tested `req.method === "GET"`
+    // strictly, so a HEAD probe (uptime monitors, Prometheus blackbox,
+    // k8s livenessProbe httpHeaders HEAD) fell through to the 404
+    // catch-all and the monitor reported the service down. Node.js
+    // auto-suppresses the body for HEAD when Content-Length is set,
+    // so the same handlers serve both verbs. Static grep matches the
+    // existing test style for this file.
+    const serverSrc = readFileSync(join(__dirname, "faucet-server.ts"), "utf-8")
+    assert.match(
+      serverSrc,
+      /(req\.method === "GET" \|\| req\.method === "HEAD"|isReadMethod\s*=\s*req\.method === "GET" \|\| req\.method === "HEAD")/,
+      "faucet-server.ts must accept HEAD alongside GET for /, /health, /faucet/status",
+    )
+    // Make sure all three read endpoints use the combined check, not
+    // the bare `=== "GET"`. Approximation: at most one `req.method ===
+    // "GET"` literal should remain (the OR-form above, if you wrote it
+    // inline). Any stricter form would re-introduce the bug.
+    const strictGetCount = (serverSrc.match(/req\.method === "GET"(?! \|\| req\.method === "HEAD")/g) ?? []).length
+    assert.ok(
+      strictGetCount === 0,
+      `faucet-server.ts has ${strictGetCount} bare 'req.method === "GET"' check(s) — HEAD must be accepted too`,
+    )
+  })
 })
