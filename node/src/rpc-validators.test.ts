@@ -645,6 +645,82 @@ describe("validateTxCallFields (#148)", () => {
     assert.equal(e.code, -32602)
     assert.match(e.message ?? "", /accessList\[0\]/i)
   })
+
+  test("#475: accepts well-shaped EIP-4844 + typed-tx fields", () => {
+    const validHash = "0x01" + "0".repeat(62)
+    validateTxCallFields({
+      type: "0x3",
+      chainId: "0x15acc",
+      maxFeePerBlobGas: "0x3b9aca00",
+      blobVersionedHashes: [validHash, validHash],
+    })
+    validateTxCallFields({ type: "0x0", chainId: "0x1" })          // legacy tx hint
+    validateTxCallFields({ blobVersionedHashes: [] })              // empty allowed
+    validateTxCallFields({ blobVersionedHashes: null })            // absent
+    validateTxCallFields({ type: "" })                             // ethers "" maps to absent
+  })
+
+  test("#475: rejects non-hex type field", () => {
+    const e = captureThrow(() => validateTxCallFields({ type: "0x not-hex" }))
+    assert.equal(e.code, -32602)
+    assert.match(e.message ?? "", /invalid type/i)
+  })
+
+  test("#475: rejects oversize type (> uint8)", () => {
+    const e = captureThrow(() => validateTxCallFields({ type: "0xffff" }))
+    assert.equal(e.code, -32602)
+    assert.match(e.message ?? "", /type too large.*uint8/i)
+  })
+
+  test("#475: rejects non-hex chainId", () => {
+    const e = captureThrow(() => validateTxCallFields({ chainId: "not-hex" }))
+    assert.equal(e.code, -32602)
+    assert.match(e.message ?? "", /invalid chainId/i)
+  })
+
+  test("#475: rejects non-hex maxFeePerBlobGas", () => {
+    const e = captureThrow(() => validateTxCallFields({ maxFeePerBlobGas: "not-hex" }))
+    assert.equal(e.code, -32602)
+    assert.match(e.message ?? "", /invalid maxFeePerBlobGas/i)
+  })
+
+  test("#475: rejects oversize maxFeePerBlobGas (> uint256)", () => {
+    const huge = "0x" + "f".repeat(65)
+    const e = captureThrow(() => validateTxCallFields({ maxFeePerBlobGas: huge }))
+    assert.equal(e.code, -32602)
+    assert.match(e.message ?? "", /maxFeePerBlobGas too large.*uint256/i)
+  })
+
+  test("#475: rejects non-array blobVersionedHashes", () => {
+    const e = captureThrow(() => validateTxCallFields({ blobVersionedHashes: "not-array" as unknown as never }))
+    assert.equal(e.code, -32602)
+    assert.match(e.message ?? "", /blobVersionedHashes.*array/i)
+  })
+
+  test("#475: rejects blobVersionedHashes entry with bad length", () => {
+    const e = captureThrow(() => validateTxCallFields({
+      blobVersionedHashes: ["0x1234"] as unknown as never,
+    }))
+    assert.equal(e.code, -32602)
+    assert.match(e.message ?? "", /blobVersionedHashes\[0\]/i)
+  })
+
+  test("#475: rejects blobVersionedHashes entry with non-hex", () => {
+    const validHash = "0x01" + "0".repeat(62)
+    const e = captureThrow(() => validateTxCallFields({
+      blobVersionedHashes: [validHash, "0xZZZ" + "0".repeat(60)] as unknown as never,
+    }))
+    assert.equal(e.code, -32602)
+    assert.match(e.message ?? "", /blobVersionedHashes\[1\]/i)
+  })
+
+  test("#475: rejects > 16 blobVersionedHashes (DoS cap)", () => {
+    const validHash = "0x01" + "0".repeat(62)
+    const list = Array.from({ length: 17 }, () => validHash)
+    const e = captureThrow(() => validateTxCallFields({ blobVersionedHashes: list }))
+    assert.equal(e.code, -32602)
+    assert.match(e.message ?? "", /blobVersionedHashes too large/i)
+  })
 })
 
 describe("validateLogFilter", () => {
