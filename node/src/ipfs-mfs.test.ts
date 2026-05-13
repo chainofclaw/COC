@@ -143,6 +143,40 @@ test("MFS: cp copies file", async () => {
   }
 })
 
+test("#477: cp/mv same source-and-dest must reject when source is missing", async () => {
+  // Pre-fix the same-path no-op short-circuit fired before source-
+  // existence validation, so `cp /missing /missing` and `mv /missing
+  // /missing` silently returned ok:true even though no file existed.
+  // Live testnet 88780 reproduction:
+  //   curl POST /api/v0/files/cp?arg=/nonexistent&arg=/nonexistent
+  //   pre-fix: {"ok":true}    (no file created, no error)
+  //   post-fix: {"error":"...","message":"source not found: /nonexistent"}
+  // POSIX cp/mv + kubo go-ipfs-mfs both error here. The silent success
+  // masked client bugs where dest computation collapsed to src.
+  const { mfs, cleanup } = await createMfs()
+  try {
+    await assert.rejects(
+      () => mfs.cp("/missing-cp-target", "/missing-cp-target"),
+      /source not found/i,
+      "cp must reject missing source even when src == dst",
+    )
+    await assert.rejects(
+      () => mfs.mv("/missing-mv-target", "/missing-mv-target"),
+      /source not found/i,
+      "mv must reject missing source even when src == dst",
+    )
+
+    // Sanity: same-path on an existing file is still a no-op (not an error).
+    await mfs.write("/keep.txt", new TextEncoder().encode("data"), { create: true })
+    await mfs.cp("/keep.txt", "/keep.txt")    // no-op, no throw
+    await mfs.mv("/keep.txt", "/keep.txt")    // no-op, no throw
+    const after = await mfs.read("/keep.txt")
+    assert.strictEqual(new TextDecoder().decode(after), "data", "same-path op on existing file preserves contents")
+  } finally {
+    cleanup()
+  }
+})
+
 test("MFS: stat returns file info", async () => {
   const { mfs, cleanup } = await createMfs()
   try {

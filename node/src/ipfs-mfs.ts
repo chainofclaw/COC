@@ -246,22 +246,28 @@ export class IpfsMfs {
     const srcNorm = normalizePath(source)
     const destNorm = normalizePath(dest)
 
-    // No-op when source and destination are identical
+    const { dir: srcDir, base: srcBase } = splitPath(srcNorm)
+    const { dir: destDir, base: destBase } = splitPath(destNorm)
+
+    // #477: validate source exists BEFORE applying the same-path no-op
+    // short-circuit. Pre-fix `mv /missing /missing` silently returned
+    // ok:true even though no file existed — POSIX mv and kubo go-ipfs-
+    // mfs both error in this case. The early return masked client bugs
+    // where dest computation yielded the same path as src.
+    const srcParent = this.dirs.get(srcDir)
+    if (!srcParent) throw new Error(`source not found: ${srcNorm}`)
+
+    const entry = srcParent.entries.get(srcBase)
+    if (!entry) throw new Error(`source not found: ${srcNorm}`)
+
+    // No-op when source and destination are identical (now that the
+    // source existence check has passed).
     if (srcNorm === destNorm) return
 
     // Prevent moving a directory into its own subtree
     if (destNorm.startsWith(srcNorm + "/")) {
       throw new Error(`cannot move directory into its own subdirectory: ${srcNorm} -> ${destNorm}`)
     }
-
-    const { dir: srcDir, base: srcBase } = splitPath(srcNorm)
-    const { dir: destDir, base: destBase } = splitPath(destNorm)
-
-    const srcParent = this.dirs.get(srcDir)
-    if (!srcParent) throw new Error(`source not found: ${srcNorm}`)
-
-    const entry = srcParent.entries.get(srcBase)
-    if (!entry) throw new Error(`source not found: ${srcNorm}`)
 
     const destParent = this.dirs.get(destDir)
     if (!destParent) throw new Error(`destination directory not found: ${destDir}`)
@@ -295,22 +301,27 @@ export class IpfsMfs {
     const srcNorm = normalizePath(source)
     const destNorm = normalizePath(dest)
 
-    // No-op when source and destination are identical
+    const { dir: srcDir, base: srcBase } = splitPath(srcNorm)
+    const { dir: destDir, base: destBase } = splitPath(destNorm)
+
+    // #477: validate source exists BEFORE the same-path no-op short-
+    // circuit. Pre-fix `cp /missing /missing` silently returned ok:true.
+    // POSIX cp + kubo go-ipfs-mfs both error on missing source even
+    // when src == dst.
+    const srcParent = this.dirs.get(srcDir)
+    if (!srcParent) throw new Error(`source not found: ${srcNorm}`)
+
+    const entry = srcParent.entries.get(srcBase)
+    if (!entry) throw new Error(`source not found: ${srcNorm}`)
+
+    // No-op when source and destination are identical (after source-
+    // existence check).
     if (srcNorm === destNorm) return
 
     // Prevent copying a directory into its own subtree (infinite recursion)
     if (destNorm.startsWith(srcNorm + "/")) {
       throw new Error(`cannot copy directory into its own subdirectory: ${srcNorm} -> ${destNorm}`)
     }
-
-    const { dir: srcDir, base: srcBase } = splitPath(srcNorm)
-    const { dir: destDir, base: destBase } = splitPath(destNorm)
-
-    const srcParent = this.dirs.get(srcDir)
-    if (!srcParent) throw new Error(`source not found: ${srcNorm}`)
-
-    const entry = srcParent.entries.get(srcBase)
-    if (!entry) throw new Error(`source not found: ${srcNorm}`)
 
     const destParent = this.dirs.get(destDir)
     if (!destParent) throw new Error(`destination directory not found: ${destDir}`)
