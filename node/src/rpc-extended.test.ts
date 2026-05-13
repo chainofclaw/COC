@@ -620,6 +620,65 @@ test("RPC Extended Methods", async (t) => {
     assert.match(malformed.error?.message ?? "", /invalid blockHash/i)
   })
 
+  await t.test("#469: EIP-1898 rejects {blockHash, blockNumber} as mutually exclusive across all state-reading endpoints", async () => {
+    // EIP-1898 §"Specification": the two object forms `{blockHash}` and
+    // `{blockNumber}` are mutually exclusive. geth, erigon and infura
+    // reject `{blockHash, blockNumber}` with invalidParams. Pre-fix
+    // resolveHistoricalExecutionContext silently picked blockHash (form #1
+    // matched first), so viem callers that mistakenly passed both for
+    // reorg-aware reads were stuck reading a stale hash while ignoring
+    // the requested number.
+    //
+    // Live testnet 88780 repro (chainId 0x15acc, port 28780):
+    //   curl ... eth_getBalance [..., {"blockNumber":"0x1","blockHash":"0x000…"}]
+    //   pre-fix: -32001 "block not found: 0x000…" (hash branch ran)
+    //   post-fix: -32602 "blockHash and blockNumber are mutually exclusive"
+    await chain.proposeNextBlock()
+    const addr = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+    const slot = "0x0"
+
+    const both = {
+      blockNumber: "0x1",
+      blockHash: "0x0000000000000000000000000000000000000000000000000000000000000000",
+    }
+
+    const fetchRpc = async (method: string, params: unknown[]): Promise<{ error?: { code: number; message: string } }> => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+      })
+      return await r.json() as { error?: { code: number; message: string } }
+    }
+
+    // Every BlockNumberOrHash-accepting endpoint must enforce the mutex.
+    const endpoints: Array<{ method: string; params: unknown[] }> = [
+      { method: "eth_getBalance", params: [addr, both] },
+      { method: "eth_getCode", params: [addr, both] },
+      { method: "eth_getTransactionCount", params: [addr, both] },
+      { method: "eth_getStorageAt", params: [addr, slot, both] },
+      { method: "eth_call", params: [{ to: addr }, both] },
+    ]
+
+    for (const { method, params } of endpoints) {
+      const res = await fetchRpc(method, params)
+      assert.equal(
+        res.error?.code,
+        -32602,
+        `${method} must return -32602 for {blockHash, blockNumber} (got ${JSON.stringify(res)})`,
+      )
+      assert.match(
+        res.error?.message ?? "",
+        /mutually exclusive|EIP-1898/i,
+        `${method} message must mention mutex/EIP-1898 (got ${JSON.stringify(res)})`,
+      )
+    }
+
+    // Sanity: bare {blockHash} alone is still accepted (no false positive).
+    const r = await fetchRpc("eth_getBalance", [addr, { blockHash: "0x0000000000000000000000000000000000000000000000000000000000000000" }])
+    assert.notEqual(r.error?.code, -32602, "lone {blockHash} must not be rejected as mutex violation")
+  })
+
   await t.test("txpool_status returns pool stats", async () => {
     const status = await rpcCall(port, "txpool_status")
     assert.ok(typeof status === "object")

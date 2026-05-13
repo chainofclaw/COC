@@ -2929,6 +2929,15 @@ async function resolveHistoricalExecutionContext(
 
   // EIP-1898 object form #1: {blockHash: "0x…", requireCanonical?: bool}.
   if (typeof input === "object" && input !== null && "blockHash" in input) {
+    // EIP-1898 §"Specification": the two object forms (`{blockHash}` and
+    // `{blockNumber}`) are mutually exclusive. geth, erigon and infura all
+    // reject `{blockHash, blockNumber}` with invalidParams. Pre-fix we
+    // silently picked blockHash, which made misconfigured clients (e.g.
+    // viem passing both for reorg-aware reads) appear to succeed against
+    // a stale hash while ignoring the requested number.
+    if ("blockNumber" in (input as Record<string, unknown>)) {
+      throw { code: -32602, message: "invalid block reference: blockHash and blockNumber are mutually exclusive (EIP-1898)" }
+    }
     const rawHash = (input as Record<string, unknown>).blockHash
     if (typeof rawHash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(rawHash)) {
       throw { code: -32602, message: "invalid blockHash: must match /^0x[0-9a-fA-F]{64}$/" }
