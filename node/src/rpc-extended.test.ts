@@ -2835,6 +2835,91 @@ test("RPC Extended Methods", async (t) => {
       `error must preserve "replacement tx gas price too low" surface, got: ${JSON.stringify(replBody)}`)
   })
 
+  await t.test("#440: eth_sendRawTransaction maps every mempool/chain rejection to -32000 (not -32603)", async () => {
+    // Live testnet 88780 reproduction: bursting 100 concurrent same-sender
+    // txs (per-sender cap = 64) returned 100× -32603 "exceeds max pending
+    // tx limit (64)". ethers.js wraps -32603 as opaque "could not coalesce
+    // error", so callers see neither the cause nor an actionable code.
+    //
+    // Per geth, every well-formed-tx-but-server-won't-accept condition
+    // maps to -32000. Per JSON-RPC, every replay/format problem maps to
+    // -32602. Anything left becomes generic -32603. Pin the canonical map
+    // so wallets + indexers can branch on error.code reliably.
+    const { Wallet } = await import("ethers")
+
+    const submit = async (rawTx: string) => {
+      const res = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_sendRawTransaction", params: [rawTx] }),
+      })
+      return await res.json() as { error?: { code: number; message: string }; result?: string }
+    }
+
+    // -32602: wrong chain id (replay protection — definitely a client error).
+    const wallet440a = new Wallet(`0x${"04".repeat(32)}`)
+    await evm.prefund([{ address: wallet440a.address, balanceWei: "1000000000000000000" }])
+    const startNonce440a = await evm.getNonce(wallet440a.address.toLowerCase() as `0x${string}`)
+    const wrongChain = await wallet440a.signTransaction({
+      type: 0,
+      to: `0x${"02".repeat(20)}`,
+      value: 1n,
+      nonce: Number(startNonce440a),
+      gasPrice: 1_000_000_000n,
+      gasLimit: 21_000n,
+      chainId: chainId + 1, // wrong!
+    })
+    {
+      const r = await submit(wrongChain)
+      assert.equal(r.error?.code, -32602,
+        `wrong-chain-id must be -32602 (invalid params), got ${JSON.stringify(r)}`)
+      assert.match(r.error!.message, /invalid chain ID/i)
+    }
+
+    // -32000: stale nonce (the #438 family — chain-engine throws "nonce too low")
+    const wallet440b = new Wallet(`0x${"05".repeat(32)}`)
+    await evm.prefund([{ address: wallet440b.address, balanceWei: "1000000000000000000" }])
+    const sign440b = (nonce: number) => wallet440b.signTransaction({
+      type: 0, to: `0x${"02".repeat(20)}`, value: 1n, nonce,
+      gasPrice: 1_000_000_000n, gasLimit: 21_000n, chainId,
+    })
+    // Mine the first tx so on-chain nonce advances.
+    const first440b = await sign440b(0)
+    {
+      const r = await submit(first440b)
+      assert.ok(r.result, `setup tx must mine: ${JSON.stringify(r)}`)
+    }
+    if (chain.proposeNextBlock) await chain.proposeNextBlock()
+    const stale440b = await sign440b(0) // same nonce, now stale
+    {
+      const r = await submit(stale440b)
+      // Either "nonce too low" (#438 wired) or "tx already confirmed"
+      // (#438 hash dedup path); both must map to -32000.
+      assert.equal(r.error?.code, -32000,
+        `stale-nonce must be -32000, got ${JSON.stringify(r)}`)
+      assert.match(r.error!.message, /nonce too low|tx already confirmed/i)
+    }
+
+    // -32000: intrinsic gas too low (gasLimit < 21000 floor).
+    const wallet440c = new Wallet(`0x${"06".repeat(32)}`)
+    await evm.prefund([{ address: wallet440c.address, balanceWei: "1000000000000000000" }])
+    const lowGas = await wallet440c.signTransaction({
+      type: 0,
+      to: `0x${"02".repeat(20)}`,
+      value: 1n,
+      nonce: Number(await evm.getNonce(wallet440c.address.toLowerCase() as `0x${string}`)),
+      gasPrice: 1_000_000_000n,
+      gasLimit: 100n, // way below 21000
+      chainId,
+    })
+    {
+      const r = await submit(lowGas)
+      assert.equal(r.error?.code, -32000,
+        `intrinsic-gas-too-low must be -32000, got ${JSON.stringify(r)}`)
+      assert.match(r.error!.message, /intrinsic gas too low/i)
+    }
+  })
+
   if (prevDevAccounts === undefined) {
     delete process.env.COC_DEV_ACCOUNTS
   } else {
