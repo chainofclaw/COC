@@ -320,6 +320,75 @@ describe("IpfsHttpServer", () => {
         "must NOT surface as 'internal error' — that was the pre-fix mis-classification")
     } finally {
       pubsub.stop()
+  })
+
+  it("#372: POST /api/v0/pin/add?arg=cid1&arg=cid2 pins ALL CIDs (kubo batch)", async () => {
+    // Pre-fix the dispatcher read only the first `arg=` via
+    // firstQueryValue, silently dropping every subsequent CID — data
+    // loss for any client that batched pin operations in one request
+    // (extremely common pattern in dapps that pin a set of related
+    // shards). Now the dispatcher passes the full string[] to the
+    // handler and we iterate.
+    const a = await unixfs.addFile("a.txt", new TextEncoder().encode("a-bytes"))
+    const b = await unixfs.addFile("b.txt", new TextEncoder().encode("b-bytes"))
+    const c = await unixfs.addFile("c.txt", new TextEncoder().encode("c-bytes"))
+
+    const r = await fetch(`/api/v0/pin/add?arg=${a.cid}&arg=${b.cid}&arg=${c.cid}`, { method: "POST" })
+    assert.equal(r.status, 200)
+    const body = await r.json() as { Pins: string[] }
+    assert.deepEqual(body.Pins.sort(), [a.cid, b.cid, c.cid].sort(), "every CID must appear in Pins")
+
+    // Verify each pin actually fired (the response could lie if the
+    // batch dispatch were still broken).
+    for (const cid of [a.cid, b.cid, c.cid]) {
+      const ls = await fetch(`/api/v0/pin/ls?arg=${cid}`, { method: "POST" })
+      assert.equal(ls.status, 200, `pin/ls for ${cid} must be 200 (actually pinned)`)
+    }
+  })
+
+  it("#372: POST /api/v0/pin/rm?arg=cid1&arg=cid2 unpins ALL CIDs (all-or-nothing)", async () => {
+    const a = await unixfs.addFile("ra.txt", new TextEncoder().encode("ra-bytes"))
+    const b = await unixfs.addFile("rb.txt", new TextEncoder().encode("rb-bytes"))
+    await store.pin(a.cid)
+    await store.pin(b.cid)
+
+    const r = await fetch(`/api/v0/pin/rm?arg=${a.cid}&arg=${b.cid}`, { method: "POST" })
+    assert.equal(r.status, 200)
+    const body = await r.json() as { Pins: string[] }
+    assert.deepEqual(body.Pins.sort(), [a.cid, b.cid].sort())
+
+    // Both must be unpinned.
+    for (const cid of [a.cid, b.cid]) {
+      const ls = await fetch(`/api/v0/pin/ls?arg=${cid}`, { method: "POST" })
+      assert.equal(ls.status, 404, `${cid} must no longer be pinned`)
+    }
+
+    // All-or-nothing: if any CID isn't pinned, 404 and DON'T touch the
+    // pinned one. Pin `a` again and try to rm `a` + a valid-shape but
+    // never-pinned CID.
+    await store.pin(a.cid)
+    // Base58 alphabet excludes 0/O/I/l — keep the CID kosher so it
+    // passes isValidCid and reaches the per-batch pin-set check.
+    const notPinnedCid = "QmNotPinnedYet12345678912345678912345678912345"
+    const r2 = await fetch(`/api/v0/pin/rm?arg=${a.cid}&arg=${notPinnedCid}`, { method: "POST" })
+    assert.equal(r2.status, 404, "batch with one missing CID must 404")
+    const ls = await fetch(`/api/v0/pin/ls?arg=${a.cid}`, { method: "POST" })
+    assert.equal(ls.status, 200, "all-or-nothing: `a` must still be pinned after failed batch")
+  })
+
+  it("#372: POST /api/v0/block/rm?arg=cid1&arg=cid2 emits NDJSON, removes all", async () => {
+    const a = await unixfs.addFile("ba.txt", new TextEncoder().encode("ba-bytes"))
+    const b = await unixfs.addFile("bb.txt", new TextEncoder().encode("bb-bytes"))
+
+    const r = await fetch(`/api/v0/block/rm?arg=${a.cid}&arg=${b.cid}`, { method: "POST" })
+    assert.equal(r.status, 200, "batch block/rm must be 200 (NDJSON stream)")
+    const body = await r.text()
+    const lines = body.split("\n").filter(s => s.length > 0)
+    assert.equal(lines.length, 2, "must emit one JSON line per CID")
+    const parsed = lines.map(l => JSON.parse(l) as { Hash: string; Error: string })
+    assert.deepEqual(parsed.map(p => p.Hash).sort(), [a.cid, b.cid].sort())
+    for (const p of parsed) {
+      assert.equal(p.Error, "", `block/rm of ${p.Hash} must succeed`)
     }
   })
 
