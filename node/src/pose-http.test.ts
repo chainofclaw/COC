@@ -366,6 +366,49 @@ test("#176: malformed JSON body returns generic error without V8 SyntaxError lea
   }
 })
 
+test("#348: pose-http body read timeout closes slowloris connection", async () => {
+  // Parity with #346 RPC body timeout — pre-fix pose-http had no body
+  // inactivity timer, so an attacker sending `Content-Length: N` headers
+  // and 0 body bytes held a request slot until Node's default ~5min
+  // requestTimeout, draining the PoSe handler pool.
+  const pose = createTestEngine()
+  const { port, close } = await startTestServer(pose)
+  try {
+    const net = await import("node:net")
+    await new Promise<void>((resolve, reject) => {
+      const socket = net.default.createConnection(port, "127.0.0.1")
+      const start = Date.now()
+      let closed = false
+      socket.on("connect", () => {
+        // Headers say content-length:1000 but we never send body.
+        socket.write(
+          "POST /pose/challenge HTTP/1.1\r\n" +
+          "Host: 127.0.0.1\r\n" +
+          "Content-Type: application/json\r\n" +
+          "Content-Length: 1000\r\n" +
+          "\r\n"
+        )
+      })
+      socket.on("close", () => {
+        closed = true
+        const elapsed = Date.now() - start
+        // Production timeout is 30s; CI watchdog at 45s catches stuck-forever.
+        assert.ok(elapsed < 45_000, `server-side timer must close socket within 45s; got ${elapsed}ms`)
+        resolve()
+      })
+      socket.on("error", () => { closed = true; resolve() })
+      setTimeout(() => {
+        if (!closed) {
+          socket.destroy()
+          reject(new Error("server failed to close slowloris socket within 45s"))
+        }
+      }, 45_000).unref()
+    })
+  } finally {
+    close()
+  }
+})
+
 function hashStable(value: unknown): `0x${string}` {
   return `0x${keccak256Hex(Buffer.from(stableStringify(value), "utf8"))}` as `0x${string}`
 }
