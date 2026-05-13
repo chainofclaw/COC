@@ -1244,6 +1244,57 @@ test("RPC Extended Methods", async (t) => {
     assert.match(slot as string, /^0x[0-9a-f]+$/i)
   })
 
+  await t.test("#471: eth_getProof slot regex parity with eth_getStorageAt — reject empty \"0x\"", async () => {
+    // eth_getProof slot regex was /^[0-9a-fA-F]*$/ (note the *), so an
+    // empty slot key "0x" silently normalized to slot 0. eth_getStorageAt
+    // uses /^0x[0-9a-fA-F]{1,64}$/ and rejects "0x" with -32602. Two
+    // sibling endpoints diverging on storage-slot validation is the same
+    // class as #124/#128 (eth_call vs eth_estimateGas address-regex
+    // divergence). Live testnet 88780 repro on /eth_getProof showed
+    // status: result with slot 0 padding, masking ethers.toBeHex(undefined)
+    // → "0x" bugs in clients.
+    const validAddr = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+    const probe = async (slot: string): Promise<{ error?: { code: number; message: string }; result?: unknown }> => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0", id: 1, method: "eth_getProof",
+          params: [validAddr, [slot], "latest"],
+        }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    }
+
+    // Empty hex is invalid for both endpoints post-fix.
+    const emptyProof = await probe("0x")
+    assert.equal(emptyProof.error?.code, -32602, `eth_getProof("0x") must be -32602 (got ${JSON.stringify(emptyProof)})`)
+    assert.match(emptyProof.error?.message ?? "", /invalid storage key/i)
+
+    const emptyStor = await fetch(`http://127.0.0.1:${port}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getStorageAt", params: [validAddr, "0x", "latest"] }),
+    })
+    const emptyStorJson = await emptyStor.json() as { error?: { code: number; message: string } }
+    assert.equal(emptyStorJson.error?.code, -32602, "eth_getStorageAt(\"0x\") parity check")
+
+    // Non-hex characters and overflow both stay rejected.
+    const overflow = await probe("0x" + "0".repeat(65))
+    assert.equal(overflow.error?.code, -32602, "65-char slot must be -32602")
+    const nonHex = await probe("0xZZ")
+    assert.equal(nonHex.error?.code, -32602, "non-hex slot must be -32602")
+
+    // Sanity: well-shaped short hex passes the slot validator. The fixture's
+    // in-memory EVM doesn't expose proofs (returns -32603 "requires proof-
+    // capable persistent state manager"), so we only assert the result is
+    // NOT -32602 — the validator gate let the request through.
+    const shortValid = await probe("0x1")
+    assert.notEqual(shortValid.error?.code, -32602, `shortValid must clear validator (got ${JSON.stringify(shortValid)})`)
+    const mixedCase = await probe("0xAb")
+    assert.notEqual(mixedCase.error?.code, -32602, "mixed-case hex must clear validator")
+  })
+
   await t.test("#128: eth_estimateGas rejects malformed to/from addresses with -32602", async () => {
     // Follow-up to #124: that PR fixed eth_call's regex but missed
     // eth_estimateGas which had the same /^0x[0-9a-fA-F]{1,40}$/
