@@ -65,27 +65,15 @@ export class ReceiptVerifierV2 {
     receipt: ReceiptMessageV2,
     witnesses: WitnessAttestation[],
   ): Promise<VerificationResultV2> {
-    // Layer 1: Nonce replay check
-    if (this.deps.nonceRegistry) {
-      const v1Like = {
-        challengeId: challenge.challengeId,
-        epochId: challenge.epochId,
-        nodeId: challenge.nodeId,
-        challengeType: challenge.challengeType,
-        nonce: challenge.nonce,
-        randSeed: "0x0000000000000000000000000000000000000000000000000000000000000000" as Hex32,
-        issuedAtMs: challenge.issuedAtMs,
-        deadlineMs: challenge.deadlineMs,
-        querySpec: challenge.querySpec,
-        challengerId: challenge.challengerId,
-        challengerSig: challenge.challengerSig,
-      }
-      if (!this.deps.nonceRegistry.consume(v1Like)) {
-        return { ok: false, reason: "nonce replay detected", resultCode: ResultCode.NonceMismatch }
-      }
-    }
+    // #298: Layer 1 was "consume nonce", Layer 2 was "verify sig". Swapped
+    // so we never poison the nonce registry on a failed-sig attempt.
+    // Same defensive ordering as receipt-verifier.ts:28. Currently this
+    // path is reached only from local-trusted callers (pose-engine,
+    // coc-agent), so the attack isn't reachable today, but moving the
+    // sig check first is fail-fast and survives any future externally-
+    // reachable receipt endpoint.
 
-    // Layer 2: Challenger EIP-712 sig verify
+    // Layer 1: Challenger EIP-712 sig verify
     const challengeTypeNum = challenge.challengeType === "U" ? 0 : challenge.challengeType === "S" ? 1 : 2
     const challengeData = {
       challengeId: challenge.challengeId,
@@ -107,6 +95,26 @@ export class ReceiptVerifierV2 {
       challengerAddr,
     )) {
       return { ok: false, reason: "invalid challenger EIP-712 signature", resultCode: ResultCode.InvalidSig }
+    }
+
+    // Layer 2: Nonce replay check (only consume after sig verified)
+    if (this.deps.nonceRegistry) {
+      const v1Like = {
+        challengeId: challenge.challengeId,
+        epochId: challenge.epochId,
+        nodeId: challenge.nodeId,
+        challengeType: challenge.challengeType,
+        nonce: challenge.nonce,
+        randSeed: "0x0000000000000000000000000000000000000000000000000000000000000000" as Hex32,
+        issuedAtMs: challenge.issuedAtMs,
+        deadlineMs: challenge.deadlineMs,
+        querySpec: challenge.querySpec,
+        challengerId: challenge.challengerId,
+        challengerSig: challenge.challengerSig,
+      }
+      if (!this.deps.nonceRegistry.consume(v1Like)) {
+        return { ok: false, reason: "nonce replay detected", resultCode: ResultCode.NonceMismatch }
+      }
     }
 
     // Layer 3: Field matching
