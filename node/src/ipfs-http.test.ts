@@ -1438,4 +1438,122 @@ describe("#310 block/stat does NOT trigger fetchRemote on local miss", () => {
       await rm(tmpDir2, { recursive: true, force: true })
     }
   })
+  })
+
+describe("#324 IPFS gateway honors HTTP Range header", () => {
+  it("bytes=N-M returns 206 Partial Content with correct slice", async () => {
+    // Pre-fix the gateway ignored Range entirely — every request
+    // returned the full body with 200. Without Range support, resumable
+    // downloads, video seek, and partial-content fetches don't work.
+    const data = Buffer.alloc(1000)
+    for (let i = 0; i < data.length; i++) data[i] = i % 256
+    const meta = await unixfs.addFile("range-test.bin", data)
+
+    // bytes=100-199 → 100 bytes (byte 100 through 199 inclusive)
+    const res = await fetch(`/ipfs/${meta.cid}`, { headers: { Range: "bytes=100-199" } })
+    assert.equal(res.status, 206, "Range request must return 206 Partial Content")
+    assert.equal(res.headers["content-range"], `bytes 100-199/1000`)
+    assert.equal(Number(res.headers["content-length"]), 100)
+    const buf = await res.buffer()
+    assert.equal(buf.length, 100)
+    // Verify the bytes are correct
+    for (let i = 0; i < 100; i++) {
+      assert.equal(buf[i], (100 + i) % 256, `byte ${i} mismatch`)
+    }
+  })
+
+  it("bytes=N- returns 206 with slice from N to end", async () => {
+    const data = Buffer.alloc(500, 0x42)
+    const meta = await unixfs.addFile("range-open.bin", data)
+
+    const res = await fetch(`/ipfs/${meta.cid}`, { headers: { Range: "bytes=400-" } })
+    assert.equal(res.status, 206)
+    assert.equal(res.headers["content-range"], "bytes 400-499/500")
+    assert.equal(Number(res.headers["content-length"]), 100)
+  })
+
+  it("bytes=-N suffix-byte-range returns the last N bytes", async () => {
+    const data = Buffer.alloc(1000)
+    for (let i = 0; i < data.length; i++) data[i] = i % 256
+    const meta = await unixfs.addFile("range-suffix.bin", data)
+
+    const res = await fetch(`/ipfs/${meta.cid}`, { headers: { Range: "bytes=-50" } })
+    assert.equal(res.status, 206)
+    assert.equal(res.headers["content-range"], "bytes 950-999/1000")
+    assert.equal(Number(res.headers["content-length"]), 50)
+    const buf = await res.buffer()
+    assert.equal(buf[0], 950 % 256)
+    assert.equal(buf[49], 999 % 256)
+  })
+
+  it("end beyond EOF is clamped to total-1 per RFC 7233", async () => {
+    const data = Buffer.alloc(100, 0)
+    const meta = await unixfs.addFile("range-clamp.bin", data)
+    const res = await fetch(`/ipfs/${meta.cid}`, { headers: { Range: "bytes=50-9999" } })
+    assert.equal(res.status, 206)
+    assert.equal(res.headers["content-range"], "bytes 50-99/100")
+    assert.equal(Number(res.headers["content-length"]), 50)
+  })
+
+  it("start beyond EOF returns 416 Range Not Satisfiable", async () => {
+    const data = Buffer.alloc(100, 0)
+    const meta = await unixfs.addFile("range-oob.bin", data)
+    const res = await fetch(`/ipfs/${meta.cid}`, { headers: { Range: "bytes=500-600" } })
+    assert.equal(res.status, 416)
+    assert.equal(res.headers["content-range"], "bytes */100",
+      "416 must include Content-Range with unknown range and known total")
+  })
+
+  it("malformed Range: syntactically-invalid units ignored (200), valid-but-bad returns 416", async () => {
+    // Per RFC 7233 §4.4, 416 is for "valid form but out-of-range"; a
+    // Range header the server can't even parse should be IGNORED (200
+    // full body returned). Distinguish the two categories carefully so
+    // we don't 416-storm legitimate-but-different units like
+    // bytes=abc-def (un-parseable) or items=1-10 (different unit).
+    const data = Buffer.alloc(100, 0)
+    const meta = await unixfs.addFile("range-malformed.bin", data)
+
+    // Unparseable bytes= forms — RFC says "ignore", return full 200
+    for (const ignored of ["bytes=abc-def", "bytes=--5"]) {
+      const res = await fetch(`/ipfs/${meta.cid}`, { headers: { Range: ignored } })
+      assert.equal(res.status, 200, `Range "${ignored}" is unparseable; must fall back to 200`)
+    }
+
+    // Syntactically valid but unsatisfiable — RFC says 416
+    for (const bad of ["bytes=10-5", "bytes=-"]) {
+      const res = await fetch(`/ipfs/${meta.cid}`, { headers: { Range: bad } })
+      assert.equal(res.status, 416, `Range "${bad}" is satisfiability-failure; must return 416`)
+    }
+  })
+
+  it("non-bytes Range unit is ignored, full 200 returned", async () => {
+    // RFC 7233: unknown range units MUST be ignored — the recipient
+    // returns the entire representation.
+    const data = Buffer.alloc(200, 0x55)
+    const meta = await unixfs.addFile("range-unitmiss.bin", data)
+    const res = await fetch(`/ipfs/${meta.cid}`, { headers: { Range: "items=1-10" } })
+    assert.equal(res.status, 200)
+    assert.equal(res.headers["accept-ranges"], "bytes")
+    const buf = await res.buffer()
+    assert.equal(buf.length, 200)
+  })
+
+  it("multi-range request falls back to full 200 (we don't generate multipart/byteranges)", async () => {
+    const data = Buffer.alloc(100, 0)
+    const meta = await unixfs.addFile("range-multi.bin", data)
+    const res = await fetch(`/ipfs/${meta.cid}`, { headers: { Range: "bytes=0-9,50-59" } })
+    assert.equal(res.status, 200,
+      "multi-range may legally fall back to 200 — clients must handle this per RFC 7233")
+    const buf = await res.buffer()
+    assert.equal(buf.length, 100)
+  })
+
+  it("Accept-Ranges: bytes is advertised on full 200 responses too", async () => {
+    // So well-behaved clients can re-request with Range on a follow-up
+    const data = Buffer.alloc(100, 0)
+    const meta = await unixfs.addFile("range-advertise.bin", data)
+    const res = await fetch(`/ipfs/${meta.cid}`)
+    assert.equal(res.status, 200)
+    assert.equal(res.headers["accept-ranges"], "bytes")
+  })
 })
