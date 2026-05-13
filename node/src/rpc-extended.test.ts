@@ -1226,10 +1226,74 @@ test("RPC Extended Methods", async (t) => {
     }
     // (c) coc_resolveDid / coc_getDIDDocument on a node without DID config
     // → -32601 method not available (not -32603 internal-error).
+    // #432: shape-valid args still hit the -32601 path (DID resolver not
+    // configured); garbage input (empty params) gets -32602 via the new
+    // validate-before-config-check ordering.
     for (const method of ["coc_resolveDid", "coc_getDIDDocument"]) {
-      const j = await probeError(method, [])
+      const j = await probeError(method, ["did:coc:agent-shape-valid"])
       assert.ok(j.error)
-      assert.equal(j.error!.code, -32601, `${method} must be -32601 when not configured, got ${j.error!.code}`)
+      assert.equal(j.error!.code, -32601, `${method} with valid shape must be -32601 when not configured, got ${j.error!.code}`)
+    }
+  })
+
+  await t.test("#432: DID/governance handlers validate input BEFORE the backend-not-configured check", async () => {
+    // Pre-fix the `if (!didResolver) methodNotFound(...)` /
+    // `if (!hasGovernance) methodNotFound(...)` short-circuit ran BEFORE
+    // `requireStringParam` in 10 handlers. On every read-only fullnode
+    // (the entire testnet 88780 RPC surface) garbage input got the
+    // misleading -32601 "not configured" instead of -32602 "invalid
+    // params". Same anti-pattern as #424 (reward handlers).
+    //
+    // This fixture has no didResolver / didDataProvider / governance
+    // configured (the default test shape), so these handlers HIT the
+    // backend-config check in the wild. With the fix, garbage gets
+    // -32602 first; shape-valid input gets -32601 after.
+    const probeError = async (method: string, params: unknown[]) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+      })
+      return await r.json() as { result?: unknown; error?: { code: number; message: string } }
+    }
+    // (a) Single-string-arg handlers: empty/numeric/boolean → -32602
+    const stringArgMethods = [
+      "coc_resolveDid",
+      "coc_getDIDDocument",
+      "coc_getAgentCapabilities",
+      "coc_getDelegations",
+      "coc_getAgentLineage",
+      "coc_getVerificationMethods",
+      "coc_getCredentialAnchor",
+    ]
+    for (const method of stringArgMethods) {
+      for (const bad of [[], [null], [42], [true], [{}], [[1, 2]]]) {
+        const j = await probeError(method, bad)
+        assert.ok(j.error, `${method}(${JSON.stringify(bad)}) must error`)
+        assert.equal(j.error!.code, -32602,
+          `${method}(${JSON.stringify(bad)}) must be -32602 (was -32601 pre-fix), got ${j.error!.code}`)
+      }
+      // Shape-valid → -32601 (backend not configured)
+      const ok = await probeError(method, ["agent-shape-valid"])
+      assert.equal(ok.error?.code, -32601,
+        `${method}("agent-shape-valid") must be -32601 (not configured), got ${JSON.stringify(ok)}`)
+    }
+    // (b) coc_getDaoProposal: proposalId is string. Same garbage shapes.
+    for (const bad of [[], [null], [42], [true], [""]]) {
+      const j = await probeError("coc_getDaoProposal", bad)
+      assert.equal(j.error?.code, -32602,
+        `coc_getDaoProposal(${JSON.stringify(bad)}) must be -32602, got ${j.error?.code}`)
+    }
+    const okDao = await probeError("coc_getDaoProposal", ["valid-id"])
+    assert.equal(okDao.error?.code, -32601,
+      `coc_getDaoProposal("valid-id") must be -32601 (governance not enabled), got ${JSON.stringify(okDao)}`)
+    // (c) coc_submitProposal / coc_voteProposal: first param must be object.
+    for (const method of ["coc_submitProposal", "coc_voteProposal"]) {
+      for (const bad of [[], [null], ["not-object"], [42], [[1, 2]]]) {
+        const j = await probeError(method, bad)
+        assert.equal(j.error?.code, -32602,
+          `${method}(${JSON.stringify(bad)}) must be -32602, got ${j.error?.code}`)
+      }
     }
   })
 
