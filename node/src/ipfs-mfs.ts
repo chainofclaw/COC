@@ -266,6 +266,28 @@ export class IpfsMfs {
     const destParent = this.dirs.get(destDir)
     if (!destParent) throw new Error(`destination directory not found: ${destDir}`)
 
+    // #304: dst is itself a directory — pre-fix this silently overwrote
+    // the parent's entry to point at src's CID while leaving the dir node
+    // in `this.dirs` intact, producing a path that responds as a directory
+    // to ls/stat AND returns the moved file's content to /api/v0/files/read.
+    // Live-reproducible on 88780; data integrity break. POSIX kubo would
+    // copy/move INTO the dir as `dst/<basename(src)>`; that's the right
+    // long-term behaviour but for now reject so the silent corruption
+    // cannot happen. Filed as follow-up in #304.
+    if (this.dirs.has(destNorm)) {
+      throw new Error(`destination is a directory: ${destNorm}`)
+    }
+    // #304 sibling: dst parent entry exists with a DIFFERENT type than src
+    // (e.g. mv directory onto an existing file). Pre-fix would clobber the
+    // file entry with a directory entry without removing the orphan UnixFS
+    // CID — same data-integrity hole. POSIX errors out, so do we.
+    const existingAtDest = destParent.entries.get(destBase)
+    if (existingAtDest && existingAtDest.type !== entry.type) {
+      throw new Error(
+        `destination type mismatch: ${destNorm} is a ${existingAtDest.type}, source is a ${entry.type}`,
+      )
+    }
+
     // Move entry
     destParent.entries.set(destBase, { ...entry, name: destBase, modifiedMs: Date.now() })
     srcParent.entries.delete(srcBase)
@@ -314,6 +336,21 @@ export class IpfsMfs {
 
     const destParent = this.dirs.get(destDir)
     if (!destParent) throw new Error(`destination directory not found: ${destDir}`)
+
+    // #304: same type-clobbering bug as mv — see comments at mv() above.
+    // cp src dst where dst is itself a directory pre-fix overwrote the
+    // parent entry to a file entry while leaving the dir node intact,
+    // making read(dst) return src's content while ls(dst) still listed
+    // the original children. Reject; kubo "cp into dir" is deferred.
+    if (this.dirs.has(destNorm)) {
+      throw new Error(`destination is a directory: ${destNorm}`)
+    }
+    const existingAtDest = destParent.entries.get(destBase)
+    if (existingAtDest && existingAtDest.type !== entry.type) {
+      throw new Error(
+        `destination type mismatch: ${destNorm} is a ${existingAtDest.type}, source is a ${entry.type}`,
+      )
+    }
 
     // Copy entry (content-addressed, so CID reuse is safe)
     const now = Date.now()
