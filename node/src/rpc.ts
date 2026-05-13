@@ -667,11 +667,21 @@ async function handleOne(
   // Pre-fix objects, arrays, bools were silently echoed back, which
   // either crashed strict-typed client response parsers or masked
   // bugs on the caller side.
+  // #398: §4 — "Numbers SHOULD NOT contain fractional parts" AND any
+  // numeric id beyond Number.MAX_SAFE_INTEGER silently lost precision
+  // through V8's JSON.parse (e.g. id 9007199254740993 came back as
+  // 9007199254740992, off by one), which broke RPC response-correlation
+  // for clients using sequential 64-bit ids. `Number.isSafeInteger`
+  // catches both classes in one predicate: rejects floats AND ids
+  // outside [-(2^53-1), 2^53-1]. String ids of any length stay allowed
+  // for clients that need larger correlation tokens.
   if ("id" in payload) {
     const id = (payload as JsonRpcRequest).id
-    const idOk = id === null || typeof id === "string" || (typeof id === "number" && Number.isFinite(id))
+    const idOk = id === null
+      || typeof id === "string"
+      || (typeof id === "number" && Number.isSafeInteger(id))
     if (!idOk) {
-      return { jsonrpc: "2.0", id: null, error: { code: -32600, message: "invalid request: id must be string, number, or null" } }
+      return { jsonrpc: "2.0", id: null, error: { code: -32600, message: "invalid request: id must be a safe integer, string, or null (no fractions, no precision-losing ints)" } }
     }
     // #316: bound the string-id surface. Pre-fix:
     //   - 5000-char id flowed straight back into every response (1:1 echo
