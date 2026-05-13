@@ -2783,11 +2783,36 @@ async function handleRpc(
       const limit = optionalIntegerField(opts, "limit", 50, { min: 1, max: 10_000 })
       const offset = optionalIntegerField(opts, "offset", 0, { min: 0, max: 100_000 })
       const reverse = optionalBooleanField(opts, "reverse", true)
+  })
+
+      // #412: pre-fix `Math.min(Math.max(Number(opts.limit ?? 50) || 50, 1),
+      // 10_000)` silently clamped `limit=0` → 50 (the `|| 50` shortcut
+      // fires on falsy 0), `limit=-5` → 1, `limit=1.5` → 1.5,
+      // `limit=999999` → 10000; same `Math.min/Math.max` rewrite for
+      // offset. Sibling of #408 (coc_getTransactionsByAddress) and
+      // #254. Clients with off-by-one paging logic act on silently-
+      // realigned results. Reject upfront with `Number.isInteger` +
+      // range check so spec-violating clients learn about misuse.
+      // Defaults for omitted (undefined / null) limit and offset stay
+      // unchanged.
+      const rawLimit = opts.limit
+      const limit = rawLimit === undefined || rawLimit === null ? 50 : Number(rawLimit)
+      if (!Number.isInteger(limit) || limit < 1 || limit > 10_000) {
+        invalidParams("invalid limit: must be an integer in [1, 10000]")
+      }
+      const rawOffset = opts.offset
+      const offset = rawOffset === undefined || rawOffset === null ? 0 : Number(rawOffset)
+      if (!Number.isInteger(offset) || offset < 0 || offset > 100_000) {
+        invalidParams("invalid offset: must be an integer in [0, 100000]")
+      }
       if (hasBlockIndex(chain)) {
         const contracts = await chain.blockIndex.getContracts({
           limit,
           offset,
           reverse,
+  })
+
+          reverse: opts.reverse !== false,
         })
         return contracts.map((c) => ({
           address: c.address,

@@ -542,12 +542,25 @@ test("RPC Extended Methods", async (t) => {
     // Reject upfront so clients with off-by-one paging logic don't
     // act on silently-realigned results.
     const validAddr = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+  })
+
+  await t.test("#412: coc_getContracts rejects limit/offset silent clamping", async () => {
+    // Pre-fix `Math.min(Math.max(Number(opts.limit ?? 50) || 50, 1),
+    // 10_000)` silently clamped `limit=0` → 50 (the `|| 50` fires on
+    // falsy 0), `limit=-5` → 1, `limit=1.5` → 1.5 (Math.max preserves
+    // fractions), `limit=999999` → 10000; same rewrite for offset.
+    // Sibling of #408 (coc_getTransactionsByAddress) and #254.
+    // Clients with off-by-one paging logic act on silently-realigned
+    // results. Reject upfront with Number.isInteger + range check.
     const probe = async (params: unknown[]) => {
       const r = await fetch(`http://127.0.0.1:${port}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           jsonrpc: "2.0", id: 1, method: "coc_getTransactionsByAddress", params,
+  })
+
+          jsonrpc: "2.0", id: 1, method: "coc_getContracts", params,
         }),
       })
       return await r.json() as { error?: { code: number; message: string }; result?: unknown }
@@ -555,6 +568,9 @@ test("RPC Extended Methods", async (t) => {
     // limit edge cases
     for (const badLimit of [0, -1, -100, 1.5, 10_001]) {
       const r = await probe([validAddr, badLimit, true, 0])
+  })
+
+      const r = await probe([{ limit: badLimit }])
       assert.equal(r.error?.code, -32602,
         `limit=${badLimit} must be -32602, got ${JSON.stringify(r)}`)
       assert.match(r.error!.message, /limit/i, "error must name limit")
@@ -562,6 +578,9 @@ test("RPC Extended Methods", async (t) => {
     // offset edge cases
     for (const badOffset of [-1, -100, 1.5, 100_001]) {
       const r = await probe([validAddr, 50, true, badOffset])
+  })
+
+      const r = await probe([{ offset: badOffset }])
       assert.equal(r.error?.code, -32602,
         `offset=${badOffset} must be -32602, got ${JSON.stringify(r)}`)
       assert.match(r.error!.message, /offset/i, "error must name offset")
@@ -573,6 +592,19 @@ test("RPC Extended Methods", async (t) => {
     // Sanity: omitted limit/offset still uses defaults (no error)
     const okDefaults = await probe([validAddr])
     assert.equal(okDefaults.error, undefined, "default limit/offset must work")
+  })
+
+    // Sanity: well-formed limit/offset still works (returns [] when
+    // blockIndex disabled in fixture).
+    const okValid = await probe([{ limit: 50, offset: 0 }])
+    assert.equal(okValid.error, undefined, "valid limit/offset must work")
+    assert.ok(Array.isArray(okValid.result), "must return array")
+    // Sanity: omitted pagination still uses defaults (no error)
+    const okDefaults = await probe([{}])
+    assert.equal(okDefaults.error, undefined, "omitted pagination must work")
+    // Sanity: no args (defaults to {}) still works
+    const okEmpty = await probe([])
+    assert.equal(okEmpty.error, undefined, "no params must work")
   })
 
   await t.test("#118: eth_getStorageAt rejects malformed slots with -32602", async () => {
