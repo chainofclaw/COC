@@ -64,8 +64,20 @@ export class IpfsMfs {
 
       if (this.dirs.has(current)) continue
 
+      // #302: even with parents=true, every intermediate component must
+      // either not exist OR exist as a directory. Pre-fix, mkdir blindly
+      // overwrote a file entry with a directory entry (line 75/81), silently
+      // orphaning UnixFS file content and producing dirs.get() + parent.entries
+      // pointing to the same name with different types. Reproduced live on
+      // 88780: `write /a/file.txt` then `mkdir /a/file.txt/sub --parents`
+      // returned 200 and `ls /a/file.txt` then listed `sub` as a child entry.
+      const parentDir = this.dirs.get(parent)
+      const existingEntry = parentDir?.entries.get(parts[i])
+      if (existingEntry && existingEntry.type === "file") {
+        throw new Error(`not a directory: ${current}`)
+      }
+
       if (!opts?.parents && i < parts.length - 1) {
-        const parentDir = this.dirs.get(parent)
         if (!parentDir?.entries.has(parts[i])) {
           throw new Error(`parent directory not found: ${parent}`)
         }
@@ -75,7 +87,6 @@ export class IpfsMfs {
       this.dirs.set(current, { entries: new Map() })
 
       // Register in parent
-      const parentDir = this.dirs.get(parent)
       if (parentDir) {
         const now = Date.now()
         parentDir.entries.set(parts[i], {
