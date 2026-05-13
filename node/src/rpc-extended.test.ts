@@ -2431,6 +2431,14 @@ test("RPC Extended Methods", async (t) => {
     // happens to know how to coerce became a real epochId lookup. Same
     // anti-pattern family as #120/#220/#226/#240/#242. Use the new
     // `requireIntegerParam` validator.
+  })
+
+  await t.test("#256: block-tag handlers reject single-element-array coercion (eth_getBlockTransactionCountByNumber / eth_getBlockReceipts / eth_feeHistory)", async () => {
+    // Pre-fix three handlers used `String((payload.params)[i] ?? "latest")`.
+    // `String([1500])` is `"1500"`, so a single-element numeric array
+    // silently became block 1500 — never hitting parseBlockTag's
+    // non-string rejection. Same anti-pattern fixed in #250 for
+    // eth_getBlockByNumber.
     const probe = async (method: string, params: unknown[]) => {
       const r = await fetch(`http://127.0.0.1:${port}`, {
         method: "POST",
@@ -2706,6 +2714,33 @@ test("RPC Extended Methods", async (t) => {
       `replacement-underpriced must be -32000, got ${replBody.error?.code} (${replBody.error?.message})`)
     assert.match(replBody.error!.message, /replacement.*gas price too low/i,
       `error must preserve "replacement tx gas price too low" surface, got: ${JSON.stringify(replBody)}`)
+  })
+
+    // eth_getBlockTransactionCountByNumber — block tag at idx 0
+    for (const bad of [[1], [0, 1], true, false, {}]) {
+      const r = await probe("eth_getBlockTransactionCountByNumber", [bad])
+      assert.equal(r.error?.code, -32602,
+        `eth_getBlockTransactionCountByNumber(${JSON.stringify(bad)}) must be -32602, got ${JSON.stringify(r)}`)
+    }
+    // eth_getBlockReceipts — block tag at idx 0
+    for (const bad of [[1], [0, 1], true, {}]) {
+      const r = await probe("eth_getBlockReceipts", [bad])
+      assert.equal(r.error?.code, -32602,
+        `eth_getBlockReceipts(${JSON.stringify(bad)}) must be -32602, got ${JSON.stringify(r)}`)
+    }
+    // eth_feeHistory — newestBlock at idx 1 (blockCount at idx 0 still valid)
+    for (const bad of [[1], [0, 1], true, {}]) {
+      const r = await probe("eth_feeHistory", ["0x1", bad, []])
+      assert.equal(r.error?.code, -32602,
+        `eth_feeHistory("0x1", ${JSON.stringify(bad)}, []) must be -32602, got ${JSON.stringify(r)}`)
+    }
+    // Sanity: well-shaped tags still succeed
+    const ok1 = await probe("eth_getBlockTransactionCountByNumber", ["latest"])
+    assert.equal(ok1.error, undefined, `latest must pass: ${JSON.stringify(ok1)}`)
+    const ok2 = await probe("eth_getBlockTransactionCountByNumber", ["0x0"])
+    assert.equal(ok2.error, undefined, `0x0 must pass: ${JSON.stringify(ok2)}`)
+    const ok3 = await probe("eth_feeHistory", ["0x1", "latest", []])
+    assert.equal(ok3.error, undefined, `feeHistory latest must pass: ${JSON.stringify(ok3)}`)
   })
 
   if (prevDevAccounts === undefined) {
