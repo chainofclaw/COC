@@ -552,6 +552,15 @@ export function startRpcServer(
     })
   })
 
+  // #350: server-level slowloris protection — same values p2p.ts has
+  // had since 2026-Q1. Defense-in-depth on top of the body-level
+  // inactivity timer (#346): even if the body reader's 30s fires too
+  // late or doesn't fire (e.g. handshake-stage attack), the HTTP server
+  // itself caps headers / total request / keep-alive idle.
+  server.headersTimeout = 10_000
+  server.requestTimeout = 30_000
+  server.keepAliveTimeout = 5_000
+
   server.listen(port, bind, () => {
     log.info("listening", { bind, port })
   })

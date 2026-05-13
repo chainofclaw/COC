@@ -392,6 +392,16 @@ export class IpfsHttpServer {
         } catch { /* connection already closed */ }
       }
     })
+    // #350: server-level slowloris protection — bound header / total
+    // request / keep-alive idle times so an attacker can't pin the
+    // request handler pool just by sending slow bytes. Mirrors p2p.ts's
+    // long-standing values (10s/30s/5s). The body-level inactivity
+    // timeout in readBody (30s) defends the same threat lower in the
+    // stack; both layers are intentional defense-in-depth.
+    server.headersTimeout = 10_000
+    server.requestTimeout = 30_000
+    server.keepAliveTimeout = 5_000
+
     server.on("connection", (socket) => {
       this.sockets.add(socket)
       socket.on("close", () => {

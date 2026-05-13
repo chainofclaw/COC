@@ -387,6 +387,12 @@ const server = http.createServer((req, res) => {
   return json(res, 404, { error: "not found" });
 });
 
+// #350: server-level slowloris protection — same values p2p.ts has
+// had for ages. Bounds headers / total request / keep-alive idle.
+server.headersTimeout = 10_000;
+server.requestTimeout = 30_000;
+server.keepAliveTimeout = 5_000;
+
 server.listen(port, bind, () => {
   log.info("listening", { bind, port });
 });
