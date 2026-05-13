@@ -34,7 +34,15 @@ export function startMetricsServer(
   timer.unref()
 
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
-    if (req.url === "/metrics" && req.method === "GET") {
+    // #414: HEAD must mirror GET on read-only endpoints. Pre-fix the
+    // bare GET method gate let HEAD probes (Prometheus blackbox_exporter
+    // with method=HEAD, k8s livenessProbe httpHeaders HEAD) fall through
+    // to the 404 catch-all and the monitor flagged the service down.
+    // Sibling of #410 (faucet) and #376/#382. Node auto-suppresses the
+    // body for HEAD when Content-Length is set, so the same handler
+    // serves both verbs unchanged.
+    const isReadMethod = req.method === "GET" || req.method === "HEAD"
+    if (req.url === "/metrics" && isReadMethod) {
       try {
         await metrics.collect()
         const body = metrics.serialize()
@@ -47,7 +55,7 @@ export function startMetricsServer(
         res.writeHead(500, { "Content-Type": "text/plain" })
         res.end("metrics collection error\n")
       }
-    } else if (req.url === "/health") {
+    } else if (req.url === "/health" && isReadMethod) {
       res.writeHead(200, { "Content-Type": "text/plain" })
       res.end("ok\n")
     } else {
