@@ -1133,6 +1133,13 @@ async function handleRpc(
         ) {
           throw { code: -32000, message: msg }
         }
+        // #444: insufficient-funds rejection at addRawTx time. Geth uses
+        // -32000 for "insufficient funds for gas * price + value" so
+        // ethers.js surfaces it as an actionable error rather than the
+        // opaque -32603 "could not coalesce" wrapper.
+        if (/^insufficient funds for gas \* price \+ value/i.test(msg)) {
+          throw { code: -32000, message: msg }
+        }
         throw parseErr
       }
       await p2p.receiveTx(raw)
