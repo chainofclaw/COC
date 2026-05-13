@@ -2260,6 +2260,46 @@ test("RPC Extended Methods", async (t) => {
     }
   })
 
+  await t.test("#266: eth_getLogs caps inner topic OR-set (defense-in-depth against O(blocks×logs×topics) amplification)", async () => {
+    // validateLogFilter caps the OUTER topics array at 4 (matching the EVM's
+    // 4-indexed-topics-per-log limit) but the INNER array (the OR-set for
+    // that topic slot) was unbounded. Sibling to MAX_FILTER_ADDRESSES=100;
+    // same family as #264 (eth_getProof storage keys cap).
+    const probe = async (innerN: number) => {
+      const inner = Array.from({ length: innerN }, (_, i) =>
+        `0x${i.toString(16).padStart(64, "0")}`,
+      )
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "eth_getLogs",
+          params: [{ topics: [inner] }],
+        }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    }
+    // 33 inner topics → over the new 32 cap, reject
+    const r33 = await probe(33)
+    assert.equal(r33.error?.code, -32602,
+      `inner topics=33 must be -32602, got ${JSON.stringify(r33)}`)
+    assert.match(r33.error!.message, /inner topic.*too large/i,
+      `error must reference inner cap, got ${JSON.stringify(r33)}`)
+    // 1000 inner topics → same
+    const r1000 = await probe(1000)
+    assert.equal(r1000.error?.code, -32602, `inner topics=1000 must be -32602`)
+    // 32 inner topics (at cap) → should NOT be a shape-rejection
+    const r32 = await probe(32)
+    assert.notEqual(r32.error?.code, -32602,
+      `inner topics=32 (at cap) must pass shape, got ${JSON.stringify(r32)}`)
+    // 1 inner topic → fine
+    const r1 = await probe(1)
+    assert.notEqual(r1.error?.code, -32602,
+      `inner topics=1 must pass shape, got ${JSON.stringify(r1)}`)
+  })
+
   if (prevDevAccounts === undefined) {
     delete process.env.COC_DEV_ACCOUNTS
   } else {
