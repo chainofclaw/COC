@@ -4581,6 +4581,34 @@ test("RPC Extended Methods", async (t) => {
     )
   })
 
+  await t.test("#342: eth_getFilterChanges for missing/expired filter returns -32000", async () => {
+    // Pre-fix returned `[]` for any missing filter — long-running indexers
+    // polling past FILTER_TTL_MS (5 min) silently dropped events with no
+    // error to trigger filter re-creation. Geth/erigon return -32000
+    // "filter not found"; mirror that so clients can detect the situation.
+    const r1 = await rpcCallRaw(port, "eth_getFilterChanges", ["0x" + "f".repeat(32)])
+    assert.equal(r1.error?.code, -32000,
+      `missing filter must be -32000, got ${JSON.stringify(r1)}`)
+    assert.match(r1.error!.message, /filter not found/,
+      "error message must say 'filter not found'")
+
+    const r2 = await rpcCallRaw(port, "eth_getFilterLogs", ["0x" + "e".repeat(32)])
+    assert.equal(r2.error?.code, -32000,
+      `getFilterLogs missing filter must be -32000, got ${JSON.stringify(r2)}`)
+    assert.match(r2.error!.message, /filter not found/)
+
+    // Sanity: a real filter still works without error
+    const fid = await rpcCall(port, "eth_newBlockFilter") as string
+    const ok = (await rpcCall(port, "eth_getFilterChanges", [fid])) as unknown[]
+    assert.ok(Array.isArray(ok), "valid filter must still return array")
+    await rpcCall(port, "eth_uninstallFilter", [fid])
+
+    // After uninstall, the same id now misses → -32000
+    const afterUninstall = await rpcCallRaw(port, "eth_getFilterChanges", [fid])
+    assert.equal(afterUninstall.error?.code, -32000,
+      "uninstalled filter must surface as -32000 on subsequent poll")
+  })
+
   if (prevDevAccounts === undefined) {
     delete process.env.COC_DEV_ACCOUNTS
   } else {
