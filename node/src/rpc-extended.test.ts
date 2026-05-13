@@ -1131,6 +1131,54 @@ test("RPC Extended Methods", async (t) => {
     assert.match(slot as string, /^0x[0-9a-f]+$/i)
   })
 
+  await t.test("#402: eth_getProof rejects empty / non-hex storage keys (parity with eth_getStorageAt)", async () => {
+    // Pre-fix the storage-key regex was `/^[0-9a-fA-F]*$/` with `*`
+    // (zero or more), so an empty hex string "0x" silently padded to
+    // slot 0 — divergent from eth_getStorageAt's
+    // `/^0x[0-9a-fA-F]{1,64}$/` which rejects empty. Same field type
+    // (32-byte storage slot), same upstream EVM call, must share the
+    // same shape contract. Without parity a client that mis-encodes
+    // a key gets a "valid proof for slot 0" they could mis-trust as
+    // the real answer.
+    const validAddr = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+    const cases: Array<{ key: unknown; desc: string }> = [
+      { key: "0x", desc: "empty hex after 0x prefix" },
+      { key: "0xnot-hex", desc: "non-hex chars" },
+      { key: "no-prefix", desc: "missing 0x prefix" },
+      { key: "0x" + "0".repeat(66), desc: "over 64 hex digits" },
+      { key: 123, desc: "non-string number" },
+      { key: null, desc: "null" },
+    ]
+    for (const { key, desc } of cases) {
+      const res = await rpcCallRaw(port, "eth_getProof", [validAddr, [key], "latest"])
+      assert.ok(res.error, `${desc}: expected error, got result ${JSON.stringify(res)}`)
+      assert.strictEqual(
+        res.error!.code,
+        -32602,
+        `${desc}: expected -32602, got ${res.error!.code} (${res.error!.message})`,
+      )
+      assert.match(res.error!.message, /storage key/i, `${desc}: error must name storage key`)
+    }
+    // Sanity: valid keys pass shape validation. The in-memory test
+    // fixture doesn't have a proof-capable persistent state manager,
+    // so the call still errors — but with a *different* code (-32603
+    // internal error from the EVM layer) and a *different* message
+    // ("proof-capable persistent state manager") that proves the
+    // shape regex let the call through. The empty-array case from
+    // #124 already verified the address part of the path is wired.
+    const okSingle = await rpcCallRaw(port, "eth_getProof", [validAddr, ["0x0"], "latest"])
+    if (okSingle.error) {
+      assert.notStrictEqual(okSingle.error.code, -32602, "valid 0x0 key must pass shape validation")
+    }
+    const okFull = await rpcCallRaw(port, "eth_getProof", [validAddr, ["0x" + "0".repeat(64)], "latest"])
+    if (okFull.error) {
+      assert.notStrictEqual(okFull.error.code, -32602, "valid 64-digit key must pass shape validation")
+    }
+    // Parity: eth_getStorageAt already rejects "0x" — eth_getProof must too.
+    const storageEmpty = await rpcCallRaw(port, "eth_getStorageAt", [validAddr, "0x", "latest"])
+    assert.strictEqual(storageEmpty.error?.code, -32602, "eth_getStorageAt parity: must reject 0x")
+  })
+
   await t.test("#128: eth_estimateGas rejects malformed to/from addresses with -32602", async () => {
     // Follow-up to #124: that PR fixed eth_call's regex but missed
     // eth_estimateGas which had the same /^0x[0-9a-fA-F]{1,40}$/

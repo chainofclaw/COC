@@ -1053,7 +1053,15 @@ async function handleRpc(
           invalidParams(`invalid storage key at index ${index}`)
         }
         const normalized = slot.replace(/^0x/, "")
-        if (!/^[0-9a-fA-F]*$/.test(normalized) || normalized.length > 64) {
+        // #402: pre-fix `/^[0-9a-fA-F]*$/` used `*` (zero or more), so
+        // an empty hex string "0x" silently padded to slot 0 — divergent
+        // from eth_getStorageAt's `/^0x[0-9a-fA-F]{1,64}$/` which rejects
+        // empty. Same field type (32-byte storage slot), same upstream
+        // EVM call — must use the same shape contract. Require at least
+        // 1 hex digit so clients get -32602 instead of a "valid proof
+        // for slot 0" they could mis-trust as the answer for their
+        // mis-encoded key.
+        if (!/^[0-9a-fA-F]+$/.test(normalized) || normalized.length > 64) {
           invalidParams(`invalid storage key at index ${index}`)
         }
         return `0x${normalized.padStart(64, "0")}`
