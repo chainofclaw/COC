@@ -124,7 +124,7 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
       }
 
       const rawBody = await readBody(req)
-      let body: { address?: string }
+      let body: { address?: unknown }
       try {
         body = JSON.parse(rawBody)
       } catch {
@@ -132,8 +132,23 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
         return
       }
 
-      if (!body.address) {
-        jsonResponse(res, 400, { error: "Missing 'address' field" })
+      // #362: pre-fix `!body.address` only checked truthiness, so a
+      // truthy non-string (number 42, array `["0xabc"]`, object
+      // `{deep:1}`, `true`) sailed through. The downstream
+      // `requestDrip(toAddress)` reaches `regex.test(toAddress)`, which
+      // V8 coerces to string — `["0xf39F…"]` joins to `"0xf39F…"` and
+      // can MATCH the address regex, then crashes at `.toLowerCase()`
+      // on a non-string with V8 TypeError surfaced as a generic
+      // 500 "Internal server error" instead of a clean 400. Reject
+      // non-object body and non-string `.address` at the boundary so
+      // the client sees a useful error and the V8 TypeError doesn't
+      // leak through console.error.
+      if (body === null || typeof body !== "object" || Array.isArray(body)) {
+        jsonResponse(res, 400, { error: "Invalid JSON body: expected object" })
+        return
+      }
+      if (typeof body.address !== "string" || body.address.length === 0) {
+        jsonResponse(res, 400, { error: "Missing or invalid 'address' field: expected non-empty string" })
         return
       }
 
