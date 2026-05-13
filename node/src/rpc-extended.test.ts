@@ -802,6 +802,69 @@ test("RPC Extended Methods", async (t) => {
     assert.equal(proposals.length, 0)
   })
 
+  await t.test("#436: coc_getProposals/getDaoProposals/getFaction validate input BEFORE backend-config short-circuit", async () => {
+    // Same family as #432 / PR #431 but for the 3 handlers that return
+    // a successful empty result (`[]` or `null`) instead of methodNotFound
+    // when governance is off. Pre-fix, garbage input shapes silently got
+    // the empty result on every read-only fullnode (the entire testnet 88780
+    // RPC surface) — clients could not tell "I sent garbage" from
+    // "no proposals exist." Validation must run unconditionally at the
+    // RPC boundary; the config check only selects between "real lookup"
+    // and "empty result" AFTER input passes shape validation.
+    const probe = async (method: string, params: unknown[]) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    }
+
+    // coc_getProposals — non-string filter must reject even without governance.
+    for (const bad of [true, false, 42, {}, [1, 2]]) {
+      const r = await probe("coc_getProposals", [bad])
+      assert.equal(r.error?.code, -32602,
+        `coc_getProposals(${JSON.stringify(bad)}) must be -32602 (not silent []), got ${JSON.stringify(r)}`)
+    }
+    // Sanity: valid shape returns [] (not error) without governance.
+    {
+      const r = await probe("coc_getProposals", [])
+      assert.equal(r.error, undefined, `coc_getProposals([]) without governance must return empty array, got ${JSON.stringify(r)}`)
+      assert.deepEqual(r.result, [])
+    }
+
+    // coc_getDaoProposals — non-string/non-object filter must reject.
+    for (const bad of [true, false, 42, [1, 2]]) {
+      const r = await probe("coc_getDaoProposals", [bad])
+      assert.equal(r.error?.code, -32602,
+        `coc_getDaoProposals(${JSON.stringify(bad)}) must be -32602 (not silent []), got ${JSON.stringify(r)}`)
+    }
+    // Bad nested shape must also reject.
+    {
+      const r = await probe("coc_getDaoProposals", [{ status: 42 }])
+      assert.equal(r.error?.code, -32602,
+        `coc_getDaoProposals({status:42}) must reject, got ${JSON.stringify(r)}`)
+    }
+    {
+      const r = await probe("coc_getDaoProposals", [])
+      assert.equal(r.error, undefined, `coc_getDaoProposals([]) without governance must return empty array`)
+      assert.deepEqual(r.result, [])
+    }
+
+    // coc_getFaction — non-string / non-0x-prefix address must reject.
+    for (const bad of [[], [null], [42], [true], [{}], [[1, 2]], ["not-0x-prefixed"]]) {
+      const r = await probe("coc_getFaction", bad)
+      assert.equal(r.error?.code, -32602,
+        `coc_getFaction(${JSON.stringify(bad)}) must be -32602 (not silent null), got ${JSON.stringify(r)}`)
+    }
+    // Sanity: valid address shape returns null (not error) without governance.
+    {
+      const r = await probe("coc_getFaction", ["0x0000000000000000000000000000000000000001"])
+      assert.equal(r.error, undefined, `coc_getFaction(valid_address) without governance must return null`)
+      assert.equal(r.result, null)
+    }
+  })
+
   await t.test("unsupported method throws error", async () => {
     await assert.rejects(
       () => rpcCall(port, "eth_nonExistentMethod"),
