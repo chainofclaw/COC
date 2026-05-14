@@ -892,6 +892,33 @@ describe("IpfsHttpServer", () => {
     assert.equal(post.status, 200, "POST /api/v0/version must still work")
   })
 
+  it("#382: HEAD on 404/405 paths gets Content-Length (doesn't hang waiting for chunked framing)", async () => {
+    // Pre-fix `res.writeHead(X, headers); res.end([body])` with no
+    // Content-Length defaulted to chunked Transfer-Encoding. HEAD
+    // requests on these paths waited 5s+ for the keep-alive timeout
+    // because the response framing was ambiguous.
+    // Affected sites: dispatch-prefix 404 (non-/api/v0/ + non-/ipfs/),
+    // /api/v0/* method-not-allowed 405, dispatch-end 404 catch-all.
+    // Family: same systemic bug class as #376 (rpc.ts root 405).
+    // (a) prefix 404: bare 404 from non-routable path
+    const r1 = await fetch("/nonexistent", { method: "HEAD" })
+    assert.equal(r1.status, 404)
+    assert.ok(r1.headers["content-length"] !== undefined,
+      `prefix 404 HEAD must set Content-Length, got ${JSON.stringify(r1.headers)}`)
+    // (b) 405 method-not-allowed on /api/v0/*
+    const r2 = await fetch("/api/v0/version", { method: "GET" })
+    assert.equal(r2.status, 405)
+    assert.ok(r2.headers["content-length"] !== undefined,
+      `405 must set Content-Length, got ${JSON.stringify(r2.headers)}`)
+    assert.equal(r2.headers.allow, "POST")
+    // (c) dispatch-end 404 (unknown /api/v0/ endpoint via POST — HEAD
+    // would short-circuit at the 405 method-check first).
+    const r3 = await fetch("/api/v0/unknown-route-xyz", { method: "POST" })
+    assert.equal(r3.status, 404)
+    assert.ok(r3.headers["content-length"] !== undefined,
+      `dispatch-end 404 must set Content-Length, got ${JSON.stringify(r3.headers)}`)
+  })
+
   it("#136: /ipfs/<cid> gateway accepts GET (read-only content addressing)", async () => {
     // The /ipfs/ gateway is intentionally GET-able — it's read-only
     // content addressing, no state mutation possible. Only /api/v0/*

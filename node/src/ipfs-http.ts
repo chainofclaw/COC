@@ -493,7 +493,11 @@ export class IpfsHttpServer {
       }
 
       if (!url.pathname?.startsWith("/api/v0/")) {
-        res.writeHead(404)
+        // #382: pre-fix bare `writeHead(404); end()` had no Content-Length
+        // and no Transfer-Encoding. HEAD clients waited 5s+ for the
+        // keep-alive timeout because the response framing was ambiguous.
+        // Set explicit Content-Length: 0 so HEAD short-circuits cleanly.
+        res.writeHead(404, { "content-length": "0" })
         res.end()
         return
       }
@@ -504,8 +508,17 @@ export class IpfsHttpServer {
       // visited webpage trigger state-changing operations (pin/add,
       // block/rm, repo/gc) against a victim's local IPFS daemon.
       if (req.method !== "POST") {
-        res.writeHead(405, { "allow": "POST", "content-type": "application/json" })
-        res.end(JSON.stringify({ error: "method not allowed: /api/v0/* requires POST" }))
+        // #382: same Content-Length fix as the 404 above. For HEAD on
+        // /api/v0/* the body is suppressed by Node but the framing must
+        // still be unambiguous. JSON body length is computed here so HEAD
+        // gets the exact byte count the server would have written.
+        const body = JSON.stringify({ error: "method not allowed: /api/v0/* requires POST" })
+        res.writeHead(405, {
+          "allow": "POST",
+          "content-type": "application/json",
+          "content-length": String(Buffer.byteLength(body)),
+        })
+        res.end(req.method === "HEAD" ? undefined : body)
         return
       }
 
@@ -656,8 +669,14 @@ export class IpfsHttpServer {
         return
       }
 
-      res.writeHead(404)
-      res.end(JSON.stringify({ error: "not found" }))
+      // #382: dispatch-end 404 catch-all — set Content-Length so HEAD
+      // doesn't hang waiting for chunked framing.
+      const notFoundBody = JSON.stringify({ error: "not found" })
+      res.writeHead(404, {
+        "content-type": "application/json",
+        "content-length": String(Buffer.byteLength(notFoundBody)),
+      })
+      res.end(req.method === "HEAD" ? undefined : notFoundBody)
       } catch (err) {
         // #180: defensively map ErasureError to 4xx — the inline
         // handleCat path already does this for read-side ErasureError,
