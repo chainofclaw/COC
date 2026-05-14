@@ -98,3 +98,93 @@ test("#358: simulating the pre-fix bug shape — `err instanceof undefined` thro
     "V8 message must match the one leaked through the RPC -32603 reply pre-fix"
   )
 })
+
+/**
+ * #507 regression: `resolveCid()` in `ipfs-erasure-reader.ts` used to
+ * interpolate `(err as Error).message` from the blockstore's ENOENT
+ * exception into the wire error message. Node.js's `fs.readFile` error
+ * shape is:
+ *   "ENOENT: no such file or directory, open
+ *    '/var/lib/coc/node-1/storage/blocks/bafyrei…'"
+ * Anyone calling the public RPC could enumerate the server's data dir
+ * layout + node identifier. Live testnet 88780 reproduction (pre-fix):
+ *   curl -d '{"jsonrpc":"2.0","id":1,"method":"coc_erasureStatus",
+ *            "params":["bafyreidskjqd4on73tlrhh2ovrgz3ihrekrojvg6yqxgldubsvgivqo2gq"]}'
+ *   → {"error":{"code":-32604,
+ *      "message":"manifest block missing: ENOENT: no such file or directory,
+ *                 open '/var/lib/coc/node-1/storage/blocks/bafyrei…'"}}
+ * Fix: emit a clean shape-only message echoing only the CID.
+ *
+ * Two code paths leaked (dag-cbor manifest block + raw block); regression
+ * test covers both.
+ */
+test("#507: resolveCid manifest-missing message must not leak filesystem path", async () => {
+  const { resolveCid } = await import("./ipfs-erasure-reader.ts")
+  const { ErasureError } = await import("./ipfs-erasure.ts")
+
+  // Real Node.js ENOENT error shape (matches `fs.readFile` on the
+  // live testnet — both message *and* code, since some upstream catch
+  // sites branch on `err.code === 'ENOENT'`).
+  const fakeEnoent = Object.assign(
+    new Error("ENOENT: no such file or directory, open '/var/lib/coc/node-1/storage/blocks/bafyreidskjqd4on73tlrhh2ovrgz3ihrekrojvg6yqxgldubsvgivqo2gq'"),
+    { code: "ENOENT", syscall: "open", path: "/var/lib/coc/node-1/storage/blocks/bafyrei…" },
+  )
+  const throwingStore = {
+    get: async () => { throw fakeEnoent },
+    has: async () => false,
+  } as never
+
+  // Use a valid dag-cbor (0x71) CID — `bafyrei…` v1 base32, code 0x71.
+  // Picked from the live testnet repro; the manifest block doesn't exist
+  // (that's the whole point of the test).
+  const manifestCid = "bafyreidskjqd4on73tlrhh2ovrgz3ihrekrojvg6yqxgldubsvgivqo2gq"
+  await assert.rejects(
+    () => resolveCid(manifestCid, throwingStore),
+    (err: unknown) => {
+      assert.ok(err instanceof ErasureError, "must wrap into ErasureError")
+      assert.equal((err as Error & { code: string }).code, "not_found",
+        "expected code='not_found' (HTTP layer maps to -32604)")
+      const msg = (err as Error).message
+      assert.doesNotMatch(msg, /ENOENT/, "must not leak Node.js error code")
+      assert.doesNotMatch(msg, /no such file or directory/, "must not leak ENOENT phrase")
+      assert.doesNotMatch(msg, /\/var\/lib\/coc/, "must not leak filesystem layout")
+      assert.doesNotMatch(msg, /node-\d/, "must not leak node identifier from path")
+      assert.doesNotMatch(msg, /storage\/blocks/, "must not leak data directory structure")
+      // Sanity: the CID itself is fine to echo (caller already sent it).
+      assert.match(msg, new RegExp(manifestCid),
+        "CID may be echoed since the caller already knows it")
+      return true
+    },
+  )
+})
+
+test("#507: resolveCid raw-block-missing message must not leak filesystem path", async () => {
+  const { resolveCid } = await import("./ipfs-erasure-reader.ts")
+  const { ErasureError } = await import("./ipfs-erasure.ts")
+
+  const fakeEnoent = Object.assign(
+    new Error("ENOENT: no such file or directory, open '/var/lib/coc/node-1/storage/blocks/bafkrei…'"),
+    { code: "ENOENT", syscall: "open" },
+  )
+  const throwingStore = {
+    get: async () => { throw fakeEnoent },
+    has: async () => false,
+  } as never
+
+  // Valid raw codec (0x55) CID — `bafkrei…` v1 base32 raw.
+  const rawCid = "bafkreigh2akiscaildc3xspxqzodxwauiakiiykohrgrlqkx5kbjepltrm"
+  await assert.rejects(
+    () => resolveCid(rawCid, throwingStore),
+    (err: unknown) => {
+      assert.ok(err instanceof ErasureError)
+      assert.equal((err as Error & { code: string }).code, "not_found")
+      const msg = (err as Error).message
+      assert.doesNotMatch(msg, /ENOENT/)
+      assert.doesNotMatch(msg, /no such file or directory/)
+      assert.doesNotMatch(msg, /\/var\/lib\/coc/)
+      assert.doesNotMatch(msg, /storage\/blocks/)
+      assert.match(msg, new RegExp(rawCid))
+      return true
+    },
+  )
+})
