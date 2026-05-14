@@ -467,15 +467,21 @@ describe("IpfsHttpServer", () => {
     assert.equal(post.status, 404, "cat must 404 after block/rm — chaos kill-shard depends on this")
   })
 
-  it("#126: POST /api/v0/block/rm returns 404 if the block is not present", async () => {
+  it("#126: POST /api/v0/block/rm returns 200 with {Error: 'block not found locally'} if the block is not present (kubo streaming shape)", async () => {
     // #489: Qm v0 CIDs must be exactly 46 chars. Pre-fix `isValidCid`
     // only enforced length<10/length>100, so the 15-char "QmNonExistent123"
     // slipped through and reached the not-found code path. Post-fix the
     // exact-46 gate rejects malformed Qm CIDs at the shape layer — provide
     // a well-shaped 46-char Qm that's still unknown to the blockstore.
+    // #372: block/rm is now batch-shaped (kubo streams one {Hash, Error}
+    // line per CID with HTTP 200). Missing blocks land as {Error:"block
+    // not found locally"} in the ndjson body instead of a top-level 404.
     const fakeQm = "QmNonExistent1234567891234567891234567891234ZZ" // 46 chars
     const res = await fetch(`/api/v0/block/rm?arg=${fakeQm}`, { method: "POST" })
-    assert.equal(res.status, 404)
+    assert.equal(res.status, 200, "block/rm streams batch results with HTTP 200")
+    const line = JSON.parse(await res.text()) as { Hash: string; Error: string }
+    assert.equal(line.Hash, fakeQm)
+    assert.match(line.Error, /block not found locally/i)
   })
 
   it("#126: POST /api/v0/repo/gc sweeps unpinned blocks but preserves pinned", async () => {
@@ -1887,6 +1893,81 @@ describe("IpfsHttpServer", () => {
     assert.equal(okRes.status, 200, "valid path must succeed")
     const statRes = await fetch("/api/v0/files/stat?arg=/probe-380", { method: "POST" })
     assert.equal(statRes.status, 200, "directory must actually be created")
+  })
+
+  describe("#372 pin/* and block/rm honor batch `?arg=` (no silent data loss)", () => {
+    it("pin/add with ?arg=cid1&arg=cid2 pins BOTH CIDs (was silently dropping cid2)", async () => {
+      // Pre-fix `firstQueryValue(arg)` returned cid1 only; pin/add silently
+      // dropped cid2..N. Clients got `{Pins:[cid1]}` and assumed success.
+      const m1 = await unixfs.addFile("a.txt", new TextEncoder().encode("alpha"))
+      const m2 = await unixfs.addFile("b.txt", new TextEncoder().encode("bravo"))
+      // Unpin both first
+      await fetch(`/api/v0/pin/rm?arg=${m1.cid}`, { method: "POST" })
+      await fetch(`/api/v0/pin/rm?arg=${m2.cid}`, { method: "POST" })
+      // Batch pin
+      const r = await fetch(`/api/v0/pin/add?arg=${m1.cid}&arg=${m2.cid}`, { method: "POST" })
+      assert.equal(r.status, 200, `batch pin/add must succeed, got ${r.status}`)
+      const body = await r.json() as { Pins: string[] }
+      assert.deepStrictEqual(body.Pins, [m1.cid, m2.cid],
+        `Pins must contain both CIDs, got ${JSON.stringify(body.Pins)}`)
+      // Verify both actually pinned
+      const ls1 = await fetch(`/api/v0/pin/ls?arg=${m1.cid}`, { method: "POST" })
+      assert.equal(ls1.status, 200, "cid1 must be pinned")
+      const ls2 = await fetch(`/api/v0/pin/ls?arg=${m2.cid}`, { method: "POST" })
+      assert.equal(ls2.status, 200, "cid2 must be pinned (was lost pre-fix)")
+    })
+
+    it("pin/rm with ?arg=cid1&arg=cid2 unpins BOTH CIDs", async () => {
+      const m1 = await unixfs.addFile("c.txt", new TextEncoder().encode("charlie"))
+      const m2 = await unixfs.addFile("d.txt", new TextEncoder().encode("delta"))
+      // Ensure both pinned
+      await fetch(`/api/v0/pin/add?arg=${m1.cid}&arg=${m2.cid}`, { method: "POST" })
+      // Batch unpin
+      const r = await fetch(`/api/v0/pin/rm?arg=${m1.cid}&arg=${m2.cid}`, { method: "POST" })
+      assert.equal(r.status, 200, `batch pin/rm must succeed, got ${r.status}`)
+      const body = await r.json() as { Pins: string[] }
+      assert.deepStrictEqual(body.Pins, [m1.cid, m2.cid],
+        `Pins must contain both CIDs, got ${JSON.stringify(body.Pins)}`)
+      // Verify both actually unpinned
+      const ls1 = await fetch(`/api/v0/pin/ls?arg=${m1.cid}`, { method: "POST" })
+      assert.equal(ls1.status, 404, "cid1 must NOT be pinned")
+      const ls2 = await fetch(`/api/v0/pin/ls?arg=${m2.cid}`, { method: "POST" })
+      assert.equal(ls2.status, 404, "cid2 must NOT be pinned (was leaked pre-fix)")
+    })
+
+    it("pin/ls with ?arg=cid1&arg=cid2 returns BOTH CIDs in Keys", async () => {
+      const m1 = await unixfs.addFile("e.txt", new TextEncoder().encode("echo"))
+      const m2 = await unixfs.addFile("f.txt", new TextEncoder().encode("foxtrot"))
+      await fetch(`/api/v0/pin/add?arg=${m1.cid}&arg=${m2.cid}`, { method: "POST" })
+      const r = await fetch(`/api/v0/pin/ls?arg=${m1.cid}&arg=${m2.cid}`, { method: "POST" })
+      assert.equal(r.status, 200)
+      const body = await r.json() as { Keys: Record<string, { Type: string }> }
+      assert.ok(body.Keys[m1.cid], `Keys must contain cid1, got ${JSON.stringify(body.Keys)}`)
+      assert.ok(body.Keys[m2.cid], `Keys must contain cid2 (was silently dropped pre-fix), got ${JSON.stringify(body.Keys)}`)
+    })
+
+    it("block/rm with ?arg=cid1&arg=cid2 emits one ndjson line per CID", async () => {
+      // block/rm requires admin; the test fixture is loopback so it passes.
+      const m1 = await unixfs.addFile("g.txt", new TextEncoder().encode("golf"))
+      const m2 = await unixfs.addFile("h.txt", new TextEncoder().encode("hotel"))
+      const r = await fetch(`/api/v0/block/rm?arg=${m1.cid}&arg=${m2.cid}`, { method: "POST" })
+      assert.equal(r.status, 200)
+      const text = await r.text()
+      const lines = text.split("\n").filter(Boolean).map((l) => JSON.parse(l) as { Hash: string; Error: string })
+      assert.equal(lines.length, 2, `block/rm must emit one line per CID, got ${lines.length}: ${text}`)
+      assert.equal(lines[0].Hash, m1.cid)
+      assert.equal(lines[1].Hash, m2.cid)
+    })
+
+    it("pin/add atomic-batch: invalid cid2 fails the whole batch (no half-pin)", async () => {
+      const m1 = await unixfs.addFile("i.txt", new TextEncoder().encode("india"))
+      await fetch(`/api/v0/pin/rm?arg=${m1.cid}`, { method: "POST" })
+      const r = await fetch(`/api/v0/pin/add?arg=${m1.cid}&arg=BOGUS`, { method: "POST" })
+      assert.equal(r.status, 400, "invalid cid in batch must reject whole batch with 400")
+      // cid1 must NOT be pinned (atomic)
+      const ls = await fetch(`/api/v0/pin/ls?arg=${m1.cid}`, { method: "POST" })
+      assert.equal(ls.status, 404, "cid1 must NOT have been pinned despite cid1 being valid (atomic batch)")
+    })
   })
 })
 
