@@ -1485,7 +1485,11 @@ export class IpfsHttpServer {
           // the 400 that path-too-long / null-byte / max-depth siblings
           // already emit. Treat as client-input error.
           /^path traversal/i.test(msg) ||
-          /^invalid /i.test(msg)
+          /^invalid /i.test(msg) ||
+          // #539: `mv` / `cp` reject existing destination (data-loss
+          // prevention, kubo parity). Map to 400 same as the other
+          // client-input-error siblings.
+          /^destination already exists/i.test(msg)
         ) {
           httpErr = new HttpError(400, "bad request", msg)
         }

@@ -177,6 +177,63 @@ test("#477: cp/mv same source-and-dest must reject when source is missing", asyn
   }
 })
 
+test("#539: cp / mv reject when destination already exists (kubo parity, data-loss prevention)", async () => {
+  // Live testnet 88780 reproduction (pre-fix):
+  //   echo "AAA" > /src.txt; echo "BBB" > /dst.txt; mv /src.txt /dst.txt
+  //   curl /files/read?arg=/dst.txt → "AAA"   // BBB silently lost
+  //
+  // Pre-fix `mfs.mv` and `mfs.cp` did `destParent.entries.set(destBase, ...)`
+  // without checking whether the destination already existed. Any pre-
+  // existing file at that path was silently clobbered. This is a
+  // data-loss bug — a user moving a file to what they think is a new
+  // location can accidentally overwrite something at that path with no
+  // warning.
+  //
+  // Kubo: `files cp` and `files mv` both error when destination exists.
+  // Per kubo docs: "If the destination already exists, then the command
+  // fails." Match that contract so existing-destination clobbering is
+  // surfaced as an actionable error instead of silent data loss.
+  const { mfs, cleanup } = await createMfs()
+  try {
+    await mfs.write("/src.txt", new TextEncoder().encode("AAA"), { create: true })
+    await mfs.write("/dst.txt", new TextEncoder().encode("BBB"), { create: true })
+
+    // (a) cp into existing dest must reject; dest content preserved.
+    await assert.rejects(
+      () => mfs.cp("/src.txt", "/dst.txt"),
+      /destination already exists/i,
+      "cp must reject existing destination (data-loss prevention)",
+    )
+    const afterCp = await mfs.read("/dst.txt")
+    assert.strictEqual(new TextDecoder().decode(afterCp), "BBB",
+      "dst.txt content preserved after rejected cp")
+
+    // (b) mv into existing dest must reject; both src and dest preserved.
+    await assert.rejects(
+      () => mfs.mv("/src.txt", "/dst.txt"),
+      /destination already exists/i,
+      "mv must reject existing destination",
+    )
+    const srcAfter = await mfs.read("/src.txt")
+    const dstAfter = await mfs.read("/dst.txt")
+    assert.strictEqual(new TextDecoder().decode(srcAfter), "AAA",
+      "src.txt preserved after rejected mv (NOT atomically removed despite the failed move)")
+    assert.strictEqual(new TextDecoder().decode(dstAfter), "BBB",
+      "dst.txt content preserved after rejected mv")
+
+    // (c) Sanity: cp / mv to a fresh path still work.
+    await mfs.cp("/src.txt", "/copy.txt")    // works
+    const copy = await mfs.read("/copy.txt")
+    assert.strictEqual(new TextDecoder().decode(copy), "AAA", "fresh-dest cp still works")
+    await mfs.mv("/copy.txt", "/moved.txt")   // works
+    const moved = await mfs.read("/moved.txt")
+    assert.strictEqual(new TextDecoder().decode(moved), "AAA", "fresh-dest mv still works")
+    await assert.rejects(() => mfs.read("/copy.txt"), /not found/i, "moved-from path is gone")
+  } finally {
+    cleanup()
+  }
+})
+
 test("MFS: stat returns file info", async () => {
   const { mfs, cleanup } = await createMfs()
   try {
