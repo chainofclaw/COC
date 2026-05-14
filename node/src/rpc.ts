@@ -1234,7 +1234,7 @@ async function handleRpc(
       // log filter (default): existing behaviour.
       const logs = await collectLogs(chain, start, cappedEnd, filter)
       filter.lastCursor = cappedEnd
-      return logs
+      return logs.map(formatLogForWire)
     }
     case "eth_uninstallFilter": {
       // #196: same shape validation as eth_getFilterChanges so a
@@ -1857,7 +1857,7 @@ async function handleRpc(
       if (end - filter.fromBlock > MAX_LOG_BLOCK_RANGE) {
         invalidParams(`block range too large: max ${MAX_LOG_BLOCK_RANGE} blocks`)
       }
-      return collectLogs(chain, filter.fromBlock, end, filter)
+      return (await collectLogs(chain, filter.fromBlock, end, filter)).map(formatLogForWire)
     }
     case "eth_maxPriorityFeePerGas": {
       const tip = await feeOracle.computeMaxPriorityFeePerGas(chain)
@@ -4140,11 +4140,11 @@ async function queryLogs(chain: IChainEngine, query: Record<string, unknown>, re
       addresses,
       topics: topics as Array<Hex | Hex[] | null> | undefined,
     })
-    return results.slice(0, MAX_LOG_RESULTS)
+    return results.slice(0, MAX_LOG_RESULTS).map(formatLogForWire)
   }
 
   // Fallback to receipt-based log collection
-  return collectLogs(chain, fromBlock, toBlock, {
+  return (await collectLogs(chain, fromBlock, toBlock, {
     id: "inline",
     fromBlock,
     toBlock,
@@ -4152,7 +4152,29 @@ async function queryLogs(chain: IChainEngine, query: Record<string, unknown>, re
     addresses,
     topics,
     lastCursor: fromBlock,
-  })
+  })).map(formatLogForWire)
+}
+
+/**
+ * #483: standardize log entries on the wire. Persistent storage's IndexedLog
+ * holds `transactionIndex` / `logIndex` as JS numbers and lacks `removed`.
+ * eth_getTransactionReceipt's `logs[]` uses hex-string indices + has the
+ * `removed` field. Two endpoints serving logs disagreed on shape, breaking
+ * strict-mode JSON-RPC clients (viem). Match the receipt shape at the
+ * wire boundary so all log-emitting endpoints agree.
+ */
+function formatLogForWire(log: unknown): Record<string, unknown> {
+  const l = log as Record<string, unknown>
+  return {
+    ...l,
+    transactionIndex: typeof l.transactionIndex === "number"
+      ? `0x${l.transactionIndex.toString(16)}`
+      : l.transactionIndex,
+    logIndex: typeof l.logIndex === "number"
+      ? `0x${l.logIndex.toString(16)}`
+      : l.logIndex,
+    removed: typeof l.removed === "boolean" ? l.removed : false,
+  }
 }
 
 async function queryTraceFilter(chain: IChainEngine, evm: EvmChain, query: Record<string, unknown>): Promise<unknown[]> {

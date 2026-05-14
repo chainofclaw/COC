@@ -3405,6 +3405,40 @@ test("RPC Extended Methods", async (t) => {
       `first tx's first log must have logIndex 0x0 (got ${rec1.logs[0].logIndex})`)
     assert.equal(rec2.logs[0].logIndex, "0x1",
       `second tx's first log must have logIndex 0x1 (block-global), not 0x0 (per-tx). got ${rec2.logs[0].logIndex} — this is the #454 regression`)
+
+    // #483: eth_getLogs must return the SAME shape as receipt.logs[].
+    // Pre-fix the persistent log index returned `transactionIndex` and
+    // `logIndex` as JS numbers (0 / 1) and omitted `removed`. Receipt's
+    // logs[] (going through formatPersistentReceipt) used hex strings
+    // ("0x0" / "0x1") + included `removed: false`. Live 88780 reproduced
+    // this with two different log shapes for the same emitted event.
+    const logsViaFilter = await rpcCall(port, "eth_getLogs", [{
+      address: contractAddr,
+      fromBlock: rec1.blockNumber,
+      toBlock: rec1.blockNumber,
+    }]) as Array<Record<string, unknown>>
+
+    assert.equal(logsViaFilter.length, 2, `eth_getLogs must return both logs (got ${logsViaFilter.length})`)
+
+    for (const log of logsViaFilter) {
+      assert.equal(typeof log.transactionIndex, "string",
+        `eth_getLogs transactionIndex must be hex string, got ${typeof log.transactionIndex} (${log.transactionIndex})`)
+      assert.match(log.transactionIndex as string, /^0x[0-9a-f]+$/,
+        `eth_getLogs transactionIndex must match /^0x[0-9a-f]+$/`)
+      assert.equal(typeof log.logIndex, "string",
+        `eth_getLogs logIndex must be hex string, got ${typeof log.logIndex} (${log.logIndex})`)
+      assert.match(log.logIndex as string, /^0x[0-9a-f]+$/,
+        `eth_getLogs logIndex must match /^0x[0-9a-f]+$/`)
+      assert.equal(typeof log.removed, "boolean",
+        `eth_getLogs log.removed must be a boolean, got ${typeof log.removed}`)
+    }
+
+    // Cross-endpoint shape parity: the same log via eth_getLogs and
+    // eth_getTransactionReceipt must have identical scalar field values.
+    assert.equal(logsViaFilter[0].logIndex, rec1.logs[0].logIndex,
+      "eth_getLogs[0].logIndex must equal receipt.logs[0].logIndex (same log, same shape)")
+    assert.equal(logsViaFilter[1].logIndex, rec2.logs[0].logIndex,
+      "eth_getLogs[1].logIndex must equal receipt.logs[0].logIndex of second tx")
   })
   })
 
