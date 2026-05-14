@@ -1130,6 +1130,19 @@ test("RPC Extended Methods", async (t) => {
       assert.equal(r.error?.code, -32602,
         `coc_getFaction(${JSON.stringify(bad)}) must be -32602 (not silent null), got ${JSON.stringify(r)}`)
     }
+    // #505: malformed-but-0x-prefixed addresses must ALSO reject — pre-fix
+    // the loose `startsWith("0x")` check accepted any prefixed string and
+    // silently returned null (indistinguishable from "real address, no
+    // faction"). requireAddressParam enforces the 40-char shape.
+    for (const bad of ["0x", "0x123", "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb9226", /* 39 chars */
+                        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb922665", /* 41 chars */
+                        "0xZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ"]) {
+      const r = await probe("coc_getFaction", [bad])
+      assert.equal(r.error?.code, -32602,
+        `coc_getFaction("${bad}") must be -32602 (malformed address), got ${JSON.stringify(r)}`)
+      assert.match(r.error!.message, /invalid address/i,
+        `coc_getFaction error must mention "invalid address", got "${r.error!.message}"`)
+    }
     // Sanity: valid address shape returns null (not error) without governance.
     {
       const r = await probe("coc_getFaction", ["0x0000000000000000000000000000000000000001"])

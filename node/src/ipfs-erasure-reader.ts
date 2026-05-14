@@ -52,8 +52,15 @@ export async function resolveCid(
   let parsed: CID
   try {
     parsed = CID.parse(cid)
-  } catch (err) {
-    throw new ErasureError("invalid_cid", `unparseable CID: ${(err as Error).message ?? err}`)
+  } catch {
+    // #505: pre-fix the multiformats library's internal error message
+    // was concatenated verbatim into the wire response, e.g.
+    //   "unparseable CID: To parse non base32, base36 or base58btc
+    //    encoded CID multibase decoder must be provided"
+    // This leaks library internals to the client (same anti-pattern
+    // family as #156 ethers leak, #176 V8 SyntaxError leak, #182
+    // TypedDataEncoder leak). Emit a clean shape-only message.
+    throw new ErasureError("invalid_cid", "invalid CID: malformed encoding")
   }
 
   if (parsed.code === CODEC_DAG_PB) {
