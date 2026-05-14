@@ -35,6 +35,7 @@ import {
   requireBlockHashParam,
   requireIndexParam,
   requireFilterId,
+  requireStrictBooleanParam,
   requireCallObject,
   requireFilterObject,
   requireStringParam,
@@ -862,7 +863,12 @@ async function handleRpc(
       // → 0n → silently returned the genesis block. Sibling of #188 / #194.
       // resolveBlockNumber accepts unknown and dispatches through parseBlockTag,
       // which rejects non-string / non-number shapes at -32602.
-      const includeTx = Boolean((payload.params ?? [])[1])
+      // #260: pre-fix `Boolean((payload.params ?? [])[1])` accepted every
+      // shape — `Boolean("false") === true`, `Boolean([]) === true`,
+      // `Boolean({}) === true` — and clients sending those got the OPPOSITE
+      // of what they meant (full tx objects ~5-6× bandwidth). Spec requires
+      // strict boolean; geth rejects everything else with -32602.
+      const includeTx = requireStrictBooleanParam(payload.params ?? [], 1, "includeTransactions")
       const number = await resolveBlockNumber((payload.params ?? [])[0], chain)
       const block = await Promise.resolve(chain.getBlockByNumber(number))
       // #112: synthesise a genesis block when block 0 is missing. The
@@ -883,8 +889,9 @@ async function handleRpc(
       // undefined, null, short hex, non-hex — and returned null,
       // indistinguishable from "valid hash, no such block". Symmetric
       // with #150's eth_getTransactionByHash fix.
+      // #260: same Boolean()-coercion fix as eth_getBlockByNumber above.
       const hash = requireBlockHashParam(payload.params ?? [], 0)
-      const includeTx = Boolean((payload.params ?? [])[1])
+      const includeTx = requireStrictBooleanParam(payload.params ?? [], 1, "includeTransactions")
       const block = await Promise.resolve(chain.getBlockByHash(hash))
       // #422: eth_getBlockByNumber("0x0") synthesises a genesis block
       // (per #112) with hash = all-zeros. Block 1's parentHash carries

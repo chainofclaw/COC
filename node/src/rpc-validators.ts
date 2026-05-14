@@ -241,6 +241,25 @@ export function requireIndexParam(params: unknown[], index: number, name = "inde
 }
 
 /**
+ * #260: Strict boolean validator for params like eth_getBlockByNumber's
+ * `includeTransactions`. Pre-fix `Boolean(params[i])` accepted every
+ * shape — `Boolean("false") === true`, `Boolean({}) === true`,
+ * `Boolean([]) === true` — and clients sending those got the OPPOSITE
+ * of what they meant (full tx objects ~5-6× bandwidth instead of hashes).
+ * Spec requires strict boolean; geth rejects everything else with -32602.
+ * Defaults to `false` when the param is missing/undefined to match the
+ * Ethereum JSON-RPC spec default.
+ */
+export function requireStrictBooleanParam(params: unknown[], index: number, name: string): boolean {
+  const value = (params ?? [])[index]
+  if (value === undefined || value === null) return false
+  if (value !== true && value !== false) {
+    invalidParams(`invalid ${name} at param ${index}: expected boolean, got ${Array.isArray(value) ? "array" : typeof value}`)
+  }
+  return value
+}
+
+/**
  * Validate a 16-byte filter ID (#196). Filter IDs are minted as
  * `0x` + `randomBytes(16).toString("hex")` (32 hex chars). Pre-fix
  * `String((payload.params ?? [])[0] ?? "")` silently coerced any
