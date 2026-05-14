@@ -388,6 +388,82 @@ test("RPC Extended Methods", async (t) => {
     assert.deepEqual(byMixedHash, byLowerHash, "mixed-case hash must yield the same receipts as lowercase")
   })
 
+  await t.test("#497: eth_getBlockReceipts accepts EIP-1898 {blockNumber} and {blockHash} object forms", async () => {
+    // Pre-fix the handler's else branch did `String(rawParam ?? "latest")`
+    // which stringified `{blockNumber:"0xa"}` to "[object Object]" and
+    // surfaced as -32602 "invalid block number: [object Object]" — both
+    // broken EIP-1898 support AND leaks `[object Object]` from V8
+    // stringification (same anti-pattern as #194/#220/#226). Live 88780
+    // reproduction:
+    //   eth_getBlockReceipts [{"blockNumber":"0xa"}]
+    //     → -32602 "invalid block number: [object Object]"   ← BUG
+    //
+    // Per geth, this method accepts BlockNumberOrHash — the same 5
+    // EIP-1898 forms as eth_call / eth_getBalance / etc.
+    if (!chain.proposeNextBlock) return  // fixture only
+
+    await chain.proposeNextBlock()
+    await chain.proposeNextBlock()
+
+    const probe = async (params: unknown[]) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getBlockReceipts", params }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    }
+
+    // Form 5: {blockNumber: "0x1"} — pre-fix returned -32602 "[object Object]"
+    const byNumberObj = await probe([{ blockNumber: "0x1" }])
+    assert.notEqual(
+      byNumberObj.error?.code,
+      -32602,
+      `{blockNumber: "0x1"} must NOT be rejected — got ${JSON.stringify(byNumberObj)}`,
+    )
+    assert.ok(byNumberObj.result !== undefined,
+      `{blockNumber: "0x1"} must return a result (array or null), got ${JSON.stringify(byNumberObj)}`)
+
+    // Sanity: same number via bare hex returns the same result.
+    const byNumberStr = await probe(["0x1"])
+    assert.deepEqual(byNumberObj.result, byNumberStr.result,
+      "{blockNumber: '0x1'} and '0x1' must yield identical results")
+
+    // Form 4: {blockHash: <real hash>}.
+    const block1 = await rpcCall(port, "eth_getBlockByNumber", ["0x1", false]) as { hash: string } | null
+    if (block1) {
+      const byHashObj = await probe([{ blockHash: block1.hash }])
+      assert.notEqual(
+        byHashObj.error?.code,
+        -32602,
+        `{blockHash: <real>} must NOT be rejected — got ${JSON.stringify(byHashObj)}`,
+      )
+      const byHashBare = await probe([block1.hash])
+      assert.deepEqual(byHashObj.result, byHashBare.result,
+        "{blockHash} object form must match bare hash form")
+    }
+
+    // EIP-1898 mutex: {blockHash, blockNumber} both → -32602 (per #469 family).
+    const both = await probe([{
+      blockNumber: "0x1",
+      blockHash: "0x" + "0".repeat(64),
+    }])
+    assert.equal(both.error?.code, -32602, `mixed {blockHash, blockNumber} must be -32602, got ${JSON.stringify(both)}`)
+    assert.match(both.error!.message, /mutually exclusive|EIP-1898/i)
+
+    // Bad shape: must NOT leak `[object Object]` from V8 stringification.
+    const badObj = await probe([{ wrong: "key" }])
+    assert.doesNotMatch(
+      JSON.stringify(badObj),
+      /\[object Object\]/,
+      `bad object shape must not leak "[object Object]", got ${JSON.stringify(badObj)}`,
+    )
+
+    // Malformed blockHash in form-4: -32602 with shape message.
+    const badHash = await probe([{ blockHash: "0xnot-hex" }])
+    assert.equal(badHash.error?.code, -32602)
+    assert.match(badHash.error!.message, /invalid blockHash/i)
+  })
+
   await t.test("#122: eth_getBalance / eth_getTransactionCount / coc_getContractInfo reject malformed addresses with -32602", async () => {
     // Pre-fix bugs:
     //   - eth_getBalance returned -32603 with the raw input echoed back

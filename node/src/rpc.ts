@@ -1945,12 +1945,39 @@ async function handleRpc(
       // by block hash (Etherscan-clones, The Graph, etc.) need this.
       const rawParam = (payload.params ?? [])[0]
       let block: Awaited<ReturnType<typeof chain.getBlockByNumber>> | null = null
+      // #497: per EIP-1898 BlockNumberOrHash, accept 5 shapes:
+      //   1. tag ("latest"/"pending"/"earliest"/"safe"/"finalized")
+      //   2. hex quantity ("0x0")
+      //   3. bare 32-byte hash (66-char hex)
+      //   4. {blockHash, requireCanonical?} object
+      //   5. {blockNumber} object
+      // Pre-fix forms 4 + 5 hit the else branch which did
+      // `String(rawParam ?? "latest")` — that stringified the object to
+      // `"[object Object]"` and surfaced as -32602 "invalid block number:
+      // [object Object]" (same V8-stringification anti-pattern as
+      // #194/#220/#226). Geth/erigon accept all 5 forms for this method;
+      // ethers/viem reorg-aware indexers depend on form 4.
       if (typeof rawParam === "string" && /^0x[0-9a-fA-F]{64}$/.test(rawParam)) {
-        // 32-byte block hash — case-insensitive, mirroring #364 normalization.
+        // Form 3: bare 32-byte block hash — case-insensitive, mirroring #364.
         block = await Promise.resolve(chain.getBlockByHash(rawParam.toLowerCase() as Hex))
+      } else if (typeof rawParam === "object" && rawParam !== null && !Array.isArray(rawParam) && "blockHash" in rawParam) {
+        // Form 4. EIP-1898 mutex: reject combo with blockNumber (#469).
+        if ("blockNumber" in (rawParam as Record<string, unknown>)) {
+          invalidParams("invalid block reference: blockHash and blockNumber are mutually exclusive (EIP-1898)")
+        }
+        const rawHash = (rawParam as Record<string, unknown>).blockHash
+        if (typeof rawHash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(rawHash)) {
+          invalidParams("invalid blockHash: must match /^0x[0-9a-fA-F]{64}$/")
+        }
+        block = await Promise.resolve(chain.getBlockByHash((rawHash as string).toLowerCase() as Hex))
+      } else if (typeof rawParam === "object" && rawParam !== null && !Array.isArray(rawParam) && "blockNumber" in rawParam) {
+        // Form 5: {blockNumber}. Route inner value through resolveBlockNumber.
+        const inner = (rawParam as Record<string, unknown>).blockNumber
+        const num = await resolveBlockNumber(inner, chain)
+        block = await Promise.resolve(chain.getBlockByNumber(num))
       } else {
-        const tag = String(rawParam ?? "latest")
-        const num = await resolveBlockNumber(tag, chain)
+        // Forms 1 + 2: tag string or hex quantity (or null/undefined → "latest").
+        const num = await resolveBlockNumber(rawParam ?? "latest", chain)
         block = await Promise.resolve(chain.getBlockByNumber(num))
       }
       if (!block) return null
