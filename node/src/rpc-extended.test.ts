@@ -444,6 +444,83 @@ test("RPC Extended Methods", async (t) => {
     assert.deepEqual(byMixedHash, byLowerHash, "mixed-case hash must yield the same receipts as lowercase")
   })
 
+  await t.test("#523: eth_getBlockReceipts accepts all 5 EIP-1898 BlockNumberOrHash shapes (no [object Object] leak)", async () => {
+    // Live testnet 88780 reproduction (pre-fix):
+    //   eth_getBlockReceipts({"blockNumber":"latest"})
+    //   → {"error":{"code":-32602,"message":"invalid block number: [object Object]"}}
+    //   eth_getBlockReceipts({"blockHash":"0xca8d..."})
+    //   → {"error":{"code":-32602,"message":"invalid block number: [object Object]"}}
+    //
+    // Same `[object Object]` leak family as #497/#499 — those PRs fixed
+    // `eth_call`-family methods via `resolveHistoricalExecutionContext`
+    // which handles all 5 EIP-1898 shapes. `eth_getBlockReceipts` was
+    // missed because it doesn't need state-root resolution, so its
+    // simpler `String(rawParam ?? "latest")` path silently coerced
+    // objects to literal `"[object Object]"`.
+    //
+    // Tooling that batches receipts via EIP-1898 forms:
+    //   - ethers.js `provider.getBlock(h).then(b => provider.send(
+    //       "eth_getBlockReceipts", [{blockHash: b.hash}]))`
+    //   - The Graph indexer's bulk-receipt fetcher
+    //   - Etherscan-clones / block explorers
+    // All silently got -32602 from this method.
+    //
+    // Fix: handle all 5 EIP-1898 shapes — bare tag, hex number, bare hash,
+    // {blockNumber: …}, {blockHash: …}. Reject hybrid {both} per spec.
+    await chain.proposeNextBlock()
+    const blockByNumber = await rpcCall(port, "eth_getBlockByNumber", ["0x1", false]) as { hash: string } | null
+    assert.ok(blockByNumber, "fixture must have block 0x1 after proposeNextBlock")
+    const blockHash = blockByNumber!.hash
+    const expectedReceipts = await rpcCall(port, "eth_getBlockReceipts", ["0x1"])
+
+    // Shape (i): {blockNumber: "0x1"} — hex quantity in object
+    const sBN = await rpcCall(port, "eth_getBlockReceipts", [{ blockNumber: "0x1" }])
+    assert.deepEqual(sBN, expectedReceipts,
+      `{blockNumber:"0x1"} must yield same receipts as "0x1", got ${JSON.stringify(sBN)}`)
+
+    // Shape (ii): {blockNumber: "latest"} — named tag in object
+    const sLatest = await rpcCall(port, "eth_getBlockReceipts", [{ blockNumber: "latest" }])
+    assert.ok(Array.isArray(sLatest) || sLatest === null,
+      `{blockNumber:"latest"} must return array or null, got ${JSON.stringify(sLatest)}`)
+
+    // Shape (iii): {blockHash: "0x…"} — 32-byte hash in object
+    const sBH = await rpcCall(port, "eth_getBlockReceipts", [{ blockHash }])
+    assert.deepEqual(sBH, expectedReceipts,
+      `{blockHash:"${blockHash}"} must yield same receipts as "0x1", got ${JSON.stringify(sBH)}`)
+
+    // Reject hybrid {both} per EIP-1898 spec (geth + Erigon return -32602).
+    const probe = async (params: unknown[]) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getBlockReceipts", params }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    }
+    const hybrid = await probe([{ blockNumber: "latest", blockHash }])
+    assert.ok(hybrid.error, "EIP-1898 hybrid {blockNumber, blockHash} must error")
+    assert.equal(hybrid.error!.code, -32602)
+    assert.match(hybrid.error!.message, /EIP-1898 forbids.*together/,
+      `hybrid message must explain the spec violation, got: ${hybrid.error!.message}`)
+
+    // Defense against the regression: confirm pre-fix leak is gone.
+    // ANY error message MUST NOT contain "[object Object]".
+    const badObj = await probe([{ unrelated: "field" }])
+    assert.ok(badObj.error, "object missing both blockNumber/blockHash must error")
+    assert.doesNotMatch(badObj.error!.message, /\[object Object\]/,
+      `must not leak [object Object] coercion, got: ${badObj.error!.message}`)
+    assert.match(badObj.error!.message, /EIP-1898|blockNumber|blockHash/i,
+      `must explain what's wrong, got: ${badObj.error!.message}`)
+
+    // Malformed blockHash in object form must surface as -32602 with a
+    // specific blockHash-shape error (not the generic block-number message).
+    const badHash = await probe([{ blockHash: "0xshort" }])
+    assert.ok(badHash.error)
+    assert.equal(badHash.error!.code, -32602)
+    assert.match(badHash.error!.message, /invalid blockHash/i,
+      `must complain about blockHash shape, got: ${badHash.error!.message}`)
+  })
+
   await t.test("#122: eth_getBalance / eth_getTransactionCount / coc_getContractInfo reject malformed addresses with -32602", async () => {
     // Pre-fix bugs:
     //   - eth_getBalance returned -32603 with the raw input echoed back
