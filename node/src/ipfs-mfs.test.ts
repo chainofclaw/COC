@@ -177,6 +177,68 @@ test("#477: cp/mv same source-and-dest must reject when source is missing", asyn
   }
 })
 
+test("#541: write without truncate preserves trailing bytes (kubo parity)", async () => {
+  // Live testnet 88780 reproduction (pre-fix):
+  //   write /f "BIGGER_OVERWRITE\n"  // 17 bytes written
+  //   write /f "ZZ\n"                 // 3 bytes, no truncate flag
+  //   read /f                         // → "ZZ\n" (3 bytes)
+  //
+  // Kubo's behavior with truncate=false (the default):
+  //   read /f → "ZZ\nGER_OVERWRITE\n"  // bytes 0..2 overwritten,
+  //                                     // bytes 3..16 preserved
+  //
+  // Pre-fix the merge logic at ipfs-mfs.ts:135 had
+  // `opts?.offset !== undefined` in its condition, so partial-overwrite
+  // semantics ONLY fired when offset was explicitly passed. The default
+  // offset=0 case fell through and the file was completely replaced.
+  // This is a data-loss bug — clients porting from kubo expect partial-
+  // overwrite semantics, COC silently dropped the trailing content.
+  // Same family as #539 (cp/mv silent overwrite).
+  //
+  // Fix: treat omitted `offset` as 0, apply merge logic in both
+  // implicit and explicit offset cases. `truncate=true` still bypasses
+  // the merge and replaces the whole file.
+  const { mfs, cleanup } = await createMfs()
+  try {
+    // (a) Default (no truncate): partial overwrite preserves trailing bytes
+    await mfs.write("/f", new TextEncoder().encode("BIGGER_OVERWRITE\n"), { create: true })
+    const before = await mfs.read("/f")
+    assert.strictEqual(new TextDecoder().decode(before), "BIGGER_OVERWRITE\n")
+
+    await mfs.write("/f", new TextEncoder().encode("ZZ\n"))  // 3 bytes, no opts
+    const after = await mfs.read("/f")
+    assert.strictEqual(new TextDecoder().decode(after), "ZZ\nGER_OVERWRITE\n",
+      `default write must preserve trailing bytes (kubo non-truncate semantics), got ${JSON.stringify(new TextDecoder().decode(after))}`)
+    assert.strictEqual(after.length, 17,
+      "merged file size must equal max(existing.length, offset+data.length)")
+
+    // (b) truncate=true: whole file replaced
+    await mfs.write("/f", new TextEncoder().encode("TINY\n"), { truncate: true })
+    const truncated = await mfs.read("/f")
+    assert.strictEqual(new TextDecoder().decode(truncated), "TINY\n",
+      "truncate=true must replace whole file")
+    assert.strictEqual(truncated.length, 5, "truncated file size matches new data length only")
+
+    // (c) Explicit offset (existing #477-era behavior, still works)
+    await mfs.write("/f2", new TextEncoder().encode("0123456789"), { create: true })
+    await mfs.write("/f2", new TextEncoder().encode("AB"), { offset: 4 })
+    const offsetResult = await mfs.read("/f2")
+    assert.strictEqual(new TextDecoder().decode(offsetResult), "0123AB6789",
+      "explicit offset still partial-overwrites correctly")
+
+    // (d) Default-offset write that EXTENDS the file (new data longer
+    // than existing): final size = max(existing, data) — same as kubo.
+    await mfs.write("/f3", new TextEncoder().encode("short"), { create: true })   // 5 bytes
+    await mfs.write("/f3", new TextEncoder().encode("longer_text"))                 // 11 bytes
+    const extended = await mfs.read("/f3")
+    assert.strictEqual(new TextDecoder().decode(extended), "longer_text",
+      "writing longer data extends the file (no trailing preservation needed)")
+    assert.strictEqual(extended.length, 11)
+  } finally {
+    cleanup()
+  }
+})
+
 test("MFS: stat returns file info", async () => {
   const { mfs, cleanup } = await createMfs()
   try {

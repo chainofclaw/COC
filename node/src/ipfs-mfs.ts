@@ -132,17 +132,36 @@ export class IpfsMfs {
     }
 
     let finalData = data
-    if (existing && !opts?.truncate && opts?.offset !== undefined) {
-      if (opts.offset < 0) throw new Error("offset must be non-negative")
+    // #541: kubo's `files write` preserves trailing bytes unless
+    // `truncate=true` is explicitly passed. Pre-fix the merge logic
+    // ONLY fired when `offset` was explicitly defined — when offset
+    // was omitted (the default behavior, equivalent to offset=0), the
+    // file was completely replaced regardless of truncate. So writing
+    // 2 bytes "ZZ" over an existing 17-byte file silently truncated
+    // the file to 2 bytes instead of producing "ZZ" + 15 bytes of
+    // preserved trailing content. Same data-loss family as #539.
+    //
+    // Live testnet 88780 repro (pre-fix):
+    //   write /f "BIGGER_OVERWRITE\n"  → 17 bytes
+    //   write /f "ZZ\n"                 → file becomes 3 bytes (wrong)
+    //   kubo: file becomes "ZZ\nGER_OVERWRITE\n" (17 bytes, partial overwrite)
+    //
+    // Fix: treat omitted `offset` as 0 and apply the same merge logic
+    // for the implicit-offset case. `truncate=true` still bypasses
+    // the merge and replaces the whole file.
+    if (existing && !opts?.truncate) {
+      const offset = opts?.offset ?? 0
+      if (offset < 0) throw new Error("offset must be non-negative")
       // Guard against memory exhaustion from large offset + data.length
       const MAX_WRITE_SIZE = 64 * 1024 * 1024 // 64 MiB
-      const mergedSize = opts.offset + data.length
+      const mergedSize = offset + data.length
       if (mergedSize > MAX_WRITE_SIZE) throw new Error(`write would exceed max size (${MAX_WRITE_SIZE} bytes)`)
-      // Append/overwrite at offset
+      // Append/overwrite at offset; preserve trailing bytes beyond
+      // offset+data.length (kubo non-truncate semantics).
       const existingData = await this.unixfs.readFile(existing.cid)
       const merged = new Uint8Array(Math.max(existingData.length, mergedSize))
       merged.set(existingData)
-      merged.set(data, opts.offset)
+      merged.set(data, offset)
       finalData = merged
     }
 
