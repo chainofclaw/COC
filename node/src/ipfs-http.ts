@@ -1667,9 +1667,15 @@ export class IpfsHttpServer {
           break
         }
         case "peers": {
-          const count = this.pubsub.getSubscribers(topic)
+          // #557: pre-fix the body was `{Strings:[], count}` — a non-
+          // standard `count` field kubo never emits, plus an empty
+          // `Strings` array. Clients deserializing into kubo's shape
+          // either silently ignored count or (with strict-fields
+          // deserializers) threw. Kubo emits exactly `{Strings:[peer…]}`.
+          // We don't track per-peer IDs yet so Strings is empty, but
+          // the wire shape now matches kubo. Same drift family as #547.
           res.writeHead(200, { "content-type": "application/json" })
-          res.end(JSON.stringify({ Strings: [], count }))
+          res.end(JSON.stringify({ Strings: [] }))
           break
         }
         default:
