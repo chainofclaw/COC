@@ -1648,6 +1648,9 @@ export class IpfsHttpServer {
           /^directory nesting too deep/i.test(msg) ||
           /^path too long/i.test(msg) ||
           /^null byte in path/i.test(msg) ||
+          // #418: whitespace-only path components rejected at normalizePath
+          // — map to 400 (sibling of path-traversal / null-byte / depth caps).
+          /^path component cannot be whitespace-only/i.test(msg) ||
           // #232: pre-fix normalizePath threw `Error("path traversal not
           // allowed: ...")` for any input containing `..`, but the
           // catch had no regex for it → 500 "internal error" instead of

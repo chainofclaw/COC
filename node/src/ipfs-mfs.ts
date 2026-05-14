@@ -498,6 +498,16 @@ function normalizePath(path: string): string {
     if (part === ".." || part === ".") {
       throw new Error(`path traversal not allowed: ${path}`)
     }
+    // #418: sibling of #380 (which rejected empty arg). Whitespace-only
+    // path components (`%20`, `%09`, `%20%20%20`) sailed through here
+    // pre-fix and downstream mkdir/write created files/dirs named " ",
+    // "\t", "   " — silent garbage in the MFS namespace, indistinguishable
+    // from a real empty-name component. Reject so client typos surface
+    // (e.g. forgetting to fill in a template variable, accidental
+    // urlencoded space, copy-paste of leading/trailing whitespace).
+    if (part.length > 0 && /^\s+$/.test(part)) {
+      throw new Error(`path component cannot be whitespace-only: ${path}`)
+    }
   }
   return path
 }
