@@ -1791,6 +1791,16 @@ export class IpfsHttpServer {
           break
         }
         case "peers": {
+          // #416: sibling pub/sub already reject empty topic; peers was
+          // missing the same guard. `?arg=` (empty) flowed through to
+          // pubsub.getSubscribers("") and the response was the same
+          // `{Strings: []}` as "real topic, no subscribers", so the
+          // caller couldn't tell their topic was missing.
+          if (!topic) {
+            res.writeHead(400, { "content-type": "application/json" })
+            res.end(JSON.stringify({ error: "missing topic" }))
+            break
+          }
           // #557: pre-fix the body was `{Strings:[], count}` — a non-
           // standard `count` field kubo never emits, plus an empty
           // `Strings` array. Clients deserializing into kubo's shape
