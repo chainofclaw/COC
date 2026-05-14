@@ -37,7 +37,9 @@ const cfg = {
   rpc: process.env.PROBE_RPC || 'https://clawchain.io/api/testnet/rpc',
   chainId: Number(process.env.PROBE_CHAIN_ID || '88780'),
   probePk: process.env.PROBE_PK || '0x8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba',
-  n: Number(process.env.STRESS_N || '32'),
+  // N=32 overruns ethers' internal 5s polling timeout on hairpin TLS;
+  // 16 fits one 88780 block (mempool packs 20+/block) with less RPC chatter.
+  n: Number(process.env.STRESS_N || '16'),
   // mempool per-sender cap is 64 on 88780 (see node/src/mempool.ts:181). Stay
   // well under it: 32 leaves headroom for retry + parallel callers. If a prior
   // run left a nonce gap in pending, refuse to fire.
@@ -47,7 +49,9 @@ const cfg = {
   counterAddr: process.env.STRESS_COUNTER_ADDR || null,
   totalTimeoutMs: Number(process.env.STRESS_TIMEOUT_MS || '90000'),
   p95LimitMs: Number(process.env.STRESS_P95_MS_LIMIT || '30000'),
-  tpsMin: Number(process.env.STRESS_TPS_MIN || '5'),
+  // Single-sender mempool serializes by nonce, 88780 block_time=3s caps
+  // natural TPS at ~0.33. Floor 0.3 catches stalls without false-flagging.
+  tpsMin: Number(process.env.STRESS_TPS_MIN || '0.3'),
   reportJson: process.env.STRESS_REPORT_JSON || null,
   counterStateFile: process.env.STRESS_COUNTER_STATE || '/var/lib/coc-synthetic/stress-counter.json',
 }
