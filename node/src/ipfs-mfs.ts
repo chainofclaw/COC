@@ -272,6 +272,18 @@ export class IpfsMfs {
     const destParent = this.dirs.get(destDir)
     if (!destParent) throw new Error(`destination directory not found: ${destDir}`)
 
+    // #539: kubo's `files/mv` MUST error if destination already exists —
+    // pre-fix the `destParent.entries.set(destBase, ...)` call silently
+    // overwrote any existing entry at the destination path, clobbering the
+    // file the caller didn't intend to replace. Live testnet 88780 repro
+    // (pre-fix): mv /src.txt(AAA) → /dst.txt(BBB) succeeded with no
+    // warning, then dst.txt's content was AAA — BBB lost. This is a
+    // data-loss bug for any client that uses MFS as a versioned filesystem
+    // (web3.storage clones, distributed wikis, archive systems).
+    if (destParent.entries.has(destBase)) {
+      throw new Error(`destination already exists: ${destNorm}`)
+    }
+
     // Move entry
     destParent.entries.set(destBase, { ...entry, name: destBase, modifiedMs: Date.now() })
     srcParent.entries.delete(srcBase)
@@ -325,6 +337,17 @@ export class IpfsMfs {
 
     const destParent = this.dirs.get(destDir)
     if (!destParent) throw new Error(`destination directory not found: ${destDir}`)
+
+    // #539: kubo's `files/cp` MUST error if destination already exists —
+    // same fix as `mv` above. Pre-fix the `destParent.entries.set` call
+    // silently overwrote any existing entry, losing the original file
+    // content. Even though IPFS data is content-addressed (the original
+    // CID is still recoverable in theory), the MFS namespace mapping is
+    // lost, breaking any tooling that uses MFS paths as a stable
+    // reference.
+    if (destParent.entries.has(destBase)) {
+      throw new Error(`destination already exists: ${destNorm}`)
+    }
 
     // Copy entry (content-addressed, so CID reuse is safe)
     const now = Date.now()
