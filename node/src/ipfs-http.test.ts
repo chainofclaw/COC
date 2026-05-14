@@ -278,7 +278,13 @@ describe("IpfsHttpServer", () => {
   })
 
   it("#126: POST /api/v0/block/rm returns 404 if the block is not present", async () => {
-    const res = await fetch(`/api/v0/block/rm?arg=QmNonExistent123`, { method: "POST" })
+    // #489: Qm v0 CIDs must be exactly 46 chars. Pre-fix `isValidCid`
+    // only enforced length<10/length>100, so the 15-char "QmNonExistent123"
+    // slipped through and reached the not-found code path. Post-fix the
+    // exact-46 gate rejects malformed Qm CIDs at the shape layer — provide
+    // a well-shaped 46-char Qm that's still unknown to the blockstore.
+    const fakeQm = "QmNonExistent1234567891234567891234567891234ZZ" // 46 chars
+    const res = await fetch(`/api/v0/block/rm?arg=${fakeQm}`, { method: "POST" })
     assert.equal(res.status, 404)
   })
 
@@ -951,6 +957,51 @@ describe("IpfsHttpServer", () => {
     const res = await fetch(`/api/v0/erasure/status?arg=${meta.cid}`, { method: "POST" })
     assert.notEqual(res.status, 500, "unixfs CID erasure/status must not leak 500")
     assert.equal(res.status, 415, `unixfs CID must be 415 not_a_manifest, got ${res.status}`)
+  })
+
+  it("#489: gateway accepts canonical short CIDs like bafkqaaa (empty raw block)", async () => {
+    // Pre-fix isValidCid had `cid.length < 10 → invalid`, rejecting
+    // `bafkqaaa` — the universally-accepted CIDv1 identity-hash empty
+    // raw block (codec=raw, multihash=identity, digest length 0).
+    // kubo and ipfs-http-client both treat it as valid; COC rejected
+    // it as "invalid cid", breaking interop with any tooling that
+    // emits identity-hash CIDs (inline data, dag-cbor canonical
+    // empty representations, etc.).
+    //
+    // The shape gate is what we're testing — the empty block may not
+    // exist in this fixture's blockstore, so the downstream error is
+    // "block not found" (404), NOT "invalid cid" (400). That's the
+    // post-fix correct behavior: shape validation passes, real lookup
+    // fails honestly.
+    const r = await fetch(`/api/v0/block/stat?arg=bafkqaaa`, { method: "POST" })
+    if (r.status === 200) return  // block happened to exist; still proves shape passed
+    const body = await r.json() as { error?: string }
+    assert.doesNotMatch(
+      body.error ?? "",
+      /invalid cid/i,
+      `bafkqaaa is a valid CIDv1 (identity-hash empty raw block) — must not reject as malformed. Got: ${JSON.stringify(body)}`,
+    )
+
+    // Same gate via other endpoints that funnel through isValidCid.
+    for (const path of [
+      "/api/v0/cat?arg=bafkqaaa",
+      "/api/v0/object/stat?arg=bafkqaaa",
+      "/api/v0/dag/get?arg=bafkqaaa",
+    ]) {
+      const sub = await fetch(path, { method: "POST" })
+      if (sub.status === 200) continue
+      const subBody = await sub.json() as { error?: string }
+      assert.doesNotMatch(
+        subBody.error ?? "",
+        /invalid cid/i,
+        `${path}: bafkqaaa must clear shape validator. Got: ${JSON.stringify(subBody)}`,
+      )
+    }
+
+    // Sanity: still rejects definitively-malformed CIDs (5 chars, but bad alphabet).
+    const bad = await fetch(`/api/v0/block/stat?arg=bafk!`, { method: "POST" })
+    const badBody = await bad.json() as { error?: string }
+    assert.match(badBody.error ?? "", /invalid cid|missing/i, "still rejects bad CIDs")
   })
 
   it("#216: gateway rejects valid-shape CID > 100 chars (no ENAMETOOLONG 500 leak)", async () => {
