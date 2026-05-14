@@ -3146,6 +3146,67 @@ test("RPC Extended Methods", async (t) => {
     }
   })
 
+  await t.test("#296: coc_submitProposal rejects non-string type/targetId/proposer/targetAddress (no Record-cast no-op)", async () => {
+    // Pre-fix `rawParams as Record<string, string>` was a TypeScript
+    // runtime no-op. Any field shape (number, boolean, array, object)
+    // silently flowed through to chain.governance.submitProposal(). The
+    // resulting proposal record stored non-string values in string slots;
+    // downstream filters / serializers either rejected with -32603 V8
+    // errors or echoed the coerced garbage back. Same anti-pattern as
+    // #551 (coc_voteProposal field strict validation); same validation-
+    // order rule as #432/#538.
+    const submittedCalls: Array<{ type: string; targetId: string; proposer: string; opts: Record<string, unknown> }> = []
+    const governanceStub296 = {
+      submitProposal: (type: string, targetId: string, proposer: string, opts: Record<string, unknown>) => {
+        submittedCalls.push({ type, targetId, proposer, opts })
+        return { id: "p1", type, targetId, status: "pending" }
+      },
+    } as Record<string, unknown>
+    ;(chain as unknown as Record<string, unknown>).governance = governanceStub296
+    try {
+      const probe = async (params: unknown[]) => {
+        const r = await fetch(`http://127.0.0.1:${port}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "coc_submitProposal", params }),
+        })
+        return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+      }
+      const base = { type: "add_validator", targetId: "v4", proposer: "node-1" }
+      const badStringShapes = [undefined, null, 123, true, {}, [], ""]
+      for (const bad of badStringShapes) {
+        const rType = await probe([{ ...base, type: bad }])
+        assert.equal(rType.error?.code, -32602,
+          `type=${JSON.stringify(bad)} must be -32602, got ${JSON.stringify(rType)}`)
+        assert.match(rType.error!.message, /type/i)
+        const rTarget = await probe([{ ...base, targetId: bad }])
+        assert.equal(rTarget.error?.code, -32602,
+          `targetId=${JSON.stringify(bad)} must be -32602, got ${JSON.stringify(rTarget)}`)
+        const rProposer = await probe([{ ...base, proposer: bad }])
+        assert.equal(rProposer.error?.code, -32602,
+          `proposer=${JSON.stringify(bad)} must be -32602, got ${JSON.stringify(rProposer)}`)
+      }
+      // targetAddress is optional but when present must be a string
+      for (const bad of [123, true, [], {}]) {
+        const r = await probe([{ ...base, targetAddress: bad }])
+        assert.equal(r.error?.code, -32602,
+          `targetAddress=${JSON.stringify(bad)} must be -32602, got ${JSON.stringify(r)}`)
+        assert.match(r.error!.message, /targetAddress/i)
+      }
+      // Sanity: well-shaped payload still reaches the stub
+      submittedCalls.length = 0
+      const ok = await probe([{ ...base, targetAddress: "0xabc" }])
+      assert.equal(ok.error, undefined, `well-shaped submit must succeed, got ${JSON.stringify(ok)}`)
+      assert.equal(submittedCalls.length, 1, "stub must be called for well-shaped input")
+      assert.equal(submittedCalls[0].type, "add_validator")
+      assert.equal(submittedCalls[0].targetId, "v4")
+      assert.equal(submittedCalls[0].proposer, "node-1")
+      assert.equal(submittedCalls[0].opts.targetAddress, "0xabc")
+    } finally {
+      delete (chain as unknown as Record<string, unknown>).governance
+    }
+  })
+
   await t.test("#551: coc_voteProposal validates inner fields (no silent Boolean/String coercion)", async () => {
     // Pre-fix the handler validated the outer-object shape but immediately
     // ran every inner field through `String()`/`Boolean()` — a missing
