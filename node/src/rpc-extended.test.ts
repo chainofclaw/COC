@@ -492,6 +492,76 @@ test("RPC Extended Methods", async (t) => {
     assert.deepEqual(r4, [], "missing filter returns [] (#342 contract)")
   })
 
+  await t.test("#282: eth_getFilterChanges pendingTx filter shrinks `seen` when txs leave mempool (no unbounded growth)", async () => {
+    // Pre-fix: per-filter `seenPendingTxs` was add-only. A tx hash entered
+    // on first observation and never left, regardless of whether the tx
+    // was mined / dropped / replaced. At MAX_FILTERS=1000 and 100 tx/s
+    // sustained churn this leaked ~360 MB/hour per filter — 8.6 GB/day
+    // OOM ceiling. CWE-401 / CWE-770.
+    //
+    // The invariant we test: after a tx leaves the mempool, polling the
+    // filter MUST drop it from `seen`, so resubmitting the same tx hash
+    // surfaces as a fresh "newly observed" event. Pre-fix the resubmit
+    // saw fresh=[] (because seen still carried the original hash); the
+    // fix intersects seen with the current mempool every poll, bounding
+    // seen.size by mempool.size (already capped).
+    const { Wallet } = await import("ethers")
+    const walletA = new Wallet(`0x${"08".repeat(32)}`)
+    const walletB = new Wallet(`0x${"09".repeat(32)}`)
+    await evm.prefund([
+      { address: walletA.address, balanceWei: "1000000000000000000" },
+      { address: walletB.address, balanceWei: "1000000000000000000" },
+    ])
+    const startNonceA = await evm.getNonce(walletA.address.toLowerCase() as `0x${string}`)
+    const startNonceB = await evm.getNonce(walletB.address.toLowerCase() as `0x${string}`)
+    const rawA = await walletA.signTransaction({
+      type: 0, to: `0x${"02".repeat(20)}`, value: 1n,
+      nonce: Number(startNonceA), gasPrice: 1_000_000_000n,
+      gasLimit: 21_000n, chainId,
+    })
+    const rawB = await walletB.signTransaction({
+      type: 0, to: `0x${"02".repeat(20)}`, value: 1n,
+      nonce: Number(startNonceB), gasPrice: 1_000_000_000n,
+      gasLimit: 21_000n, chainId,
+    })
+
+    const fid = (await rpcCall(port, "eth_newPendingTransactionFilter")) as string
+    // Drain any pre-populated mempool entries.
+    await rpcCall(port, "eth_getFilterChanges", [fid])
+
+    // Step 1: submit A + B → poll → fresh contains both, seen = {A, B}.
+    const hashA = (await rpcCall(port, "eth_sendRawTransaction", [rawA])) as string
+    const hashB = (await rpcCall(port, "eth_sendRawTransaction", [rawB])) as string
+    const poll1 = (await rpcCall(port, "eth_getFilterChanges", [fid])) as string[]
+    assert.ok(poll1.includes(hashA), `poll1 must include hashA (got ${JSON.stringify(poll1)})`)
+    assert.ok(poll1.includes(hashB), `poll1 must include hashB (got ${JSON.stringify(poll1)})`)
+
+    // Step 2: remove A from mempool directly (mimics mined/dropped/replaced
+    // without advancing the chain head — preserves the ability to resubmit
+    // the exact same signed tx with the same nonce in step 4).
+    chain.mempool.remove(hashA as `0x${string}`)
+
+    // Step 3: poll → fresh = [] (no new arrivals). Pre-fix seen still
+    // carries {A, B}; post-fix the intersect-with-mempool step prunes A.
+    const poll2 = (await rpcCall(port, "eth_getFilterChanges", [fid])) as string[]
+    assert.deepEqual(poll2, [], `poll2 must be empty between adds (got ${JSON.stringify(poll2)})`)
+
+    // Step 4: resubmit A. Same raw tx → same hash → returns to mempool
+    // (chain head didn't advance, so it's not "tx already confirmed").
+    // Pre-fix: seen still carries hashA from step 1, so fresh = [] —
+    // the resubmit silently disappears. Post-fix: seen was pruned in
+    // step 3, so this is a fresh observation.
+    const hashA2 = (await rpcCall(port, "eth_sendRawTransaction", [rawA])) as string
+    assert.equal(hashA2, hashA, "resubmitted raw tx must have the same hash")
+    const poll3 = (await rpcCall(port, "eth_getFilterChanges", [fid])) as string[]
+    assert.deepEqual(poll3, [hashA],
+      `poll3 must surface resubmitted hashA as fresh (got ${JSON.stringify(poll3)}). ` +
+      `Pre-fix bug: seen never shrinks, so resubmit silently drops.`)
+  })
+
+  // (Original #94: eth_getFilterLogs-on-block-filter-returns-[] test removed —
+  // superseded by #390 above, which asserts strict -32602 rejection instead.)
+
   await t.test("eth_getFilterLogs returns array", async () => {
     const filterId = await rpcCall(port, "eth_newFilter", [{ fromBlock: "0x0" }])
     const logs = await rpcCall(port, "eth_getFilterLogs", [filterId])
