@@ -906,7 +906,8 @@ async function handleRpc(
         gas: gasForEstimate,
       }, executionContext.stateRoot, executionContext)
       if (estProbe.failed) {
-        throwExecutionReverted(estProbe.returnValue)
+        // #491: distinguish insufficient-balance from real reverts.
+        throwCallFailure(estProbe)
       }
       const estimated = await evm.estimateGas({
         from: estParams.from,
@@ -959,7 +960,8 @@ async function handleRpc(
       // returned 200 OK with result:"0x" for any contract call with an
       // unknown selector before this fix.
       if (callResult.failed) {
-        throwExecutionReverted(callResult.returnValue)
+        // #491: distinguish insufficient-balance from real reverts.
+        throwCallFailure(callResult)
       }
       return callResult.returnValue
     }
@@ -2979,6 +2981,25 @@ function throwExecutionReverted(returnValue: string): never {
   const reason = decodeRevertReason(returnValue)
   const message = reason ? `execution reverted: ${reason}` : "execution reverted"
   throw { code: 3, message, data: returnValue || "0x" }
+}
+
+/**
+ * #491: distinguish "insufficient balance" (caller pre-execution check)
+ * from "execution reverted" (contract code reverted). Pre-fix both went
+ * through throwExecutionReverted with code 3 "execution reverted", which
+ * misled ethers/viem into surfacing "Transaction would revert" when the
+ * actual cause was a balance shortfall. geth uses -32000 "insufficient
+ * funds for gas * price + value" for this case.
+ */
+function throwCallFailure(result: { returnValue: string; failed: boolean; errorReason?: string }): never {
+  if (result.errorReason === "insufficient balance") {
+    throw {
+      code: -32000,
+      message: "insufficient funds for gas * price + value",
+      data: result.returnValue || "0x",
+    }
+  }
+  throwExecutionReverted(result.returnValue)
 }
 
 async function resolveBlockNumber(input: unknown, chain: IChainEngine): Promise<bigint> {
