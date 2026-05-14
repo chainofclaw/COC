@@ -865,7 +865,7 @@ export class EvmChain {
     params: { from?: string; to: string; data?: string; value?: string; gas?: string },
     stateRoot?: string,
     context?: bigint | ExecutionContext,
-  ): Promise<{ returnValue: string; gasUsed: bigint; failed: boolean }> {
+  ): Promise<{ returnValue: string; gasUsed: bigint; failed: boolean; errorReason?: string }> {
     const executionContext = normalizeExecutionContext(context)
     if (stateRoot || executionContext.blockNumber !== undefined) {
       const stateManager = await this.resolveStateManager(stateRoot)
@@ -1179,7 +1179,7 @@ export class EvmChain {
     vm: VM,
     params: { from?: string; to: string; data?: string; value?: string; gas?: string },
     opts: ExecutionContext & { revertAfter?: boolean } = {},
-  ): Promise<{ returnValue: string; gasUsed: bigint; failed: boolean }> {
+  ): Promise<{ returnValue: string; gasUsed: bigint; failed: boolean; errorReason?: string }> {
     const executionContext = normalizeExecutionContext(opts)
     const blockCommon = this.createExecutionCommon(executionContext.blockNumber)
     this.applyHardforkToVm(vm, executionContext.blockNumber)
@@ -1214,6 +1214,14 @@ export class EvmChain {
         returnValue,
         gasUsed: result.execResult.executionGasUsed,
         failed: result.execResult.exceptionError !== undefined,
+        // #491: surface the underlying EVMError name so the JSON-RPC
+        // layer can distinguish "insufficient balance" (caller pre-
+        // execution check; geth returns -32000 "insufficient funds for
+        // gas * price + value") from "revert" (contract reverted with
+        // payload; geth returns code 3 "execution reverted"). Pre-fix
+        // both were lumped into code 3, hiding the actual cause from
+        // ethers/viem and the user.
+        errorReason: result.execResult.exceptionError?.error,
       }
     } finally {
       if (opts.revertAfter !== false) {

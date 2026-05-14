@@ -3128,6 +3128,85 @@ test("RPC Extended Methods", async (t) => {
     }
   })
 
+  await t.test("#491: eth_call / eth_estimateGas distinguish insufficient-balance from revert (-32000 vs code 3)", async () => {
+    // Pre-fix any callRaw failure (revert + insufficient-balance + out-of-
+    // gas + invalid opcode) was lumped into code 3 "execution reverted".
+    // geth distinguishes:
+    //   - Real revert (RETURN ❌ / REVERT opcode) → code 3 "execution reverted"
+    //   - Insufficient balance pre-execution check → -32000 "insufficient
+    //     funds for gas * price + value"
+    // ethers/viem surface different UIs for the two cases (contract bug vs
+    // user needs to top up). Live 88780 reproduction: a poor address
+    // calling eth_estimateGas for a value transfer got "execution
+    // reverted" code 3 — totally misleading.
+    //
+    // Hijack callRaw to deterministically return the "insufficient balance"
+    // exceptionError name (matches what EthereumJS-VM evm.js:949 throws
+    // when caller.balance < value).
+    const origCallRaw = (evm as unknown as {
+      callRaw: (...args: unknown[]) => Promise<{ returnValue: string; gasUsed: bigint; failed: boolean; errorReason?: string }>
+    }).callRaw
+    ;(evm as unknown as { callRaw: typeof origCallRaw }).callRaw = async () => ({
+      returnValue: "0x",
+      gasUsed: 0n,
+      failed: true,
+      errorReason: "insufficient balance",
+    })
+    try {
+      const probe = async (method: string) => {
+        const r = await fetch(`http://127.0.0.1:${port}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0", id: 1, method,
+            params: [{
+              from: "0xc0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+              to: "0x0000000000000000000000000000000000000001",
+              value: "0xde0b6b3a7640000",
+            }],
+          }),
+        })
+        return await r.json() as { error?: { code: number; message: string; data: string }; result?: unknown }
+      }
+
+      const call = await probe("eth_call")
+      assert.equal(
+        call.error?.code,
+        -32000,
+        `eth_call insufficient-balance must be -32000 (geth convention), got ${JSON.stringify(call)}`,
+      )
+      assert.match(
+        call.error!.message,
+        /insufficient funds for gas \* price \+ value/i,
+        `eth_call message must say insufficient funds, got: ${call.error!.message}`,
+      )
+      assert.doesNotMatch(
+        call.error!.message,
+        /execution reverted/i,
+        `eth_call must NOT use "execution reverted" wording for balance issues`,
+      )
+
+      const est = await probe("eth_estimateGas")
+      assert.equal(
+        est.error?.code,
+        -32000,
+        `eth_estimateGas insufficient-balance must be -32000, got ${JSON.stringify(est)}`,
+      )
+      assert.match(est.error!.message, /insufficient funds for gas \* price \+ value/i)
+
+      // Sanity: a real revert still surfaces as code 3 (regression guard for #286).
+      ;(evm as unknown as { callRaw: typeof origCallRaw }).callRaw = async () => ({
+        returnValue: "0x", gasUsed: 21000n, failed: true,
+        errorReason: "revert",
+      })
+      const revertCall = await probe("eth_call")
+      assert.equal(revertCall.error?.code, 3, "real revert still uses code 3")
+      assert.match(revertCall.error!.message, /execution reverted/i)
+    } finally {
+      ;(evm as unknown as { callRaw: typeof origCallRaw }).callRaw = origCallRaw
+    }
+  })
+
   await t.test("#288: eth_compileSolidity rejects oversize source (DoS gate; pre-fix 14.9 KB blocked event loop 5+ min)", async () => {
     // solc.compile is synchronous emscripten WASM. A single moderately
     // large source (500 empty contracts ≈ 15 KB) took 5m20s on 88780,
