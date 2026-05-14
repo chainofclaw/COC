@@ -1715,16 +1715,29 @@ function isValidCid(cid: string): boolean {
   // Pre-fix the cap of 512 let synthetic over-long CIDs reach
   // store.get(cid) which then failed `open()` with ENAMETOOLONG —
   // leaking as `500 "internal error"` instead of a clean 400.
-  if (!cid || cid.length < 10 || cid.length > 100) return false
+  //
+  // #489: lower-bound check needs to accommodate identity-hash CIDs.
+  // The canonical empty-raw-block CID `bafkqaaa` is 8 chars (CIDv1,
+  // codec=raw, multihash=identity, digest length 0). Pre-fix the
+  // length<10 guard rejected this universally-accepted CID; ipfs-
+  // http-client and kubo both parse it as valid. The minimum
+  // theoretical CIDv1 base32 length is 8 chars (1 'b' prefix +
+  // 4-byte header encoded as 8 base32 chars); v0 Qm CIDs are always
+  // 46 chars and have their own min via the regex.
+  if (!cid || cid.length > 100) return false
   const trimmed = cid.trim()
   if (trimmed !== cid) return false
   if (/[\/\\]|\.\.|\0|\s/.test(cid)) return false
   // Base58 v0: "Qm" + base58 chars. Strict alphabet (no 0/O/I/l).
+  // Qm CIDs are always exactly 46 chars (32-byte SHA-256 + 2 prefix).
   if (cid.startsWith("Qm")) {
+    if (cid.length !== 46) return false
     return /^Qm[1-9A-HJ-NP-Za-km-z]+$/.test(cid)
   }
   // Base32 v1: "b"/"B" + RFC 4648 base32 chars (no 0/1/8/9).
+  // Minimum length 8 covers identity-hash empty CIDs like `bafkqaaa`.
   if (cid.startsWith("b") || cid.startsWith("B")) {
+    if (cid.length < 8) return false
     return /^[bB][a-z2-7]+$/.test(cid)
   }
   return false
