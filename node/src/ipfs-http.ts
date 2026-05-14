@@ -97,10 +97,17 @@ function stripIpfsPathPrefix(arg: string | undefined): string | undefined {
 // coalesced everything to [0], silently dropping CIDs 2..N — clients
 // got `{Pins:[cid1]}` and assumed success while cid2..N never actually
 // pinned/unpinned. Normalize into an always-array shape at the boundary.
+//
+// #590-regression-fix: #370 strips `/ipfs/<cid>` path-form prefix at the
+// dispatcher boundary so kubo-default `arg=/ipfs/<cid>` works on every
+// route. The batch helpers above bypassed `stripIpfsPathPrefix` for
+// pin/{add,rm,ls} + block/rm, so `arg=/ipfs/<cid>` came back as 400
+// invalid_cid after #372 landed. Apply the strip per-element here to
+// preserve #370's invariant for batch endpoints too.
 function allQueryValues(raw: string | string[] | undefined): string[] {
   if (raw === undefined) return []
-  if (Array.isArray(raw)) return raw
-  return [raw]
+  const vs = Array.isArray(raw) ? raw : [raw]
+  return vs.map((v) => stripIpfsPathPrefix(v) ?? v)
 }
 
 function isNotFoundError(err: unknown): boolean {
@@ -279,6 +286,20 @@ export interface IpfsServerConfig {
     perShard: Array<{ cid: string; attempted: number; succeeded: string[]; failed: string[]; skippedLowPeers: boolean }>
     distinctPeersUsed: number
     worstPeerOverlap: number
+  }>
+  /**
+   * #590: kubo-standard `/api/v0/swarm/peers` route returns the set of
+   * currently-connected P2P peers. The HTTP server is intentionally
+   * decoupled from `P2PNode` — wiring injects this getter so client
+   * libraries (js-ipfs, kubo-rpc-client, IPFS Companion) that depend on
+   * the kubo wire shape stop receiving 404s. When undefined, the route
+   * returns `{Peers: []}` (kubo's documented "no connections" shape)
+   * rather than 404, so liveness probes don't false-alarm.
+   */
+  getSwarmPeers?: () => Array<{
+    id: string
+    url: string
+    advertisedUrl?: string
   }>
 }
 
@@ -558,6 +579,29 @@ export class IpfsHttpServer {
       }
       if (url.pathname === "/api/v0/id") {
         await this.handleId(res)
+        return
+      }
+      // #590: kubo-standard swarm/peers route. Many clients (IPFS Companion,
+      // kubo-rpc-client, ipfs-http-client, archival indexers) poll this
+      // for liveness; pre-fix every probe got 404 even when the node had
+      // healthy P2P connections. Returns kubo's documented wire shape:
+      // `{Peers: [{Peer, Addr, Direction, Latency, Muxer, Streams}, ...]}`.
+      // When `getSwarmPeers` isn't wired, return an empty list (NOT 404)
+      // so clients distinguish "node has no peers" from "endpoint missing".
+      if (url.pathname === "/api/v0/swarm/peers") {
+        const rawPeers = this.cfg.getSwarmPeers?.() ?? []
+        const peers = rawPeers.map((p) => ({
+          Peer: p.id,
+          Addr: p.advertisedUrl ?? p.url,
+          // COC doesn't yet track per-peer direction/latency/muxer/streams —
+          // fill with kubo defaults so the wire shape is complete.
+          Direction: 0,
+          Latency: "",
+          Muxer: "",
+          Streams: null,
+        }))
+        res.writeHead(200, { "content-type": "application/json" })
+        res.end(JSON.stringify({ Peers: peers }))
         return
       }
       // #547: kubo-rpc-client / ipfs-http-client / web3.storage call
