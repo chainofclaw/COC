@@ -4078,7 +4078,13 @@ async function formatBlock(block: Awaited<ReturnType<IChainEngine["getBlockByNum
     blobGasUsed: `0x${(block.blobGasUsed ?? 0n).toString(16)}`,
     excessBlobGas: `0x${(block.excessBlobGas ?? 0n).toString(16)}`,
     parentBeaconBlockRoot: block.parentBeaconBlockRoot ?? ("0x" + "0".repeat(64)),
-    finalized: block.finalized,
+    // #481: default to false so the key is always serialized. Pre-fix a
+    // chain block stored without a finalized flag (e.g. genesis-as-real-
+    // block on older chains, or any pre-BFT-finalization block) emitted
+    // `finalized: undefined` which JSON.stringify drops, making the
+    // block schema-different from a finalized one. Live 88780 reproed
+    // on block 0x0: missing `finalized` key vs block 0xb200 having it.
+    finalized: block.finalized ?? false,
     transactions,
   }
 }
