@@ -267,9 +267,15 @@ export class IpfsMfs {
     const entry = srcParent.entries.get(srcBase)
     if (!entry) throw new Error(`source not found: ${srcNorm}`)
 
-    // No-op when source and destination are identical (now that the
-    // source existence check has passed).
-    if (srcNorm === destNorm) return
+    // #420: pre-fix `if (srcNorm === destNorm) return` silently succeeded
+    // for `mv /a /a`, masking client typos (variable confusion, accidental
+    // copy-paste). POSIX `mv /a /a` rejects with "are the same file"; kubo's
+    // MFS does the same. Reject so a buggy client learns about misuse
+    // instead of getting a silent 200 ok. Same class as #380 (empty mkdir
+    // arg silent ok) and #418 (whitespace-only path components).
+    if (srcNorm === destNorm) {
+      throw new Error(`source and destination are the same: ${srcNorm}`)
+    }
 
     // Prevent moving a directory into its own subtree
     if (destNorm.startsWith(srcNorm + "/")) {
@@ -333,9 +339,11 @@ export class IpfsMfs {
     const entry = srcParent.entries.get(srcBase)
     if (!entry) throw new Error(`source not found: ${srcNorm}`)
 
-    // No-op when source and destination are identical (after source-
-    // existence check).
-    if (srcNorm === destNorm) return
+    // #420: same POSIX/kubo alignment as mv above — `cp /a /a` rejects
+    // instead of silent no-op so client typos surface.
+    if (srcNorm === destNorm) {
+      throw new Error(`source and destination are the same: ${srcNorm}`)
+    }
 
     // Prevent copying a directory into its own subtree (infinite recursion)
     if (destNorm.startsWith(srcNorm + "/")) {
