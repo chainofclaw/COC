@@ -180,6 +180,62 @@ test("RPC Extended Methods", async (t) => {
     assert.ok(signature.startsWith("0x"))
   })
 
+  await t.test("#503: eth_signTypedData_v4 accepts JSON-stringified typedData (MetaMask/ethers convention)", async () => {
+    // Per EIP-712 reference impl + MetaMask docs, the canonical browser-
+    // wallet call shape is `params: [address, JSON.stringify(typedData)]`.
+    // ethers.signTypedData, viem.signTypedData, web3.eth.signTypedDataV4,
+    // and the MetaMask `ethereum.request` API all pass the typedData as
+    // a stringified JSON. Pre-fix COC's handler required the object form
+    // and rejected stringified payloads with -32602 "invalid typedData:
+    // expected object" — every browser-wallet integration broke.
+    //
+    // Live testnet 88780 reproduction confirmed the rejection.
+    const accounts = await rpcCall(port, "eth_accounts")
+    const typedData = {
+      types: {
+        Person: [
+          { name: "name", type: "string" },
+          { name: "wallet", type: "address" },
+        ],
+      },
+      primaryType: "Person",
+      domain: { name: "Test", version: "1", chainId: 1 },
+      message: { name: "Alice", wallet: accounts[0] },
+    }
+
+    // Stringified form (the canonical MetaMask/ethers call shape).
+    const sigFromString = await rpcCall(port, "eth_signTypedData_v4", [
+      accounts[0],
+      JSON.stringify(typedData),
+    ])
+    assert.ok(typeof sigFromString === "string", "stringified typedData must produce a signature")
+    assert.match(sigFromString as string, /^0x[0-9a-f]{130}$/i, "signature must be 65-byte hex")
+
+    // Object form (legacy, but should still work — backwards compat).
+    const sigFromObject = await rpcCall(port, "eth_signTypedData_v4", [accounts[0], typedData])
+    // Both forms must produce IDENTICAL signatures over the same typedData.
+    assert.equal(
+      sigFromString,
+      sigFromObject,
+      "stringified and object forms must produce byte-identical signatures",
+    )
+
+    // Malformed JSON string → structured -32602 with "malformed JSON" hint
+    // (NOT silent fallback / V8 SyntaxError leak).
+    const bad = await fetch(`http://127.0.0.1:${port}`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0", id: 1, method: "eth_signTypedData_v4",
+        params: [accounts[0], "{not valid json"],
+      }),
+    })
+    const badJson = await bad.json() as { error?: { code: number; message: string } }
+    assert.equal(badJson.error?.code, -32602, `malformed JSON string must be -32602, got ${JSON.stringify(badJson)}`)
+    assert.match(badJson.error!.message, /malformed JSON|expected object/i)
+    // Must not leak V8 SyntaxError internals.
+    assert.doesNotMatch(badJson.error!.message, /SyntaxError|at JSON\.parse|line \d+|column \d+/)
+  })
+
   await t.test("eth_createAccessList returns access list", async () => {
     const result = await rpcCall(port, "eth_createAccessList", [
       {
