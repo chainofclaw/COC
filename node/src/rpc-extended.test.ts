@@ -2032,6 +2032,68 @@ test("RPC Extended Methods", async (t) => {
     assert.match(ok as string, /^0x[0-9a-f]+$/i)
   })
 
+  await t.test("#563: eth_call/estimateGas/createAccessList honor input as data alias (viem/ethers v6 parity)", async () => {
+    // Pre-fix `input` (the canonical Ethereum JSON-RPC field since 2019)
+    // was silently dropped: every call-site read only `callParams.data`.
+    // viem/ethers v6/web3.js v5+ emit only `input`, so every modern dApp
+    // got eth_call executed against EMPTY calldata. Silent-param-drop
+    // family with #174/#353/#553/#559 but worst impact (modern default).
+    //
+    // SHA-256 precompile lives at 0x…02; result == sha256(calldata).
+    // sha256(0xdeadbeef) = 0x5f78c33274e43fa9de5659265c1d917e25c03722dcb0b8d27db8d5feaa813953
+    const sha256Precompile = "0x0000000000000000000000000000000000000002"
+    const from = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+    const sha256Deadbeef = "0x5f78c33274e43fa9de5659265c1d917e25c03722dcb0b8d27db8d5feaa813953"
+    const sha256Empty = "0xe3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+    // (1) input alone is honored as the calldata
+    const inputOnly = await rpcCall(port, "eth_call", [{ from, to: sha256Precompile, input: "0xdeadbeef" }, "latest"])
+    assert.strictEqual(inputOnly, sha256Deadbeef,
+      `input-only must compute sha256(0xdeadbeef), got ${inputOnly} (would be ${sha256Empty} if input was silently dropped)`)
+
+    // (2) data alone still works (no regression)
+    const dataOnly = await rpcCall(port, "eth_call", [{ from, to: sha256Precompile, data: "0xdeadbeef" }, "latest"])
+    assert.strictEqual(dataOnly, sha256Deadbeef, `data-only must still compute sha256(0xdeadbeef), got ${dataOnly}`)
+
+    // (3) matching values both set → accepted (no mismatch error)
+    const both = await rpcCall(port, "eth_call", [{ from, to: sha256Precompile, input: "0xdeadbeef", data: "0xdeadbeef" }, "latest"])
+    assert.strictEqual(both, sha256Deadbeef, `matching input+data must work, got ${both}`)
+
+    // (4) mismatch → -32602 (geth parity, no silent "data wins")
+    const r = await fetch(`http://127.0.0.1:${port}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0", id: 1, method: "eth_call",
+        params: [{ from, to: sha256Precompile, input: "0xdeadbeef", data: "0x12345678" }, "latest"],
+      }),
+    })
+    const mismatchJson = await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    assert.equal(mismatchJson.error?.code, -32602,
+      `input/data mismatch must reject with -32602, got ${JSON.stringify(mismatchJson)}`)
+    assert.match(mismatchJson.error!.message, /input.*data|data.*input|different/i,
+      `error must name both fields, got ${mismatchJson.error!.message}`)
+
+    // (5) malformed input gets the same validation gate as data
+    const badInput = await fetch(`http://127.0.0.1:${port}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0", id: 1, method: "eth_call",
+        params: [{ from, to: sha256Precompile, input: "not-hex" }, "latest"],
+      }),
+    })
+    const badInputJson = await badInput.json() as { error?: { code: number; message: string } }
+    assert.equal(badInputJson.error?.code, -32602, `malformed input must -32602, got ${JSON.stringify(badInputJson)}`)
+    assert.match(badInputJson.error!.message, /invalid input/i, "error must name input field")
+
+    // (6) parity covers eth_estimateGas + eth_createAccessList (every call-shape method)
+    const estG = await rpcCall(port, "eth_estimateGas", [{ from, to: sha256Precompile, input: "0xdeadbeef" }])
+    assert.match(estG as string, /^0x[0-9a-f]+$/i, "estimateGas with input only must succeed")
+    const acl = await rpcCall(port, "eth_createAccessList", [{ from, to: sha256Precompile, input: "0xdeadbeef" }, "latest"]) as Record<string, unknown>
+    assert.ok(Array.isArray(acl.accessList), "createAccessList with input only must succeed")
+  })
+
   await t.test("#150: eth_getTransactionByHash / eth_getTransactionReceipt reject short tx hashes with -32602", async () => {
     // Pre-fix the loose requireHexParam accepted any 0x-prefixed hex up
     // to 64 chars. `"0x123"` slipped through and the tx-lookup returned

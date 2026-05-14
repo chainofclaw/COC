@@ -458,11 +458,43 @@ export function validateTxCallFields(callParams: Record<string, unknown>): void 
       invalidParams(`${field} too large: ${v.length} chars > ${maxLen} (uint${bits} max)`)
     }
   }
+  // #563: Ethereum JSON-RPC spec defines `input` as the canonical
+  // calldata field; `data` is the legacy alias. Modern clients (viem,
+  // ethers v6, web3.js v5+, wagmi) emit only `input`. Pre-fix this
+  // node validated only `data` and every call-site (rpc.ts:949/1394/
+  // 1420/1492/3173) read only `callParams.data` — so viem/ethers-v6
+  // eth_call/estimateGas requests silently executed against EMPTY
+  // calldata. Wallets built tx with gasLimit against empty execution;
+  // real submit reverted out-of-gas. Silent-param-drop family with
+  // #174/#353/#553/#559 — but this one hits the modern client default.
+  //
+  // Resolution rules (geth parity):
+  //   data only          → use data
+  //   input only         → use input (alias)
+  //   both, same value   → use value (no error)
+  //   both, different    → -32602 mismatch
   const data = callParams.data
-  if (data !== undefined && data !== null && data !== "") {
+  const input = callParams.input
+  const dataPresent = data !== undefined && data !== null && data !== ""
+  const inputPresent = input !== undefined && input !== null && input !== ""
+  if (dataPresent) {
     if (typeof data !== "string" || !HEX_DATA_RE.test(data)) {
       invalidParams("invalid data: must match /^0x([0-9a-fA-F]{2})*$/")
     }
+  }
+  if (inputPresent) {
+    if (typeof input !== "string" || !HEX_DATA_RE.test(input)) {
+      invalidParams("invalid input: must match /^0x([0-9a-fA-F]{2})*$/")
+    }
+  }
+  if (dataPresent && inputPresent && (data as string).toLowerCase() !== (input as string).toLowerCase()) {
+    invalidParams("both data and input set with different values")
+  }
+  // Normalize: downstream call-sites read `callParams.data` only, so
+  // promote `input` to `data` when only `input` is set. Mutating here
+  // keeps the five existing read-sites unchanged.
+  if (!dataPresent && inputPresent) {
+    callParams.data = input
   }
   // #394: EIP-1559 field combinations. Pre-fix each field was shape-
   // validated in isolation but the relationship between them wasn't
