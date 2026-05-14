@@ -34,7 +34,9 @@ import { writeFileSync, existsSync, readFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 
 const cfg = {
-  rpc: process.env.PROBE_RPC || 'https://clawchain.io/api/testnet/rpc',
+  // Default to localhost — sidesteps TLS hairpin-NAT and lets us push higher
+  // throughput. Override PROBE_RPC for off-host runs.
+  rpc: process.env.PROBE_RPC || 'http://127.0.0.1:28790',
   chainId: Number(process.env.PROBE_CHAIN_ID || '88780'),
   probePk: process.env.PROBE_PK || '0x8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba',
   // N=32 overruns ethers' internal 5s polling timeout on hairpin TLS;
