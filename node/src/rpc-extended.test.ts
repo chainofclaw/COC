@@ -1,6 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import type http from "node:http"
+import net from "node:net"
 import { join } from "node:path"
 import { ChainEngine } from "./chain-engine.ts"
 import { EvmChain } from "./evm.ts"
@@ -491,6 +492,90 @@ test("RPC Extended Methods", async (t) => {
     const r4 = await rpcCall(port, "eth_getFilterLogs", [missing])
     assert.deepEqual(r4, [], "missing filter returns [] (#342 contract)")
   })
+
+  await t.test("#360: oversize RPC body returns 413 + JSON-RPC error (no ECONNRESET race after res.end)", async () => {
+    // Pre-fix: when the body exceeded MAX_RPC_BODY (1 MiB), the server
+    // called req.destroy() synchronously after res.end(...). res.end
+    // merely buffered the response in Node's http stream; the inline
+    // destroy RST-ed the socket before the bytes reached the kernel TCP
+    // stack. Clients saw ECONNRESET / "Connection reset by peer" instead
+    // of the documented 413 + JSON-RPC -32600 error, non-deterministically
+    // (depends on TCP send buffer + scheduler timing — the boundary scan
+    // in #360 showed flapping across N=27000-32000 addresses in eth_getLogs).
+    //
+    // Fix: emit Connection:close + Content-Length, and run socket.destroy()
+    // inside res.end's flush callback (guaranteed to fire AFTER the
+    // buffered response reaches the wire).
+    //
+    // This test sends an oversize body (~2 MiB) via raw TCP and asserts
+    // we receive the full 413 + JSON error body BEFORE any socket teardown.
+    const PAYLOAD_SIZE = 2 * 1024 * 1024 // 2 MiB, well above 1 MiB cap
+    const filler = "a".repeat(PAYLOAD_SIZE - 100)
+    const jsonBody = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 360,
+      method: "web3_sha3",
+      params: ["0x" + filler],
+    })
+    const request =
+      `POST / HTTP/1.1\r\n` +
+      `Host: 127.0.0.1:${port}\r\n` +
+      `Content-Type: application/json\r\n` +
+      `Content-Length: ${Buffer.byteLength(jsonBody)}\r\n` +
+      `Connection: close\r\n` +
+      `\r\n` +
+      jsonBody
+
+    const result = await new Promise<{ buffer: string; gotError: boolean; errorCode?: string }>((resolve) => {
+      const sock = net.connect(port, "127.0.0.1")
+      let buffer = ""
+      let gotError = false
+      let errorCode: string | undefined
+      sock.on("data", (chunk) => { buffer += chunk.toString("utf8") })
+      sock.on("error", (err) => {
+        gotError = true
+        errorCode = (err as NodeJS.ErrnoException).code
+      })
+      sock.on("close", () => resolve({ buffer, gotError, errorCode }))
+      sock.write(request)
+      // Safety: don't hang if the server never responds.
+      setTimeout(() => sock.destroy(), 10_000)
+    })
+
+    // 1. We must have received the full HTTP 413 response with body.
+    //    Pre-fix: buffer is empty or partial (RST arrived first).
+    assert.match(result.buffer, /HTTP\/1\.1 413/,
+      `must receive HTTP 413, got buffer (first 200 chars): "${result.buffer.slice(0, 200)}". ` +
+      `gotError=${result.gotError} errorCode=${result.errorCode}. ` +
+      `Pre-fix bug: req.destroy() RSTs the socket before res.end's bytes reach the wire.`)
+
+    // 2. Connection:close header must be present (signals the client
+    //    not to reuse the about-to-be-destroyed socket).
+    assert.match(result.buffer, /Connection:\s*close/i,
+      `413 response must include Connection:close header, got: "${result.buffer.slice(0, 400)}"`)
+
+    // 3. JSON-RPC error body must be the documented -32600 payload.
+    //    With Content-Length set in the fix, the response is identity-
+    //    encoded — body starts right after the header terminator.
+    const bodyStart = result.buffer.indexOf("\r\n\r\n")
+    assert.notEqual(bodyStart, -1, "response must have a body separator")
+    const body = result.buffer.slice(bodyStart + 4)
+    const parsed = JSON.parse(body) as { jsonrpc: string; id: unknown; error?: { code: number; message: string } }
+    assert.equal(parsed.jsonrpc, "2.0")
+    assert.equal(parsed.id, null)
+    assert.equal(parsed.error?.code, -32600)
+    assert.match(parsed.error?.message ?? "", /request body too large/i,
+      `error message must be the documented one, got: ${parsed.error?.message}`)
+
+    // We deliberately don't assert gotError=false here. ECONNRESET on
+    // the client's send side is acceptable post-fix: the server already
+    // closed the read half via socket.destroy() after the flush, so any
+    // remaining bytes the test client tries to send may fail. What's
+    // NOT acceptable is an empty response buffer (caught by assert #1).
+  })
+
+  // (Original #94: eth_getFilterLogs-on-block-filter-returns-[] test removed —
+  // superseded by #390 above, which asserts strict -32602 rejection instead.)
 
   await t.test("#282: eth_getFilterChanges pendingTx filter shrinks `seen` when txs leave mempool (no unbounded growth)", async () => {
     // Pre-fix: per-filter `seenPendingTxs` was add-only. A tx hash entered
