@@ -2106,4 +2106,36 @@ describe("#312 pubsub topic rejects control characters", () => {
       pubsub.stop()
     }
   })
+
+  it("#557: pubsub/peers wire shape matches kubo — Strings only, no non-standard `count` field", async () => {
+    // Pre-fix the body was `{Strings:[], count:N}` — `count` is not in
+    // kubo's spec and strict-fields deserializers (Rust serde
+    // deny_unknown_fields, Java FAIL_ON_UNKNOWN_PROPERTIES) threw on it.
+    // Same drift family as #547 (path drift).
+    const { IpfsPubsub: PubsubCtor } = await import("./ipfs-pubsub.ts")
+    const pubsub = new PubsubCtor({ nodeId: "peers-test" })
+    server.attachSubsystems({ pubsub })
+    try {
+      // No-arg form (server-wide peer list)
+      const r1 = await fetch("/api/v0/pubsub/peers", { method: "POST" })
+      assert.equal(r1.status, 200)
+      const b1 = await r1.json() as Record<string, unknown>
+      assert.deepStrictEqual(Object.keys(b1).sort(), ["Strings"],
+        `body keys must be exactly ["Strings"] (kubo parity), got ${JSON.stringify(b1)}`)
+      assert.ok(Array.isArray(b1.Strings), "Strings must be an array")
+      assert.equal((b1 as { count?: unknown }).count, undefined,
+        "non-standard `count` field must not be present")
+
+      // Topic-arg form
+      const r2 = await fetch("/api/v0/pubsub/peers?arg=topic1", { method: "POST" })
+      assert.equal(r2.status, 200)
+      const b2 = await r2.json() as Record<string, unknown>
+      assert.deepStrictEqual(Object.keys(b2).sort(), ["Strings"],
+        `topic-arg body keys must be exactly ["Strings"], got ${JSON.stringify(b2)}`)
+      assert.equal((b2 as { count?: unknown }).count, undefined,
+        "non-standard `count` field must not be present (topic-arg form)")
+    } finally {
+      pubsub.stop()
+    }
+  })
 })
