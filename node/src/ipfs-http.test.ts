@@ -106,6 +106,21 @@ describe("IpfsHttpServer", () => {
     assert.ok("NumObjects" in body)
   })
 
+  it("#547: /api/v0/repo/stat and /api/v0/stats/repo expose repo stats (kubo canonical paths)", async () => {
+    // Pre-fix the handler was registered under /api/v0/stat only — a
+    // path kubo-rpc-client never calls. POST /api/v0/repo/stat (canonical)
+    // and POST /api/v0/stats/repo (alias) both 404'd, blocking every
+    // ipfs-http-client / web3.storage caller from polling repo size.
+    for (const path of ["/api/v0/repo/stat", "/api/v0/stats/repo"]) {
+      const res = await fetch(path)
+      assert.equal(res.status, 200, `${path} must 200 (kubo parity), got ${res.status}`)
+      const body = await res.json() as Record<string, unknown>
+      assert.equal(body.Version, "0.1.0-coc", `${path} body must contain Version`)
+      assert.ok("NumObjects" in body, `${path} body must include NumObjects`)
+      assert.ok("RepoSize" in body, `${path} body must include RepoSize`)
+    }
+  })
+
   it("POST /api/v0/add uploads a file and returns CID", async () => {
     const boundary = "----TestBoundary"
     const content = "hello ipfs"
