@@ -91,8 +91,9 @@ openclaw coc pose-status [--node <id>] [--epoch <n>] [--json] [--watch]
 - Pretty-printed banner identifies the failing leg in human mode; JSON
   mode encodes via the `health.issues` array.
 
-**Backing RPC calls**: `coc_nodeInfo`, `coc_chainStats`, `coc_poseStatus`
-(adminRpc-gated), `coc_getEquivocations`. All read-only.
+**Backing RPC calls**: `coc_nodeInfo`, `coc_chainStats`, `coc_getBftStatus`
+(BFT-progress signals, partial substitute for the `coc_poseStatus` originally
+sketched here), `coc_getEquivocations`. All read-only.
 
 ## 2. `openclaw coc chain-stats`
 
@@ -133,7 +134,10 @@ openclaw coc chain-stats [--node <id>] [--window <duration>] [--validators] [--j
 ```
 
 **Backing**: `coc_chainStats`, `eth_getBlockByNumber` for sampled blocks,
-`coc_validatorActivity`.
+`coc_validators` (per-validator stake + voting power; the
+`coc_validatorActivity` previously referenced here is not implemented —
+the `blocksProposed` / `missedRotations` fields above are computed
+skill-side by walking sampled blocks).
 
 ## 3. `openclaw coc health`
 
