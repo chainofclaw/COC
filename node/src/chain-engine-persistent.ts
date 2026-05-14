@@ -624,6 +624,22 @@ export class PersistentChainEngine {
     // the latest applied block.
     const decoded = Transaction.from(rawTx)
 
+    // #527: chainId is a STRUCTURAL property of the tx — verify before any
+    // dynamic-state checks (hash dedup, nonce, balance). Pre-fix a
+    // wrong-chain tx with a low nonce got the misleading "nonce too low"
+    // error from line ~637 because mempool.addRawTx (mempool.ts:155) ran
+    // AFTER the engine-level nonce check; clients had to bump nonce,
+    // re-sign, and re-submit just to learn their chainId was fundamentally
+    // wrong. Mirrors the same fix in chain-engine.ts addRawTx.
+    const txChainId = (decoded as { chainId?: bigint | number | null }).chainId
+    if (
+      txChainId !== null &&
+      txChainId !== undefined &&
+      BigInt(txChainId) !== BigInt(this.cfg.chainId ?? 18780)
+    ) {
+      throw new Error(`invalid chain ID: expected ${this.cfg.chainId}, got ${txChainId}`)
+    }
+
     // Mirror in-memory engine order: hash dedup first (more specific error
     // for same-tx replay), then stale-nonce check (catches different-tx-same-
     // -nonce). Both run before mempool insertion so we never accept a tx that
