@@ -398,6 +398,22 @@ describe("WebSocket RPC", () => {
         ["logs", { topics: [null, null, null, null, null] }])
       assert.equal(tooManyTopicsErr.code, -32602,
         `5 outer topics must be -32602, got ${tooManyTopicsErr.code} (${tooManyTopicsErr.message})`)
+      // #519: wording parity with HTTP `eth_getLogs` (rpc-validators.ts
+      // line 638). Pre-fix WS emitted "topics array must have at most 4
+      // elements" while HTTP emitted "topics array too large: 5 > 4 (max
+      // indexed log topics)". Clients pattern-matching the error string had
+      // to handle both forms. Lock the wording to the HTTP variant since
+      // its message is geth-canonical and rpc-validators.test.ts:779 already
+      // asserts against it.
+      assert.match(tooManyTopicsErr.message, /^topics array too large: 5 > 4/,
+        `WS topic-too-many wording must match HTTP eth_getLogs (rpc-validators.ts:638), got "${tooManyTopicsErr.message}"`)
+      // Symmetric: non-array topics must also match HTTP wording.
+      const nonArrayTopicsErr = await sendRpcExpectError(ws, "eth_subscribe",
+        ["logs", { topics: "not-an-array" }])
+      assert.equal(nonArrayTopicsErr.code, -32602,
+        `non-array topics must be -32602, got ${nonArrayTopicsErr.code}`)
+      assert.match(nonArrayTopicsErr.message, /^invalid filter topics:/,
+        `WS non-array topics wording must match HTTP wording, got "${nonArrayTopicsErr.message}"`)
       // Inner topic OR-array: 33+ → -32602 (matches HTTP cap from #266)
       const inner33 = Array.from({ length: 33 }, (_, i) => `0x${i.toString(16).padStart(64, "0")}`)
       const innerCapErr = await sendRpcExpectError(ws, "eth_subscribe",
