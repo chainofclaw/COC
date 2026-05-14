@@ -2913,6 +2913,54 @@ test("RPC Extended Methods", async (t) => {
     }
   })
 
+  await t.test("#551: coc_voteProposal validates inner fields (no silent Boolean/String coercion)", async () => {
+    // Pre-fix the handler validated the outer-object shape but immediately
+    // ran every inner field through `String()`/`Boolean()` — a missing
+    // `approve` field silently coerced to `false` (a flipped NO vote),
+    // a numeric `proposalId` to "123" (coerced ID), a string "yes" to
+    // `true`. Same coercion-leak family as #260/#525, same validation-
+    // order rule as #432/#538.
+    const governanceStub551 = {
+      vote: () => {},
+      getProposal: () => ({ id: "p1", status: "pending", votes: new Map() }),
+    } as Record<string, unknown>
+    ;(chain as unknown as Record<string, unknown>).governance = governanceStub551
+    try {
+      const probe = async (params: unknown[]) => {
+        const r = await fetch(`http://127.0.0.1:${port}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "coc_voteProposal", params }),
+        })
+        return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+      }
+      // Missing approve — pre-fix silently coerced to false (flipped NO vote)
+      const noApprove = await probe([{ proposalId: "p1", voterId: "node-1" }])
+      assert.equal(noApprove.error?.code, -32602, `missing approve must be -32602, got ${JSON.stringify(noApprove)}`)
+      assert.match(noApprove.error!.message, /approve/i)
+      // String approve — pre-fix Boolean("yes") = true
+      const stringApprove = await probe([{ proposalId: "p1", voterId: "node-1", approve: "yes" }])
+      assert.equal(stringApprove.error?.code, -32602, `string approve must be -32602, got ${JSON.stringify(stringApprove)}`)
+      assert.match(stringApprove.error!.message, /approve/i)
+      // Numeric proposalId — pre-fix String(123) = "123"
+      const numId = await probe([{ proposalId: 123, voterId: "node-1", approve: true }])
+      assert.equal(numId.error?.code, -32602, `numeric proposalId must be -32602, got ${JSON.stringify(numId)}`)
+      assert.match(numId.error!.message, /proposalId/)
+      // Null proposalId — pre-fix String(null) = "null"
+      const nullId = await probe([{ proposalId: null, voterId: "node-1", approve: true }])
+      assert.equal(nullId.error?.code, -32602, `null proposalId must be -32602, got ${JSON.stringify(nullId)}`)
+      // Empty voterId
+      const emptyVoter = await probe([{ proposalId: "p1", voterId: "", approve: true }])
+      assert.equal(emptyVoter.error?.code, -32602, `empty voterId must be -32602, got ${JSON.stringify(emptyVoter)}`)
+      assert.match(emptyVoter.error!.message, /voterId/)
+      // Sanity: well-formed payload still reaches the stub
+      const ok = await probe([{ proposalId: "p1", voterId: "node-1", approve: true }])
+      assert.equal(ok.error, undefined, "well-formed vote must NOT error")
+    } finally {
+      delete (chain as unknown as Record<string, unknown>).governance
+    }
+  })
+
   await t.test("#226: coc_getProposals + coc_getDaoProposals + coc_getEquivocations reject malformed filter params", async () => {
     // Pre-fix:
     // - coc_getProposals(true) → `as string | undefined` runtime no-op → silent no-filter → return all

@@ -2382,21 +2382,36 @@ async function handleRpc(
       if (!voteRaw || typeof voteRaw !== "object" || Array.isArray(voteRaw)) {
         invalidParams("invalid params: expected non-null object as first param")
       }
+      // #551: pre-fix inner fields were String()/Boolean()-coerced
+      // unconditionally — a missing `approve` silently became `false`
+      // (a flipped NO vote), a numeric `proposalId` became "123", a
+      // string `approve:"yes"` became `true`. Same coercion-leak family
+      // as #260/#525, same validation-order rule as #432/#538: every
+      // inner field has to clear its type before the governance dispatch.
+      const voteParams = voteRaw as Record<string, unknown>
+      if (typeof voteParams.proposalId !== "string" || !voteParams.proposalId) {
+        invalidParams("invalid proposalId: expected non-empty string")
+      }
+      if (typeof voteParams.voterId !== "string" || !voteParams.voterId) {
+        invalidParams("invalid voterId: expected non-empty string")
+      }
+      if (typeof voteParams.approve !== "boolean") {
+        invalidParams("invalid approve: expected boolean")
+      }
       if (!hasGovernance(chain)) {
         methodNotFound("coc_voteProposal: governance module not enabled on this node")
       }
-      const voteParams = voteRaw as Record<string, unknown>
       // Only the local node can vote via RPC
       const localVoterId = (opts as Record<string, unknown>)?.nodeId as string | undefined
-      if (localVoterId && String(voteParams.voterId) !== localVoterId) {
+      if (localVoterId && (voteParams.voterId as string) !== localVoterId) {
         throw { code: -32003, message: "unauthorized: can only vote as local node" }
       }
       chain.governance.vote(
-        String(voteParams.proposalId),
-        String(voteParams.voterId),
-        Boolean(voteParams.approve),
+        voteParams.proposalId as string,
+        voteParams.voterId as string,
+        voteParams.approve as boolean,
       )
-      const updated = chain.governance.getProposal(String(voteParams.proposalId))
+      const updated = chain.governance.getProposal(voteParams.proposalId as string)
       return {
         id: updated?.id,
         status: updated?.status,
