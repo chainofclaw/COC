@@ -2073,6 +2073,72 @@ test("RPC Extended Methods", async (t) => {
     assert.equal(okNull.error, undefined, "null tag must NOT error")
   })
 
+  await t.test("#499: eth_getBlockTransactionCountByNumber / eth_feeHistory don't leak [object Object] from String() coercion", async () => {
+    // Pre-fix both endpoints used `String((payload.params)[N] ?? "latest")`
+    // which V8-stringifies any object to "[object Object]", surfacing as
+    // -32602 "invalid block number: [object Object]" — both broken shape
+    // handling AND leaks the V8 toString output (same anti-pattern as
+    // #194/#220/#226/#497). debug_getRawBlock / debug_getRawReceipts
+    // shared the same bug behind the COC_DEBUG_RPC gate.
+    //
+    // Live testnet 88780 repro:
+    //   eth_getBlockTransactionCountByNumber [{"blockNumber":"0x1"}]
+    //     → -32602 "invalid block number: [object Object]"  ← BUG
+    //   eth_feeHistory ["0x5", {"blockNumber":"0x1"}, []]
+    //     → -32602 "invalid block number: [object Object]"  ← BUG
+    //
+    // Fix routes the raw param through parseBlockTag (which already
+    // handles unknown shapes properly, per #194).
+    const probe = async (method: string, params: unknown[]) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    }
+
+    // eth_getBlockTransactionCountByNumber: object input → structured -32602, no [object Object] leak.
+    const tcByObj = await probe("eth_getBlockTransactionCountByNumber", [{ blockNumber: "0x1" }])
+    assert.doesNotMatch(
+      JSON.stringify(tcByObj),
+      /\[object Object\]/,
+      `eth_getBlockTransactionCountByNumber must NOT leak [object Object], got ${JSON.stringify(tcByObj)}`,
+    )
+    assert.equal(tcByObj.error?.code, -32602)
+    assert.match(tcByObj.error!.message, /invalid block tag|must be hex/i)
+
+    // eth_feeHistory: object as newestBlock — must reject with structured error, no leak.
+    const fhByObj = await probe("eth_feeHistory", ["0x5", { blockNumber: "0x1" }, []])
+    assert.doesNotMatch(
+      JSON.stringify(fhByObj),
+      /\[object Object\]/,
+      `eth_feeHistory must NOT leak [object Object], got ${JSON.stringify(fhByObj)}`,
+    )
+    assert.equal(fhByObj.error?.code, -32602)
+
+    // Sanity: hex quantity still works.
+    const tcByHex = await probe("eth_getBlockTransactionCountByNumber", ["0x0"])
+    assert.equal(tcByHex.error, undefined, `eth_getBlockTransactionCountByNumber("0x0") must succeed, got ${JSON.stringify(tcByHex)}`)
+
+    // Sanity: tag still works.
+    const tcByTag = await probe("eth_getBlockTransactionCountByNumber", ["latest"])
+    assert.equal(tcByTag.error, undefined, "eth_getBlockTransactionCountByNumber(latest) must succeed")
+
+    // Sanity: omitted/null param → "latest" (preserve prior contract).
+    const tcByNull = await probe("eth_getBlockTransactionCountByNumber", [null])
+    assert.equal(tcByNull.error, undefined, "eth_getBlockTransactionCountByNumber(null) must default to latest")
+
+    // Array shape rejected with structured -32602, NO leak.
+    const tcByArr = await probe("eth_getBlockTransactionCountByNumber", [["0x1"]])
+    assert.doesNotMatch(JSON.stringify(tcByArr), /\[object Object\]/, "array input must not leak")
+    assert.equal(tcByArr.error?.code, -32602, `array input must be -32602, got ${JSON.stringify(tcByArr)}`)
+
+    // Bool shape rejected.
+    const tcByBool = await probe("eth_getBlockTransactionCountByNumber", [true])
+    assert.equal(tcByBool.error?.code, -32602)
+  })
+
   await t.test("#190: eth_getLogs rejects non-array topics field (no silent bypass)", async () => {
     // Pre-fix `validateLogFilter` only validated when Array.isArray(topics).
     // A client passing topics as a string/object got the same empty-result
