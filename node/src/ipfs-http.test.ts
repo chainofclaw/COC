@@ -98,6 +98,62 @@ describe("IpfsHttpServer", () => {
     assert.ok(Array.isArray(body.Addresses))
   })
 
+  it("#590: POST /api/v0/swarm/peers returns kubo wire shape (empty list when no peer getter wired)", async () => {
+    // Pre-fix: every probe got 404 because the route wasn't registered.
+    // IPFS Companion + kubo-rpc-client poll this for liveness; clients
+    // saw "Not connected" even when the node had healthy P2P links.
+    // Now the route ALWAYS returns 200 with the kubo `{Peers: [...]}`
+    // shape — empty array when no getter wired, populated otherwise.
+    const res = await fetch("/api/v0/swarm/peers", { method: "POST" })
+    assert.equal(res.status, 200, `must 200 (kubo parity), got ${res.status}`)
+    const body = await res.json() as { Peers: unknown[] }
+    assert.ok(Array.isArray(body.Peers), "body.Peers must be an array")
+    // No getter wired in the default fixture → empty list (not 404).
+    assert.deepEqual(body.Peers, [], "no getter wired → empty list, not 404")
+  })
+
+  it("#590: POST /api/v0/swarm/peers returns wired peer set in kubo wire shape", async () => {
+    // With getSwarmPeers wired, the route maps the COC peer set to kubo's
+    // `{Peer, Addr, Direction, Latency, Muxer, Streams}` per-entry shape.
+    // Wire a fresh server with a stub peer-getter.
+    const port2 = 30000 + Math.floor(Math.random() * 10000)
+    const baseUrl2 = `http://127.0.0.1:${port2}`
+    const server2 = new IpfsHttpServer(
+      {
+        bind: "127.0.0.1",
+        port: port2,
+        storageDir: tmpDir,
+        nodeId: "test-node",
+        getSwarmPeers: () => [
+          { id: "0xnode-1", url: "http://10.0.0.1:29780" },
+          { id: "0xnode-2", url: "http://10.0.0.2:29780", advertisedUrl: "http://203.0.113.2:29780" },
+        ],
+      },
+      store,
+      unixfs,
+    )
+    server2.start()
+    await new Promise((r) => setTimeout(r, 100))
+    try {
+      const res = await fetch(`${baseUrl2}/api/v0/swarm/peers`, { method: "POST" })
+      assert.equal(res.status, 200)
+      const body = await res.json() as { Peers: Array<Record<string, unknown>> }
+      assert.equal(body.Peers.length, 2)
+      assert.equal(body.Peers[0].Peer, "0xnode-1")
+      assert.equal(body.Peers[0].Addr, "http://10.0.0.1:29780", "no advertisedUrl → use url")
+      assert.equal(body.Peers[1].Peer, "0xnode-2")
+      assert.equal(body.Peers[1].Addr, "http://203.0.113.2:29780",
+        "advertisedUrl takes precedence over internal url (parity with coc_getPeers #108)")
+      // Wire-shape parity: kubo always emits these 6 keys.
+      for (const p of body.Peers) {
+        assert.ok("Peer" in p && "Addr" in p && "Direction" in p && "Latency" in p && "Muxer" in p && "Streams" in p,
+          `peer entry missing kubo-required key: ${JSON.stringify(p)}`)
+      }
+    } finally {
+      await server2.stop()
+    }
+  })
+
   it("GET /api/v0/stat returns repo stats", async () => {
     const res = await fetch("/api/v0/stat")
     assert.equal(res.status, 200)
