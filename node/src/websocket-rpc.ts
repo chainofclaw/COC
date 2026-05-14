@@ -789,11 +789,18 @@ function validateLogFilter(params: Record<string, unknown>): LogSubscriptionFilt
   }
 
   if (params.topics !== undefined && params.topics !== null) {
+    // #519: align wording with HTTP `validateLogFilter` (rpc-validators.ts:584)
+    // so clients pattern-matching the error string don't have to handle two
+    // variants per surface. Pre-fix this WS validator used distinct wording
+    // ("topics must be an array" / "topics array must have at most 4 elements")
+    // that pre-dated #274's HTTP-validator extraction; the HTTP side wins
+    // since its wording matches geth's `eth/filters` package + the existing
+    // rpc-validators.test.ts assertions.
     if (!Array.isArray(params.topics)) {
-      invalidParams("topics must be an array")
+      invalidParams("invalid filter topics: must be array or omitted")
     }
     if ((params.topics as unknown[]).length > 4) {
-      invalidParams("topics array must have at most 4 elements")
+      invalidParams(`topics array too large: ${(params.topics as unknown[]).length} > 4 (max indexed log topics)`)
     }
     const topics: Array<string | string[] | null> = []
     for (const t of params.topics as unknown[]) {
