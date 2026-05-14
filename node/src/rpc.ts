@@ -2502,10 +2502,13 @@ async function handleRpc(
       // #436: validate shape BEFORE backend-config short-circuit (same
       // family as #432 / PR #431). Without this, garbage address shapes
       // silently get `null` instead of -32602 on read-only nodes.
-      const address = (payload.params ?? [])[0]
-      if (typeof address !== "string" || !address.startsWith("0x")) {
-        invalidParams("invalid address: expected hex string")
-      }
+      // #505: pre-fix the loose `startsWith("0x")` check accepted any
+      // 0x-prefixed string — "0x123", "0xZZZ…" and other malformed
+      // addresses all silently returned null (indistinguishable from
+      // "real address, no faction"). Use requireAddressParam (40-char
+      // enforcement) to match the rest of the coc_* address-taking
+      // endpoints (#120, #122, #124, #128, #471, family).
+      const address = requireAddressParam(payload.params ?? [], 0).toLowerCase() as Hex
       if (!hasGovernance(chain)) return null
       const factionInfo = chain.governance.getFaction?.(address)
       if (!factionInfo) return null
