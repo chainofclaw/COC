@@ -1403,6 +1403,28 @@ export class IpfsHttpServer {
     try {
       switch (route) {
         case "mkdir": {
+          // #380: pre-fix the handler passed empty `arg` (when no ?arg= was
+          // supplied) straight to mfs.mkdir(""). normalizePath("") rewrites
+          // it to "/", `dirs.has("/")` is always true, and the call returns
+          // as a silent no-op — leaving the client a 200 `{ok:true}`
+          // response indicating a directory that doesn't exist. The client
+          // later `files/write`s into the path and fails with
+          // "parent directory not found", masking the original mistake.
+          //
+          // kubo's CLI rejects empty / root with
+          //   Error: argument "path" is required
+          // Reject both shapes at the HTTP boundary so silent-success is
+          // impossible.
+          if (arg.length === 0) {
+            res.writeHead(400, { "content-type": "application/json" })
+            res.end(JSON.stringify({ error: "bad request", message: "missing path argument" }))
+            break
+          }
+          if (arg === "/" || arg === "") {
+            res.writeHead(400, { "content-type": "application/json" })
+            res.end(JSON.stringify({ error: "bad request", message: "cannot mkdir root path" }))
+            break
+          }
           const parents = url.query?.parents === "true"
           await this.mfs.mkdir(arg, { parents })
           res.writeHead(200, { "content-type": "application/json" })
