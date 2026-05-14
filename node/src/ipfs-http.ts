@@ -2004,6 +2004,19 @@ async function readMultipartFile(req: http.IncomingMessage): Promise<{ filename?
   // Limit boundary length to prevent split amplification DoS
   const boundaryMatch = /boundary=([^;\s]{1,256})/.exec(contentType)
   if (!boundaryMatch) {
+    // #356: pre-fix `Content-Type: multipart/form-data` (no boundary param)
+    // fell through to the raw-body fallback and the multipart envelope
+    // bytes were stored verbatim as a "file" — the literal
+    // `--XYZ\r\nContent-Disposition...\r\n\r\nfile-bytes\r\n--XYZ--`
+    // got content-addressed and returned as the CID. Reject multipart/*
+    // without boundary so clients can't accidentally upload envelope
+    // bytes thinking they uploaded the inner file. Non-multipart
+    // Content-Types (octet-stream, empty, etc.) still pass through —
+    // kubo CLI + curl --data-binary depend on the raw-body fallback.
+    if (/^multipart\//i.test(contentType.trim())) {
+      throw new HttpError(400, "invalid_multipart",
+        "multipart/* Content-Type requires boundary param")
+    }
     const raw = await readBody(req)
     return { bytes: raw }
   }
@@ -2011,6 +2024,11 @@ async function readMultipartFile(req: http.IncomingMessage): Promise<{ filename?
   const boundary = boundaryMatch[1]
   const raw = Buffer.from(await readBody(req))
   const parts = findMultipartParts(raw, boundary)
+  // #356: pre-fix the loop returned on the FIRST part and silently
+  // dropped any additional parts. A 2-file multipart upload returned
+  // a CID for file #1 and the client believed both files were stored.
+  // Accumulate validParts and reject !=1 — this endpoint is single-file.
+  const validParts: Array<{ filename?: string; bytes: Uint8Array }> = []
   for (const { start, end } of parts) {
     const part = raw.subarray(start, end)
     // Headers/body separator is the FIRST \r\n\r\n inside the part.
@@ -2022,8 +2040,20 @@ async function readMultipartFile(req: http.IncomingMessage): Promise<{ filename?
     const rawFilename = filenameMatch ? filenameMatch[1] : undefined
     // Strip path components to prevent directory traversal in metadata
     const filename = rawFilename ? rawFilename.replace(/.*[/\\]/, "").slice(0, 255) || undefined : undefined
-    return { filename, bytes: new Uint8Array(body) }
+    validParts.push({ filename, bytes: new Uint8Array(body) })
   }
 
-  return { bytes: new Uint8Array() }
+  // #356: pre-fix returned `{bytes: new Uint8Array()}` (empty file's CID)
+  // when no parts matched — clients uploading their (non-empty) file got
+  // a success response carrying the empty-file CID and silently lost
+  // their data. Reject empty multipart bodies with 400.
+  if (validParts.length === 0) {
+    throw new HttpError(400, "invalid_multipart",
+      "no part found in multipart body")
+  }
+  if (validParts.length > 1) {
+    throw new HttpError(400, "unsupported_multipart",
+      `multipart body has ${validParts.length} parts, but this endpoint accepts at most 1`)
+  }
+  return validParts[0]
 }
