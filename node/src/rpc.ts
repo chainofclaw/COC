@@ -888,6 +888,10 @@ async function handleRpc(
       // treated non-hex as 0, so {value:"not-hex"} gave a clean gas
       // estimate that ignored the value transfer.
       validateTxCallFields(estParams)
+      // #513: same fix as eth_call — reject non-empty state overrides
+      // instead of returning a natural-state gas estimate that won't
+      // match the caller's intended simulation.
+      rejectUnsupportedStateOverride((payload.params ?? [])[2], "eth_estimateGas")
       // Default gas cap to block gas limit (30M) to prevent DoS via unbounded execution
       const gasForEstimate = estParams.gas ?? "0x1c9c380"
       const executionContext = await resolveHistoricalExecutionContext((payload.params ?? [])[1], chain)
@@ -942,6 +946,18 @@ async function handleRpc(
       // where malformed input either silently becomes 0 (value) or
       // surfaces as -32603 with V8 message leak (data).
       validateTxCallFields(callParams)
+      // #513: surface unsupported 3rd-arg state override instead of
+      // silently dropping it. Pre-fix `eth_call(callObj, blockTag,
+      // stateOverride)` accepted the override param, ignored it, and
+      // returned the natural-state result — indistinguishable from a
+      // successful simulation. Tools that depend on the override (foundry
+      // `cast call --state-override`, Tenderly simulations, ethers.js
+      // provider.call(tx, tag, overrides), viem simulateContract({
+      // stateOverride })) silently got wrong answers. Geth supports
+      // EIP-3326-style overrides; until COC plumbs that through the EVM
+      // (separate work), explicitly -32602 reject non-empty overrides
+      // so callers know the result is unreliable.
+      rejectUnsupportedStateOverride((payload.params ?? [])[2], "eth_call")
       const executionContext = await resolveHistoricalExecutionContext((payload.params ?? [])[1], chain)
       const callResult = await evm.callRaw({
         from: callParams.from,
@@ -2963,6 +2979,34 @@ function throwExecutionReverted(returnValue: string): never {
   const reason = decodeRevertReason(returnValue)
   const message = reason ? `execution reverted: ${reason}` : "execution reverted"
   throw { code: 3, message, data: returnValue || "0x" }
+}
+
+// #513: surface unsupported eth_call(callObj, blockTag, stateOverride)
+// 3rd parameter as -32602 instead of silently dropping the override.
+// Accept `undefined`, `null`, and the empty object `{}` (all geth-equivalent
+// to "no override") so existing well-behaved clients aren't broken. Reject
+// anything with at least one address-keyed entry — that's a real override
+// request the EVM layer can't honor today (#513 follow-up tracked separately
+// to plumb the override through to evm.callRaw).
+function rejectUnsupportedStateOverride(rawOverride: unknown, method: string): void {
+  if (rawOverride === undefined || rawOverride === null) return
+  // Disallow non-object shapes upfront — geth's contract is "object map of
+  // address → override object", anything else is a client typo.
+  if (typeof rawOverride !== "object" || Array.isArray(rawOverride)) {
+    throw {
+      code: -32602,
+      message: `${method}: state override (3rd param) must be an object map of address → override fields`,
+    }
+  }
+  const keys = Object.keys(rawOverride as Record<string, unknown>)
+  if (keys.length === 0) return
+  // Reject the moment the caller asks for any actual override. Silently
+  // dropping it would let the caller act on a natural-state result that
+  // looked like a successful simulation.
+  throw {
+    code: -32602,
+    message: `${method}: state override (3rd param) is not supported on this node (${keys.length} override${keys.length === 1 ? "" : "s"} requested); the result would not reflect your override and is therefore unsafe to act on. Drop the parameter or run against a node that supports EIP-3326-style overrides.`,
+  }
 }
 
 async function resolveBlockNumber(input: unknown, chain: IChainEngine): Promise<bigint> {

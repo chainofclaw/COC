@@ -3043,6 +3043,99 @@ test("RPC Extended Methods", async (t) => {
     }
   })
 
+  await t.test("#513: eth_call / eth_estimateGas reject non-empty stateOverride (no silent drop)", async () => {
+    // Live testnet 88780 reproduction (pre-fix):
+    //   eth_call(callObj, "latest", {"0x…99":{"balance":"0xff…"}})
+    //   → result identical to omitting the 3rd param — override silently dropped.
+    //
+    // Geth supports EIP-3326 stateOverride. Tools that depend on it:
+    //   - foundry `cast call --state-override`
+    //   - Tenderly simulations
+    //   - ethers.js `provider.call(tx, blockTag, overrides)`
+    //   - viem `simulateContract({ stateOverride: ... })`
+    //
+    // Silently dropping the param lets clients act on natural-state results
+    // that look successful. Until COC plumbs overrides through to evm.callRaw
+    // (separate work), surface -32602 so callers know the result is unreliable.
+    const validAddr = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+    const fromAddr = "0x0000000000000000000000000000000000000099"
+    const stateOverride = {
+      [fromAddr]: { balance: "0x100000000000000000000" },
+    }
+    for (const method of ["eth_call", "eth_estimateGas"]) {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0", id: 1, method,
+          params: [
+            { from: fromAddr, to: validAddr, value: "0x100" },
+            "latest",
+            stateOverride,
+          ],
+        }),
+      })
+      const res = await r.json() as { result?: unknown; error?: { code: number; message: string } }
+      assert.ok(res.error, `${method} with stateOverride MUST error (not silently drop), got result=${JSON.stringify(res.result)}`)
+      assert.equal(res.error!.code, -32602,
+        `${method} stateOverride must be -32602, got ${res.error!.code}`)
+      assert.match(res.error!.message, /state override/i,
+        `${method} message must mention "state override"`)
+      assert.match(res.error!.message, /not supported|not reflect/i,
+        `${method} message must signal that override won't be applied`)
+      assert.equal(res.result, undefined)
+    }
+  })
+
+  await t.test("#513: eth_call / eth_estimateGas accept undefined/null/empty stateOverride (backward-compat)", async () => {
+    // Defense: well-behaved clients pass `{}` (no overrides specified) or
+    // omit the param entirely. Both must still work — the #513 reject is
+    // scoped to non-empty overrides only.
+    const validAddr = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+    const cases: Array<{ params: unknown[]; desc: string }> = [
+      { params: [{ to: validAddr }, "latest"], desc: "no 3rd param" },
+      { params: [{ to: validAddr }, "latest", undefined], desc: "undefined 3rd param" },
+      { params: [{ to: validAddr }, "latest", null], desc: "null 3rd param" },
+      { params: [{ to: validAddr }, "latest", {}], desc: "empty {} 3rd param" },
+    ]
+    for (const { params, desc } of cases) {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_call", params }),
+      })
+      const res = await r.json() as { result?: string; error?: { code: number; message: string } }
+      if (res.error) {
+        assert.doesNotMatch(res.error.message, /state override/i,
+          `eth_call(${desc}) must not be rejected as state-override misuse, got: ${res.error.message}`)
+      } else {
+        assert.match(res.result!, /^0x[0-9a-f]*$/i, `eth_call(${desc}) result must be hex`)
+      }
+    }
+  })
+
+  await t.test("#513: eth_call rejects non-object stateOverride shape (defensive validation)", async () => {
+    // Sanity: arrays/numbers/strings as 3rd param must reject with the
+    // shape-validation branch of #513.
+    const validAddr = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+    const bad: unknown[] = [["not", "an", "object"], 42, "not-an-object"]
+    for (const override of bad) {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0", id: 1, method: "eth_call",
+          params: [{ to: validAddr }, "latest", override],
+        }),
+      })
+      const res = await r.json() as { result?: unknown; error?: { code: number; message: string } }
+      assert.ok(res.error, `eth_call with non-object stateOverride=${JSON.stringify(override)} must error`)
+      assert.equal(res.error!.code, -32602)
+      assert.match(res.error!.message, /state override.*must be an object/i,
+        `must complain about the object-shape requirement, got: ${res.error!.message}`)
+    }
+  })
+
   await t.test("#288: eth_compileSolidity rejects oversize source (DoS gate; pre-fix 14.9 KB blocked event loop 5+ min)", async () => {
     // solc.compile is synchronous emscripten WASM. A single moderately
     // large source (500 empty contracts ≈ 15 KB) took 5m20s on 88780,
