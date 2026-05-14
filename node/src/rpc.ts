@@ -3876,7 +3876,7 @@ function normalizePersistedTo(value: string | null | undefined): string | null {
   return value
 }
 
-function formatRawTransaction(
+export function formatRawTransaction(
   rawTx: Hex,
   context?: { blockHash?: Hex; blockNumber?: bigint; transactionIndex?: number | null },
 ): Record<string, unknown> | null {

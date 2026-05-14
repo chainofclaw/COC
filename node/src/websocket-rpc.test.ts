@@ -254,6 +254,69 @@ describe("WebSocket RPC", () => {
     }
   })
 
+  it("#495: newPendingTransactions with 2nd-arg `true` returns full tx objects (geth compat)", async () => {
+    // Pre-fix the 2nd param of eth_subscribe("newPendingTransactions",
+    // true) was silently dropped — both with-flag and without-flag
+    // subscriptions emitted only the tx hash string. Per geth API:
+    //   subscribe("newPendingTransactions")        → string hashes
+    //   subscribe("newPendingTransactions", true)  → full tx objects
+    // MEV/front-running monitors, mempool indexers, ethers/viem
+    // mempool watchers rely on the full-object mode.
+    //
+    // Live testnet 88780 reproduction showed both subscriptions
+    // returning the same hash string for the same tx.
+    const ws = await connectWs(WS_PORT)
+    try {
+      const subId = await sendRpc(ws, "eth_subscribe", ["newPendingTransactions", true])
+      assert.ok(typeof subId === "string")
+
+      const msgPromise = waitForMessage(ws)
+      const rawTx = createSignedTx(1, "0x0000000000000000000000000000000000000001", 1000n)
+      await chain.addRawTx(rawTx)
+
+      const msg = await msgPromise
+      const msgParams = msg.params as Record<string, unknown>
+      const result = msgParams.result as Record<string, unknown>
+
+      // Result must be a full tx object, not a hash string.
+      assert.equal(typeof result, "object", `expected object, got ${typeof result}: ${JSON.stringify(result)}`)
+      assert.ok(result !== null, "result must not be null")
+
+      // Required shape (matches eth_getTransactionByHash output).
+      const requiredKeys = ["hash", "from", "to", "nonce", "value", "gas", "input", "type"]
+      for (const k of requiredKeys) {
+        assert.ok(k in result, `full-tx mode must include "${k}", got keys: ${Object.keys(result).join(",")}`)
+      }
+      assert.match(result.hash as string, /^0x[0-9a-f]{64}$/, "hash must be 32-byte hex")
+      assert.match(result.from as string, /^0x[0-9a-f]{40}$/, "from must be 20-byte hex")
+      assert.match(result.nonce as string, /^0x[0-9a-f]+$/, "nonce must be hex quantity")
+    } finally {
+      ws.close()
+    }
+  })
+
+  it("#495: newPendingTransactions rejects non-boolean 2nd arg with -32602", async () => {
+    // Same shape-validation pattern as #244 for logs filter param.
+    // Pre-fix `String("not-a-bool")` would silently fall through to
+    // hash-mode, hiding the caller's bug.
+    const ws = await connectWs(WS_PORT)
+    try {
+      const reply = await new Promise<Record<string, unknown>>((resolve) => {
+        ws.once("message", (data) => resolve(JSON.parse(data.toString())))
+        ws.send(JSON.stringify({
+          jsonrpc: "2.0", id: 999, method: "eth_subscribe",
+          params: ["newPendingTransactions", "not-a-bool"],
+        }))
+      })
+      const err = reply.error as Record<string, unknown> | undefined
+      assert.ok(err, `expected error envelope, got ${JSON.stringify(reply)}`)
+      assert.equal(err.code, -32602, `bad shape must be -32602, got ${err.code}`)
+      assert.match(err.message as string, /boolean or omitted/i)
+    } finally {
+      ws.close()
+    }
+  })
+
   it("unsubscribe stops notifications", async () => {
     const ws = await connectWs(WS_PORT)
     try {

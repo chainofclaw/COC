@@ -684,6 +684,7 @@ export class PersistentChainEngine {
       from: tx.from,
       nonce: tx.nonce,
       gasPrice: tx.gasPrice,
+      rawTx: tx.rawTx,
     })
 
     return tx
