@@ -1362,10 +1362,18 @@ async function handleRpc(
         invalidParams("invalid typedData: expected object or JSON-encoded string")
       }
 
-      const account = testAccounts.get(address)
-      if (!account) throw { code: -32004, message: `account not in dev keystore: ${address}` }
-
-      // EIP-712 compliant: use TypedDataEncoder for correct domain-separated hash
+      // #521: structural validation of the typedData (TypedDataEncoder
+      // catches missing primaryType, primaryType-not-in-types, circular
+      // type references, etc.) must happen BEFORE the keystore lookup.
+      // Pre-fix:
+      //   - eth_sign(badAddr, badMsg)            → -32602 (msg shape first)
+      //   - eth_signTypedData_v4(badAddr, badTD) → -32004 (keystore first)
+      // Same problem space (signing methods), inconsistent order. Callers
+      // can't reliably tell from the response code whether their typedData
+      // shape is wrong — they'd need to also verify keystore presence,
+      // which varies between dev / test / prod environments. Match
+      // eth_sign's order: shape-validate everything that doesn't need
+      // keystore, THEN authorize.
       const td = typedData as Record<string, unknown>
       const types = (td.types ?? {}) as Record<string, Array<{ name: string; type: string }>>
       const domain = (td.domain ?? {}) as Record<string, unknown>
@@ -1389,6 +1397,9 @@ async function handleRpc(
         }
         throw encErr
       }
+
+      const account = testAccounts.get(address)
+      if (!account) throw { code: -32004, message: `account not in dev keystore: ${address}` }
       const signature = account.signingKey.sign(dataHash)
       return signature.serialized
     }
