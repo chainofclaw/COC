@@ -2246,7 +2246,14 @@ async function handleRpc(
       const mempoolStats = chain.mempool.stats()
       return {
         clientVersion: "COC/0.2",
-        chainId,
+        // #561: pre-fix chainId leaked as a raw JS number (88780) here
+        // while eth_chainId + coc_chainStats.chainId both emit hex
+        // ("0x15acc"). Clients comparing across endpoints saw
+        // `88780 !== "0x15acc"` and concluded the node was misconfigured.
+        // Format-drift family with #517 (nextProposalBlock decimal vs hex
+        // on same response). Hex-quantity is the Ethereum JSON-RPC
+        // contract — viem/ethers/wagmi all hard-code that parse.
+        chainId: `0x${chainId.toString(16)}`,
         blockHeight: height,
         mempool: mempoolStats,
         uptime: Math.floor(process.uptime()),

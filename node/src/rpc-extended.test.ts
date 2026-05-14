@@ -1203,12 +1203,34 @@ test("RPC Extended Methods", async (t) => {
     const info = await rpcCall(port, "coc_nodeInfo")
     assert.ok(typeof info === "object")
     assert.strictEqual(info.clientVersion, "COC/0.2")
-    assert.strictEqual(info.chainId, chainId)
+    // #561: chainId returned as 0x-prefixed hex quantity (parity with
+    // eth_chainId + coc_chainStats.chainId; Ethereum JSON-RPC contract).
+    assert.strictEqual(info.chainId, `0x${chainId.toString(16)}`)
     assert.ok(typeof info.blockHeight === "number" || typeof info.blockHeight === "string")
     assert.ok(typeof info.mempool === "object")
     assert.ok(typeof info.mempool.size === "number")
     assert.ok(typeof info.uptime === "number")
     // nodeVersion, platform, arch removed from public endpoint (info disclosure)
+  })
+
+  await t.test("#561: coc_nodeInfo.chainId is 0x-prefixed hex (parity with eth_chainId)", async () => {
+    // Pre-fix coc_nodeInfo emitted chainId as a raw JS number (e.g. 88780)
+    // while sibling methods returned hex ("0x15acc"). Clients aggregating
+    // chainId from multiple endpoints saw `88780 !== "0x15acc"` and
+    // concluded the node was misconfigured. Same format-drift family as
+    // #517 (nextProposalBlock decimal vs hex on same response).
+    //
+    // Both coc_nodeInfo and eth_chainId derive from the same `chainId`
+    // argument passed to handleRpc, so they must match exactly. The test
+    // fixture's coc_chainStats reads from chain.cfg.chainId (a separate
+    // source that may be unset in the fixture) — that cross-method
+    // divergence is its own pre-existing concern; this regression pins
+    // only the format and the eth_chainId<->coc_nodeInfo parity.
+    const info = await rpcCall(port, "coc_nodeInfo")
+    const ethId = await rpcCall(port, "eth_chainId")
+    assert.equal(typeof info.chainId, "string", `coc_nodeInfo.chainId must be a string, got ${typeof info.chainId}`)
+    assert.match(info.chainId, /^0x[0-9a-f]+$/i, `coc_nodeInfo.chainId must be 0x-prefixed hex, got ${JSON.stringify(info.chainId)}`)
+    assert.strictEqual(info.chainId, ethId, `coc_nodeInfo.chainId (${info.chainId}) must match eth_chainId (${ethId})`)
   })
 
   await t.test("web3_clientVersion returns version string", async () => {
