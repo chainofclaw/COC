@@ -388,6 +388,49 @@ test("RPC Extended Methods", async (t) => {
     assert.deepEqual(byMixedHash, byLowerHash, "mixed-case hash must yield the same receipts as lowercase")
   })
 
+  await t.test("#537: coc_submitProposal validates stakeAmount BEFORE governance-enabled check", async () => {
+    // Live testnet 88780 reproduction (pre-fix):
+    //   coc_submitProposal({stakeAmount:"123abc"})  // malformed stakeAmount
+    //   → {"error":{"code":-32601,"message":"governance not enabled"}}
+    //
+    // On governance-disabled nodes, the caller learned only that the
+    // module was disabled — they couldn't tell that their `stakeAmount`
+    // field was structurally invalid until trying on a governance-enabled
+    // node. Same anti-pattern as #521 (eth_signTypedData_v4 keystore-
+    // before-structure). #432 already lifted TOP-LEVEL object validation
+    // before the governance check but missed inner-field validation.
+    //
+    // Fix: move stakeAmount shape validation upfront. Response shape is
+    // now consistent regardless of governance-module availability.
+    const probe = async (params: unknown[]) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "coc_submitProposal", params }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    }
+    // (a) Malformed stakeAmount must surface as -32602 (structural shape)
+    // even on governance-disabled nodes, NOT -32601 (module not available).
+    for (const bad of ["123abc", {}, [], -1, "0xZZ"]) {
+      const r = await probe([{ description: "test", stakeAmount: bad }])
+      assert.ok(r.error, `stakeAmount=${JSON.stringify(bad)} must error`)
+      assert.equal(r.error!.code, -32602,
+        `stakeAmount=${JSON.stringify(bad)} must be -32602 (shape first), got ${r.error!.code} (${r.error!.message})`)
+      assert.match(r.error!.message, /stakeAmount/i,
+        `error must mention stakeAmount, got: ${r.error!.message}`)
+    }
+    // (b) Shape-valid stakeAmount on a governance-disabled node still
+    // gets -32601 (module not available). Defends against over-rotation
+    // that would skip the module-availability check.
+    const ok = await probe([{ description: "test", stakeAmount: "0x100" }])
+    assert.ok(ok.error)
+    assert.equal(ok.error!.code, -32601,
+      `shape-valid params on disabled-governance node must be -32601 (module check), got ${ok.error!.code}`)
+    assert.match(ok.error!.message, /governance/i,
+      `error must mention governance module, got: ${ok.error!.message}`)
+  })
+
   await t.test("#122: eth_getBalance / eth_getTransactionCount / coc_getContractInfo reject malformed addresses with -32602", async () => {
     // Pre-fix bugs:
     //   - eth_getBalance returned -32603 with the raw input echoed back

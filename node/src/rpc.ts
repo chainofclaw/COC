@@ -2183,21 +2183,19 @@ async function handleRpc(
       if (!rawParams || typeof rawParams !== "object" || Array.isArray(rawParams)) {
         invalidParams("invalid params: expected non-null object as first param")
       }
-      if (!hasGovernance(chain)) {
-        methodNotFound("coc_submitProposal: governance module not enabled on this node")
-      }
       const proposalParams = rawParams as Record<string, string>
-      // Only the local node can submit proposals via RPC
-      const localNodeId = (opts as Record<string, unknown>)?.nodeId as string | undefined
-      if (localNodeId && proposalParams.proposer !== localNodeId) {
-        throw { code: -32003, message: "unauthorized: can only submit proposals as local node" }
-      }
-      // #218: validate stakeAmount shape before `BigInt(...)`. Pre-fix
-      // an object/array/non-digit-string flowed straight into BigInt
-      // and threw a V8 SyntaxError ("Cannot convert [object Object] to
-      // a BigInt"). Same leak class as #212 (pose-http) — currently
-      // dead path because governance is disabled on prod, but fixing
-      // now avoids the leak surfacing once R3.2 (88780) enables it.
+      // #537: validate ALL structural fields BEFORE the governance-enabled
+      // check — top-level object validation was already lifted upstream by
+      // #432, but `stakeAmount` field validation lived AFTER the check.
+      // Same anti-pattern as #521 (eth_signTypedData_v4 keystore vs
+      // structure). On governance-disabled nodes, a caller passing a
+      // malformed `stakeAmount` got `-32601 governance not enabled` and
+      // could never learn their field was structurally invalid. Lift the
+      // shape gate upfront so the response shape is consistent regardless
+      // of whether the module is enabled.
+      //
+      // #218: original lift was for the BigInt() V8 SyntaxError leak —
+      // that fix still applies. This just moves the check earlier.
       const stakeRaw = proposalParams.stakeAmount as unknown
       let stakeAmount: bigint | undefined
       if (stakeRaw !== undefined && stakeRaw !== null && stakeRaw !== "") {
@@ -2208,6 +2206,14 @@ async function handleRpc(
           invalidParams("invalid stakeAmount: must be a non-negative integer or 0x-hex")
         }
         stakeAmount = BigInt(stakeRaw as string | number)
+      }
+      if (!hasGovernance(chain)) {
+        methodNotFound("coc_submitProposal: governance module not enabled on this node")
+      }
+      // Only the local node can submit proposals via RPC
+      const localNodeId = (opts as Record<string, unknown>)?.nodeId as string | undefined
+      if (localNodeId && proposalParams.proposer !== localNodeId) {
+        throw { code: -32003, message: "unauthorized: can only submit proposals as local node" }
       }
       const proposal = chain.governance.submitProposal(
         proposalParams.type,
