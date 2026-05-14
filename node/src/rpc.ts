@@ -1616,9 +1616,9 @@ async function handleRpc(
     }
     case "debug_getRawReceipts": {
       if (!DEBUG_RPC_ENABLED) methodNotFound("debug methods disabled (set COC_DEBUG_RPC=1)")
-      const rawReceiptTag = String((payload.params ?? [])[0] ?? "latest")
+      // #499: pass raw param; parseBlockTag handles unknown shapes.
       const rawReceiptHeight = await Promise.resolve(chain.getHeight())
-      const rawReceiptNum = parseBlockTag(rawReceiptTag, rawReceiptHeight)
+      const rawReceiptNum = parseBlockTag((payload.params ?? [])[0], rawReceiptHeight)
       const rawReceiptBlock = await Promise.resolve(chain.getBlockByNumber(rawReceiptNum))
       if (!rawReceiptBlock) return []
       return rawReceiptBlock.txs
@@ -1628,9 +1628,9 @@ async function handleRpc(
       if (!DEBUG_RPC_ENABLED) methodNotFound("debug methods disabled (set COC_DEBUG_RPC=1)")
       // Simplified: return JSON-encoded block data as hex (not RLP)
       // Full RLP encoding deferred to future phase
-      const rawBlockTag = String((payload.params ?? [])[0] ?? "latest")
+      // #499: pass raw param; parseBlockTag handles unknown shapes.
       const rawBlockHeight = await Promise.resolve(chain.getHeight())
-      const rawBlockNum = parseBlockTag(rawBlockTag, rawBlockHeight)
+      const rawBlockNum = parseBlockTag((payload.params ?? [])[0], rawBlockHeight)
       const rawBlock = await Promise.resolve(chain.getBlockByNumber(rawBlockNum))
       if (!rawBlock) return null
       if (payload.method === "debug_getRawHeader") {
@@ -1664,9 +1664,13 @@ async function handleRpc(
       return block ? `0x${block.txs.length.toString(16)}` : null
     }
     case "eth_getBlockTransactionCountByNumber": {
-      const tag = String((payload.params ?? [])[0] ?? "latest")
+      // #499: pass raw param to parseBlockTag (which handles unknown
+      // shapes properly) instead of String() coercion. Pre-fix
+      // `String({blockNumber: "0x1"})` = "[object Object]" → -32602
+      // "invalid block number: [object Object]" — leaked V8 toString
+      // output (same anti-pattern as #194/#220/#226/#497).
       const height = await Promise.resolve(chain.getHeight())
-      const num = parseBlockTag(tag, height)
+      const num = parseBlockTag((payload.params ?? [])[0], height)
       const block = await Promise.resolve(chain.getBlockByNumber(num))
       return block ? `0x${block.txs.length.toString(16)}` : null
     }
@@ -1741,7 +1745,11 @@ async function handleRpc(
       } else {
         invalidParams("invalid blockCount: expected hex quantity or positive integer")
       }
-      const newestBlock = String((payload.params ?? [])[1] ?? "latest")
+      // #499: pass raw param to resolveBlockNumber (which delegates to
+      // parseBlockTag and handles unknown shapes properly). Pre-fix
+      // String({blockNumber:"0x1"}) → "[object Object]" → -32602 leak.
+      const newestBlockRaw = (payload.params ?? [])[1]
+      const newestBlock = newestBlockRaw === undefined || newestBlockRaw === null ? "latest" : newestBlockRaw
       // #224: `as number[]` was a TS runtime no-op so an object/string/
       // bool silently passed through (`{}.length === undefined`
       // bypassed the >100 check and the for-loop). Reject non-array
