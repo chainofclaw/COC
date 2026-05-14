@@ -1662,9 +1662,18 @@ async function handleRpc(
       return block ? `0x${block.txs.length.toString(16)}` : null
     }
     case "eth_getBlockTransactionCountByNumber": {
-      const tag = String((payload.params ?? [])[0] ?? "latest")
+      // #525: pre-fix `String(rawParam ?? "latest")` coerced any object
+      // input to literal `"[object Object]"`, then parseBlockTag rejected
+      // it with the misleading "invalid block number: [object Object]"
+      // — same `[object Object]` leak family as #497/#499/#523. This
+      // method takes BlockNumber (NOT BlockNumberOrHash per geth/spec),
+      // so EIP-1898 object forms aren't required, but the rejection
+      // must still be a clean shape error rather than a coerced leak.
+      // Hand the raw input to parseBlockTag directly — it rejects
+      // unknown shapes with a clean message.
+      const rawTag = (payload.params ?? [])[0]
       const height = await Promise.resolve(chain.getHeight())
-      const num = parseBlockTag(tag, height)
+      const num = parseBlockTag(rawTag, height)
       const block = await Promise.resolve(chain.getBlockByNumber(num))
       return block ? `0x${block.txs.length.toString(16)}` : null
     }
@@ -1739,7 +1748,25 @@ async function handleRpc(
       } else {
         invalidParams("invalid blockCount: expected hex quantity or positive integer")
       }
-      const newestBlock = String((payload.params ?? [])[1] ?? "latest")
+      // #525: same `[object Object]` leak fix as
+      // eth_getBlockTransactionCountByNumber. Pre-fix
+      // `String(rawParam ?? "latest")` coerced object inputs to
+      // `"[object Object]"` and surfaced as misleading
+      // "invalid block number: [object Object]". newestBlock is a
+      // BlockNumber (not BlockNumberOrHash) per the EIP-1559 / geth
+      // spec, so EIP-1898 object support is out of scope; the fix is
+      // to surface the shape error cleanly rather than via String()
+      // coercion.
+      const rawNewestBlock = (payload.params ?? [])[1]
+      if (
+        rawNewestBlock !== undefined &&
+        rawNewestBlock !== null &&
+        typeof rawNewestBlock !== "string" &&
+        typeof rawNewestBlock !== "number"
+      ) {
+        invalidParams("invalid newestBlock: expected hex quantity or named tag")
+      }
+      const newestBlock = rawNewestBlock ?? "latest"
       // #224: `as number[]` was a TS runtime no-op so an object/string/
       // bool silently passed through (`{}.length === undefined`
       // bypassed the >100 check and the for-loop). Reject non-array

@@ -388,6 +388,57 @@ test("RPC Extended Methods", async (t) => {
     assert.deepEqual(byMixedHash, byLowerHash, "mixed-case hash must yield the same receipts as lowercase")
   })
 
+  await t.test("#525: eth_getBlockTransactionCountByNumber + eth_feeHistory.newestBlock reject objects without [object Object] leak", async () => {
+    // Live testnet 88780 reproduction (pre-fix):
+    //   eth_getBlockTransactionCountByNumber({"blockNumber":"latest"})
+    //   → {"error":{"code":-32602,"message":"invalid block number: [object Object]"}}
+    //   eth_feeHistory("0x4", {"blockNumber":"latest"}, [])
+    //   → {"error":{"code":-32602,"message":"invalid block number: [object Object]"}}
+    //
+    // Same `[object Object]` leak family as #497/#499/#523:
+    // `String(rawParam ?? "latest")` coerces any object to the literal
+    // string `"[object Object]"`. These two methods (per geth spec)
+    // take BlockNumber, NOT BlockNumberOrHash, so EIP-1898 object
+    // support is out of scope — but the rejection must be a clean
+    // shape error rather than a coerced-string leak.
+    const probe = async (method: string, params: unknown[]) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    }
+    // (a) eth_getBlockTransactionCountByNumber with object input MUST
+    // error with a clean shape message — NOT "[object Object]".
+    for (const obj of [{ blockNumber: "latest" }, { blockHash: "0x" + "a".repeat(64) }, { random: "field" }]) {
+      const r = await probe("eth_getBlockTransactionCountByNumber", [obj])
+      assert.ok(r.error, `eth_getBlockTransactionCountByNumber(${JSON.stringify(obj)}) must error`)
+      assert.equal(r.error!.code, -32602)
+      assert.doesNotMatch(r.error!.message, /\[object Object\]/,
+        `must not leak [object Object] coercion, got: ${r.error!.message}`)
+      assert.match(r.error!.message, /block (number|tag)/i,
+        `must mention "block number" or "block tag", got: ${r.error!.message}`)
+    }
+    // (b) eth_feeHistory with object newestBlock MUST error cleanly.
+    for (const obj of [{ blockNumber: "latest" }, { blockHash: "0x" + "a".repeat(64) }]) {
+      const r = await probe("eth_feeHistory", ["0x4", obj, []])
+      assert.ok(r.error, `eth_feeHistory(_, ${JSON.stringify(obj)}, _) must error`)
+      assert.equal(r.error!.code, -32602)
+      assert.doesNotMatch(r.error!.message, /\[object Object\]/,
+        `must not leak [object Object] coercion, got: ${r.error!.message}`)
+      assert.match(r.error!.message, /newestBlock|block (number|tag)/i,
+        `must mention newestBlock or block-number shape, got: ${r.error!.message}`)
+    }
+    // (c) Sanity: the happy paths still work.
+    const okCount = await probe("eth_getBlockTransactionCountByNumber", ["latest"])
+    assert.equal(okCount.error, undefined,
+      `eth_getBlockTransactionCountByNumber("latest") must succeed, got error: ${JSON.stringify(okCount.error)}`)
+    const okFee = await probe("eth_feeHistory", ["0x2", "latest", []])
+    assert.equal(okFee.error, undefined,
+      `eth_feeHistory("0x2", "latest", []) must succeed, got error: ${JSON.stringify(okFee.error)}`)
+  })
+
   await t.test("#122: eth_getBalance / eth_getTransactionCount / coc_getContractInfo reject malformed addresses with -32602", async () => {
     // Pre-fix bugs:
     //   - eth_getBalance returned -32603 with the raw input echoed back
