@@ -521,6 +521,63 @@ test("RPC Extended Methods", async (t) => {
       `must complain about blockHash shape, got: ${badHash.error!.message}`)
   })
 
+  await t.test("#527: eth_sendRawTransaction checks chainId BEFORE nonce (no misleading 'nonce too low' for wrong-chain tx)", async () => {
+    // Live testnet 88780 reproduction (pre-fix):
+    //   wallet.signTransaction({chainId: 99999, nonce: 0, ...})
+    //   eth_sendRawTransaction(raw)
+    //   → {"error":{"code":-32000,"message":"nonce too low: tx nonce 0, on-chain nonce 282"}}
+    //
+    // With nonce=500 (above on-chain), the SAME wrong-chain tx instead
+    // returned the correct chainId error:
+    //   → {"error":{"code":-32602,"message":"invalid chain ID: expected 88780, got 99999"}}
+    //
+    // The validation order pre-fix was: parse → tx-hash dedup → nonce →
+    // chainId (inside mempool.addRawTx). ChainId is STRUCTURAL (signed
+    // into the tx via EIP-155 / EIP-2930), nonce is DYNAMIC (state).
+    // Geth + Erigon both check structural properties first because
+    // dynamic-state errors are misleading when the tx is structurally
+    // unacceptable. A wrong-chain tx will NEVER be valid on this chain
+    // regardless of nonce; reporting "nonce too low" suggests bumping
+    // the nonce would help, which is wrong.
+    //
+    // Fix: chainId check pulled from mempool.addRawTx up to the start
+    // of chain-engine{,-persistent}.ts addRawTx. Both engines now check
+    // chainId first.
+    const { Wallet } = await import("ethers")
+    const wallet = new Wallet("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80")
+    const probe = async (raw: string) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_sendRawTransaction", params: [raw] }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    }
+    // The fixture's chain config exposes its chainId; pick something obviously
+    // different so the chainId check fires.
+    const fixtureChainId = await rpcCall(port, "eth_chainId", []) as string
+    const wrongChainId = Number(BigInt(fixtureChainId)) + 12345
+    const wrongChain = await wallet.signTransaction({
+      chainId: wrongChainId,
+      nonce: 0,  // intentionally low — bug case is low-nonce + wrong-chain
+      gasLimit: 21000n,
+      gasPrice: 1_000_000_000n,
+      to: "0x0000000000000000000000000000000000000001",
+      value: 1n,
+    })
+    const r1 = await probe(wrongChain)
+    assert.ok(r1.error, `wrong-chain tx must be rejected, got result=${JSON.stringify(r1.result)}`)
+    // Must mention chainId, NOT nonce — the bug shape.
+    assert.match(r1.error!.message, /chain ID|chainId/i,
+      `wrong-chain tx error must mention chainId, got: ${r1.error!.message}`)
+    assert.doesNotMatch(r1.error!.message, /nonce too low/i,
+      `wrong-chain tx must NOT be misreported as nonce too low (the pre-fix bug), got: ${r1.error!.message}`)
+    // Geth wire convention: chainId errors are -32602 (structural shape
+    // failure) per the existing #332 rpc.ts mapping at line ~1112.
+    assert.equal(r1.error!.code, -32602,
+      `wrong-chain tx must be -32602 (invalid params), got ${r1.error!.code}`)
+  })
+
   await t.test("#122: eth_getBalance / eth_getTransactionCount / coc_getContractInfo reject malformed addresses with -32602", async () => {
     // Pre-fix bugs:
     //   - eth_getBalance returned -32603 with the raw input echoed back
