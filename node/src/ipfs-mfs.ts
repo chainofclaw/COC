@@ -79,7 +79,14 @@ export class IpfsMfs {
 
       if (!opts?.parents && i < parts.length - 1) {
         if (!parentDir?.entries.has(parts[i])) {
-          throw new Error(`parent directory not found: ${parent}`)
+          // #555: pre-fix the message interpolated `parent` (the dir we
+          // just successfully walked into) instead of `current` (the
+          // path we just found is missing). A user running
+          // `mkdir /no_such_a/sub_b` got "parent directory not found: /"
+          // and concluded the root was gone. Same wording-drift family
+          // as #543/#545 — error built from visited-so-far instead of
+          // failed-now state.
+          throw new Error(`parent directory not found: ${current}`)
         }
       }
 
