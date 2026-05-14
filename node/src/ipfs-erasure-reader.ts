@@ -71,8 +71,15 @@ export async function resolveCid(
     let block
     try {
       block = await store.get(cid)
-    } catch (err) {
-      throw new ErasureError("not_found", `manifest block missing: ${(err as Error).message ?? err}`)
+    } catch {
+      // #507: pre-fix the catch interpolated `(err as Error).message`,
+      // leaking the full filesystem path from the Node.js ENOENT message:
+      //   "manifest block missing: ENOENT: no such file or directory,
+      //    open '/var/lib/coc/node-1/storage/blocks/bafyrei…'"
+      // This is information disclosure — anyone calling public RPC can
+      // enumerate the server's data directory layout and node identifier.
+      // Emit a clean shape-only message with the CID as the only echo.
+      throw new ErasureError("not_found", `manifest block missing: ${cid}`)
     }
     let manifest: ErasureManifest
     try {
@@ -91,8 +98,11 @@ export async function resolveCid(
     let block
     try {
       block = await store.get(cid)
-    } catch (err) {
-      throw new ErasureError("not_found", `raw block missing: ${(err as Error).message ?? err}`)
+    } catch {
+      // #507: same fix as the dag-cbor branch above. ENOENT messages
+      // leak the server's filesystem layout — emit a clean shape-only
+      // message with the CID as the only echo.
+      throw new ErasureError("not_found", `raw block missing: ${cid}`)
     }
     return { kind: "raw", bytes: block.bytes }
   }
