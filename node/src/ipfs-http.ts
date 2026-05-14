@@ -415,8 +415,17 @@ export class IpfsHttpServer {
         // #168: pre-fix ENOENT for valid-shape-missing CIDs propagated
         // to the outer 500 handler, logging a stacktrace for every probe.
         // Map to 404 explicitly so missing-block looks like missing-block.
+        //
+        // #272: pre-fix the gateway called `unixfs.readFile()` directly,
+        // which throws `Error("not a unixfs file")` for raw blocks — falling
+        // through to the outer 500. The sibling `/api/v0/cat` already
+        // dispatches raw / erasure via `resolveCid`. Reuse `readByCid`
+        // here so the gateway behaves identically; its HttpError throws
+        // (404 for missing, 400 for invalid CID, etc.) flow through the
+        // outer catch's structured handler. Same family as #168/#232/
+        // #268/#270/#543 — generic 500 leak for a well-defined case.
         try {
-          const data = await this.unixfs.readFile(cid)
+          const data = await this.readByCid(cid)
           // #324: HTTP Range support per RFC 7233. Pre-fix the gateway
           // returned the full body for every request, even when the
           // client sent `Range: bytes=N-M` — making resumable downloads,
@@ -470,7 +479,10 @@ export class IpfsHttpServer {
             res.end(data)
           }
         } catch (err) {
-          if (isNotFoundError(err)) {
+          // #272: readByCid throws HttpError instead of raw "not found"
+          // strings, so map back here to preserve the existing CORS-on-404
+          // contract that browser callers rely on.
+          if (isNotFoundError(err) || (err instanceof HttpError && err.status === 404)) {
             res.writeHead(404, { "content-type": "application/json", "access-control-allow-origin": "*" })
             res.end(req.method === "HEAD" ? undefined : JSON.stringify({ error: "not found" }))
           } else {
