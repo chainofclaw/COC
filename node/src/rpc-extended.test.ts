@@ -1845,6 +1845,59 @@ test("RPC Extended Methods", async (t) => {
     assert.equal(r2.error?.code, -32602, `non-object typedData must be -32602, got ${r2.error?.code}`)
   })
 
+  await t.test("#521: eth_signTypedData_v4 validates typedData structure before keystore (parity with eth_sign)", async () => {
+    // Live testnet 88780 reproduction (pre-fix):
+    //   eth_sign(unauthorized_addr, "garbage-msg")              → -32602 (msg shape)
+    //   eth_signTypedData_v4(unauthorized_addr, malformed_td)   → -32004 (keystore)
+    //
+    // Same problem space (signing), inconsistent validation order. Callers
+    // can't reliably tell from the response code whether their typedData
+    // shape is wrong — they'd need to ALSO verify keystore presence (which
+    // varies between dev / test / prod environments). Pre-fix a script
+    // probing typedData shape would get different errors depending on
+    // whether the address happens to be in the dev keystore.
+    //
+    // Fix: do the cheap shape-validation upfront (mirroring eth_sign's
+    // order). TypedDataEncoder.hash() is the canonical EIP-712 structural
+    // validator; failed encoding signals malformed typedData. Keystore
+    // lookup runs after.
+    const probe = async (params: unknown[]) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_signTypedData_v4", params }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    }
+    const unknownAddr = "0x" + "9".repeat(40)
+    // (a) Malformed typedData (TypedDataEncoder rejects: no primaryType,
+    // unresolvable type ref) — must surface as -32602 even though
+    // the address isn't in the keystore. Pre-fix the keystore check
+    // ran first → caller saw -32004 and never learned their typedData
+    // shape was broken.
+    const noPrimaryType = await probe([unknownAddr, { types: {}, domain: {}, message: {} }])
+    assert.equal(noPrimaryType.error?.code, -32602,
+      `malformed typedData on unauthorized addr must be -32602 (shape first), got ${noPrimaryType.error?.code} (${noPrimaryType.error?.message})`)
+    assert.match(noPrimaryType.error!.message, /invalid typedData/i,
+      `error must mention typedData, not keystore: ${noPrimaryType.error!.message}`)
+    // (b) Shape-valid typedData + unauthorized addr → -32004 (keystore).
+    // This is the post-shape-check path; ensures keystore check still runs.
+    const okTd = {
+      types: {
+        EIP712Domain: [{ name: "name", type: "string" }],
+        Message: [{ name: "x", type: "uint256" }],
+      },
+      primaryType: "Message",
+      domain: { name: "test" },
+      message: { x: 42 },
+    }
+    const goodTd = await probe([unknownAddr, okTd])
+    assert.equal(goodTd.error?.code, -32004,
+      `shape-valid typedData on unauthorized addr must be -32004 (keystore), got ${goodTd.error?.code} (${goodTd.error?.message})`)
+    assert.match(goodTd.error!.message, /keystore/i,
+      `error must mention keystore, not typedData: ${goodTd.error!.message}`)
+  })
+
   await t.test("#156: eth_sendRawTransaction rejects malformed input with -32602 and clean message (no ethers leak)", async () => {
     // Pre-fix bogus input (e.g. "0xff") flowed into ethers.Transaction.from()
     // and surfaced as -32603 "data short segment too short (buffer=0xff,
