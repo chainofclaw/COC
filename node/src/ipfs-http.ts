@@ -472,7 +472,17 @@ export class IpfsHttpServer {
         await this.handleId(res)
         return
       }
-      if (url.pathname === "/api/v0/stat") {
+      // #547: kubo-rpc-client / ipfs-http-client / web3.storage call
+      // POST /api/v0/repo/stat (canonical) or POST /api/v0/stats/repo
+      // (alias). The handler was only registered under the non-standard
+      // /api/v0/stat path, so every canonical client got a 404 trying
+      // to poll repo size. Keep /api/v0/stat as an internal alias for
+      // backward compatibility with anything already calling it.
+      if (
+        url.pathname === "/api/v0/repo/stat" ||
+        url.pathname === "/api/v0/stats/repo" ||
+        url.pathname === "/api/v0/stat"
+      ) {
         await this.handleStat(res)
         return
       }
