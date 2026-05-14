@@ -1667,7 +1667,21 @@ export class IpfsHttpServer {
           // because readMultipartFile falls back to raw bytes when there's no
           // boundary in Content-Type.
           const { bytes: body } = await readMultipartFile(req)
-          await this.pubsub.publish(topic, body)
+          // #284: IpfsPubsub.publish throws a plain Error("message too large:
+          // N > M") when data.length exceeds maxMessageSize (default 1 MB).
+          // Without this catch the error fell through the outer try/catch as
+          // 500 "internal error" — clients couldn't tell server fault from
+          // their own oversized payload. Same class as #276 (mempool plain
+          // Errors leaking as -32603); remap to 413 per HTTP semantics.
+          try {
+            await this.pubsub.publish(topic, body)
+          } catch (pubErr) {
+            const msg = pubErr instanceof Error ? pubErr.message : String(pubErr)
+            if (/^message too large/i.test(msg)) {
+              throw new HttpError(413, "payload too large", msg)
+            }
+            throw pubErr
+          }
           res.writeHead(200, { "content-type": "application/json" })
           res.end(JSON.stringify({ ok: true }))
           break
@@ -1732,6 +1746,23 @@ export class IpfsHttpServer {
           res.end(JSON.stringify({ error: `unknown pubsub command: ${route}` }))
       }
     } catch (err) {
+      // #284: pre-fix this route-level catch unconditionally surfaced 500
+      // "internal error", masking client-input failures (e.g. pubsub
+      // payload too large) as server faults. Honour HttpError throws —
+      // the publish call site rethrows oversized messages as
+      // HttpError(413), and future client-input errors from this route
+      // should also bypass the 500 default.
+      if (err instanceof HttpError) {
+        if (!res.headersSent) {
+          res.writeHead(err.status, { "content-type": "application/json" })
+        }
+        log.warn("IPFS pubsub request rejected", { status: err.status, code: err.code })
+        const messageOut = err.message !== err.code ? err.message : undefined
+        try {
+          res.end(JSON.stringify(messageOut ? { error: err.code, message: messageOut } : { error: err.code }))
+        } catch { /* connection already closed */ }
+        return
+      }
       log.error("pubsub route failed", { error: String(err) })
       res.writeHead(500, { "content-type": "application/json" })
       res.end(JSON.stringify({ error: "internal error" }))
