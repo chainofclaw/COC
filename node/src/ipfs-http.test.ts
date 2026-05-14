@@ -881,6 +881,53 @@ describe("IpfsHttpServer", () => {
     assert.equal(huge2.status, 400, "MFS read count over MAX_SAFE_INTEGER must reject")
   })
 
+  it("#559: /api/v0/files/write?offset=N forwards offset to mfs (no silent data-loss merge bypass)", async () => {
+    // Pre-fix the HTTP write handler only forwarded create/truncate/parents
+    // and silently dropped offset. mfs.write's merge branch then never ran,
+    // so `write?offset=10` to a 5-byte file produced a 2-byte file with just
+    // the new bytes — the pre-offset content was permanently destroyed.
+    // Same silent-param-drop class as #174/#353/#460/#553 but data-destructive.
+    const { IpfsMfs: MfsCtor } = await import("./ipfs-mfs.ts")
+    const mfs = new MfsCtor(store, unixfs)
+    server.attachSubsystems({ mfs })
+
+    // Seed: AAAAA (5 bytes)
+    const seed = await fetch("/api/v0/files/write?arg=/iter27_merge&create=true&truncate=true", {
+      method: "POST",
+      headers: { "content-type": "application/octet-stream" },
+      body: new TextEncoder().encode("AAAAA"),
+    })
+    assert.equal(seed.status, 200, "seed write must succeed")
+
+    // Overlay: BB at offset=10. Expected (kubo merge): 5 A's + 5 zero bytes + 2 B's = 12 bytes total.
+    const overlay = await fetch("/api/v0/files/write?arg=/iter27_merge&offset=10", {
+      method: "POST",
+      headers: { "content-type": "application/octet-stream" },
+      body: new TextEncoder().encode("BB"),
+    })
+    assert.equal(overlay.status, 200, "offset write must succeed")
+
+    const read = await fetch("/api/v0/files/read?arg=/iter27_merge", { method: "POST" })
+    assert.equal(read.status, 200)
+    const data = await read.buffer()
+    assert.equal(data.length, 12, `merge result must be 12 bytes (AAAAA + 5*\\0 + BB), got ${data.length}: ${Array.from(data).map((b) => b.toString(16).padStart(2,"0")).join(",")}`)
+    assert.equal(data.slice(0, 5).toString(), "AAAAA", "first 5 bytes must still be AAAAA (no data loss)")
+    for (let i = 5; i < 10; i++) assert.equal(data[i], 0, `byte ${i} must be zero-padding`)
+    assert.equal(data.slice(10, 12).toString(), "BB", "last 2 bytes must be the new BB")
+
+    // Validation parity with read handler: negative / non-integer offset → 400 invalid offset
+    for (const qs of ["offset=-1", "offset=1.5", "offset=abc", "offset=999999999999999999999"]) {
+      const r = await fetch(`/api/v0/files/write?arg=/iter27_merge&${qs}`, {
+        method: "POST",
+        headers: { "content-type": "application/octet-stream" },
+        body: new Uint8Array(),
+      })
+      assert.equal(r.status, 400, `write ${qs} must reject with 400, got ${r.status}`)
+      const body = await r.json() as { error?: string }
+      assert.match(body.error ?? "", /invalid offset/i, qs)
+    }
+  })
+
   it("#232: /api/v0/files/* path traversal returns 400 (not 500 'internal error')", async () => {
     // Pre-fix normalizePath threw `Error("path traversal not allowed: ...")`
     // for any input with `..`. The route-level catch had regexes for
