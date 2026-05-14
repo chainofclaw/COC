@@ -3580,6 +3580,56 @@ test("RPC Extended Methods", async (t) => {
     }
   })
 
+  await t.test("#258: coc_getContracts rejects non-integer/non-bool fields inside the pagination object (no Number/!== coercion)", async () => {
+    // Pre-fix the object-field variant of #254: `Number(opts.limit ?? 50)`
+    // coerced `true`→1, `"5"`→5, `[5]`→5; `opts.reverse !== false`
+    // accepted `0`/`"false"`/`null` as truthy → reverse=true (opposite
+    // of the sloppy client's intent). Same anti-pattern as #254 (the
+    // positional sibling), #252 (epochId), #224 (feeHistory blockCount).
+    const probe = async (params: unknown[]) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "coc_getContracts", params }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    }
+    // limit: non-integer shapes must be rejected
+    for (const bad of [true, false, "5", [3], [1, 2], {}, 1.5]) {
+      const r = await probe([{ limit: bad }])
+      assert.equal(r.error?.code, -32602,
+        `limit=${JSON.stringify(bad)} must be -32602, got ${JSON.stringify(r)}`)
+      assert.match(r.error!.message, /limit/i)
+    }
+    // offset: same
+    for (const bad of [true, "0", [0], {}, 0.5]) {
+      const r = await probe([{ offset: bad }])
+      assert.equal(r.error?.code, -32602,
+        `offset=${JSON.stringify(bad)} must be -32602, got ${JSON.stringify(r)}`)
+      assert.match(r.error!.message, /offset/i)
+    }
+    // reverse: non-boolean shapes must be rejected
+    for (const bad of [0, 1, "false", "true", [true], {}]) {
+      const r = await probe([{ reverse: bad }])
+      assert.equal(r.error?.code, -32602,
+        `reverse=${JSON.stringify(bad)} must be -32602, got ${JSON.stringify(r)}`)
+      assert.match(r.error!.message, /reverse/i)
+    }
+    // Sanity: well-shaped values still succeed (result is array)
+    for (const opts of [
+      {},
+      { limit: 10 },
+      { offset: 0 },
+      { reverse: false },
+      { limit: 5, offset: 0, reverse: true },
+    ]) {
+      const r = await probe([opts])
+      assert.equal(r.error, undefined,
+        `well-shaped ${JSON.stringify(opts)} must succeed, got ${JSON.stringify(r)}`)
+      assert.ok(Array.isArray(r.result), `result must be array for ${JSON.stringify(opts)}`)
+    }
+  })
+
   await t.test("#485: coc_getTransactionsByAddress logs have full wire shape (parity with eth_getTransactionReceipt.logs)", async () => {
     // Pre-fix the persistent layer stripped logs to {address, topics, data}
     // when writing the receipt (chain-engine-persistent.ts:1229), and this

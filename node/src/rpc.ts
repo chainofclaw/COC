@@ -2786,11 +2786,45 @@ async function handleRpc(
       // #238. Validate shape FIRST so the rejection fires regardless
       // of whether the node has blockIndex enabled.
       const opts = requireFilterObject((payload.params ?? [])[0])
+      // #258: pre-fix the inner fields used the same silent-coercion
+      // anti-pattern fixed in #254 for the positional sibling
+      // coc_getTransactionsByAddress: `Number(opts.limit ?? 50) || 50`
+      // coerced `true`→1, `"5"`→5, `[5]`→5; `opts.reverse !== false`
+      // accepted `0`/`"false"`/`null` as truthy (== reverse=true), the
+      // opposite of the client's intent. Mirror #254's strict per-field
+      // validators inline so the same -32602 message format applies.
+      let limit = 50
+      if (opts.limit !== undefined && opts.limit !== null) {
+        if (typeof opts.limit !== "number" || !Number.isInteger(opts.limit)) {
+          invalidParams(`invalid limit: expected integer, got ${Array.isArray(opts.limit) ? "array" : typeof opts.limit}`)
+        }
+        if (opts.limit < 1 || opts.limit > 10_000) {
+          invalidParams("invalid limit: must be between 1 and 10000")
+        }
+        limit = opts.limit
+      }
+      let offset = 0
+      if (opts.offset !== undefined && opts.offset !== null) {
+        if (typeof opts.offset !== "number" || !Number.isInteger(opts.offset)) {
+          invalidParams(`invalid offset: expected integer, got ${Array.isArray(opts.offset) ? "array" : typeof opts.offset}`)
+        }
+        if (opts.offset < 0 || opts.offset > 100_000) {
+          invalidParams("invalid offset: must be between 0 and 100000")
+        }
+        offset = opts.offset
+      }
+      let reverse = true
+      if (opts.reverse !== undefined && opts.reverse !== null) {
+        if (typeof opts.reverse !== "boolean") {
+          invalidParams(`invalid reverse: expected boolean, got ${Array.isArray(opts.reverse) ? "array" : typeof opts.reverse}`)
+        }
+        reverse = opts.reverse
+      }
       if (hasBlockIndex(chain)) {
         const contracts = await chain.blockIndex.getContracts({
-          limit: Math.min(Math.max(Number(opts.limit ?? 50) || 50, 1), 10_000),
-          offset: Math.min(Math.max(Number(opts.offset ?? 0) || 0, 0), 100_000),
-          reverse: opts.reverse !== false,
+          limit,
+          offset,
+          reverse,
         })
         return contracts.map((c) => ({
           address: c.address,
