@@ -388,6 +388,116 @@ test("RPC Extended Methods", async (t) => {
     assert.deepEqual(byMixedHash, byLowerHash, "mixed-case hash must yield the same receipts as lowercase")
   })
 
+  await t.test("#531: coc_getTransactionsByAddress.input is EVM calldata (not RLP rawTx)", async () => {
+    // Live testnet 88780 reproduction (pre-fix):
+    //   coc_getTransactionsByAddress("0xf39…") for a simple transfer
+    //   → [{ hash, ..., input: "0x02f86f83015acc820119843b9aca00...", logs: [] }]
+    //   The `input` field carried the FULL RLP-encoded signed tx (RLP envelope
+    //   + chainId + nonce + gas + value + sig + ...) — NOT the EVM calldata
+    //   that the contract sees as msg.data. The same tx via
+    //   eth_getTransactionByHash had input: "0x" (correct: simple transfer
+    //   has no calldata).
+    //
+    // Explorer code already consumes `tx.input` as calldata:
+    //   - decodeMethodSelector(tx.input) for ABI decoding (4-byte selector)
+    //   - tx.input.length > 10 to classify "contract interaction"
+    // Pre-fix EVERY tx had input.length >> 10 (RLP is always long) so
+    // simple transfers were mis-classified as contract calls.
+    //
+    // Fix: decode rawTx → tx.data and emit as `input` (matches geth's
+    // eth_getTransactionByHash.input convention). Add new `rawTx` field
+    // carrying the RLP for callers that want to re-broadcast.
+    const { Wallet, Transaction } = await import("ethers")
+    const wallet = new Wallet("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80")
+    const fixtureChainId = Number(BigInt(await rpcCall(port, "eth_chainId", []) as string))
+
+    // Build two test txs:
+    //   (a) simple transfer with empty calldata → input must be "0x"
+    //   (b) contract call with calldata 0xdeadbeef → input must be "0xdeadbeef"
+    const transferTx = await wallet.signTransaction({
+      chainId: fixtureChainId, nonce: 100,
+      gasLimit: 21000n, gasPrice: 1_000_000_000n,
+      to: "0x0000000000000000000000000000000000000001",
+      value: 1n, data: "0x",
+    })
+    const callTx = await wallet.signTransaction({
+      chainId: fixtureChainId, nonce: 101,
+      gasLimit: 100_000n, gasPrice: 1_000_000_000n,
+      to: "0x0000000000000000000000000000000000000002",
+      value: 0n, data: "0xdeadbeef",
+    })
+    const transferHash = Transaction.from(transferTx).hash!
+    const callHash = Transaction.from(callTx).hash!
+
+    // Stub the chain hook to return our two fixture txs (a real fixture
+    // doesn't have getTransactionsByAddress wired up).
+    const mockChain = chain as unknown as {
+      getTransactionsByAddress?: (addr: string, opts: object) => Promise<unknown[]>
+    }
+    const origHook = mockChain.getTransactionsByAddress
+    mockChain.getTransactionsByAddress = async () => [
+      {
+        rawTx: transferTx,
+        receipt: {
+          transactionHash: transferHash, from: wallet.address.toLowerCase(),
+          to: "0x0000000000000000000000000000000000000001",
+          blockNumber: 1n, blockHash: "0x" + "ab".repeat(32),
+          gasUsed: 21000n, status: 1n, logs: [],
+        },
+      },
+      {
+        rawTx: callTx,
+        receipt: {
+          transactionHash: callHash, from: wallet.address.toLowerCase(),
+          to: "0x0000000000000000000000000000000000000002",
+          blockNumber: 2n, blockHash: "0x" + "cd".repeat(32),
+          gasUsed: 50000n, status: 1n, logs: [],
+        },
+      },
+    ]
+    try {
+      const result = await rpcCall(port, "coc_getTransactionsByAddress", [wallet.address]) as Array<{
+        hash: string; input: string; rawTx: string
+      }>
+      assert.equal(result.length, 2, "must return both fixture txs")
+
+      // (a) Simple transfer: input must be "0x", rawTx must be the RLP.
+      const transfer = result.find((t) => t.hash === transferHash)!
+      assert.ok(transfer, "transfer tx must be in result")
+      assert.equal(transfer.input, "0x",
+        `simple transfer input must be "0x" (EVM calldata), got ${transfer.input!.slice(0, 50)}...`)
+      assert.equal(transfer.rawTx, transferTx,
+        "rawTx field must carry the full RLP-encoded signed tx for callers that need it")
+
+      // (b) Contract call: input must be the calldata, NOT the RLP.
+      const call = result.find((t) => t.hash === callHash)!
+      assert.ok(call, "call tx must be in result")
+      assert.equal(call.input, "0xdeadbeef",
+        `contract call input must be "0xdeadbeef" (calldata), got ${call.input}`)
+      assert.equal(call.rawTx, callTx,
+        "rawTx field must carry the full RLP-encoded signed tx")
+
+      // Defense against the regression: input must NEVER carry the RLP
+      // envelope markers — RLP starts with 0xc0+ for legacy or 0x01/0x02/0x03
+      // for type-2718 (these are valid hex bytes that would never appear
+      // as the FIRST byte of a clean ABI-encoded calldata selector). The
+      // simple-transfer case (`input: "0x"`) is the strongest signal.
+      for (const tx of result) {
+        // RLP-encoded legacy txs start with 0xf8/0xf9/0xfa/0xfb (long-form
+        // list prefix); type-2718 txs start with 0x01/0x02/0x03 + RLP body.
+        // The full rawTx for either is far longer than 10 bytes. Pre-fix
+        // input === rawTx, so the input/rawTx equality check is the
+        // surest regression sentinel.
+        if (tx.input !== "0x") {
+          assert.notEqual(tx.input, tx.rawTx,
+            `regression sentinel: tx.input MUST NOT equal tx.rawTx (the pre-fix bug shape), input=${tx.input.slice(0, 50)}... rawTx=${tx.rawTx.slice(0, 50)}...`)
+        }
+      }
+    } finally {
+      mockChain.getTransactionsByAddress = origHook
+    }
+  })
+
   await t.test("#122: eth_getBalance / eth_getTransactionCount / coc_getContractInfo reject malformed addresses with -32602", async () => {
     // Pre-fix bugs:
     //   - eth_getBalance returned -32603 with the raw input echoed back

@@ -2014,17 +2014,43 @@ async function handleRpc(
 
       if (typeof chain.getTransactionsByAddress === "function") {
         const txs = await chain.getTransactionsByAddress(addr, { limit, reverse, offset })
-        return txs.map((tx) => ({
-          hash: tx.receipt.transactionHash,
-          from: tx.receipt.from,
-          to: tx.receipt.to,
-          blockNumber: `0x${tx.receipt.blockNumber.toString(16)}`,
-          blockHash: tx.receipt.blockHash,
-          gasUsed: `0x${tx.receipt.gasUsed.toString(16)}`,
-          status: `0x${tx.receipt.status.toString(16)}`,
-          input: tx.rawTx,
-          logs: tx.receipt.logs,
-        }))
+        return txs.map((tx) => {
+          // #531: pre-fix `input: tx.rawTx` returned the FULL RLP-encoded
+          // signed tx (with v/r/s + chainId envelope) on the wire under the
+          // field name `input`. But geth's `eth_getTransactionByHash.input`
+          // is the EVM calldata only (the bytes the contract sees as
+          // msg.data). Explorer code already uses `tx.input` as calldata:
+          //   - explorer/src/components/ContractView.tsx:140 calls
+          //     decodeMethodSelector(tx.input) expecting first 4 bytes to be
+          //     the function selector
+          //   - explorer/src/app/mempool/page.tsx:204 same
+          //   - explorer/src/components/TxHistory.tsx:18 uses
+          //     `tx.input && tx.input.length > 10` to classify "contract
+          //     interaction" vs "simple transfer" — pre-fix EVERY tx looked
+          //     like a contract call (rawTx is always >>10 chars) so simple
+          //     transfers were mis-classified.
+          // Fix: decode the rawTx via ethers.Transaction.from() and emit
+          // `.data` (the calldata) under `input`. Add a separate `rawTx`
+          // field carrying the RLP for callers that want to re-broadcast or
+          // verify the signature themselves. Brings shape parity with
+          // eth_getTransactionByHash.input.
+          let inputData = "0x"
+          try {
+            inputData = Transaction.from(tx.rawTx).data || "0x"
+          } catch { /* malformed rawTx — keep "0x" rather than leak */ }
+          return {
+            hash: tx.receipt.transactionHash,
+            from: tx.receipt.from,
+            to: tx.receipt.to,
+            blockNumber: `0x${tx.receipt.blockNumber.toString(16)}`,
+            blockHash: tx.receipt.blockHash,
+            gasUsed: `0x${tx.receipt.gasUsed.toString(16)}`,
+            status: `0x${tx.receipt.status.toString(16)}`,
+            input: inputData,
+            rawTx: tx.rawTx,
+            logs: tx.receipt.logs,
+          }
+        })
       }
       return []
     }
