@@ -286,6 +286,36 @@ test("RPC Extended Methods", async (t) => {
     assert.ok(count === null || count.startsWith("0x"))
   })
 
+  await t.test("#260: eth_getBlockByNumber/Hash reject non-boolean includeTx (no Boolean() coercion)", async () => {
+    // Pre-fix `Boolean((payload.params ?? [])[1])` accepted every shape:
+    //   Boolean("false") === true  → client thinking "false" gets full txs
+    //   Boolean([]) === true       → array silently treated as truthy
+    //   Boolean({}) === true       → object silently treated as truthy
+    //   Boolean(1) === true        → numeric truthy
+    // Clients sending the wrong shape got the OPPOSITE of what they meant
+    // (full tx objects ~5-6× bandwidth instead of hashes). Spec requires
+    // strict boolean; geth rejects everything else with -32602.
+    await chain.proposeNextBlock()
+    const validHash = "0x" + "00".repeat(32)
+    for (const method of ["eth_getBlockByNumber", "eth_getBlockByHash"]) {
+      const arg0 = method === "eth_getBlockByNumber" ? "0x0" : validHash
+      for (const bad of ["false", "true", [], {}, 0, 1, "yes", "no"]) {
+        const r = await rpcCallRaw(port, method, [arg0, bad])
+        assert.equal(r.error?.code, -32602,
+          `${method}([${arg0}, ${JSON.stringify(bad)}]) must -32602, got ${JSON.stringify(r)}`)
+        assert.match(r.error!.message, /includeTransactions/i,
+          `${method} error must name the param, got ${r.error!.message}`)
+      }
+      // Sanity: strict booleans still work
+      for (const good of [true, false, undefined, null]) {
+        const params = good === undefined ? [arg0] : [arg0, good]
+        const r = await rpcCallRaw(port, method, params)
+        assert.equal(r.error, undefined,
+          `${method}([${arg0}, ${JSON.stringify(good)}]) must succeed, got ${JSON.stringify(r.error)}`)
+      }
+    }
+  })
+
   await t.test("eth_getUncleCountByBlockNumber returns zero", async () => {
     const count = await rpcCall(port, "eth_getUncleCountByBlockNumber", ["0x0"])
     assert.strictEqual(count, "0x0")
