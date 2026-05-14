@@ -2337,13 +2337,36 @@ async function handleRpc(
       if (!rawParams || typeof rawParams !== "object" || Array.isArray(rawParams)) {
         invalidParams("invalid params: expected non-null object as first param")
       }
+      // #296: pre-fix `as Record<string, string>` was a TypeScript runtime
+      // no-op. Any field shape (number, boolean, array, object) flowed
+      // through to `chain.governance.submitProposal()` and either stored
+      // non-string values in string slots (downstream filters / serializers
+      // broke with -32603 V8 errors) or echoed the coerced garbage back to
+      // clients. Same anti-pattern as #220 (outer shape — now covered) and
+      // #551 (coc_voteProposal field strict validation). Validate each
+      // required field BEFORE the hasGovernance() gate so the same -32602
+      // fires on read-only nodes too (#432 validation-order rule).
+      const proposalParams = rawParams as Record<string, unknown>
+      for (const field of ["type", "targetId", "proposer"] as const) {
+        const v = proposalParams[field]
+        if (typeof v !== "string" || !v) {
+          invalidParams(`invalid ${field}: expected non-empty string`)
+        }
+      }
+      // Optional targetAddress: when present, must be a string (no
+      // length/hex check here — governance module decides whether it's a
+      // valid Ethereum address or a node ID).
+      if (proposalParams.targetAddress !== undefined && proposalParams.targetAddress !== null) {
+        if (typeof proposalParams.targetAddress !== "string") {
+          invalidParams("invalid targetAddress: expected string")
+        }
+      }
       if (!hasGovernance(chain)) {
         methodNotFound("coc_submitProposal: governance module not enabled on this node")
       }
-      const proposalParams = rawParams as Record<string, string>
       // Only the local node can submit proposals via RPC
       const localNodeId = (opts as Record<string, unknown>)?.nodeId as string | undefined
-      if (localNodeId && proposalParams.proposer !== localNodeId) {
+      if (localNodeId && (proposalParams.proposer as string) !== localNodeId) {
         throw { code: -32003, message: "unauthorized: can only submit proposals as local node" }
       }
       // #218: validate stakeAmount shape before `BigInt(...)`. Pre-fix
@@ -2364,11 +2387,11 @@ async function handleRpc(
         stakeAmount = BigInt(stakeRaw as string | number)
       }
       const proposal = chain.governance.submitProposal(
-        proposalParams.type,
-        proposalParams.targetId,
-        proposalParams.proposer,
+        proposalParams.type as string,
+        proposalParams.targetId as string,
+        proposalParams.proposer as string,
         {
-          targetAddress: proposalParams.targetAddress,
+          targetAddress: proposalParams.targetAddress as string | undefined,
           stakeAmount,
         },
       )
