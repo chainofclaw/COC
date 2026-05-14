@@ -1634,6 +1634,9 @@ export class IpfsHttpServer {
           // with the generic "internal error" body (and an ERROR log line per
           // probe). Same regex-mismatch family as #232/#268/#543.
           /^cannot (remove|operate on|copy|move)/i.test(msg) ||
+          // #420: cp/mv reject src===dst with "source and destination are
+          // the same: <path>" — map to 400 client-input error.
+          /^source and destination are the same/i.test(msg) ||
           /must be/i.test(msg) ||
           /^missing /i.test(msg) ||
           /^write would exceed/i.test(msg) ||
