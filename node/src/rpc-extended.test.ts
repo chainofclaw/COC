@@ -2937,6 +2937,91 @@ test("RPC Extended Methods", async (t) => {
     }
   })
 
+  await t.test("#485: coc_getTransactionsByAddress logs have full wire shape (parity with eth_getTransactionReceipt.logs)", async () => {
+    // Pre-fix the persistent layer stripped logs to {address, topics, data}
+    // when writing the receipt (chain-engine-persistent.ts:1229), and this
+    // endpoint passed them straight through. Clients got a 3-field log
+    // while eth_getTransactionReceipt returned the full 9-field log
+    // (blockNumber/blockHash/transactionHash/transactionIndex/logIndex/
+    // removed). Live 88780 reproduction (this iteration):
+    //   coc_getTransactionsByAddress.logs[0] = {address, topics, data}
+    //   eth_getTransactionReceipt.logs[0]    = {address, topics, data,
+    //     blockNumber, blockHash, transactionHash, transactionIndex,
+    //     logIndex, removed}
+    //
+    // Deploy a log-emitting contract, call it, then fetch via both endpoints
+    // and assert shape parity. Reuse the #454 deploy bytecode.
+    const DEPLOY_BYTECODE = "0x6006600c60003960066000f360006000a000"
+    const { Wallet: EW485 } = await import("ethers")
+    const wallet = new EW485(`0x${"21".repeat(32)}`)
+    await evm.prefund([{ address: wallet.address, balanceWei: "1000000000000000000" }])
+    const startN = await evm.getNonce(wallet.address.toLowerCase() as `0x${string}`)
+
+    const deployTx = await wallet.signTransaction({
+      type: 0, to: null, value: 0n, data: DEPLOY_BYTECODE,
+      gasLimit: 500_000n, gasPrice: 1_000_000_000n,
+      nonce: Number(startN), chainId,
+    })
+    const submit485 = async (raw: string) => {
+      const res = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_sendRawTransaction", params: [raw] }),
+      })
+      return await res.json() as { result?: string; error?: { code: number; message: string } }
+    }
+    const deployBody = await submit485(deployTx)
+    if (!deployBody.result) return  // fixture skips persistent path
+    if (chain.proposeNextBlock) await chain.proposeNextBlock()
+    const deployReceipt = await rpcCall(port, "eth_getTransactionReceipt", [deployBody.result]) as { contractAddress: string }
+    if (!deployReceipt.contractAddress) return
+
+    const callTx = await wallet.signTransaction({
+      type: 0, to: deployReceipt.contractAddress, value: 0n, data: "0x",
+      gasLimit: 50_000n, gasPrice: 1_000_000_000n,
+      nonce: Number(startN) + 1, chainId,
+    })
+    const callBody = await submit485(callTx)
+    if (!callBody.result) return
+    if (chain.proposeNextBlock) await chain.proposeNextBlock()
+
+    const recViaHash = await rpcCall(port, "eth_getTransactionReceipt", [callBody.result]) as {
+      logs: Array<Record<string, unknown>>
+    }
+    const txsByAddr = await rpcCall(port, "coc_getTransactionsByAddress", [wallet.address.toLowerCase(), 10, true, 0]) as Array<{
+      hash: string
+      logs: Array<Record<string, unknown>>
+    }>
+
+    // Locate the call tx in the address history.
+    const callTxEntry = txsByAddr.find((tx) => tx.hash.toLowerCase() === callBody.result!.toLowerCase())
+    if (!callTxEntry) return
+
+    assert.equal(callTxEntry.logs.length, 1, "must have exactly 1 log")
+    const cocLog = callTxEntry.logs[0]
+    const recLog = recViaHash.logs[0]
+
+    // The required wire shape: 9 fields, all present.
+    for (const required of ["address", "topics", "data", "blockNumber", "blockHash", "transactionHash", "transactionIndex", "logIndex", "removed"]) {
+      assert.ok(
+        cocLog[required] !== undefined,
+        `coc_getTransactionsByAddress log must include "${required}" (pre-fix only address/topics/data were present)`,
+      )
+    }
+
+    // Type parity with eth_getTransactionReceipt.logs[].
+    assert.equal(typeof cocLog.transactionIndex, "string", `transactionIndex must be hex string`)
+    assert.equal(typeof cocLog.logIndex, "string", `logIndex must be hex string`)
+    assert.equal(typeof cocLog.removed, "boolean", `removed must be boolean`)
+
+    // Value parity for the same log via two endpoints.
+    assert.equal(cocLog.address, recLog.address, "log.address parity")
+    assert.equal(cocLog.transactionHash, recLog.transactionHash, "log.transactionHash parity")
+    assert.equal(cocLog.logIndex, recLog.logIndex, "log.logIndex parity (block-global)")
+    assert.equal(cocLog.transactionIndex, recLog.transactionIndex, "log.transactionIndex parity")
+    assert.equal(cocLog.blockNumber, recLog.blockNumber, "log.blockNumber parity")
+    assert.equal(cocLog.blockHash, recLog.blockHash, "log.blockHash parity")
+  })
+
   await t.test("#266: eth_getLogs caps inner topic OR-set (defense-in-depth against O(blocks×logs×topics) amplification)", async () => {
     // solc.compile is synchronous emscripten WASM. A single moderately
     // large source (500 empty contracts ≈ 15 KB) took 5m20s on 88780,

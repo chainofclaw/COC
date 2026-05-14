@@ -2014,16 +2014,32 @@ async function handleRpc(
 
       if (typeof chain.getTransactionsByAddress === "function") {
         const txs = await chain.getTransactionsByAddress(addr, { limit, reverse, offset })
-        return txs.map((tx) => ({
-          hash: tx.receipt.transactionHash,
-          from: tx.receipt.from,
-          to: tx.receipt.to,
-          blockNumber: `0x${tx.receipt.blockNumber.toString(16)}`,
-          blockHash: tx.receipt.blockHash,
-          gasUsed: `0x${tx.receipt.gasUsed.toString(16)}`,
-          status: `0x${tx.receipt.status.toString(16)}`,
-          input: tx.rawTx,
-          logs: tx.receipt.logs,
+        // #485: persistent storage strips logs down to {address, topics,
+        // data} when writing the receipt (chain-engine-persistent.ts:1229).
+        // Pre-fix this endpoint passed `tx.receipt.logs` through to the
+        // wire — clients got the stripped 3-field shape while the parallel
+        // `eth_getTransactionReceipt` correctly returned the full 9-field
+        // shape (blockNumber/blockHash/transactionHash/transactionIndex/
+        // logIndex/removed all filled in). Live 88780 repro: same log
+        // event yielded different shapes from the two endpoints.
+        //
+        // Use formatPersistentReceipt for the log block-global logIndex
+        // computation parity with eth_getTransactionReceipt. The receipts-
+        // by-block query is bounded by `limit` (max 10_000), and each
+        // unique block contributes one DB lookup.
+        return await Promise.all(txs.map(async (tx) => {
+          const fullReceipt = await formatPersistentReceipt(tx, chain)
+          return {
+            hash: tx.receipt.transactionHash,
+            from: tx.receipt.from,
+            to: tx.receipt.to,
+            blockNumber: `0x${tx.receipt.blockNumber.toString(16)}`,
+            blockHash: tx.receipt.blockHash,
+            gasUsed: `0x${tx.receipt.gasUsed.toString(16)}`,
+            status: `0x${tx.receipt.status.toString(16)}`,
+            input: tx.rawTx,
+            logs: fullReceipt?.logs ?? [],
+          }
         }))
       }
       return []
