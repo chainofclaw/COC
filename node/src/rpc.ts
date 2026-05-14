@@ -2008,6 +2008,45 @@ async function handleRpc(
       const { pending, queued } = await splitMempoolPendingQueued(allTxs, evm)
       return { pending, queued }
     }
+    case "txpool_contentFrom": {
+      // #501: geth-standard per-sender variant of txpool_content. Returns
+      // the same {pending, queued} shape but filtered to one address.
+      // Pre-fix this method was unsupported — MetaMask, Etherscan, and
+      // chain indexers that poll per-account mempool state had to fetch
+      // the full content and filter client-side (O(mempool_size) instead
+      // of O(sender_txs)).
+      const fromAddr = requireAddressParam(payload.params ?? [], 0).toLowerCase() as Hex
+      const allTxs = chain.mempool.getAll().filter((tx) => tx.from.toLowerCase() === fromAddr)
+      const { pending, queued } = await splitMempoolPendingQueued(allTxs, evm)
+      return { pending, queued }
+    }
+    case "txpool_inspect": {
+      // #501: geth-standard summary view of txpool_content. Same partition
+      // (pending vs queued) but each tx entry is a single string:
+      //   "<to>: <value> wei + <gas> gas × <gasPrice> wei"
+      // Wallets / explorers use this as a lightweight at-a-glance view.
+      const allTxsInspect = chain.mempool.getAll()
+      const { pending, queued } = await splitMempoolPendingQueued(allTxsInspect, evm)
+      const inspect = (bucket: Record<string, Record<string, unknown>>): Record<string, Record<string, string>> => {
+        const out: Record<string, Record<string, string>> = {}
+        for (const [sender, byNonce] of Object.entries(bucket)) {
+          out[sender] = {}
+          for (const [nonce, txInfo] of Object.entries(byNonce)) {
+            const t = txInfo as Record<string, string>
+            const to = t.to ?? "0x"
+            const value = t.value ?? "0x0"
+            const gas = t.gas ?? "0x0"
+            const gasPrice = t.gasPrice ?? "0x0"
+            const valueWei = BigInt(value).toString()
+            const gasDec = BigInt(gas).toString()
+            const gasPriceWei = BigInt(gasPrice).toString()
+            out[sender][nonce] = `${to}: ${valueWei} wei + ${gasDec} gas × ${gasPriceWei} wei`
+          }
+        }
+        return out
+      }
+      return { pending: inspect(pending), queued: inspect(queued) }
+    }
     case "coc_getTransactionsByAddress": {
       // #120: validate address shape so typos surface as -32602 instead
       // of silently missing the index → empty result. Pre-fix, "not-an-address"

@@ -683,6 +683,105 @@ test("RPC Extended Methods", async (t) => {
     assert.ok(typeof content.queued === "object")
   })
 
+  await t.test("#501: txpool_inspect returns geth-style summary strings per tx", async () => {
+    // Geth-standard method: returns same {pending, queued} shape as
+    // txpool_content but each tx entry is a single descriptive string
+    // ("<to>: <value> wei + <gas> gas × <gasPrice> wei"). Pre-fix
+    // unsupported — wallets / explorers had to fetch the full
+    // txpool_content and format client-side. Live testnet 88780 repro:
+    //   curl ... txpool_inspect  → -32601 "method not supported"
+    const { Wallet: EW501, Transaction: ETT501 } = await import("ethers")
+    const TEST_PK_501 = "0x" + "11".repeat(32)
+    const wallet = new EW501(TEST_PK_501)
+    await evm.prefund([{ address: wallet.address, balanceWei: "1000000000000000000" }])
+    const startNonce = await evm.getNonce(wallet.address.toLowerCase() as `0x${string}`)
+
+    // Inject one tx (pending) + one gap-queued.
+    for (const offset of [0, 5]) {
+      const tx = ETT501.from({
+        to: "0x0000000000000000000000000000000000000001",
+        value: 1n, gasLimit: 21000n, gasPrice: 1_000_000_000n,
+        nonce: Number(startNonce) + offset, chainId: 18780,
+      })
+      const signed = await wallet.signTransaction(tx)
+      await rpcCall(port, "eth_sendRawTransaction", [signed])
+    }
+
+    const inspect = await rpcCall(port, "txpool_inspect") as {
+      pending: Record<string, Record<string, string>>
+      queued: Record<string, Record<string, string>>
+    }
+    assert.equal(typeof inspect, "object", "result must be object")
+    assert.ok("pending" in inspect, "must have pending field")
+    assert.ok("queued" in inspect, "must have queued field")
+
+    const senderLower = wallet.address.toLowerCase()
+    const pendingBySender = inspect.pending[senderLower] ?? {}
+    const queuedBySender = inspect.queued[senderLower] ?? {}
+
+    // At least 1 entry in pending + 1 in queued.
+    const pendingEntries = Object.values(pendingBySender)
+    const queuedEntries = Object.values(queuedBySender)
+    assert.ok(pendingEntries.length >= 1, `expected pending entries for ${senderLower}, got ${JSON.stringify(pendingBySender)}`)
+    assert.ok(queuedEntries.length >= 1, `expected queued entries, got ${JSON.stringify(queuedBySender)}`)
+
+    // Each entry must be a STRING (not an object).
+    for (const entry of [...pendingEntries, ...queuedEntries]) {
+      assert.equal(typeof entry, "string", `entry must be summary string, got ${typeof entry}`)
+      assert.match(
+        entry,
+        /^0x[0-9a-fA-F]{40}: \d+ wei \+ \d+ gas × \d+ wei$/,
+        `entry must match geth format "<to>: <value> wei + <gas> gas × <gasPrice> wei", got ${entry}`,
+      )
+    }
+  })
+
+  await t.test("#501: txpool_contentFrom filters per-sender + shape matches txpool_content", async () => {
+    // Geth-standard variant of txpool_content scoped to one address.
+    // Pre-fix unsupported.
+    const { Wallet: EW501F, Transaction: ETT501F } = await import("ethers")
+    const wallet = new EW501F("0x" + "31".repeat(32))
+    const other = new EW501F("0x" + "32".repeat(32))
+    await evm.prefund([
+      { address: wallet.address, balanceWei: "1000000000000000000" },
+      { address: other.address, balanceWei: "1000000000000000000" },
+    ])
+    const myNonce = await evm.getNonce(wallet.address.toLowerCase() as `0x${string}`)
+    const otherNonce = await evm.getNonce(other.address.toLowerCase() as `0x${string}`)
+
+    // Inject 1 tx from each sender.
+    for (const [w, n] of [[wallet, myNonce], [other, otherNonce]] as const) {
+      const tx = ETT501F.from({
+        to: "0x0000000000000000000000000000000000000001",
+        value: 1n, gasLimit: 21000n, gasPrice: 1_000_000_000n,
+        nonce: Number(n), chainId: 18780,
+      })
+      const signed = await w.signTransaction(tx)
+      await rpcCall(port, "eth_sendRawTransaction", [signed])
+    }
+
+    const meLower = wallet.address.toLowerCase()
+    const otherLower = other.address.toLowerCase()
+
+    const fromMe = await rpcCall(port, "txpool_contentFrom", [meLower]) as {
+      pending: Record<string, Record<string, unknown>>
+      queued: Record<string, Record<string, unknown>>
+    }
+    // Must include this sender.
+    assert.ok(fromMe.pending[meLower], `txpool_contentFrom must include ${meLower}, got ${JSON.stringify(fromMe)}`)
+    // Must NOT include the other sender.
+    assert.ok(!fromMe.pending[otherLower], `txpool_contentFrom must filter out other senders, got ${JSON.stringify(fromMe)}`)
+    assert.ok(!fromMe.queued[otherLower])
+
+    // Bad address shape → -32602 (uses requireAddressParam).
+    const bad = await fetch(`http://127.0.0.1:${port}`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "txpool_contentFrom", params: ["not-an-address"] }),
+    })
+    const badJson = await bad.json() as { error?: { code: number; message: string } }
+    assert.equal(badJson.error?.code, -32602, `bad address must be -32602, got ${JSON.stringify(badJson)}`)
+  })
+
   await t.test("#386: txpool_status / txpool_content classify gap-nonce txs as queued (not pending)", async () => {
     // Pre-fix: txpool_status hardcoded `queued: "0x0"` and txpool_content
     // returned `queued: {}` regardless of nonce gaps. A tx with nonce=5
