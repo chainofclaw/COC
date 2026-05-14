@@ -1285,11 +1285,24 @@ async function handleRpc(
         filter.seenPendingTxs ??= new Set<Hex>()
         const seen = filter.seenPendingTxs
         const fresh: Hex[] = []
+        // #282: pre-fix `seen` grew monotonically — hashes were added on
+        // first observation but never removed when txs left the mempool
+        // (mined / dropped / replaced). With MAX_FILTERS=1000 and 100 tx/s
+        // sustained churn, ~360 MB/hour per filter → 8.6 GB/day OOM ceiling.
+        // Intersect with the current mempool every poll so `seen` is
+        // bounded by mempool.size (already capped). Matches geth's
+        // semantics: a tx that leaves and re-enters mempool legitimately
+        // counts as a new "observed since last poll" event.
+        const currentHashes = new Set<Hex>()
         for (const tx of chain.mempool.getAll()) {
+          currentHashes.add(tx.hash)
           if (!seen.has(tx.hash)) {
             fresh.push(tx.hash)
             seen.add(tx.hash)
           }
+        }
+        for (const h of seen) {
+          if (!currentHashes.has(h)) seen.delete(h)
         }
         return fresh
       }
