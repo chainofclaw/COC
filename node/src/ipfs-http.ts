@@ -87,7 +87,7 @@ function isNotFoundError(err: unknown): boolean {
  * a different shape so they can fall back / retry with the right
  * settings instead of pinning a CID that doesn't match their hash.
  *
- * Benign params (pin, progress, silent, quieter, quiet, fscache,
+ * Benign params (progress, silent, quieter, quiet, fscache,
  * stdin-name, only-hash, hash-fun-code) are passed through — they
  * either don't change the CID or the response shape we already
  * emit (single newline-terminated JSON object) is a strict subset
@@ -128,6 +128,27 @@ function validateAddParams(query: Record<string, string | string[] | undefined>)
     if (norm !== "false" && norm !== "0") {
       throw new HttpError(400, "unsupported_param",
         `${key}: expected boolean (true/false/0/1), got '${raw}'`)
+    }
+  }
+
+  // #553: pin was previously listed as a "benign passed-through" param
+  // — but `handleAdd` always pins regardless of the query value, so a
+  // client passing `pin=false` got a 200 indistinguishable from "pinned
+  // anyway" and burned disk it asked us to skip. `pin=garbage` was also
+  // silently accepted, drifting from kubo's strconv.ParseBool reject.
+  // This server always pins, so the policy is: accept true/1/unset,
+  // reject false/0 as "unsupported (this server always pins)", reject
+  // everything else as the same boolean-parse 400 kubo emits.
+  const pinRaw = firstQueryValue(query.pin)
+  if (pinRaw !== undefined) {
+    const norm = pinRaw.toLowerCase()
+    if (norm === "false" || norm === "0") {
+      throw new HttpError(400, "unsupported_param",
+        `pin: this server always pins uploaded blobs (only 'true' / unset)`)
+    }
+    if (norm !== "true" && norm !== "1") {
+      throw new HttpError(400, "unsupported_param",
+        `pin: expected boolean (true/false/0/1), got '${pinRaw}'`)
     }
   }
 }
