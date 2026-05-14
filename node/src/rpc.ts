@@ -2043,6 +2043,19 @@ async function handleRpc(
       if (rawCid.length > 512 || /[\/\\]|\.\.|\0|\s/.test(rawCid)) {
         invalidParams("invalid cid: contains illegal characters or exceeds 512 chars")
       }
+      // #515: pre-fix the shape gate above accepted any string of ≤512
+      // chars with no path-traversal chars — "bad-cid", "not-a-cid",
+      // "deadbeef" all slipped through and `findProviders` returned
+      // `{providers:[]}` silently. The DHT layer was being asked to look
+      // up garbage and clients couldn't distinguish "no providers
+      // advertise this CID" from "your CID was malformed". Apply real
+      // CID-shape validation: must look like a Qm v0 base58 or a
+      // b/B-prefixed v1 base32, with the right alphabet for each. Same
+      // policy as IpfsHttpServer.isValidCid (ipfs-http.ts:1711) so the
+      // RPC + HTTP gateways stay in lock-step.
+      if (!isValidCidShape(rawCid)) {
+        invalidParams("invalid cid: must be a real Qm v0 (base58) or v1 (base32) CID")
+      }
       const cid = rawCid
       // #251: pre-fix `Number(... ?? 3)` silently mapped any malformed
       // maxK (true → 1, "huge" → NaN→3, {} → NaN→3, -5 → fallback 3,
@@ -2074,6 +2087,13 @@ async function handleRpc(
       }
       if (rawCid.length > 512 || /[\/\\]|\.\.|\0|\s/.test(rawCid)) {
         invalidParams("invalid cid: contains illegal characters or exceeds 512 chars")
+      }
+      // #515: same real-CID-shape check as coc_dhtFindProviders.
+      // Pre-fix this method silently returned `{bytes: null}` for any
+      // valid-shape but non-CID string, indistinguishable from "CID is
+      // real but no peer had the block".
+      if (!isValidCidShape(rawCid)) {
+        invalidParams("invalid cid: must be a real Qm v0 (base58) or v1 (base32) CID")
       }
       const cid = rawCid
       // #250: pre-fix `String((payload.params ?? [])[1] ?? "")` silently
@@ -2963,6 +2983,24 @@ function throwExecutionReverted(returnValue: string): never {
   const reason = decodeRevertReason(returnValue)
   const message = reason ? `execution reverted: ${reason}` : "execution reverted"
   throw { code: 3, message, data: returnValue || "0x" }
+}
+
+// #515: real-CID-shape gate for coc_dhtFindProviders / coc_ipfsFetchBlockFromPeer.
+// Mirrors IpfsHttpServer.isValidCid (ipfs-http.ts:1711) so the JSON-RPC and
+// HTTP gateways enforce the same CID admission policy. Accepts:
+//   - Qm v0: base58btc alphabet, 46 chars typical
+//   - b/B v1: base32 RFC4648 lowercase alphabet
+// Rejects: arbitrary printable strings, hex blobs, base64 strings, anything
+// that doesn't start with Qm or b/B with the right alphabet. Path-traversal
+// chars, control chars, and length cap (≤512) are already enforced upstream.
+function isValidCidShape(cid: string): boolean {
+  if (cid.startsWith("Qm")) {
+    return /^Qm[1-9A-HJ-NP-Za-km-z]+$/.test(cid)
+  }
+  if (cid.startsWith("b") || cid.startsWith("B")) {
+    return /^[bB][a-z2-7]+$/.test(cid)
+  }
+  return false
 }
 
 async function resolveBlockNumber(input: unknown, chain: IChainEngine): Promise<bigint> {

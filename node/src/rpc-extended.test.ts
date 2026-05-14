@@ -3043,6 +3043,82 @@ test("RPC Extended Methods", async (t) => {
     }
   })
 
+  await t.test("#515: coc_dhtFindProviders / coc_ipfsFetchBlockFromPeer reject valid-shape-but-not-CID strings (no silent empty result)", async () => {
+    // Live testnet 88780 reproduction (pre-fix):
+    //   coc_dhtFindProviders("bad-cid")  → {"providers":[]}
+    //   coc_ipfsFetchBlockFromPeer("bad-cid") → {"bytes":null}
+    //
+    // The pre-fix shape gate (#146) accepted any ≤512-char ascii string
+    // without path-traversal markers as a "CID". `findProviders("bad-cid")`
+    // routed garbage into the DHT layer, which correctly returned no
+    // matches — but clients couldn't distinguish "no providers advertise
+    // this CID" from "your CID string is malformed and was silently routed
+    // to a meaningless lookup". Same anti-pattern family as #511 (silent
+    // empty result that mimics no-data) and #513 (silent param drop).
+    //
+    // Fix: validate against the real Qm v0 base58 / b/B v1 base32 CID
+    // shape — same policy as IpfsHttpServer.isValidCid so the JSON-RPC
+    // surface aligns with the HTTP gateway. coc_erasureStatus already
+    // uses CID.parse() (via resolveCid) and rejects "bad-cid" with -32602;
+    // this fix brings the two DHT-only methods in line.
+    const fakeCids = [
+      "bad-cid",          // missing Qm / b prefix
+      "not-a-cid",        // ditto
+      "deadbeef",         // looks hex
+      "qmlowercaseprefix",// Qm-prefix is case-sensitive
+      "bUPPERCASE",       // base32 v1 must be lowercase
+      "Qm-has-dashes",    // base58 alphabet excludes -
+      "bafy with space",  // (would already fail the control-char gate but test the shape too)
+    ]
+    const probe = async (method: string, cid: string) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: [cid] }),
+      })
+      return await r.json() as { result?: unknown; error?: { code: number; message: string } }
+    }
+    for (const method of ["coc_dhtFindProviders", "coc_ipfsFetchBlockFromPeer"]) {
+      for (const cid of fakeCids) {
+        const res = await probe(method, cid)
+        assert.ok(res.error, `${method}("${cid}") MUST error (not silently return empty), got result=${JSON.stringify(res.result)}`)
+        assert.equal(res.error!.code, -32602,
+          `${method}("${cid}") must be -32602, got ${res.error!.code}`)
+        assert.match(res.error!.message, /invalid cid/i,
+          `${method}("${cid}") message must mention "invalid cid", got "${res.error!.message}"`)
+        assert.equal(res.result, undefined,
+          `${method}("${cid}") MUST NOT carry a result alongside the error`)
+      }
+    }
+  })
+
+  await t.test("#515: coc_dhtFindProviders accepts real CID shapes (Qm v0 + b v1 base32)", async () => {
+    // Defense: lock down which shapes are ALLOWED through the gate. The
+    // -32602 reject must be scoped to real garbage; real CIDs (Qm v0
+    // base58, b/B v1 base32) should reach the DHT layer and return
+    // `{providers:[]}` if no peer has advertised them. Pre-fix this
+    // worked by accident (over-permissive gate); post-fix we lock the
+    // contract.
+    const realCids = [
+      "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",   // v0 base58 (canonical "Hello World")
+      "bafkreigh2akiscaildc3xspxqzodxwauiakiiykohrgrlqkx5kbjepltrm", // v1 base32 raw
+      "bafybeianrutwhfx2ysd6cohv2e5lrvijxihi7qgvjzuqooql6o67uta7pq", // v1 base32 dag-pb
+    ]
+    for (const cid of realCids) {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "coc_dhtFindProviders", params: [cid] }),
+      })
+      const res = await r.json() as { result?: { providers: string[] }; error?: { code: number; message: string } }
+      assert.equal(res.error, undefined,
+        `coc_dhtFindProviders("${cid}") must accept real CID, got error: ${JSON.stringify(res.error)}`)
+      assert.ok(res.result, "must return a result")
+      assert.ok(Array.isArray(res.result!.providers),
+        "result.providers must be an array (possibly empty)")
+    }
+  })
+
   await t.test("#288: eth_compileSolidity rejects oversize source (DoS gate; pre-fix 14.9 KB blocked event loop 5+ min)", async () => {
     // solc.compile is synchronous emscripten WASM. A single moderately
     // large source (500 empty contracts ≈ 15 KB) took 5m20s on 88780,
