@@ -1597,7 +1597,12 @@ export class IpfsHttpServer {
         } else if (
           /is a directory/i.test(msg) ||
           /directory not empty/i.test(msg) ||
-          /^cannot (remove|operate on|copy)/i.test(msg) ||
+          // #270: sibling of `cannot copy directory into its own subdirectory`
+          // — mfs.mv throws the same shape with `move` instead of `copy`. The
+          // alternation was missing `move` so /files/mv falls through to 500
+          // with the generic "internal error" body (and an ERROR log line per
+          // probe). Same regex-mismatch family as #232/#268/#543.
+          /^cannot (remove|operate on|copy|move)/i.test(msg) ||
           /must be/i.test(msg) ||
           /^missing /i.test(msg) ||
           /^write would exceed/i.test(msg) ||
