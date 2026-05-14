@@ -2163,24 +2163,43 @@ describe("#312 pubsub topic rejects control characters", () => {
     const pubsub = new PubsubCtor({ nodeId: "peers-test" })
     server.attachSubsystems({ pubsub })
     try {
-      // No-arg form (server-wide peer list)
-      const r1 = await fetch("/api/v0/pubsub/peers", { method: "POST" })
-      assert.equal(r1.status, 200)
-      const b1 = await r1.json() as Record<string, unknown>
-      assert.deepStrictEqual(Object.keys(b1).sort(), ["Strings"],
-        `body keys must be exactly ["Strings"] (kubo parity), got ${JSON.stringify(b1)}`)
-      assert.ok(Array.isArray(b1.Strings), "Strings must be an array")
-      assert.equal((b1 as { count?: unknown }).count, undefined,
-        "non-standard `count` field must not be present")
-
-      // Topic-arg form
+      // Topic-arg form (success) — note: #416 now requires arg, so the
+      // no-arg case lives in its own subtest below.
       const r2 = await fetch("/api/v0/pubsub/peers?arg=topic1", { method: "POST" })
       assert.equal(r2.status, 200)
       const b2 = await r2.json() as Record<string, unknown>
       assert.deepStrictEqual(Object.keys(b2).sort(), ["Strings"],
         `topic-arg body keys must be exactly ["Strings"], got ${JSON.stringify(b2)}`)
+      assert.ok(Array.isArray(b2.Strings), "Strings must be an array")
       assert.equal((b2 as { count?: unknown }).count, undefined,
         "non-standard `count` field must not be present (topic-arg form)")
+    } finally {
+      pubsub.stop()
+    }
+  })
+
+  it("#416: pubsub/peers rejects empty topic (sibling guard with pub/sub)", async () => {
+    // Pre-fix `pubsub/peers` was missing the empty-topic guard that
+    // `pub` and `sub` already had. `?arg=` (empty) or no `arg` at all
+    // flowed through to `pubsub.getSubscribers("")` and the response
+    // was the same as "real topic, no subscribers" — caller couldn't
+    // tell their topic was missing. Control-character rejection in the
+    // same handler covered separately by #312/#313 at the route prefix.
+    const { IpfsPubsub: PubsubCtor416 } = await import("./ipfs-pubsub.ts")
+    const pubsub = new PubsubCtor416({ nodeId: "peers416-test" })
+    server.attachSubsystems({ pubsub })
+    try {
+      // No arg → 400 missing topic
+      const r1 = await fetch("/api/v0/pubsub/peers", { method: "POST" })
+      assert.equal(r1.status, 400, `no-arg peers must 400, got ${r1.status}`)
+      const b1 = await r1.json() as { error?: string }
+      assert.match(b1.error ?? "", /missing topic/i)
+      // Empty arg → 400 missing topic
+      const r2 = await fetch("/api/v0/pubsub/peers?arg=", { method: "POST" })
+      assert.equal(r2.status, 400, `empty-arg peers must 400, got ${r2.status}`)
+      // Sanity: real topic still 200
+      const r3 = await fetch("/api/v0/pubsub/peers?arg=valid-topic", { method: "POST" })
+      assert.equal(r3.status, 200, `valid topic must succeed`)
     } finally {
       pubsub.stop()
     }
