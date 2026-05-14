@@ -3043,6 +3043,95 @@ test("RPC Extended Methods", async (t) => {
     }
   })
 
+  await t.test("#511: eth_getFilterChanges / eth_getFilterLogs return -32000 'filter not found' for unknown filter id (not silent [])", async () => {
+    // Live testnet 88780 reproduction (pre-fix):
+    //   eth_getFilterChanges("0x12345678901234567890123456789012")  // valid shape, never created
+    //   → {"jsonrpc":"2.0","id":1,"result":[]}
+    //   eth_getFilterLogs("0x12345678901234567890123456789012")
+    //   → {"jsonrpc":"2.0","id":1,"result":[]}
+    //
+    // Geth contract (eth/filters/api.go GetFilterChanges / GetFilterLogs):
+    //   {"error":{"code":-32000,"message":"filter not found"}}
+    //
+    // The pre-fix `[]` return is indistinguishable from "filter exists, no
+    // matches yet". Long-running log subscribers (ethers.js, viem) detect
+    // filter expiry via the error and recreate the filter; pre-fix they
+    // silently lost ALL log updates after the server's filter TTL elapsed.
+    // Block-explorers / indexers polling on a stale id would log empty
+    // forever, eventually missing events the contract emitted.
+    //
+    // eth_uninstallFilter is the only filter method that *should* return a
+    // bool (true/false) instead of an error — geth matches that, and #196
+    // already aligned us with it. The #511 fix is scoped to the two methods
+    // that need to carry "filter expired, please recreate" semantics.
+    const validIdShape = "0x12345678901234567890123456789012"
+    const probe = async (method: string) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: [validIdShape] }),
+      })
+      return await r.json() as { result?: unknown; error?: { code: number; message: string } }
+    }
+    for (const method of ["eth_getFilterChanges", "eth_getFilterLogs"]) {
+      const res = await probe(method)
+      assert.ok(res.error, `${method}("${validIdShape}") MUST return an error for unknown filter id, got result=${JSON.stringify(res.result)}`)
+      assert.equal(res.error!.code, -32000,
+        `${method} unknown-id error code must be -32000 (geth parity), got ${res.error!.code}`)
+      assert.match(res.error!.message, /^filter not found$/i,
+        `${method} unknown-id message must be exactly "filter not found" (geth verbatim), got "${res.error!.message}"`)
+      assert.equal(res.result, undefined,
+        `${method} MUST NOT carry a result alongside the error`)
+    }
+    // Regression: eth_uninstallFilter is the OPPOSITE — unknown id returns
+    // `false`, not an error. Lock that contract so future cleanups don't
+    // over-apply the #511 change.
+    const r = await fetch(`http://127.0.0.1:${port}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_uninstallFilter", params: [validIdShape] }),
+    })
+    const rJson = await r.json() as { result?: unknown; error?: unknown }
+    assert.equal(rJson.error, undefined,
+      `eth_uninstallFilter MUST NOT error on unknown id (geth returns false), got ${JSON.stringify(rJson)}`)
+    assert.equal(rJson.result, false,
+      `eth_uninstallFilter unknown-id MUST return false, got ${JSON.stringify(rJson.result)}`)
+  })
+
+  await t.test("#511: eth_getFilterChanges DOES return [] for existing filter with no new events (not 'filter not found')", async () => {
+    // Defense: ensure the #511 fix doesn't conflate "no matches" with
+    // "filter expired". Create a fresh block filter, immediately poll —
+    // there may or may not be new blocks; the call must still succeed
+    // (return an array, not a -32000 error).
+    const newF = await fetch(`http://127.0.0.1:${port}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_newBlockFilter", params: [] }),
+    })
+    const newJson = await newF.json() as { result?: string; error?: unknown }
+    assert.equal(newJson.error, undefined, `eth_newBlockFilter must succeed: ${JSON.stringify(newJson)}`)
+    const filterId = newJson.result!
+    assert.match(filterId, /^0x[0-9a-fA-F]{32}$/, "filter id must be 16-byte hex")
+    try {
+      const poll = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getFilterChanges", params: [filterId] }),
+      })
+      const pollJson = await poll.json() as { result?: unknown[]; error?: unknown }
+      assert.equal(pollJson.error, undefined,
+        `eth_getFilterChanges on a real existing filter MUST NOT error, got ${JSON.stringify(pollJson)}`)
+      assert.ok(Array.isArray(pollJson.result),
+        "eth_getFilterChanges on existing filter must return an array (possibly empty)")
+    } finally {
+      await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_uninstallFilter", params: [filterId] }),
+      })
+    }
+  })
+
   await t.test("#288: eth_compileSolidity rejects oversize source (DoS gate; pre-fix 14.9 KB blocked event loop 5+ min)", async () => {
     // solc.compile is synchronous emscripten WASM. A single moderately
     // large source (500 empty contracts ≈ 15 KB) took 5m20s on 88780,

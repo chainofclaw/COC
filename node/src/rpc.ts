@@ -1195,7 +1195,14 @@ async function handleRpc(
       // a perpetual empty stream that mimics "no new events."
       const id = requireFilterId(payload.params ?? [], 0)
       const filter = filters.get(id)
-      if (!filter) return []
+      // #511: pre-fix returned [] for an unknown filter ID, indistinguishable
+      // from "filter exists but matched zero events". Long-running ethers.js
+      // / viem log subscribers detect filter expiry via the `filter not
+      // found` error and recreate; pre-fix they silently lost all log updates
+      // after the filter aged out of the server's TTL window. Geth's contract
+      // (eth/filters/api.go GetFilterChanges) returns
+      // `{"error":{"code":-32000,"message":"filter not found"}}` for this case.
+      if (!filter) throw { code: -32000, message: "filter not found" }
       // Refresh the filter's last-access timestamp so cleanupExpiredFilters
       // doesn't reap an actively polled subscriber.
       filter.lastAccessedAtMs = Date.now()
@@ -1844,7 +1851,10 @@ async function handleRpc(
       // #196: parity with eth_getFilterChanges / eth_uninstallFilter.
       const id = requireFilterId(payload.params ?? [], 0)
       const filter = filters.get(id)
-      if (!filter) return []
+      // #511: same `[]` → `-32000 "filter not found"` fix as
+      // eth_getFilterChanges — clients can't recover from filter expiry
+      // without an error signal.
+      if (!filter) throw { code: -32000, message: "filter not found" }
       // Refresh last-access time so active polls keep the filter alive.
       filter.lastAccessedAtMs = Date.now()
       // getFilterLogs is a log-filter-only method: block and pendingTx
