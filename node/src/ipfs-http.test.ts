@@ -454,6 +454,31 @@ describe("IpfsHttpServer", () => {
     assert.equal(bgBody.error, "block not found")
   })
 
+  it("#272: gateway /ipfs/<raw-cid> returns 200 (not 500 'internal error')", async () => {
+    // Pre-fix the gateway called `this.unixfs.readFile(cid)` directly,
+    // which throws `Error("not a unixfs file")` for any non-UnixFS CID.
+    // The inline catch only mapped "not found"; the unixfs-shape mismatch
+    // fell through to the outer 500. Sibling `/api/v0/cat` already
+    // dispatched raw/erasure via `resolveCid`.
+    // Same family as #168 (ENOENT → 500), #232 (path traversal → 500),
+    // #268 (path-too-deep → 500), #270 (cannot-move → 500), #543 (mkdir
+    // on file-collision → 500): each spammed log.error per probe.
+    const payload = new TextEncoder().encode("raw-block payload-272")
+    const putRes = await fetch("/api/v0/block/put", { method: "POST", body: payload })
+    assert.equal(putRes.status, 200, "block/put must accept raw bytes")
+    const putBody = await putRes.json() as { Key: string }
+    const cid = putBody.Key
+    // gateway should now succeed for raw block CIDs
+    const gw = await fetch(`/ipfs/${cid}`)
+    assert.equal(gw.status, 200, `gateway must 200 for raw-block CID, got ${gw.status}`)
+    const body = new Uint8Array(await gw.buffer())
+    assert.deepEqual(body, payload, "gateway body must match raw block bytes")
+    // Sibling /api/v0/cat must still work the same
+    const cat = await fetch(`/api/v0/cat?arg=${cid}`, { method: "POST" })
+    assert.equal(cat.status, 200, "cat must still 200 for raw-block CID")
+    assert.deepEqual(new Uint8Array(await cat.buffer()), payload)
+  })
+
   it("#174: /api/v0/cat honors offset + length query params", async () => {
     // Pre-fix the handler accepted offset/length/count via query but
     // ignored them, returning the full file. Malformed values
