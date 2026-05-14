@@ -4,8 +4,6 @@ import { Wallet } from "ethers";
 import { loadConfig } from "./lib/config.ts";
 import { InMemoryStore } from "./lib/state.ts";
 import { recordChallengeBounded } from "./lib/bounded-challenge-store.ts";
-  })
-
 import { validatePoseWitnessPayload } from "./lib/pose-witness-validator.ts";
 import { IpfsBlockstore } from "../node/src/ipfs-blockstore.ts";
 import { loadStorageProof, MerkleLeavesCache } from "./lib/storage-proof.ts";
