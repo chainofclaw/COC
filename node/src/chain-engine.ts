@@ -174,6 +174,22 @@ export class ChainEngine {
     // Pre-check: decode tx hash and reject if already confirmed BEFORE adding to mempool
     // Fixes TOCTOU race where tx could be picked by pickForBlock between add and check
     const decoded = Transaction.from(rawTx)
+    // #527: chainId is a STRUCTURAL property of the tx — verify it before
+    // any dynamic-state checks (hash dedup, nonce, balance). Pre-fix a
+    // wrong-chain tx with a low nonce got the misleading "nonce too low"
+    // error from line ~184 because mempool.addRawTx (mempool.ts:155)
+    // ran AFTER the engine-level nonce check; clients had to bump nonce,
+    // re-sign, and re-submit just to learn their chainId was fundamentally
+    // wrong. Geth and Erigon check chainId first because it's
+    // immutable for a given signed tx.
+    const txChainId = (decoded as { chainId?: bigint | number | null }).chainId
+    if (
+      txChainId !== null &&
+      txChainId !== undefined &&
+      BigInt(txChainId) !== BigInt(this.cfg.chainId ?? 18780)
+    ) {
+      throw new Error(`invalid chain ID: expected ${this.cfg.chainId}, got ${txChainId}`)
+    }
     if (this.txHashSet.has(decoded.hash as Hex)) {
       throw new Error("tx already confirmed")
     }
