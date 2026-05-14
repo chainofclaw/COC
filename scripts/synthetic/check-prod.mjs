@@ -41,6 +41,23 @@ const cfg = {
   blockFreshnessSec: Number(process.env.COC_BLOCK_FRESHNESS_SEC || '60'),
   intervalSec: Number(process.env.CHECK_INTERVAL_SEC || '60'),
   timeoutMs: Number(process.env.CHECK_TIMEOUT_MS || '15000'),
+  // Per-validator RPC endpoints for cross-validator consistency checks.
+  // Format "name=host:port,name=host:port,...". Reachable from prod-2.
+  validatorRpcs: (process.env.COC_VALIDATOR_RPCS ||
+    'v1=209.74.64.88:38780,v2=159.198.44.136:28780,v3=199.192.16.79:28780,v4=159.198.36.3:28780,v5=159.198.36.25:28780'
+  ).split(',').map(s => {
+    const [name, hp] = s.split('='); const [host, port] = hp.split(':')
+    return { name, url: `http://${host}:${port}` }
+  }),
+  // Block time monitoring: sample N latest blocks, compute p95 inter-block
+  // delta. Alert if p95 > limit (= 2× nominal 3s).
+  blockTimeSampleN: Number(process.env.COC_BLOCK_TIME_SAMPLE_N || '50'),
+  blockTimeP95LimitSec: Number(process.env.COC_BLOCK_TIME_P95_LIMIT_SEC || '6'),
+  // Reorg detection: remember last seen (number, hash) and verify unchanged.
+  reorgStateFile: process.env.COC_REORG_STATE || '/var/lib/coc-synthetic/reorg-state.json',
+  // Look back this many blocks from tip (well past finality depth = 3) so we
+  // don't false-positive on natural unstabilized-head shuffling.
+  reorgLookback: Number(process.env.COC_REORG_LOOKBACK || '20'),
 }
 
 // ---------- helpers ----------
@@ -281,6 +298,120 @@ const checks = [
       const res = await fetchWithTimeout(cfg.ipfsUrl + '/')
       if (!res.ok) throw new Error(`ipfs / HTTP ${res.status}`)
       return `200`
+    },
+  },
+  {
+    // Cross-validator consistency: probe each validator's RPC directly and
+    // assert stateRoot agreement on a near-finalized block (tip - 5). Catches
+    // forks that public RPC's single-perspective check would miss.
+    name: 'consensus.stateRootAgreement',
+    critical: true,
+    async run() {
+      const rpcDirect = async (url, method, params = []) => {
+        const res = await fetchWithTimeout(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+        }, 5000)
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const j = await res.json()
+        if (j.error) throw new Error(j.error.message)
+        return j.result
+      }
+      const refTip = Number(await rpc('eth_blockNumber')) >>> 0 || parseInt(await rpc('eth_blockNumber'), 16)
+      // tip-5 is past finality depth (3), so block hash should be stable.
+      const probeHeight = Math.max(1, refTip - 5)
+      const blockTag = '0x' + probeHeight.toString(16)
+      const results = await Promise.allSettled(
+        cfg.validatorRpcs.map(async (v) => {
+          const b = await rpcDirect(v.url, 'eth_getBlockByNumber', [blockTag, false])
+          if (!b) throw new Error(`${v.name}: block ${probeHeight} missing`)
+          return { name: v.name, hash: b.hash, stateRoot: b.stateRoot }
+        }),
+      )
+      const ok = results.filter(r => r.status === 'fulfilled').map(r => r.value)
+      const fail = results.filter(r => r.status === 'rejected').map((r, i) =>
+        ({ name: cfg.validatorRpcs[i].name, err: r.reason?.message || String(r.reason) }))
+      if (ok.length < 3) {
+        throw new Error(`only ${ok.length}/${cfg.validatorRpcs.length} validators responded (need ≥3 for BFT quorum)`)
+      }
+      const roots = new Set(ok.map(r => r.stateRoot))
+      if (roots.size > 1) {
+        throw new Error(
+          `STATEROOT FORK at block ${probeHeight}: ${ok.map(r => `${r.name}=${r.stateRoot?.slice(0,12)}`).join(' ')}`,
+        )
+      }
+      return `${ok.length}/${cfg.validatorRpcs.length} validators agree@${probeHeight}${fail.length ? ` (offline: ${fail.map(f => f.name).join(',')})` : ''}`
+    },
+  },
+  {
+    // Block time p95 over last N blocks. Catches gradual proposer-slot misses
+    // before they become full freezes.
+    name: 'chain.blockTimeP95',
+    critical: false,
+    async run() {
+      const tipHex = await rpc('eth_blockNumber')
+      const tip = parseInt(tipHex, 16)
+      const n = Math.min(cfg.blockTimeSampleN, tip)
+      // Single JSON-RPC batch — 51 individual fetches saturated undici's
+      // connect pool and timed out at 10s. One round-trip handles them all.
+      const batch = Array.from({ length: n + 1 }, (_, i) => ({
+        jsonrpc: '2.0', id: i, method: 'eth_getBlockByNumber',
+        params: ['0x' + (tip - n + i).toString(16), false],
+      }))
+      const res = await fetchWithTimeout(cfg.rpcUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(batch),
+      }, 10_000)
+      if (!res.ok) throw new Error(`batch HTTP ${res.status}`)
+      const jsons = await res.json()
+      // Sort by request id since batch responses may be out-of-order.
+      jsons.sort((a, b) => a.id - b.id)
+      const blocks = jsons.map((j) => j.result)
+      const deltas = []
+      for (let i = 1; i < blocks.length; i++) {
+        const t1 = parseInt(blocks[i].timestamp, 16)
+        const t0 = parseInt(blocks[i - 1].timestamp, 16)
+        deltas.push(t1 - t0)
+      }
+      deltas.sort((a, b) => a - b)
+      const p50 = deltas[Math.floor(deltas.length * 0.5)]
+      const p95 = deltas[Math.floor(deltas.length * 0.95)]
+      const max = deltas[deltas.length - 1]
+      if (p95 > cfg.blockTimeP95LimitSec) {
+        throw new Error(`block time p95 ${p95}s > ${cfg.blockTimeP95LimitSec}s (p50=${p50} max=${max})`)
+      }
+      return `p50=${p50}s p95=${p95}s max=${max}s over ${n} blocks`
+    },
+  },
+  {
+    // Reorg detection: remember a recent block's hash. Next tick, verify
+    // the SAME block number still has the SAME hash. Look back well past
+    // finality depth (default 20 blocks) so natural head shuffle doesn't
+    // false-positive.
+    name: 'chain.reorgWatch',
+    critical: true,
+    async run() {
+      const fs = await import('node:fs')
+      const tip = parseInt(await rpc('eth_blockNumber'), 16)
+      const watchHeight = Math.max(1, tip - cfg.reorgLookback)
+      const blockTag = '0x' + watchHeight.toString(16)
+      const block = await rpc('eth_getBlockByNumber', [blockTag, false])
+      if (!block) throw new Error(`watch block ${watchHeight} missing`)
+      const current = { height: watchHeight, hash: block.hash, observedAt: Date.now() }
+      let prev = null
+      try { prev = JSON.parse(fs.readFileSync(cfg.reorgStateFile, 'utf8')) } catch {}
+      // Persist current observation for next tick.
+      try {
+        const dir = cfg.reorgStateFile.substring(0, cfg.reorgStateFile.lastIndexOf('/'))
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+        fs.writeFileSync(cfg.reorgStateFile, JSON.stringify(current, null, 2))
+      } catch {}
+      if (prev && prev.height === watchHeight && prev.hash !== current.hash) {
+        throw new Error(`REORG at block ${watchHeight}: was ${prev.hash?.slice(0,12)} now ${current.hash?.slice(0,12)}`)
+      }
+      return `watching ${watchHeight}=${current.hash.slice(0, 12)}…${prev?.height === watchHeight ? ' (unchanged)' : ' (new watch)'}`
     },
   },
 ]
