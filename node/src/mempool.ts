@@ -97,6 +97,43 @@ export function computeIntrinsicGas(tx: Transaction): bigint {
   return gas
 }
 
+// #529: hoist the structural-only validation out of Mempool.addRawTx so the
+// chain engine can run these checks BEFORE its dynamic-state checks (hash
+// dedup, nonce, balance). All checks here depend only on the signed tx
+// itself — chainId is signed-in via EIP-155/EIP-2930, gas limits and
+// intrinsic gas are derivable from the tx body, blob-type is the tx type
+// field. None of them require state.
+//
+// Pre-fix the wrong validation order produced misleading errors for tx
+// that had MULTIPLE problems: a wrong-chain tx with low nonce got
+// "nonce too low" (which my #527 fix partially addressed for chainId),
+// but a tx with gasLimit > 30M and low nonce STILL got "nonce too low"
+// instead of "gasLimit exceeds maximum". Same anti-pattern, broader fix.
+//
+// Throws Error (not invalidParams) since this is shared chain-engine
+// code; rpc.ts maps these messages to -32602 via existing regex matches
+// (rpc.ts:1110-1117).
+export const MAX_TX_GAS_LIMIT = 30_000_000n
+export function validateTxStructure(tx: Transaction, chainId: number): void {
+  if (!tx.from) {
+    throw new Error("invalid tx: missing sender")
+  }
+  if (tx.chainId !== BigInt(chainId)) {
+    throw new Error(`invalid chain ID: expected ${chainId}, got ${tx.chainId}`)
+  }
+  if (tx.type === 3) {
+    throw new Error("blob transactions (type 3) are not supported")
+  }
+  const gasLimit = tx.gasLimit ?? 21000n
+  if (gasLimit > MAX_TX_GAS_LIMIT) {
+    throw new Error(`gasLimit exceeds maximum: ${gasLimit} > ${MAX_TX_GAS_LIMIT}`)
+  }
+  const intrinsicGasRequired = computeIntrinsicGas(tx)
+  if (gasLimit < intrinsicGasRequired) {
+    throw new Error(`intrinsic gas too low: have ${gasLimit}, want ${intrinsicGasRequired}`)
+  }
+}
+
 export class Mempool {
   private readonly txs = new Map<Hex, MempoolTx>()
   // Index: sender -> set of tx hashes for fast per-sender lookups
@@ -146,52 +183,25 @@ export class Mempool {
 
   addRawTx(rawTx: Hex, preDecoded?: Transaction): MempoolTx {
     const tx = preDecoded ?? Transaction.from(rawTx)
-    if (!tx.from) {
-      throw new Error("invalid tx: missing sender")
-    }
-
-    // Replay protection: validate chain ID (reject chainId=0 to prevent cross-chain replay)
-    if (tx.chainId !== BigInt(this.cfg.chainId)) {
-      throw new Error(`invalid chain ID: expected ${this.cfg.chainId}, got ${tx.chainId}`)
-    }
+    // #529: structural-only checks (missing sender, chainId, blob type,
+    // gas limits, intrinsic gas) are hoisted to validateTxStructure so
+    // the chain engine can run them BEFORE its dynamic-state checks
+    // (hash dedup, nonce, balance). The mempool still calls them here
+    // as defense-in-depth — preDecoded txs coming from re-insertion
+    // paths (block reorg, snapshot replay) shouldn't be assumed
+    // pre-validated.
+    validateTxStructure(tx, this.cfg.chainId)
 
     if (this.poisoned.has((tx.hash as Hex).toLowerCase() as Hex)) {
       throw new Error(`tx ${tx.hash} is poisoned (hung block execution previously)`)
     }
 
-    const from = tx.from.toLowerCase() as Hex
+    const from = tx.from!.toLowerCase() as Hex
     const nonce = BigInt(tx.nonce)
     const gasPrice = tx.gasPrice ?? tx.maxFeePerGas ?? 0n
     const maxFeePerGas = tx.maxFeePerGas ?? tx.gasPrice ?? 0n
     const maxPriorityFeePerGas = tx.maxPriorityFeePerGas ?? 0n
     const gasLimit = tx.gasLimit ?? 21000n
-
-    // Reject blob transactions (type 3) — COC has no blob sidecar support
-    if (tx.type === 3) {
-      throw new Error("blob transactions (type 3) are not supported")
-    }
-
-    // Reject transactions with gasLimit exceeding block gas limit (prevents
-    // mempool pollution with txs that can never be included in a block)
-    const MAX_TX_GAS_LIMIT = 30_000_000n
-    if (gasLimit > MAX_TX_GAS_LIMIT) {
-      throw new Error(`gasLimit exceeds maximum: ${gasLimit} > ${MAX_TX_GAS_LIMIT}`)
-    }
-
-    // #334: reject gasLimit below the EIP-3 intrinsic gas cost. Pre-fix the
-    // mempool only enforced the upper bound, so a tx with `gasLimit=100`
-    // returned a success hash from eth_sendRawTransaction but could never
-    // execute — wasting a nonce slot and leaving the user with a tx they
-    // can't replace (without a 10% bump on already-zero gas price). Also
-    // a clean mempool-fill DoS surface since these txs sit forever.
-    // Geth surfaces this as -32000 "intrinsic gas too low: gas X, minimum
-    // needed Y"; mirror the message so existing clients parse it.
-    const intrinsicGasRequired = computeIntrinsicGas(tx)
-    if (gasLimit < intrinsicGasRequired) {
-      throw new Error(
-        `intrinsic gas too low: have ${gasLimit}, want ${intrinsicGasRequired}`,
-      )
-    }
 
     const item: MempoolTx = {
       hash: tx.hash as Hex,

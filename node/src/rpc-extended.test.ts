@@ -388,6 +388,64 @@ test("RPC Extended Methods", async (t) => {
     assert.deepEqual(byMixedHash, byLowerHash, "mixed-case hash must yield the same receipts as lowercase")
   })
 
+  await t.test("#529: eth_sendRawTransaction structural checks (gasLimit / intrinsic gas) fire BEFORE nonce", async () => {
+    // Live testnet 88780 reproduction (pre-fix):
+    //   wallet.signTransaction({chainId: 88780, nonce: 0, gasLimit: 999_999_999n, ...})
+    //   eth_sendRawTransaction(raw)
+    //   → {"error":{"code":-32000,"message":"nonce too low: tx nonce 0, on-chain nonce 282"}}
+    //   The SAME tx with nonce=999 (above on-chain) got the *correct* error:
+    //   → {"error":{"code":-32000,"message":"gasLimit exceeds maximum: 999999999 > 30000000"}}
+    //
+    // #527 extracted the chainId-vs-nonce ordering bug; this PR
+    // generalizes the lift to ALL structural checks (gasLimit upper
+    // bound, intrinsic gas lower bound, blob-type rejection,
+    // missing-sender) via a shared `validateTxStructure` helper in
+    // mempool.ts. Geth + Erigon both check structural-first because
+    // a structurally broken tx is unfixable regardless of state.
+    const { Wallet } = await import("ethers")
+    const wallet = new Wallet("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80")
+    const fixtureChainId = Number(BigInt(await rpcCall(port, "eth_chainId", []) as string))
+    const probe = async (raw: string) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_sendRawTransaction", params: [raw] }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    }
+    // (a) gasLimit > block max + nonce=0 → must report gasLimit error, NOT nonce.
+    const overGas = await wallet.signTransaction({
+      chainId: fixtureChainId,
+      nonce: 0,
+      gasLimit: 999_999_999n,
+      gasPrice: 1_000_000_000n,
+      to: "0x0000000000000000000000000000000000000001",
+      value: 1n,
+    })
+    const r1 = await probe(overGas)
+    assert.ok(r1.error)
+    assert.match(r1.error!.message, /gasLimit exceeds maximum/i,
+      `over-gas tx error must mention gasLimit, got: ${r1.error!.message}`)
+    assert.doesNotMatch(r1.error!.message, /nonce too low/i,
+      `over-gas tx must NOT be misreported as nonce too low, got: ${r1.error!.message}`)
+
+    // (b) intrinsic gas too low + nonce=0 → must report intrinsic-gas, NOT nonce.
+    const underGas = await wallet.signTransaction({
+      chainId: fixtureChainId,
+      nonce: 0,
+      gasLimit: 1n,
+      gasPrice: 1_000_000_000n,
+      to: "0x0000000000000000000000000000000000000001",
+      value: 1n,
+    })
+    const r2 = await probe(underGas)
+    assert.ok(r2.error)
+    assert.match(r2.error!.message, /intrinsic gas too low/i,
+      `under-gas tx error must mention intrinsic gas, got: ${r2.error!.message}`)
+    assert.doesNotMatch(r2.error!.message, /nonce too low/i,
+      `under-gas tx must NOT be misreported as nonce too low, got: ${r2.error!.message}`)
+  })
+
   await t.test("#122: eth_getBalance / eth_getTransactionCount / coc_getContractInfo reject malformed addresses with -32602", async () => {
     // Pre-fix bugs:
     //   - eth_getBalance returned -32603 with the raw input echoed back

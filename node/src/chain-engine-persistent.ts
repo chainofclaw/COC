@@ -8,7 +8,7 @@
  */
 
 import type { TxReceipt, EvmChain, EvmLog } from "./evm.ts"
-import { Mempool } from "./mempool.ts"
+import { Mempool, validateTxStructure } from "./mempool.ts"
 import { hashBlockPayload, validateBlockLink, zeroHash } from "./hash.ts"
 import { keccak256Hex } from "../../services/relayer/keccak256.ts"
 import type { ChainBlock, Hex, MempoolTx } from "./blockchain-types.ts"
@@ -623,6 +623,15 @@ export class PersistentChainEngine {
     // nonce via evm.getNonce hits the live state manager, which reflects
     // the latest applied block.
     const decoded = Transaction.from(rawTx)
+    // #529: structural-only validation (chainId, gas limits, intrinsic gas,
+    // blob-type) runs BEFORE dynamic-state checks (hash dedup, nonce,
+    // balance). Pre-fix a tx with a structural defect AND a low nonce
+    // got the misleading "nonce too low" error from line ~637 because
+    // mempool.addRawTx (where these checks lived) ran AFTER the
+    // engine-level nonce check. Mirrors the same lift in chain-engine.ts
+    // addRawTx. Builds on #527 (chainId only) by extending to ALL
+    // structural properties.
+    validateTxStructure(decoded, this.cfg.chainId ?? 18780)
 
     // Mirror in-memory engine order: hash dedup first (more specific error
     // for same-tx replay), then stale-nonce check (catches different-tx-same-

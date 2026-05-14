@@ -1,5 +1,5 @@
 import type { TxReceipt, EvmChain } from "./evm.ts"
-import { Mempool } from "./mempool.ts"
+import { Mempool, validateTxStructure } from "./mempool.ts"
 import { ChainStorage } from "./storage.ts"
 import { hashBlockPayload, validateBlockLink, zeroHash } from "./hash.ts"
 import type { ChainBlock, ChainSnapshot, Hex, MempoolTx } from "./blockchain-types.ts"
@@ -174,6 +174,16 @@ export class ChainEngine {
     // Pre-check: decode tx hash and reject if already confirmed BEFORE adding to mempool
     // Fixes TOCTOU race where tx could be picked by pickForBlock between add and check
     const decoded = Transaction.from(rawTx)
+    // #529: structural-only validation (chainId, gas limits, intrinsic gas,
+    // blob-type) runs BEFORE dynamic-state checks (hash dedup, nonce,
+    // balance). Pre-fix a tx with a structural defect AND a low nonce
+    // got the misleading "nonce too low" error from line ~184 because
+    // mempool.addRawTx (where these checks lived) ran AFTER the
+    // engine-level nonce check. Geth + Erigon check structural first
+    // because a structurally-broken tx is unfixable regardless of state.
+    // Builds on #527 (chainId only) by extending to ALL structural
+    // properties.
+    validateTxStructure(decoded, this.cfg.chainId ?? 18780)
     if (this.txHashSet.has(decoded.hash as Hex)) {
       throw new Error("tx already confirmed")
     }
