@@ -388,6 +388,48 @@ test("RPC Extended Methods", async (t) => {
     assert.deepEqual(byMixedHash, byLowerHash, "mixed-case hash must yield the same receipts as lowercase")
   })
 
+  await t.test("#535: eth_newFilter resolves blockHash (snapshot semantics, geth parity)", async () => {
+    // Live testnet 88780 reproduction (pre-fix):
+    //   eth_newFilter({"blockHash":"0xdeadbeef..."})  // valid shape, doesn't exist
+    //   → {"result":"0x99456e8befc455cf79f9dc16b1d1b5c5"}    // SUCCESSFUL FILTER ID
+    //   eth_getFilterLogs("0x99456e8b...")
+    //   → {"result":[]}    // SILENT EMPTY — caller never learns the hash didn't exist
+    //
+    // Same anti-pattern as #533 (eth_getLogs blockHash silently ignored).
+    // eth_newFilter shared the bug — `parseBlockTag(undefined, height)
+    // = latest` so a blockHash filter silently became a "latest block"
+    // filter. The blockHash field was completely dropped before the
+    // filter was stored.
+    //
+    // Fix: eth_newFilter resolves blockHash → fromBlock=toBlock=
+    // block.number (snapshot semantics matching geth's behavior).
+    // Throws -32000 "unknown block" if the hash doesn't resolve.
+    const probe = async (filter: unknown) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_newFilter", params: [filter] }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: string }
+    }
+    const nonexistent = await probe({ blockHash: "0xdeadbeef000000000000000000000000000000000000000000000000deadbeef" })
+    assert.ok(nonexistent.error,
+      `non-existent blockHash must error (not silent filter ID), got result=${JSON.stringify(nonexistent.result)}`)
+    assert.equal(nonexistent.error!.code, -32000)
+    assert.match(nonexistent.error!.message, /unknown block/i)
+
+    if (typeof chain.proposeNextBlock === "function") {
+      await chain.proposeNextBlock()
+    }
+    const blockByNum = await rpcCall(port, "eth_getBlockByNumber", ["0x1", false]) as { hash: string } | null
+    if (blockByNum) {
+      const existing = await probe({ blockHash: blockByNum.hash })
+      assert.equal(existing.error, undefined,
+        `existing blockHash must succeed, got: ${JSON.stringify(existing.error)}`)
+      assert.match(existing.result!, /^0x[0-9a-fA-F]{32}$/, "must return a 16-byte hex filter id")
+    }
+  })
+
   await t.test("#122: eth_getBalance / eth_getTransactionCount / coc_getContractInfo reject malformed addresses with -32602", async () => {
     // Pre-fix bugs:
     //   - eth_getBalance returned -32603 with the raw input echoed back

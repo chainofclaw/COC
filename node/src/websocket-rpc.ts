@@ -586,6 +586,23 @@ export class WsRpcServer {
           }
           filterParam = rawFilter as Record<string, unknown>
         }
+        // #535: blockHash is incompatible with streaming subscriptions
+        // — a subscription only matches FUTURE events but a blockHash
+        // refers to a SPECIFIC past block. Pre-fix the WS handler
+        // silently accepted `{blockHash: "..."}` filters, created a
+        // subscription, and that subscription could never match any
+        // event (the requested block is already in the past). Geth's
+        // `eth/filters/api.go` rejects this case explicitly
+        // ("invalid filter: blockHash is not supported for
+        // subscription"). Match that contract so callers learn
+        // immediately rather than waiting forever for events that
+        // never come. Companion fix: eth_newFilter (rpc.ts) DOES
+        // support blockHash by resolving to fromBlock=toBlock=
+        // block.number (one-shot snapshot semantics) — different
+        // surface, different policy.
+        if (filterParam.blockHash !== undefined && filterParam.blockHash !== null) {
+          invalidParams("invalid filter: blockHash is not supported for subscription (use eth_getLogs instead)")
+        }
         const filter = validateLogFilter(filterParam)
 
         const handler = (event: LogEvent) => {

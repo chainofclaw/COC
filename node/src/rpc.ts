@@ -1169,8 +1169,27 @@ async function handleRpc(
       const query = requireFilterObject((payload.params ?? [])[0])
       const id = `0x${randomBytes(16).toString("hex")}`
       const newFilterHeight = await Promise.resolve(chain.getHeight())
-      const fromBlock = parseBlockTag(query.fromBlock, newFilterHeight)
-      const toBlock = query.toBlock !== undefined ? parseBlockTag(query.toBlock, newFilterHeight) : undefined
+      // #535: pre-fix eth_newFilter accepted `{blockHash: "..."}` and
+      // silently created a filter at fromBlock=toBlock=latest (because
+      // parseBlockTag(undefined, height) returns height and the
+      // blockHash field was never read). The companion #533 fix landed
+      // for eth_getLogs but this method shared the same gap. Resolve
+      // blockHash → block.number first; reject hashes that don't
+      // resolve with -32000 "unknown block" (geth parity).
+      let fromBlock: bigint
+      let toBlock: bigint | undefined
+      if (query.blockHash !== undefined && query.blockHash !== null) {
+        const hash = (query.blockHash as string).toLowerCase() as Hex
+        const block = await Promise.resolve(chain.getBlockByHash(hash))
+        if (!block) {
+          throw { code: -32000, message: "unknown block" }
+        }
+        fromBlock = block.number
+        toBlock = block.number
+      } else {
+        fromBlock = parseBlockTag(query.fromBlock, newFilterHeight)
+        toBlock = query.toBlock !== undefined ? parseBlockTag(query.toBlock, newFilterHeight) : undefined
+      }
       // #142 / #162: validate address + topic shape so malformed inputs
       // reject at the boundary. Shared with eth_getLogs (#162) — both
       // consume the same filter shape, both should reject the same way.

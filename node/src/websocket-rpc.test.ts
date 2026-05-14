@@ -404,13 +404,32 @@ describe("WebSocket RPC", () => {
         ["logs", { topics: [inner33] }])
       assert.equal(innerCapErr.code, -32602,
         `inner OR-array of 33 must be -32602, got ${innerCapErr.code} (${innerCapErr.message})`)
-      // Sanity: well-shaped filters still create subscriptions
-      const okHash = `0x${"ab".repeat(32)}`
+      // Sanity: well-shaped filters still create subscriptions.
+      // #535: blockHash removed from this happy-path filter — it's now
+      // rejected for subscriptions (geth parity, see test below). Other
+      // shape validations (address, topics, fromBlock/toBlock) unchanged.
       const okAddr = `0x${"cd".repeat(20)}`
       const okTopic = `0x${"ef".repeat(32)}`
       const sub1 = await sendRpc(ws, "eth_subscribe",
-        ["logs", { fromBlock: "0x1", toBlock: "0x100", blockHash: okHash, address: okAddr, topics: [okTopic] }])
+        ["logs", { fromBlock: "0x1", toBlock: "0x100", address: okAddr, topics: [okTopic] }])
       assert.match(sub1, /^0x[0-9a-f]+$/, `well-shaped filter must create subscription, got ${sub1}`)
+
+      // #535: blockHash is incompatible with streaming subscriptions.
+      // Pre-fix, `eth_subscribe("logs", {blockHash: <hash>})` silently
+      // created a subscription that could never match any event (the
+      // requested block is in the past; subscriptions only fire on
+      // future events). Geth's `eth/filters/api.go` rejects this with
+      // "invalid filter: blockHash is not supported for subscription".
+      // Match that contract so callers learn immediately rather than
+      // waiting forever for events that never come. Companion to
+      // eth_newFilter (rpc.ts) which DOES support blockHash via
+      // snapshot semantics — different surface, different policy.
+      const blockHashErr = await sendRpcExpectError(ws, "eth_subscribe",
+        ["logs", { blockHash: `0x${"ab".repeat(32)}` }])
+      assert.equal(blockHashErr.code, -32602,
+        `blockHash subscription must be -32602, got ${blockHashErr.code} (${blockHashErr.message})`)
+      assert.match(blockHashErr.message, /blockHash.*not supported/i,
+        `error must explain incompatibility, got: ${blockHashErr.message}`)
     } finally {
       ws.close()
     }
