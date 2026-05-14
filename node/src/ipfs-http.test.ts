@@ -1064,6 +1064,33 @@ describe("IpfsHttpServer", () => {
     }
   })
 
+  it("#270: /api/v0/files/mv into own subtree returns 400 (not 500 'internal error')", async () => {
+    // Pre-fix the route-level catch alternation `/^cannot (remove|operate
+    // on|copy)/i` was missing `move`. mfs.mv throws `cannot move directory
+    // into its own subdirectory: ...` which fell through to the outer 500
+    // with the generic "internal error" body (and an ERROR log line per
+    // probe). Sibling /files/cp WAS matched via `copy` in the alternation.
+    // Same regex-mismatch family as #232/#268/#543.
+    const { IpfsMfs: MfsCtor270 } = await import("./ipfs-mfs.ts")
+    const mfs = new MfsCtor270(store, unixfs)
+    server.attachSubsystems({ mfs })
+    await mfs.mkdir("/parent/child", { parents: true })
+    const res = await fetch(
+      "/api/v0/files/mv?arg=/parent&arg=/parent/child/grandchild",
+      { method: "POST" },
+    )
+    assert.equal(res.status, 400, `mv-into-own-subtree must be 400, got ${res.status}`)
+    const body = await res.json() as { error?: string; message?: string }
+    assert.notEqual(body.error, "internal error",
+      `must not leak 'internal error', got ${JSON.stringify(body)}`)
+    assert.match(`${body.error} ${body.message ?? ""}`, /cannot move/i,
+      `error must reference the actual throw, got ${JSON.stringify(body)}`)
+    // Sanity: legal mv still works (regression guard)
+    await mfs.mkdir("/ok-src")
+    const ok = await fetch("/api/v0/files/mv?arg=/ok-src&arg=/ok-dst", { method: "POST" })
+    assert.equal(ok.status, 200, `legal mv must still 200, got ${ok.status}`)
+  })
+
   it("#545: gateway /ipfs/<cid>/<subpath> returns 404 'no such file' (not misleading 400 'invalid CID')", async () => {
     // Pre-fix `url.pathname.slice(6)` treated the ENTIRE tail (including
     // subpaths) as the CID string. So `/ipfs/<valid-cid>/sub` had
