@@ -328,10 +328,41 @@ export class IpfsHttpServer {
       //   #340 — MIME-type sniffing so browsers render content correctly
       const isGatewayMethod = req.method === "GET" || req.method === "HEAD"
       if (isGatewayMethod && url.pathname?.startsWith("/ipfs/")) {
-        const cid = url.pathname.slice(6) // strip "/ipfs/"
+        // #545: pre-fix `url.pathname.slice(6)` treated the ENTIRE tail
+        // (including subpaths like `/ipfs/<cid>/foo/bar`) as the CID
+        // string. `isValidCid("<cid>/foo/bar")` rejected the embedded
+        // slash and returned "invalid CID" — misleading because the CID
+        // itself is well-formed; only the subpath traversal couldn't be
+        // resolved. Kubo's gateway: returns 404 "no link named 'foo'
+        // under <CID>" (or similar) for subpath misses, NOT "invalid
+        // CID". Same anti-pattern family as #543 (regex-mismatch produces
+        // misleading error for a well-formed input).
+        //
+        // Fix: split the path; treat the first segment as the CID
+        // candidate. If a non-empty subpath follows AND we don't have a
+        // dag-pb subtree resolver wired up, surface 404 "no such file"
+        // explicitly so callers don't think their CID is malformed. This
+        // is a clean minimum — full subpath traversal within dag-pb dirs
+        // is out of scope for this PR (would need UnixFsBuilder dir-
+        // walking integration).
+        const tail = url.pathname.slice(6) // strip "/ipfs/"
+        const slashIdx = tail.indexOf("/")
+        const cid = slashIdx < 0 ? tail : tail.slice(0, slashIdx)
+        const subpath = slashIdx < 0 ? "" : tail.slice(slashIdx)
         if (!isValidCid(cid)) {
           res.writeHead(400, { "content-type": "application/json", "access-control-allow-origin": "*" })
           res.end(req.method === "HEAD" ? undefined : JSON.stringify({ error: "invalid CID" }))
+          return
+        }
+        if (subpath !== "" && subpath !== "/") {
+          // CID is valid; subpath traversal isn't supported on this
+          // gateway. Surface 404 with the kubo-style "no link named ..."
+          // message rather than a misleading 400 "invalid CID".
+          res.writeHead(404, { "content-type": "application/json", "access-control-allow-origin": "*" })
+          res.end(req.method === "HEAD" ? undefined : JSON.stringify({
+            error: "no such file",
+            message: `no link named '${subpath.replace(/^\//, "").split("/")[0]}' under ${cid}`,
+          }))
           return
         }
         // #168: pre-fix ENOENT for valid-shape-missing CIDs propagated

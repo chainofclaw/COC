@@ -871,6 +871,74 @@ describe("IpfsHttpServer", () => {
     }
   })
 
+  it("#545: gateway /ipfs/<cid>/<subpath> returns 404 'no such file' (not misleading 400 'invalid CID')", async () => {
+    // Pre-fix `url.pathname.slice(6)` treated the ENTIRE tail (including
+    // subpaths) as the CID string. So `/ipfs/<valid-cid>/sub` had
+    // `isValidCid("<valid-cid>/sub")` reject it (slash invalid in
+    // base58/base32 alphabet) — and the wire said "invalid CID". But
+    // the CID itself was well-formed! Only the subpath traversal failed.
+    //
+    // Live testnet 88780 reproduction (pre-fix):
+    //   ipfs add "data"  # returns <cid>
+    //   curl /ipfs/<cid>/extra
+    //   → 400 {"error":"invalid CID"}    # misleading; CID is fine
+    //
+    // Kubo's gateway: returns 404 "no link named 'extra' under <cid>"
+    // for subpath misses. Same anti-pattern family as #543 (misleading
+    // error for a well-formed input).
+    //
+    // Fix: split path; treat first segment as CID. Subpath traversal
+    // within dag-pb dirs is out of scope (would need UnixFsBuilder
+    // walking integration); for now, surface a clean 404 with kubo-style
+    // "no link named ..." so callers don't blame their CID.
+    const addRes = await fetch("/api/v0/add", {
+      method: "POST",
+      headers: { "content-type": "multipart/form-data; boundary=----X" },
+      body: [
+        "------X",
+        'Content-Disposition: form-data; name="file"; filename="test.txt"',
+        "Content-Type: text/plain",
+        "",
+        "subpath-test-data",
+        "------X--",
+        "",
+      ].join("\r\n"),
+    })
+    const addBody = await addRes.json() as { Hash?: string }
+    const cid = addBody.Hash!
+    assert.ok(cid, "add must return a CID")
+
+    // (a) Bare /ipfs/<cid> still works
+    const bare = await fetch(`/ipfs/${cid}`)
+    assert.equal(bare.status, 200, `bare /ipfs/<cid> must return 200, got ${bare.status}`)
+
+    // (b) /ipfs/<cid>/extra — pre-fix returned 400 "invalid CID"
+    const sub = await fetch(`/ipfs/${cid}/extra`)
+    assert.equal(sub.status, 404,
+      `/ipfs/<cid>/extra must return 404 'no such file', got ${sub.status} (the pre-fix bug was 400 'invalid CID')`)
+    const subBody = await sub.json() as { error?: string; message?: string }
+    assert.notEqual(subBody.error, "invalid CID",
+      `must NOT say 'invalid CID' (the pre-fix bug shape), got ${JSON.stringify(subBody)}`)
+    assert.match(`${subBody.error} ${subBody.message ?? ""}`, /no link|no such file/i,
+      `error must reference 'no link' or 'no such file', got ${JSON.stringify(subBody)}`)
+    assert.match(subBody.message ?? "", new RegExp(`'extra'.*${cid.slice(0, 20)}`),
+      `message must name both subpath and CID for clarity, got: ${subBody.message}`)
+
+    // (c) /ipfs/<cid>/a/b/c — multi-segment subpath
+    const deep = await fetch(`/ipfs/${cid}/a/b/c`)
+    assert.equal(deep.status, 404)
+    const deepBody = await deep.json() as { error?: string; message?: string }
+    assert.notEqual(deepBody.error, "invalid CID")
+    assert.match(deepBody.message ?? "", /'a'/, "message names the FIRST missing segment")
+
+    // (d) Truly invalid CID still returns 400 "invalid CID" (regression sentinel)
+    const invalid = await fetch("/ipfs/not-a-cid")
+    assert.equal(invalid.status, 400, "truly malformed CID still returns 400")
+    const invalidBody = await invalid.json() as { error?: string }
+    assert.equal(invalidBody.error, "invalid CID",
+      "malformed CID still surfaces as 'invalid CID' (no regression)")
+  })
+
   it("#236: /api/v0/files/cp + /files/mv read second ?arg= for destination (kubo compat)", async () => {
     // Pre-fix the handlers read `?dest=<path>` but kubo HTTP RPC sends
     // dest as a second `?arg=` value. Result: every kubo-CLI / ipfs-http-
