@@ -1729,11 +1729,35 @@ async function handleRpc(
       })
     }
     case "eth_getUncleCountByBlockHash":
+    case "eth_getUncleByBlockHashAndIndex": {
+      // #549: pre-fix every uncle handler short-circuited to "0x0"/null
+      // without inspecting input shape, so "0xbogus" / {} / [] / numbers
+      // all silently succeeded — indistinguishable from "valid hash,
+      // zero uncles." Geth rejects malformed inputs with -32602
+      // regardless of whether the body would have been zero. Same
+      // empty-result-masking-bug family as #166/#188/#196/#242.
+      // COC uses PoSe consensus with no uncle blocks, so the body
+      // stays "0x0"/null for well-formed inputs.
+      requireBlockHashParam(payload.params ?? [], 0)
+      if (payload.method.endsWith("AndIndex")) {
+        requireIndexParam(payload.params ?? [], 1)
+        return null
+      }
+      return "0x0"
+    }
     case "eth_getUncleCountByBlockNumber":
-    case "eth_getUncleByBlockHashAndIndex":
-    case "eth_getUncleByBlockNumberAndIndex":
-      // COC uses PoSe consensus with no uncle blocks
-      return payload.method.includes("Count") ? "0x0" : null
+    case "eth_getUncleByBlockNumberAndIndex": {
+      // #549: same validation-bypass anti-pattern, block-tag variant.
+      // parseBlockTag rejects non-string/non-number shapes and bogus
+      // strings with -32602.
+      const uncleHeight = await Promise.resolve(chain.getHeight())
+      parseBlockTag((payload.params ?? [])[0], uncleHeight)
+      if (payload.method.endsWith("AndIndex")) {
+        requireIndexParam(payload.params ?? [], 1)
+        return null
+      }
+      return "0x0"
+    }
     case "eth_getWork":
       // PoW stub — COC uses PoSe consensus, no mining
       return ["0x" + "0".repeat(64), "0x" + "0".repeat(64), "0x" + "0".repeat(64)]

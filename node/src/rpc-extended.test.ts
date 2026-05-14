@@ -291,6 +291,37 @@ test("RPC Extended Methods", async (t) => {
     assert.strictEqual(count, "0x0")
   })
 
+  await t.test("#549: uncle handlers validate input shape (no silent 0x0/null for malformed args)", async () => {
+    // Pre-fix every uncle handler short-circuited the result without
+    // inspecting the input, so "0xbogus" / {} / bogus tag silently
+    // succeeded indistinguishable from the well-formed "zero uncles"
+    // case. Geth rejects each malformed shape with -32602.
+    const badHashCount = await rpcCallRaw(port, "eth_getUncleCountByBlockHash", ["0xbogus"])
+    assert.equal(badHashCount.error?.code, -32602, `bad hash for count must -32602, got ${JSON.stringify(badHashCount)}`)
+    assert.match(badHashCount.error?.message ?? "", /block hash/i)
+
+    const objHash = await rpcCallRaw(port, "eth_getUncleCountByBlockHash", [{}])
+    assert.equal(objHash.error?.code, -32602, `object hash for count must -32602, got ${JSON.stringify(objHash)}`)
+
+    const badTagCount = await rpcCallRaw(port, "eth_getUncleCountByBlockNumber", ["bogus"])
+    assert.equal(badTagCount.error?.code, -32602, `bad tag for count must -32602, got ${JSON.stringify(badTagCount)}`)
+
+    const badHashBy = await rpcCallRaw(port, "eth_getUncleByBlockHashAndIndex", ["0xbogus", "0x0"])
+    assert.equal(badHashBy.error?.code, -32602, `bad hash for by-hash-and-index must -32602, got ${JSON.stringify(badHashBy)}`)
+
+    const badIdx = await rpcCallRaw(port, "eth_getUncleByBlockNumberAndIndex", ["latest", "bogus"])
+    assert.equal(badIdx.error?.code, -32602, `bad index for by-number-and-index must -32602, got ${JSON.stringify(badIdx)}`)
+
+    // Well-formed inputs still return zero / null (no regression on the body)
+    const validHash = "0x" + "00".repeat(32)
+    const okCount = await rpcCall(port, "eth_getUncleCountByBlockHash", [validHash])
+    assert.equal(okCount, "0x0", "well-formed hash still returns 0x0")
+    const okBy = await rpcCall(port, "eth_getUncleByBlockHashAndIndex", [validHash, "0x0"])
+    assert.equal(okBy, null, "well-formed hash+index still returns null")
+    const okNumCount = await rpcCall(port, "eth_getUncleCountByBlockNumber", ["latest"])
+    assert.equal(okNumCount, "0x0", "well-formed tag still returns 0x0")
+  })
+
   await t.test("eth_protocolVersion returns version", async () => {
     const version = await rpcCall(port, "eth_protocolVersion")
     assert.ok(typeof version === "string")
