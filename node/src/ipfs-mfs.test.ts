@@ -198,12 +198,64 @@ test("#477: cp/mv same source-and-dest must reject when source is missing", asyn
       "mv must reject missing source even when src == dst",
     )
 
-    // Sanity: same-path on an existing file is still a no-op (not an error).
+    // #420: same-path on an existing file ALSO rejects now (POSIX/kubo
+    // parity). Update from the #477-era no-op sanity check to the strict
+    // reject. Source file is left intact (no destructive side-effect).
     await mfs.write("/keep.txt", new TextEncoder().encode("data"), { create: true })
-    await mfs.cp("/keep.txt", "/keep.txt")    // no-op, no throw
-    await mfs.mv("/keep.txt", "/keep.txt")    // no-op, no throw
+    await assert.rejects(
+      () => mfs.cp("/keep.txt", "/keep.txt"),
+      /source and destination are the same/i,
+      "cp must reject src===dst even when source exists (POSIX/kubo parity, #420)",
+    )
+    await assert.rejects(
+      () => mfs.mv("/keep.txt", "/keep.txt"),
+      /source and destination are the same/i,
+      "mv must reject src===dst even when source exists (POSIX/kubo parity, #420)",
+    )
     const after = await mfs.read("/keep.txt")
-    assert.strictEqual(new TextDecoder().decode(after), "data", "same-path op on existing file preserves contents")
+    assert.strictEqual(new TextDecoder().decode(after), "data", "src untouched after rejected same-path op")
+  } finally {
+    cleanup()
+  }
+})
+
+test("#420: MFS cp/mv with src===dest rejects (POSIX/kubo parity, no silent no-op)", async () => {
+  // Pre-fix `if (srcNorm === destNorm) return` silently succeeded for
+  // `mv /a /a` and `cp /a /a`, masking client typos. POSIX and kubo both
+  // reject. Real renames/copies must still work (regression guard).
+  const { mfs, cleanup } = await createMfs()
+  try {
+    await mfs.write("/src.txt", new TextEncoder().encode("hello"), { create: true })
+    // src===dest with existing source: reject
+    await assert.rejects(
+      () => mfs.cp("/src.txt", "/src.txt"),
+      /source and destination are the same: \/src\.txt/i,
+      "cp same-path on existing file must reject",
+    )
+    await assert.rejects(
+      () => mfs.mv("/src.txt", "/src.txt"),
+      /source and destination are the same: \/src\.txt/i,
+      "mv same-path on existing file must reject",
+    )
+    // Source is intact
+    assert.strictEqual(
+      new TextDecoder().decode(await mfs.read("/src.txt")),
+      "hello",
+      "src must be intact after rejected same-path op",
+    )
+    // Real rename + real copy still work (regression sentinel)
+    await mfs.cp("/src.txt", "/cp-dest.txt")
+    assert.strictEqual(
+      new TextDecoder().decode(await mfs.read("/cp-dest.txt")),
+      "hello",
+      "real cp must still succeed",
+    )
+    await mfs.mv("/src.txt", "/mv-dest.txt")
+    assert.strictEqual(
+      new TextDecoder().decode(await mfs.read("/mv-dest.txt")),
+      "hello",
+      "real mv must still succeed",
+    )
   } finally {
     cleanup()
   }
