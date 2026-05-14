@@ -482,6 +482,55 @@ describe("IpfsHttpServer", () => {
     assert.ok(okBody.Hash?.startsWith("bafy"), "should still return v1 bafy CID")
   })
 
+  it("#553: /api/v0/add validates pin param — rejects pin=false (silent drop) and pin=garbage", async () => {
+    // Pre-fix `pin` was listed as a benign passed-through param but
+    // handleAdd always pinned regardless of the query value. A client
+    // explicitly opting out with `pin=false` got 200 + a Hash that was
+    // silently pinned anyway, burning disk it asked us to skip.
+    // `pin=garbage` was also accepted, drifting from kubo's
+    // strconv.ParseBool reject. Same silent-param-drop family as
+    // #174/#353/#460/#513.
+    const boundary = "----T553"
+    const mkBody = () => [
+      `--${boundary}`,
+      'Content-Disposition: form-data; name="file"; filename="x.txt"',
+      "Content-Type: application/octet-stream",
+      "",
+      "x",
+      `--${boundary}--`,
+      "",
+    ].join("\r\n")
+    const post = async (qs: string) => fetch(`/api/v0/add?${qs}`, {
+      method: "POST",
+      headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+      body: mkBody(),
+    })
+
+    // pin=false is the silent-drop case — server always pins, so this
+    // must reject (not silently treat as true).
+    for (const qs of ["pin=false", "pin=0", "pin=False", "pin=FALSE"]) {
+      const r = await post(qs)
+      assert.equal(r.status, 400, `${qs}: expected 400 (got ${r.status})`)
+      const body = await r.json() as { error: string; message?: string }
+      assert.equal(body.error, "unsupported_param", qs)
+      assert.match(body.message ?? "", /always pins/i, qs)
+    }
+
+    // pin=garbage is the kubo-parser-reject case.
+    for (const qs of ["pin=maybe", "pin=yes", "pin=2", "pin="]) {
+      const r = await post(qs)
+      assert.equal(r.status, 400, `${qs}: expected 400 (got ${r.status})`)
+      const body = await r.json() as { error: string; message?: string }
+      assert.equal(body.error, "unsupported_param", qs)
+    }
+
+    // pin=true / pin=1 / unset must still succeed (no behavior change).
+    for (const qs of ["pin=true", "pin=1", "pin=True", ""]) {
+      const r = await post(qs)
+      assert.equal(r.status, 200, `${qs}: well-formed pin must succeed, got ${r.status}`)
+    }
+  })
+
   it("#180: /api/v0/add?erasure=N+M rejects N or M above MAX_DATA/PARITY_SHARDS with 400 (not 500)", async () => {
     // Pre-fix parseErasureSpec only checked the lower bound (n>=1,
     // m>=1). Values above MAX_DATA_SHARDS / MAX_PARITY_SHARDS (24
