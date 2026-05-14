@@ -419,10 +419,47 @@ test("RPC Extended Methods", async (t) => {
     // semantics (empty initial, no errors on poll).
   })
 
-  await t.test("#94: eth_getFilterLogs on a block filter returns [] (not log results)", async () => {
-    const fid = (await rpcCall(port, "eth_newBlockFilter")) as string
-    const result = (await rpcCall(port, "eth_getFilterLogs", [fid])) as unknown[]
-    assert.deepEqual(result, [], "getFilterLogs on a non-log filter must return []")
+  await t.test("#390: eth_getFilterLogs rejects non-log filter with -32602 (was silent [] pre-fix)", async () => {
+    // Pre-fix the handler returned `[]` for block/pendingTx filters with
+    // a misleading "match kubo/geth" comment. Geth actually returns
+    // "filter not found" when typ != LogsSubscription
+    // (filters/api.go: GetFilterLogs). Polling clients that hit the
+    // wrong method saw "no logs" forever instead of an error pointing
+    // at the type mismatch.
+    //
+    // Block filter case:
+    const blockFid = (await rpcCall(port, "eth_newBlockFilter")) as string
+    const r1 = await fetch(`http://127.0.0.1:${port}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getFilterLogs", params: [blockFid] }),
+    })
+    const body1 = await r1.json() as { error?: { code: number; message: string } }
+    assert.ok(body1.error, "block filter must reject (not return [])")
+    assert.equal(body1.error!.code, -32602, `expected -32602, got ${body1.error!.code}`)
+    assert.match(body1.error!.message, /block filter|log filter/i, `message must name the type mismatch, got: ${body1.error!.message}`)
+
+    // Pending-tx filter case:
+    const ptxFid = (await rpcCall(port, "eth_newPendingTransactionFilter")) as string
+    const r2 = await fetch(`http://127.0.0.1:${port}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "eth_getFilterLogs", params: [ptxFid] }),
+    })
+    const body2 = await r2.json() as { error?: { code: number; message: string } }
+    assert.ok(body2.error, "pendingTx filter must reject (not return [])")
+    assert.equal(body2.error!.code, -32602)
+    assert.match(body2.error!.message, /pendingTx filter|log filter/i)
+
+    // Log filter case (sanity: still works):
+    const logFid = (await rpcCall(port, "eth_newFilter", [{ fromBlock: "0x0" }])) as string
+    const r3 = await rpcCall(port, "eth_getFilterLogs", [logFid])
+    assert.ok(Array.isArray(r3), "log filter still works")
+
+    // Missing filter case (sanity: #342 unchanged, returns []):
+    const missing = "0x" + "00".repeat(16)
+    const r4 = await rpcCall(port, "eth_getFilterLogs", [missing])
+    assert.deepEqual(r4, [], "missing filter returns [] (#342 contract)")
   })
 
   await t.test("eth_getFilterLogs returns array", async () => {
