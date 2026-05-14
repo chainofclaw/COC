@@ -1609,6 +1609,44 @@ test("RPC Extended Methods", async (t) => {
     )
   })
 
+  await t.test("#422: eth_getBlockByHash(ZERO_HASH) returns the same synthesised genesis (parity with eth_getBlockByNumber)", async () => {
+    // Pre-fix: eth_getBlockByNumber("0x0") synthesised a genesis block
+    // with hash = all-zeros (#112). Block 1's parentHash carried the
+    // same all-zeros value. But eth_getBlockByHash lacked the
+    // symmetric synthesis path — a client that grabbed block 1,
+    // followed parentHash, and called `provider.getBlock(parentHash)`
+    // got `null` and broke. Mirror #112 so both lookups agree.
+    //
+    // Live testnet 88780 reproduction (pre-fix):
+    //   getBlockByNumber("0x0")  → hash 0x000…000 (synthesised)
+    //   getBlockByHash(0x000…000) → null   (asymmetric!)
+    const proposed = await chain.proposeNextBlock()
+    assert.ok(proposed, "need at least one real block so height ≥ 1")
+    const ZERO_HASH = "0x" + "0".repeat(64)
+    const byNum = await rpcCall(port, "eth_getBlockByNumber", ["0x0", false]) as Record<string, unknown>
+    assert.equal(byNum.hash, ZERO_HASH, "synthesised genesis hash must be all-zeros (sanity)")
+    const byHash = await rpcCall(port, "eth_getBlockByHash", [ZERO_HASH, false]) as Record<string, unknown> | null
+    assert.ok(byHash !== null, "eth_getBlockByHash(ZERO_HASH) must not be null when synth-genesis is on")
+    assert.equal(byHash!.number, "0x0", "by-hash genesis must have number 0x0")
+    assert.equal(byHash!.hash, ZERO_HASH, "by-hash genesis hash must match by-number")
+    assert.equal(byHash!.parentHash, ZERO_HASH)
+    assert.deepEqual(byHash!.transactions, [])
+    // Sanity: a non-zero hash that doesn't exist still returns null
+    const fakeHash = "0x" + "ab".repeat(32)
+    const nullResult = await rpcCall(port, "eth_getBlockByHash", [fakeHash, false])
+    assert.equal(nullResult, null, "non-zero non-existent hash must still return null")
+    // Sanity: includeTx=true also works through synthesis
+    const byHashWithTx = await rpcCall(port, "eth_getBlockByHash", [ZERO_HASH, true]) as Record<string, unknown>
+    assert.ok(byHashWithTx !== null)
+    assert.deepEqual(byHashWithTx.transactions, [])
+    // Symmetric reachability: block 1's parentHash points to the
+    // synthesised genesis and a client can follow it.
+    const block1 = await rpcCall(port, "eth_getBlockByNumber", ["0x1", false]) as Record<string, unknown>
+    assert.equal(block1.parentHash, ZERO_HASH, "block 1 parentHash anchors to synth genesis (sanity)")
+    const parent = await rpcCall(port, "eth_getBlockByHash", [block1.parentHash, false]) as Record<string, unknown>
+    assert.ok(parent !== null, "client following block1.parentHash must reach the genesis (not null)")
+  })
+
   await t.test("#108 part-2: coc_getPeers exposes the public peer list (id + url)", async () => {
     const peers = await rpcCall(port, "coc_getPeers") as Array<{ id: string; url: string }>
     assert.ok(Array.isArray(peers), "must return an array")

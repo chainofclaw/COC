@@ -886,6 +886,23 @@ async function handleRpc(
       const hash = requireBlockHashParam(payload.params ?? [], 0)
       const includeTx = Boolean((payload.params ?? [])[1])
       const block = await Promise.resolve(chain.getBlockByHash(hash))
+      // #422: eth_getBlockByNumber("0x0") synthesises a genesis block
+      // (per #112) with hash = all-zeros. Block 1's parentHash carries
+      // the same all-zeros value. But eth_getBlockByHash never had the
+      // symmetric synthesis path — a client that grabbed block 1,
+      // followed parentHash, and called `provider.getBlock(parentHash)`
+      // got `null` and broke. Mirror #112: if the lookup hash is the
+      // all-zeros synthesis hash AND chain.height ≥ 1 AND no real
+      // block-0 is persisted, return the same synthesised genesis.
+      if (!block && /^0x0+$/.test(hash) && hash.length === 66) {
+        const height = await Promise.resolve(chain.getHeight())
+        if (height >= 1n) {
+          const realBlockZero = await Promise.resolve(chain.getBlockByNumber(0n))
+          if (!realBlockZero) {
+            return formatGenesisBlock(includeTx)
+          }
+        }
+      }
       return formatBlock(block, includeTx, chain, evm)
     }
     case "eth_gasPrice": {
