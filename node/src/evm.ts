@@ -865,7 +865,7 @@ export class EvmChain {
     params: { from?: string; to: string; data?: string; value?: string; gas?: string },
     stateRoot?: string,
     context?: bigint | ExecutionContext,
-  ): Promise<{ returnValue: string; gasUsed: bigint; failed: boolean }> {
+  ): Promise<{ returnValue: string; gasUsed: bigint; failed: boolean; errorReason?: string }> {
     const executionContext = normalizeExecutionContext(context)
     if (stateRoot || executionContext.blockNumber !== undefined) {
       const stateManager = await this.resolveStateManager(stateRoot)
@@ -1179,7 +1179,7 @@ export class EvmChain {
     vm: VM,
     params: { from?: string; to: string; data?: string; value?: string; gas?: string },
     opts: ExecutionContext & { revertAfter?: boolean } = {},
-  ): Promise<{ returnValue: string; gasUsed: bigint; failed: boolean }> {
+  ): Promise<{ returnValue: string; gasUsed: bigint; failed: boolean; errorReason?: string }> {
     const executionContext = normalizeExecutionContext(opts)
     const blockCommon = this.createExecutionCommon(executionContext.blockNumber)
     this.applyHardforkToVm(vm, executionContext.blockNumber)
@@ -1210,10 +1210,19 @@ export class EvmChain {
         ? bytesToHex(result.execResult.returnValue)
         : "0x"
 
+      // #509: surface the EvmError variant so eth_call / eth_estimateGas can
+      // distinguish REVERT (geth: code 3 "execution reverted") from
+      // pre-execution failures like INSUFFICIENT_BALANCE (geth: code -32000
+      // "insufficient funds for gas * price + value: …"). Pre-fix the rpc
+      // layer mapped every EVM failure to "execution reverted", confusing
+      // ethers.js / viem / wallets that route those error codes to
+      // different UX paths.
+      const exceptionError = result.execResult.exceptionError
       return {
         returnValue,
         gasUsed: result.execResult.executionGasUsed,
-        failed: result.execResult.exceptionError !== undefined,
+        failed: exceptionError !== undefined,
+        errorReason: exceptionError?.error,
       }
     } finally {
       if (opts.revertAfter !== false) {

@@ -906,7 +906,8 @@ async function handleRpc(
         gas: gasForEstimate,
       }, executionContext.stateRoot, executionContext)
       if (estProbe.failed) {
-        throwExecutionReverted(estProbe.returnValue)
+        // #509: distinguish INSUFFICIENT_BALANCE (-32000) from REVERT (code 3).
+        throwCallFailure(estProbe.errorReason, estProbe.returnValue, estParams.from)
       }
       const estimated = await evm.estimateGas({
         from: estParams.from,
@@ -959,7 +960,8 @@ async function handleRpc(
       // returned 200 OK with result:"0x" for any contract call with an
       // unknown selector before this fix.
       if (callResult.failed) {
-        throwExecutionReverted(callResult.returnValue)
+        // #509: distinguish INSUFFICIENT_BALANCE (-32000) from REVERT (code 3).
+        throwCallFailure(callResult.errorReason, callResult.returnValue, callParams.from)
       }
       return callResult.returnValue
     }
@@ -2963,6 +2965,44 @@ function throwExecutionReverted(returnValue: string): never {
   const reason = decodeRevertReason(returnValue)
   const message = reason ? `execution reverted: ${reason}` : "execution reverted"
   throw { code: 3, message, data: returnValue || "0x" }
+}
+
+// #509: route eth_call / eth_estimateGas failures to the correct geth
+// error shape. The pre-fix code mapped *every* EVM failure (including
+// pre-execution failures like INSUFFICIENT_BALANCE that the EVM raises
+// before any opcodes run) to code 3 "execution reverted", confusing
+// ethers.js / viem / MetaMask which route those codes to different UX:
+//   - code 3 → "Transaction reverted: <reason>" UI (revert decoder runs)
+//   - code -32000 → "Insufficient funds" / "Out of gas" UI (no decode)
+// Geth's behavior:
+//   - REVERT opcode (with or without revert payload) → code 3
+//   - INSUFFICIENT_BALANCE → code -32000 "insufficient funds for gas
+//     * price + value: address 0x… have N want M"
+//   - other pre-execution failures (nonce, intrinsic gas) → code -32000
+//
+// Live testnet 88780 repro (pre-fix):
+//   eth_call({from:0x000…001, value:0xffff…}) → code 3 "execution reverted"
+// Post-fix:
+//   eth_call({from:0x000…001, value:0xffff…}) → code -32000
+//     "insufficient funds for gas * price + value: address 0x000…001"
+function throwCallFailure(
+  errorReason: string | undefined,
+  returnValue: string,
+  from?: string,
+): never {
+  // EvmError.error string from @ethereumjs/evm. The "insufficient balance"
+  // case is the one observably-mishandled today; other EVMError variants
+  // (out of gas, invalid opcode, stack underflow) DO happen during code
+  // execution after value transfer succeeds, so the REVERT-style mapping
+  // is still defensible there pending separate geth-parity work.
+  if (errorReason === "insufficient balance") {
+    const addr = from ?? "0x0000000000000000000000000000000000000000"
+    throw {
+      code: -32000,
+      message: `insufficient funds for gas * price + value: address ${addr}`,
+    }
+  }
+  throwExecutionReverted(returnValue)
 }
 
 async function resolveBlockNumber(input: unknown, chain: IChainEngine): Promise<bigint> {

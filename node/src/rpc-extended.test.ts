@@ -3043,6 +3043,112 @@ test("RPC Extended Methods", async (t) => {
     }
   })
 
+  await t.test("#509: eth_call / eth_estimateGas surface INSUFFICIENT_BALANCE as -32000 (not code 3 'execution reverted')", async () => {
+    // Live testnet 88780 reproduction (pre-fix):
+    //   eth_call({from:"0x000…001", to:<addr>, value:"0xfffffffffffffffffffffffff"})
+    //   → {"error":{"code":3,"message":"execution reverted","data":"0x"}}
+    //
+    // Geth contract:
+    //   - REVERT opcode → code 3 "execution reverted" + data
+    //   - INSUFFICIENT_BALANCE (caller can't afford `value` transfer)
+    //     → code -32000 "insufficient funds for gas * price + value:
+    //         address 0x… have N want M"
+    //   - other pre-execution failures (nonce, intrinsic gas) → -32000
+    //
+    // Anti-pattern: rpc.ts mapped EVERY failed callRaw to throwExecutionReverted.
+    // Wallets (MetaMask, Frame, Rabby), ethers.js, viem all route code 3 to
+    // a different UX surface than -32000 — code 3 triggers revert-reason
+    // decoding (looking for Error(string)/Panic(uint)), while -32000 shows
+    // "Insufficient funds". Conflating them tells users their *contract
+    // logic* reverted when their *account is just broke*.
+    //
+    // Fix plumbs `errorReason` from EvmError through callRaw → rpc.ts:
+    //   - errorReason==="insufficient balance" → -32000 with geth message
+    //   - all other EVM failures → preserve existing REVERT-style mapping
+    const validAddr = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+    const fromAddr = "0x0000000000000000000000000000000000000001"
+    const origCallRaw = evm.callRaw.bind(evm)
+    // Stub callRaw to simulate INSUFFICIENT_BALANCE: failed:true with
+    // errorReason matching the @ethereumjs/evm EvmError.error string.
+    ;(evm as unknown as { callRaw: unknown }).callRaw = async () => ({
+      returnValue: "0x",  // no payload on INSUFFICIENT_BALANCE
+      gasUsed: 0n,
+      failed: true,
+      errorReason: "insufficient balance",
+    })
+    try {
+      const probe = async (method: string) => {
+        const r = await fetch(`http://127.0.0.1:${port}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0", id: 1, method,
+            params: [{ from: fromAddr, to: validAddr, value: "0xffffffffffffffffffffffff" }, "latest"],
+          }),
+        })
+        return await r.json() as { result?: unknown; error?: { code: number; message: string; data?: string } }
+      }
+      // (a) eth_call must emit -32000 with geth's insufficient-funds message
+      // shape (not code 3 "execution reverted").
+      const callRes = await probe("eth_call")
+      assert.equal(callRes.error?.code, -32000,
+        `eth_call INSUFFICIENT_BALANCE must be -32000, got ${JSON.stringify(callRes)}`)
+      assert.match(callRes.error!.message, /^insufficient funds for gas \* price \+ value/,
+        "message must start with geth's canonical 'insufficient funds for gas * price + value' prefix")
+      assert.match(callRes.error!.message, new RegExp(fromAddr),
+        "message must echo the sender address so wallets can attribute the failure")
+      assert.notEqual(callRes.error!.code, 3,
+        "must NOT use code 3 — that's reserved for REVERT opcode in geth")
+      assert.equal(callRes.error!.data, undefined,
+        "must NOT carry a `data` field — INSUFFICIENT_BALANCE has no ABI-decodable payload")
+      // (b) eth_estimateGas mirrors — wallets probe estimateGas before
+      // signing, so confusing the error here breaks the entire send flow.
+      const estRes = await probe("eth_estimateGas")
+      assert.equal(estRes.error?.code, -32000,
+        `eth_estimateGas INSUFFICIENT_BALANCE must be -32000, got ${JSON.stringify(estRes)}`)
+      assert.match(estRes.error!.message, /^insufficient funds for gas \* price \+ value/)
+      assert.notEqual(estRes.error!.code, 3)
+    } finally {
+      ;(evm as unknown as { callRaw: typeof origCallRaw }).callRaw = origCallRaw
+    }
+  })
+
+  await t.test("#509: REVERT still maps to code 3 (regression: don't over-correct INSUFFICIENT_BALANCE fix)", async () => {
+    // Defense against accidentally widening the #509 fix to swallow real
+    // REVERTs. Stub callRaw with errorReason==="revert" + a real Error(string)
+    // payload — handler MUST still emit code 3 with decoded reason, matching
+    // the #286 contract.
+    const validAddr = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+    const origCallRaw = evm.callRaw.bind(evm)
+    const revertPayload =
+      "0x08c379a0" +
+      "0000000000000000000000000000000000000000000000000000000000000020" +
+      "0000000000000000000000000000000000000000000000000000000000000005" +
+      "4861726421000000000000000000000000000000000000000000000000000000"
+    ;(evm as unknown as { callRaw: unknown }).callRaw = async () => ({
+      returnValue: revertPayload,
+      gasUsed: 21_000n,
+      failed: true,
+      errorReason: "revert",
+    })
+    try {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0", id: 1, method: "eth_call",
+          params: [{ to: validAddr, data: "0xdeadbeef" }, "latest"],
+        }),
+      })
+      const res = await r.json() as { result?: unknown; error?: { code: number; message: string; data?: string } }
+      assert.equal(res.error?.code, 3, `REVERT must remain code 3, got ${JSON.stringify(res)}`)
+      assert.match(res.error!.message, /execution reverted: Hard!/)
+      assert.equal(res.error!.data, revertPayload, "revert payload must round-trip in `data`")
+    } finally {
+      ;(evm as unknown as { callRaw: typeof origCallRaw }).callRaw = origCallRaw
+    }
+  })
+
   await t.test("#288: eth_compileSolidity rejects oversize source (DoS gate; pre-fix 14.9 KB blocked event loop 5+ min)", async () => {
     // solc.compile is synchronous emscripten WASM. A single moderately
     // large source (500 empty contracts ≈ 15 KB) took 5m20s on 88780,
