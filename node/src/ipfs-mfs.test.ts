@@ -43,6 +43,38 @@ test("MFS: mkdir with parents", async () => {
   }
 })
 
+test("#555: mkdir error names the missing intermediate, not the existing parent", async () => {
+  // Pre-fix the throw interpolated `parent` (the existing ancestor we
+  // just walked into) instead of `current` (the missing path the walker
+  // just discovered). `mkdir /no_such_parent_a/sub_b` reported "parent
+  // directory not found: /" — but / exists. Operators read that as "root
+  // is gone." Same wording-drift family as #543/#545.
+  const { mfs, cleanup } = await createMfs()
+  try {
+    // Top-level missing parent — error must name /no_such_a, not /
+    await assert.rejects(
+      () => mfs.mkdir("/no_such_a/sub_b"),
+      /parent directory not found: \/no_such_a$/,
+      "missing top-level parent must be named, not /",
+    )
+    // Deep missing parent — must name /existing/no_such_b (the
+    // missing intermediate), not /existing.
+    await mfs.mkdir("/existing")
+    await assert.rejects(
+      () => mfs.mkdir("/existing/no_such_b/sub_c"),
+      /parent directory not found: \/existing\/no_such_b$/,
+      "deep missing parent must be named, not its existing ancestor",
+    )
+    // Sanity: mkdir --parents still works (no regression on the path
+    // that bypasses the throw).
+    await mfs.mkdir("/par_ok/sub", { parents: true })
+    const stat = await mfs.stat("/par_ok/sub")
+    assert.strictEqual(stat.type, "directory")
+  } finally {
+    cleanup()
+  }
+})
+
 test("MFS: write and read file", async () => {
   const { mfs, cleanup } = await createMfs()
   try {
