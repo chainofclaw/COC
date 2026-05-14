@@ -216,6 +216,99 @@ describe("IpfsHttpServer", () => {
     assert.deepEqual(new Uint8Array(buf), data)
   })
 
+  it("#356: /api/v0/add rejects empty multipart body (no parts) with 400 invalid_multipart", async () => {
+    // Pre-fix: `--BOUNDARY--\r\n` (no parts at all) returned 200 with the
+    // empty-file CID `bafybeihjs...` — clients believed their (non-empty)
+    // file was uploaded but the server received zero bytes. Silent data
+    // loss. Reject explicitly.
+    const boundary = "----EmptyMpBoundary356"
+    const body = `--${boundary}--\r\n`
+    const res = await fetch("/api/v0/add", {
+      method: "POST",
+      headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+      body,
+    })
+    assert.equal(res.status, 400,
+      `empty multipart must be 400, got ${res.status}`)
+    const errBody = await res.json() as Record<string, string>
+    assert.equal(errBody.error, "invalid_multipart",
+      `error code must be invalid_multipart, got ${JSON.stringify(errBody)}`)
+    assert.match(errBody.message ?? "", /no part found/i,
+      `error message must mention "no part found", got: ${errBody.message}`)
+  })
+
+  it("#356: /api/v0/add rejects multi-part body (2+ parts) with 400 unsupported_multipart (no silent drop)", async () => {
+    // Pre-fix: the readMultipartFile loop returned on the FIRST part. A
+    // 2-file multipart upload returned the CID for file #1 and silently
+    // dropped file #2 — the client saw 200 OK and believed BOTH files
+    // were stored. /api/v0/add is single-file; reject multi-part.
+    const boundary = "----MultiMpBoundary356"
+    const body = [
+      `--${boundary}`,
+      'Content-Disposition: form-data; name="file"; filename="a"',
+      "",
+      "alpha",
+      `--${boundary}`,
+      'Content-Disposition: form-data; name="file"; filename="b"',
+      "",
+      "beta",
+      `--${boundary}--`,
+      "",
+    ].join("\r\n")
+    const res = await fetch("/api/v0/add", {
+      method: "POST",
+      headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+      body,
+    })
+    assert.equal(res.status, 400,
+      `multi-part body must be 400, got ${res.status}`)
+    const errBody = await res.json() as Record<string, string>
+    assert.equal(errBody.error, "unsupported_multipart",
+      `error code must be unsupported_multipart, got ${JSON.stringify(errBody)}`)
+    assert.match(errBody.message ?? "", /has 2 parts/i,
+      `error must surface part count, got: ${errBody.message}`)
+  })
+
+  it("#356: /api/v0/add rejects multipart/* Content-Type without boundary param", async () => {
+    // Pre-fix: `Content-Type: multipart/form-data` (no boundary param)
+    // fell through to the raw-body fallback — the literal envelope bytes
+    // `--XYZ\r\nContent-Disposition...\r\n\r\nfile-bytes\r\n--XYZ--` got
+    // content-addressed and stored verbatim, masquerading as the inner
+    // file. Multipart Content-Type without boundary is malformed per
+    // RFC 2046 §5.1.1; reject at the boundary.
+    const body = '--XYZ\r\nContent-Disposition: form-data; name="file"; filename="x"\r\n\r\nfile-bytes\r\n--XYZ--\r\n'
+    const res = await fetch("/api/v0/add", {
+      method: "POST",
+      headers: { "content-type": "multipart/form-data" }, // no boundary!
+      body,
+    })
+    assert.equal(res.status, 400,
+      `boundaryless multipart must be 400, got ${res.status}`)
+    const errBody = await res.json() as Record<string, string>
+    assert.equal(errBody.error, "invalid_multipart",
+      `error code must be invalid_multipart, got ${JSON.stringify(errBody)}`)
+    assert.match(errBody.message ?? "", /boundary/i,
+      `error must mention boundary, got: ${errBody.message}`)
+  })
+
+  it("#356: /api/v0/add raw-body fallback still works (octet-stream / no Content-Type)", async () => {
+    // Regression guard: kubo CLI uses multipart, but raw-body uploads via
+    // `curl --data-binary` (no Content-Type, or application/octet-stream)
+    // remain a supported path. Pre-fix and post-fix both accept these.
+    const content = new TextEncoder().encode("raw upload bytes 356")
+    const r1 = await fetch("/api/v0/add", {
+      method: "POST",
+      headers: { "content-type": "application/octet-stream" },
+      body: content,
+    })
+    assert.equal(r1.status, 200,
+      "octet-stream raw upload must still succeed")
+    const b1 = await r1.json() as Record<string, string>
+    assert.ok(b1.Hash, "raw upload must return a CID")
+    assert.equal(b1.Size, String(content.length),
+      "raw upload Size must match input length")
+  })
+
   it("#92: POST /api/v0/block/put extracts file bytes from kubo-style multipart", async () => {
     // Pre-fix bug: the entire multipart envelope (boundary, headers,
     // closing boundary) was stored as block bytes — incompatible with the
