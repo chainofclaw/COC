@@ -592,7 +592,16 @@ describe("IpfsHttpServer", () => {
     // non-traversal string through isValidCid, then the blockstore
     // ENOENT propagated as a generic 500 with a stacktrace logged.
     // Now: malformed CID → 400, valid-shape-missing CID → 404.
-    const missingButValid = "bafybeibbaty5wl7jqgcwyouemb5jerxoisdoxwldqdue5dd6evw6lgalhz"
+    //
+    // #592: pre-fix the CID below ended in 'z' (one-char typo from the
+    // sibling test at line 583's `...alhy`). `bafy...alhz` looks like
+    // a valid CIDv1 (base32 alphabet OK, regex pass) but the decoded
+    // multihash bytes are truncated — `CID.parse` throws "Unexpected
+    // end of data", so `resolveCid` raises `ErasureError("invalid_cid")`
+    // and the gateway returns 400, not the expected 404. Use the
+    // properly-parseable sibling so the test exercises what its name
+    // claims: a valid-shape CID that just isn't stored.
+    const missingButValid = "bafybeibbaty5wl7jqgcwyouemb5jerxoisdoxwldqdue5dd6evw6lgalhy"
     // (a) gateway: malformed → 400
     const gw1 = await fetch(`/ipfs/bogus`)
     assert.equal(gw1.status, 400, "gateway must reject 'bogus' with 400 (not 500)")
