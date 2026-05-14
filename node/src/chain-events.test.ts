@@ -227,6 +227,90 @@ describe("formatNewHeadsNotification", () => {
     assert.match(result.receiptsRoot as string, /^0x[0-9a-f]{64}$/)
     assert.match(result.logsBloom as string, /^0x[0-9a-f]{512}$/)
   })
+
+  it("#487: includes all Cancun + finalized + size + totalDifficulty + mixHash fields (parity with eth_getBlockByNumber)", async () => {
+    // Pre-fix WebSocket newHeads subscription returned 16 fields while
+    // eth_getBlockByNumber returned 26 (minus `transactions` which is
+    // correctly omitted for headers-only). Missing: mixHash, size,
+    // totalDifficulty, withdrawals, withdrawalsRoot, blobGasUsed,
+    // excessBlobGas, parentBeaconBlockRoot, finalized.
+    //
+    // Live testnet 88780 reproduction:
+    //   WS newHeads payload keys: 16
+    //   RPC eth_getBlockByNumber keys: 26 (incl. transactions)
+    //   Diff (in RPC, not in WS): 10 fields
+    //
+    // ethers/viem feature-detect Cancun by inspecting the head — pre-fix
+    // a subscription client saw a "pre-Cancun" chain while a query client
+    // saw the correct Cancun fields. Same class as #481 (genesis vs
+    // regular block shape drift), but on the WS notification path.
+    const block = makeBlock(100n)
+    block.timestampMs = 1700000000000
+    block.stateRoot = `0x${"11".repeat(32)}` as Hex
+    block.baseFee = 1_000_000_000n
+    block.finalized = true
+    block.blobGasUsed = 0x20000n
+    block.excessBlobGas = 0x40000n
+    block.parentBeaconBlockRoot = `0x${"55".repeat(32)}` as Hex
+
+    const result = await formatNewHeadsNotification({
+      block,
+      receipts: [],
+    })
+
+    // All 25 header fields must be present (transactions is the only
+    // omission vs eth_getBlockByNumber).
+    const expectedKeys = [
+      "baseFeePerGas", "blobGasUsed", "difficulty", "excessBlobGas", "extraData",
+      "finalized", "gasLimit", "gasUsed", "hash", "logsBloom", "miner", "mixHash",
+      "nonce", "number", "parentBeaconBlockRoot", "parentHash", "receiptsRoot",
+      "sha3Uncles", "size", "stateRoot", "timestamp", "totalDifficulty",
+      "transactionsRoot", "withdrawals", "withdrawalsRoot",
+    ]
+    const actualKeys = new Set(Object.keys(result))
+    for (const key of expectedKeys) {
+      assert.equal(
+        actualKeys.has(key),
+        true,
+        `newHeads must include ${key} (pre-fix it was missing). Current keys: ${[...actualKeys].sort().join(",")}`,
+      )
+    }
+
+    // Type/value checks for the previously-missing fields.
+    assert.equal(typeof result.size, "string", "size must be hex string")
+    assert.match(result.size as string, /^0x[0-9a-f]+$/, "size must be valid hex")
+    assert.equal(typeof result.finalized, "boolean", "finalized must be boolean")
+    assert.equal(result.finalized, true, "fixture set finalized=true → must be propagated")
+    assert.equal(result.mixHash, `0x${"00".repeat(32)}`, "mixHash must be zero hash (PoS)")
+    assert.equal(result.totalDifficulty, "0x0", "totalDifficulty must be 0x0 (PoS)")
+    assert.deepEqual(result.withdrawals, [], "withdrawals must be empty array")
+    assert.equal(
+      result.withdrawalsRoot,
+      "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
+      "withdrawalsRoot must be EMPTY_TRIE_ROOT",
+    )
+    assert.equal(result.blobGasUsed, "0x20000", "blobGasUsed must propagate from block")
+    assert.equal(result.excessBlobGas, "0x40000", "excessBlobGas must propagate from block")
+    assert.equal(result.parentBeaconBlockRoot, `0x${"55".repeat(32)}`, "parentBeaconBlockRoot must propagate from block")
+
+    // newHeads correctly excludes `transactions` (header-only stream).
+    assert.equal(actualKeys.has("transactions"), false, "newHeads must NOT include transactions[]")
+  })
+
+  it("#487: defaults blob fields to 0x0 + finalized to false when block omits them", async () => {
+    const block = makeBlock(101n)
+    block.timestampMs = 1700000000000
+    block.baseFee = 1_000_000_000n
+    // Intentionally NOT setting finalized / blobGasUsed / excessBlobGas /
+    // parentBeaconBlockRoot to test the default fallbacks.
+
+    const result = await formatNewHeadsNotification({ block, receipts: [] })
+
+    assert.equal(result.finalized, false, "finalized defaults to false when block.finalized is undefined")
+    assert.equal(result.blobGasUsed, "0x0", "blobGasUsed defaults to 0x0")
+    assert.equal(result.excessBlobGas, "0x0", "excessBlobGas defaults to 0x0")
+    assert.equal(result.parentBeaconBlockRoot, `0x${"00".repeat(32)}`, "parentBeaconBlockRoot defaults to zero hash")
+  })
 })
 
 describe("formatLogNotification", () => {
