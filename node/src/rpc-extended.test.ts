@@ -1677,6 +1677,86 @@ test("RPC Extended Methods", async (t) => {
     assert.ok(parent !== null, "client following block1.parentHash must reach the genesis (not null)")
   })
 
+  await t.test("#384: state-query RPCs return defaults at synth-genesis instead of -32001 block-not-found", async () => {
+    // Pre-fix: #112 carved a synth-genesis path for eth_getBlockByNumber("earliest")
+    // but the state-query RPCs (eth_getBalance/Code/TxCount/StorageAt/call/...)
+    // still threw -32001 "block not found: earliest" because their helper
+    // resolveHistoricalExecutionContext had no parallel fallback. Wallet
+    // probes (ethers/viem) hitting earliest balance during the JSON-RPC
+    // handshake broke immediately. Match geth/anvil at an empty-allocs
+    // genesis: zero balance, no code, nonce 0, zero storage, "0x" return.
+    const proposed = await chain.proposeNextBlock()
+    assert.ok(proposed, "need at least one real block so height ≥ 1")
+
+    const TEST_ADDR = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+    const ZERO_HASH32 = "0x" + "0".repeat(64)
+    const ZERO_ADDR = "0x0000000000000000000000000000000000000000"
+
+    // Cover all five shapes the issue calls out: "earliest", "0x0",
+    // and the three EIP-1898 object forms ({blockNumber: "0x0"}). The
+    // bare-hash and {blockHash} forms target a real block so they
+    // legitimately fail at synth-genesis (no hash to look up) and are
+    // not part of this fix.
+    const SYNTH_GENESIS_TAGS: Array<string | { blockNumber: string }> = [
+      "earliest",
+      "0x0",
+      { blockNumber: "0x0" },
+    ]
+
+    for (const tag of SYNTH_GENESIS_TAGS) {
+      const label = typeof tag === "string" ? tag : JSON.stringify(tag)
+
+      const balance = await rpcCall(port, "eth_getBalance", [TEST_ADDR, tag])
+      assert.equal(balance, "0x0", `eth_getBalance @ ${label} must be 0x0 at synth-genesis`)
+
+      const code = await rpcCall(port, "eth_getCode", [TEST_ADDR, tag])
+      assert.equal(code, "0x", `eth_getCode @ ${label} must be "0x" at synth-genesis`)
+
+      const nonce = await rpcCall(port, "eth_getTransactionCount", [TEST_ADDR, tag])
+      assert.equal(nonce, "0x0", `eth_getTransactionCount @ ${label} must be 0x0 at synth-genesis`)
+
+      const slot = await rpcCall(port, "eth_getStorageAt", [TEST_ADDR, "0x0", tag])
+      assert.equal(slot, ZERO_HASH32, `eth_getStorageAt @ ${label} must be 32-byte zero at synth-genesis`)
+
+      // eth_call against an empty-allocs genesis: no contracts deployed,
+      // returns empty bytes (matches geth/anvil).
+      const callResult = await rpcCall(port, "eth_call", [
+        { to: ZERO_ADDR, data: "0x" },
+        tag,
+      ])
+      assert.equal(callResult, "0x", `eth_call @ ${label} must return "0x" at synth-genesis`)
+
+      // eth_estimateGas: intrinsic-gas floor (21k for value-transfer, 53k
+      // for contract creation). Anvil returns the floor rather than -32001.
+      const estimateGas = await rpcCall(port, "eth_estimateGas", [
+        { to: ZERO_ADDR, value: "0x0" },
+        tag,
+      ])
+      assert.equal(estimateGas, "0x5208", `eth_estimateGas @ ${label} must be intrinsic 21000 (0x5208)`)
+
+      const estimateGasCreate = await rpcCall(port, "eth_estimateGas", [
+        { data: "0x60006000fd" },
+        tag,
+      ])
+      assert.equal(estimateGasCreate, "0xcf08", `eth_estimateGas (creation) @ ${label} must be intrinsic 53000 (0xcf08)`)
+
+      // eth_createAccessList: empty list + intrinsic-gas at synth-genesis.
+      const accessList = await rpcCall(port, "eth_createAccessList", [
+        { to: ZERO_ADDR, data: "0x" },
+        tag,
+      ]) as { accessList: unknown[]; gasUsed: string }
+      assert.deepEqual(accessList.accessList, [], `eth_createAccessList @ ${label} must be empty at synth-genesis`)
+      assert.equal(accessList.gasUsed, "0x5208", `eth_createAccessList gasUsed @ ${label} must be 0x5208`)
+    }
+
+    // Sanity: eth_getBlockByNumber("earliest") still works (the #112 path
+    // we're mirroring). Cross-method symmetry: state queries succeed at
+    // the same tag that block lookups already do.
+    const earliestBlock = await rpcCall(port, "eth_getBlockByNumber", ["earliest", false]) as Record<string, unknown> | null
+    assert.ok(earliestBlock !== null, "eth_getBlockByNumber('earliest') still works")
+    assert.equal(earliestBlock!.number, "0x0")
+  })
+
   await t.test("#108 part-2: coc_getPeers exposes the public peer list (id + url)", async () => {
     const peers = await rpcCall(port, "coc_getPeers") as Array<{ id: string; url: string }>
     assert.ok(Array.isArray(peers), "must return an array")
