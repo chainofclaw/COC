@@ -1978,14 +1978,47 @@ async function handleRpc(
       // doesn't exist." Detect the 66-char hash shape and route to
       // `getBlockByHash` instead. Indexers that bulk-fetch receipts
       // by block hash (Etherscan-clones, The Graph, etc.) need this.
+      // #523: pre-fix this only handled bare-string forms (named tag, hex
+      // number, 32-byte hash). EIP-1898 object forms `{blockNumber: "…"}`
+      // and `{blockHash: "…"}` fell through to `String(rawParam)` which
+      // coerced the object to literal `"[object Object]"` and bubbled out
+      // as `-32602 "invalid block number: [object Object]"`. Same
+      // `[object Object]` leak family as #497/#499 — except those PRs
+      // only fixed `eth_call`-family methods via
+      // `resolveHistoricalExecutionContext`. `eth_getBlockReceipts` was
+      // missed because it doesn't need state-root resolution, so its
+      // handler kept the simpler String()-coercion path. Tooling that
+      // batches receipts via EIP-1898 forms (ethers.js
+      // `provider.getBlock(blockHash).then(b => provider.send("eth_getBlockReceipts", [{blockHash: b.hash}]))`,
+      // The Graph indexer's bulk-receipt fetcher, Etherscan-clones) all
+      // emit object forms and silently got `-32602` from this method.
       const rawParam = (payload.params ?? [])[0]
       let block: Awaited<ReturnType<typeof chain.getBlockByNumber>> | null = null
       if (typeof rawParam === "string" && /^0x[0-9a-fA-F]{64}$/.test(rawParam)) {
-        // 32-byte block hash — case-insensitive, mirroring #364 normalization.
+        // Form (a): bare 32-byte block hash.
         block = await Promise.resolve(chain.getBlockByHash(rawParam.toLowerCase() as Hex))
+      } else if (typeof rawParam === "object" && rawParam !== null) {
+        // EIP-1898 object forms. Reject hybrid {blockNumber, blockHash}
+        // upfront per spec (geth + Erigon both -32602 this case).
+        const obj = rawParam as Record<string, unknown>
+        if ("blockNumber" in obj && "blockHash" in obj) {
+          invalidParams("invalid block parameter: EIP-1898 forbids blockNumber and blockHash together")
+        }
+        if ("blockHash" in obj) {
+          const rawHash = obj.blockHash
+          if (typeof rawHash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(rawHash)) {
+            invalidParams("invalid blockHash: must match /^0x[0-9a-fA-F]{64}$/")
+          }
+          block = await Promise.resolve(chain.getBlockByHash((rawHash as string).toLowerCase() as Hex))
+        } else if ("blockNumber" in obj) {
+          const num = await resolveBlockNumber(obj.blockNumber, chain)
+          block = await Promise.resolve(chain.getBlockByNumber(num))
+        } else {
+          invalidParams("invalid block parameter: EIP-1898 object must contain blockNumber or blockHash")
+        }
       } else {
-        const tag = String(rawParam ?? "latest")
-        const num = await resolveBlockNumber(tag, chain)
+        // Form (b): bare string tag / hex number / undefined → latest.
+        const num = await resolveBlockNumber(rawParam, chain)
         block = await Promise.resolve(chain.getBlockByNumber(num))
       }
       if (!block) return null
