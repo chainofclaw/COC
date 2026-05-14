@@ -419,3 +419,30 @@ test("#302: mkdir at root depth with file collision still rejects", async () => 
     cleanup()
   }
 })
+
+test("#418: MFS whitespace-only path components rejected (no silent garbage in namespace)", async () => {
+  // Sibling of #380 (empty arg). Pre-fix `arg=%20` (single space),
+  // `arg=%09` (tab), `arg=%20%20%20` (multi-space) sailed through
+  // normalizePath and downstream mkdir/write created files/dirs named
+  // " ", "\t", "   " — silent garbage indistinguishable from a real
+  // empty-name component. Reject so client typos surface.
+  const { mfs, cleanup } = await createMfs()
+  try {
+    const whitespaceProbes = [" ", "\t", "   ", "/\t", "/ ", "/path/ /sub", "/path/\t/sub"]
+    for (const path of whitespaceProbes) {
+      await assert.rejects(
+        () => mfs.mkdir(path),
+        /path component cannot be whitespace-only/i,
+        `mkdir ${JSON.stringify(path)} must reject whitespace-only component`,
+      )
+    }
+    // Sanity: paths with non-whitespace components containing internal
+    // whitespace are still allowed (e.g. "/my dir" — space inside name).
+    await mfs.mkdir("/my dir")
+    const entries = await mfs.ls("/")
+    assert.ok(entries.some((e) => e.name === "my dir"),
+      "internal-whitespace name still allowed")
+  } finally {
+    cleanup()
+  }
+})
