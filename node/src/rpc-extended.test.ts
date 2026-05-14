@@ -578,6 +578,65 @@ test("RPC Extended Methods", async (t) => {
       `wrong-chain tx must be -32602 (invalid params), got ${r1.error!.code}`)
   })
 
+  await t.test("#533: eth_getLogs blockHash resolves to the correct block (non-existent → -32000 'unknown block')", async () => {
+    // Live testnet 88780 reproduction (pre-fix):
+    //   eth_getLogs({"blockHash":"0xdeadbeef...deadbeef"})  // valid shape, doesn't exist
+    //   → {"result":[]}
+    //   eth_getLogs({"blockHash":"0x2a020dbc...latest"})    // valid AND exists
+    //   → {"result":[]}    // INDISTINGUISHABLE from above
+    //
+    // Upstream validation (#186 shape, #464 fromBlock/toBlock mutex)
+    // existed, but `queryLogs` (rpc.ts:4093) NEVER read `query.blockHash`.
+    // It always fell through to `parseBlockTag(query.fromBlock, height)`
+    // which returned `height` for undefined → fromBlock=toBlock=latest.
+    // A `{blockHash: "<hash>"}` filter silently queried the LATEST block
+    // instead of the block at that hash.
+    //
+    // EIP-234 batched fetchers (ethers.js provider.getLogs({blockHash:...}),
+    // viem getLogs({blockHash:...}), The Graph indexer, every block-explorer
+    // implementing reorg-aware retrieval) need:
+    //   1. Resolution to the SPECIFIC block (not latest)
+    //   2. A `-32000 "unknown block"` signal so a hash that's been reorged
+    //      out is detectable. Pre-fix `[]` masks reorgs.
+    //
+    // Fix: queryLogs reads query.blockHash, resolves to block.number for
+    // fromBlock=toBlock, throws -32000 "unknown block" if the hash doesn't
+    // match a known block.
+    const probe = async (filter: unknown) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getLogs", params: [filter] }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    }
+    // (a) Non-existent blockHash → -32000 "unknown block" (geth parity)
+    const nonexistent = await probe({ blockHash: "0xdeadbeef000000000000000000000000000000000000000000000000deadbeef" })
+    assert.ok(nonexistent.error,
+      `non-existent blockHash must error (not silent []), got result=${JSON.stringify(nonexistent.result)}`)
+    assert.equal(nonexistent.error!.code, -32000,
+      `non-existent blockHash must be -32000, got ${nonexistent.error!.code}`)
+    assert.match(nonexistent.error!.message, /unknown block/i,
+      `error must mention "unknown block", got: ${nonexistent.error!.message}`)
+    assert.equal(nonexistent.result, undefined,
+      "must NOT carry a result alongside the error")
+
+    // (b) Existing blockHash (the fixture's genesis stub or block 0x1 if any
+    // were proposed) → must succeed (no -32000), regardless of log count.
+    // First, propose a block to ensure block 0x1 exists.
+    if (typeof chain.proposeNextBlock === "function") {
+      await chain.proposeNextBlock()
+    }
+    const blockByNum = await rpcCall(port, "eth_getBlockByNumber", ["0x1", false]) as { hash: string } | null
+    if (blockByNum) {
+      const existing = await probe({ blockHash: blockByNum.hash })
+      assert.equal(existing.error, undefined,
+        `existing blockHash must succeed, got error: ${JSON.stringify(existing.error)}`)
+      assert.ok(Array.isArray(existing.result),
+        `existing blockHash must return array, got ${typeof existing.result}`)
+    }
+  })
+
   await t.test("#122: eth_getBalance / eth_getTransactionCount / coc_getContractInfo reject malformed addresses with -32602", async () => {
     // Pre-fix bugs:
     //   - eth_getBalance returned -32603 with the raw input echoed back

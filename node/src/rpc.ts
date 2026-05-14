@@ -4269,8 +4269,32 @@ const MAX_TRACE_RESULTS = 1_000
 async function queryLogs(chain: IChainEngine, query: Record<string, unknown>, resolvedHeight?: bigint): Promise<unknown[]> {
   const height = resolvedHeight ?? await Promise.resolve(chain.getHeight())
   const finalizedHeight = await Promise.resolve(chain.getHighestFinalizedBlock())
-  const fromBlock = parseBlockTag(query.fromBlock, height, finalizedHeight)
-  const toBlock = parseBlockTag(query.toBlock, height, finalizedHeight)
+  // #533: pre-fix `query.blockHash` was validated upstream (#186 shape +
+  // #464 mutex with fromBlock/toBlock) but NEVER resolved to a block
+  // number here. queryLogs always fell through to parseBlockTag(undefined,
+  // height) = latest, so a `{blockHash: "<hash>"}` filter silently queried
+  // the LATEST block instead of the block at that hash. Worse, a
+  // non-existent hash returned `result: []` indistinguishable from "block
+  // exists, no logs" — same anti-pattern family as #511 (silent empty
+  // result that mimics no-data). Geth's contract: `-32000 "unknown block"`
+  // for an unknown blockHash. EIP-234 batched fetchers (ethers.js
+  // provider.getLogs({blockHash}), viem getLogs({blockHash})) need this
+  // signal to distinguish "block was reorged out" from "block exists,
+  // matched zero logs".
+  let fromBlock: bigint
+  let toBlock: bigint
+  if (query.blockHash !== undefined && query.blockHash !== null) {
+    const hash = (query.blockHash as string).toLowerCase() as Hex
+    const block = await Promise.resolve(chain.getBlockByHash(hash))
+    if (!block) {
+      throw { code: -32000, message: "unknown block" }
+    }
+    fromBlock = block.number
+    toBlock = block.number
+  } else {
+    fromBlock = parseBlockTag(query.fromBlock, height, finalizedHeight)
+    toBlock = parseBlockTag(query.toBlock, height, finalizedHeight)
+  }
 
   // Reject invalid range where fromBlock > toBlock
   if (fromBlock > toBlock) {
