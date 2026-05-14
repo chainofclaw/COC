@@ -1343,9 +1343,23 @@ async function handleRpc(
       // #154: same fix as eth_sign — validate address and typedData
       // shape upfront so malformed inputs return -32602 not -32603.
       const address = requireAddressParam(payload.params ?? [], 0).toLowerCase() as Hex
-      const typedData = (payload.params ?? [])[1]
+      // #503: MetaMask, ethers.signTypedData, viem.signTypedData, web3.js
+      // — every browser-side library — passes typedData as a JSON-
+      // stringified string (`params: [address, JSON.stringify(td)]`)
+      // because that's the EIP-712 reference impl + MetaMask docs
+      // convention. Pre-fix the handler only accepted object form and
+      // rejected stringified payloads as -32602 "invalid typedData:
+      // expected object" — every browser wallet flow broke against COC.
+      let typedData = (payload.params ?? [])[1]
+      if (typeof typedData === "string") {
+        try {
+          typedData = JSON.parse(typedData)
+        } catch {
+          invalidParams("invalid typedData: malformed JSON")
+        }
+      }
       if (typedData === null || typeof typedData !== "object" || Array.isArray(typedData)) {
-        invalidParams("invalid typedData: expected object")
+        invalidParams("invalid typedData: expected object or JSON-encoded string")
       }
 
       const account = testAccounts.get(address)
