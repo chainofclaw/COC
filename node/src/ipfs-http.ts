@@ -1384,11 +1384,29 @@ export class IpfsHttpServer {
           // handles both: it extracts the file bytes from multipart, or returns
           // raw bytes when the request has no boundary in Content-Type.
           const { bytes: body } = await readMultipartFile(req)
-          await this.mfs.write(arg, body, {
+          // #559: pre-fix the HTTP handler forwarded only create/truncate/
+          // parents and silently dropped `offset`. The mfs-layer merge
+          // branch (`if (existing && !opts?.truncate && opts?.offset !== undefined)`)
+          // never ran, so `write?offset=10` to a 5-byte file produced a
+          // 2-byte file containing only the new bytes — the pre-offset
+          // content was permanently destroyed. Parse offset the same way
+          // the sibling `read` handler does (#200/#426): reject non-
+          // SafeInteger + negative with 400 invalid offset. Silent-param-
+          // drop family as #174/#353/#460/#553 but data-destructive.
+          const writeOpts: { create?: boolean; truncate?: boolean; parents?: boolean; offset?: number } = {
             create: url.query?.create === "true",
             truncate: url.query?.truncate === "true",
             parents: url.query?.parents === "true",
-          })
+          }
+          const writeOffsetRaw = firstQueryValue(url.query?.offset)
+          if (writeOffsetRaw !== undefined) {
+            const n = Number(writeOffsetRaw)
+            if (!Number.isSafeInteger(n) || n < 0) {
+              throw new HttpError(400, "invalid offset")
+            }
+            writeOpts.offset = n
+          }
+          await this.mfs.write(arg, body, writeOpts)
           res.writeHead(200, { "content-type": "application/json" })
           res.end(JSON.stringify({ ok: true }))
           break
