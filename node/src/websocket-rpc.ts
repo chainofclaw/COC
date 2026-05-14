@@ -20,6 +20,7 @@ import type { EvmChain } from "./evm.ts"
 import type { P2PNode } from "./p2p.ts"
 import type { ChainEventEmitter, BlockEvent, PendingTxEvent, LogEvent } from "./chain-events.ts"
 import { formatNewHeadsNotification, formatLogNotification } from "./chain-events.ts"
+import { formatRawTransaction } from "./rpc.ts"
 import type { Hex } from "./blockchain-types.ts"
 import type { IndexedLog } from "./storage/block-index.ts"
 import { createLogger } from "./logger.ts"
@@ -562,8 +563,31 @@ export class WsRpcServer {
         break
       }
       case "newPendingTransactions": {
+        // #495: geth-compat 2nd param `true` ⇒ emit full tx objects
+        // (eth_getTransactionByHash shape). Pre-fix this boolean was
+        // silently dropped — both ["newPendingTransactions"] and
+        // ["newPendingTransactions", true] returned hash strings.
+        // Reject non-boolean / non-omitted shapes upfront so a buggy
+        // client gets -32602 instead of silent fallback (same anti-
+        // pattern family as #244 for logs).
+        const fullObjects = params[1]
+        if (fullObjects !== undefined && fullObjects !== null && typeof fullObjects !== "boolean") {
+          invalidParams("invalid newPendingTransactions param: 2nd argument must be boolean or omitted")
+        }
+        const emitFull = fullObjects === true
         const handler = (event: PendingTxEvent) => {
           if (!this.clients.has(ws)) return
+          if (emitFull) {
+            // Parse the raw RLP into the standard tx object shape used by
+            // eth_getTransactionByHash. The tx isn't in a block yet, so
+            // blockHash/blockNumber/transactionIndex stay null per spec.
+            const formatted = formatRawTransaction(event.rawTx)
+            if (formatted) {
+              this.sendSubscription(ws, subId, formatted)
+              return
+            }
+            // Fallback to hash if parsing fails — better than dropping the event.
+          }
           this.sendSubscription(ws, subId, event.hash)
         }
         this.events.onPendingTx(handler as (event: PendingTxEvent) => void)

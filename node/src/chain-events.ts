@@ -21,6 +21,13 @@ export interface PendingTxEvent {
   from: Hex
   nonce: bigint
   gasPrice: bigint
+  // #495: include the raw signed RLP so a WS subscriber that opted into
+  // full-tx mode (eth_subscribe("newPendingTransactions", true)) can
+  // re-parse and surface the same shape as eth_getTransactionByHash.
+  // Pre-fix the WS path emitted only `event.hash` regardless of the
+  // boolean flag, so the geth-style full-tx subscription was silently
+  // downgraded to hash-only.
+  rawTx: Hex
 }
 
 export interface LogEvent {
