@@ -436,9 +436,29 @@ export function startRpcServer(
       if (bodySize > MAX_RPC_BODY) {
         aborted = true
         clearTimeout(readTimer)
-        res.writeHead(413, { "content-type": "application/json" })
-        res.end(JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "request body too large" } }))
-        req.destroy()
+        // #360: pre-fix `req.destroy()` ran synchronously right after
+        // `res.end(...)`. res.end merely buffered the response in Node's
+        // http stream; the bytes hadn't been handed to the kernel TCP
+        // stack yet. The inline destroy() then RST-ed the socket,
+        // throwing away the buffered response. Clients saw ECONNRESET
+        // instead of the documented 413 + JSON-RPC -32600 error, non-
+        // deterministically (depends on TCP send buffer + scheduler
+        // timing — boundary scan in #360 showed flapping N=27000-32000).
+        //
+        // Fix: emit Connection:close so the client doesn't try to reuse
+        // the socket, set Content-Length so the response is identity-
+        // encoded (not chunked — saves clients from decoding chunks for
+        // a tiny error body), and run socket.destroy() inside res.end's
+        // flush callback — guaranteed to fire AFTER the response is on
+        // the wire.
+        const bodyPayload = JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "request body too large" } })
+        const bodyBytes = Buffer.byteLength(bodyPayload)
+        res.writeHead(413, {
+          "content-type": "application/json",
+          "content-length": String(bodyBytes),
+          "connection": "close",
+        })
+        res.end(bodyPayload, () => { req.socket?.destroy() })
         return
       }
       body += chunk

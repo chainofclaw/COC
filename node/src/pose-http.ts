@@ -343,8 +343,20 @@ export function handlePoseRequest(
     if (bodySize > MAX_POSE_BODY) {
       aborted = true
       clearTimeout(readTimer)
-      jsonResponse(res, 413, { error: "body too large" })
-      req.destroy()
+      // #360: same race as rpc.ts — inline req.destroy() RSTs the socket
+      // before res.end's buffered response reaches the kernel TCP stack.
+      // Run socket.destroy() inside res.end's flush callback so it fires
+      // only after the response is on the wire; set Connection:close +
+      // Content-Length so the client releases the socket cleanly without
+      // needing to decode chunked encoding for a tiny error body.
+      const bodyPayload = JSON.stringify({ error: "body too large" })
+      const bodyBytes = Buffer.byteLength(bodyPayload)
+      res.writeHead(413, {
+        "content-type": "application/json",
+        "content-length": String(bodyBytes),
+        "connection": "close",
+      })
+      res.end(bodyPayload, () => { req.socket?.destroy() })
       return
     }
     body += chunk
