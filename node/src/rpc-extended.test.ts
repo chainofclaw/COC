@@ -3207,6 +3207,101 @@ test("RPC Extended Methods", async (t) => {
     }
   })
 
+  await t.test("#493: eth_call non-revert EVM exceptions surface specific reason in message", async () => {
+    // Pre-fix every EVM failure mode collapsed to bare "execution reverted":
+    //   - stack underflow, invalid opcode, out of gas, invalid jump,
+    //     refund exhausted, code size exceeds limit — all identical
+    // ethers/viem surface this as "Transaction would revert (likely
+    // require(false))" — totally wrong UX for OOG / OOPS / opcode bugs
+    // where the user should bump gas limit or fix the contract logic.
+    //
+    // Live testnet 88780 reproduction (all returned same error):
+    //   eth_call(0x50)         (POP, stack underflow)   → "execution reverted"
+    //   eth_call(0xfe)         (INVALID opcode)         → "execution reverted"
+    //   eth_call(...gas=0x10)  (out of gas)             → "execution reverted"
+    //   eth_call(0x600056)     (invalid JUMP)           → "execution reverted"
+    //
+    // geth puts the specific reason in the message so wallets can show
+    // a meaningful UI (e.g. "Out of gas — bump gas limit"). Match.
+    const origCallRaw = (evm as unknown as {
+      callRaw: (...args: unknown[]) => Promise<{ returnValue: string; gasUsed: bigint; failed: boolean; errorReason?: string }>
+    }).callRaw
+
+    const cases: Array<{ reason: string; expectMessage: RegExp }> = [
+      { reason: "stack underflow",  expectMessage: /execution reverted: stack underflow/i },
+      { reason: "invalid opcode",   expectMessage: /execution reverted: invalid opcode/i },
+      { reason: "out of gas",        expectMessage: /execution reverted: out of gas/i },
+      { reason: "invalid JUMP",      expectMessage: /execution reverted: invalid JUMP/i },
+    ]
+
+    try {
+      for (const { reason, expectMessage } of cases) {
+        ;(evm as unknown as { callRaw: typeof origCallRaw }).callRaw = async () => ({
+          returnValue: "0x", gasUsed: 21000n, failed: true,
+          errorReason: reason,
+        })
+        const r = await fetch(`http://127.0.0.1:${port}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0", id: 1, method: "eth_call",
+            params: [{ from: "0x" + "ab".repeat(20), to: "0x" + "cd".repeat(20), data: "0x" }, "latest"],
+          }),
+        })
+        const body = await r.json() as { error?: { code: number; message: string; data: string } }
+        assert.equal(body.error?.code, 3, `${reason} must still be code 3 (per geth), got ${JSON.stringify(body)}`)
+        assert.match(body.error!.message, expectMessage,
+          `${reason} must surface in message, got "${body.error!.message}"`)
+      }
+
+      // Sanity: bare revert (errorReason="revert") with no payload → bare
+      // "execution reverted" (no extra suffix). Regression guard for #286.
+      ;(evm as unknown as { callRaw: typeof origCallRaw }).callRaw = async () => ({
+        returnValue: "0x", gasUsed: 21000n, failed: true,
+        errorReason: "revert",
+      })
+      const bareRevert = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0", id: 1, method: "eth_call",
+          params: [{ from: "0x" + "ab".repeat(20), to: "0x" + "cd".repeat(20), data: "0x" }, "latest"],
+        }),
+      })
+      const bareBody = await bareRevert.json() as { error?: { code: number; message: string } }
+      assert.equal(bareBody.error?.code, 3)
+      assert.equal(bareBody.error!.message, "execution reverted",
+        `bare revert with no errorReason payload must be exactly "execution reverted", got "${bareBody.error!.message}"`)
+
+      // Sanity: decoded Error(string) revert payload still works.
+      // ABI-encoded `Error("Hard!")`:
+      //   selector 08c379a0 + offset 0x20 + length 5 + "Hard!" padded to 32
+      const revertPayload = "0x08c379a0" +
+        "0000000000000000000000000000000000000000000000000000000000000020" +
+        "0000000000000000000000000000000000000000000000000000000000000005" +
+        "4861726421000000000000000000000000000000000000000000000000000000"
+      ;(evm as unknown as { callRaw: typeof origCallRaw }).callRaw = async () => ({
+        returnValue: revertPayload, gasUsed: 21000n, failed: true,
+        errorReason: "revert",
+      })
+      const decoded = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0", id: 1, method: "eth_call",
+          params: [{ from: "0x" + "ab".repeat(20), to: "0x" + "cd".repeat(20), data: "0x" }, "latest"],
+        }),
+      })
+      const decodedBody = await decoded.json() as { error?: { code: number; message: string; data: string } }
+      assert.equal(decodedBody.error?.code, 3)
+      assert.match(decodedBody.error!.message, /execution reverted: Hard!/,
+        "decoded revert reason takes precedence over errorReason")
+      assert.equal(decodedBody.error!.data, revertPayload)
+    } finally {
+      ;(evm as unknown as { callRaw: typeof origCallRaw }).callRaw = origCallRaw
+    }
+  })
+
   await t.test("#288: eth_compileSolidity rejects oversize source (DoS gate; pre-fix 14.9 KB blocked event loop 5+ min)", async () => {
     // solc.compile is synchronous emscripten WASM. A single moderately
     // large source (500 empty contracts ≈ 15 KB) took 5m20s on 88780,

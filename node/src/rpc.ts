@@ -2977,10 +2977,32 @@ async function handleRpc(
 // payload from `error.data`. Decoded reason is appended to the message
 // when available (`Error(string)` → "execution reverted: <reason>";
 // `Panic(uint)` → "execution reverted: Panic(N)").
-function throwExecutionReverted(returnValue: string): never {
-  const reason = decodeRevertReason(returnValue)
-  const message = reason ? `execution reverted: ${reason}` : "execution reverted"
-  throw { code: 3, message, data: returnValue || "0x" }
+function throwExecutionReverted(returnValue: string, errorReason?: string): never {
+  // Try to decode an ABI-encoded revert payload first (Error(string) /
+  // Panic(uint256)). For a real REVERT opcode with payload, this gives
+  // the user-friendly Solidity reason.
+  const decoded = decodeRevertReason(returnValue)
+  if (decoded) {
+    throw { code: 3, message: `execution reverted: ${decoded}`, data: returnValue || "0x" }
+  }
+  // #493: when there's no revert payload, the failure is one of:
+  //   - explicit REVERT(0,0) with no data → "execution reverted"
+  //   - non-REVERT EVM exception (invalid opcode / out of gas / stack
+  //     underflow / invalid jump / etc) — these are NOT reverts, they're
+  //     consensus errors that consume all gas
+  // Pre-fix all of them collapsed into bare "execution reverted",
+  // misleading ethers/viem ("Transaction would revert: require(false)"
+  // is the default surface when no data is present). geth includes the
+  // specific reason in the message so wallets can show a meaningful UI
+  // ("Out of gas — increase the gas limit", "Invalid opcode" etc).
+  if (errorReason && errorReason !== "revert" && errorReason !== "insufficient balance") {
+    throw {
+      code: 3,
+      message: `execution reverted: ${errorReason}`,
+      data: returnValue || "0x",
+    }
+  }
+  throw { code: 3, message: "execution reverted", data: returnValue || "0x" }
 }
 
 /**
@@ -2999,7 +3021,10 @@ function throwCallFailure(result: { returnValue: string; failed: boolean; errorR
       data: result.returnValue || "0x",
     }
   }
-  throwExecutionReverted(result.returnValue)
+  // #493: pass the errorReason through so non-revert EVM exceptions get
+  // a specific message ("invalid opcode", "out of gas", "stack underflow",
+  // etc.) instead of bare "execution reverted".
+  throwExecutionReverted(result.returnValue, result.errorReason)
 }
 
 async function resolveBlockNumber(input: unknown, chain: IChainEngine): Promise<bigint> {
