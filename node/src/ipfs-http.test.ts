@@ -865,6 +865,52 @@ describe("IpfsHttpServer", () => {
     }
   })
 
+  it("#543: /api/v0/files/mkdir on a file-collision path returns 400 'not a directory' (not 500 'internal error')", async () => {
+    // Pre-fix `mkdir /a/file.txt` (where /a/file.txt is an existing file)
+    // and `mkdir /a/file.txt/sub --parents` (mkdir UNDER a file) both
+    // threw `Error("not a directory: <path>")` from #302's file-collision
+    // guard — but the route-level catch had only `/is a directory/`
+    // (the inverse, used by file-read-on-dir), so the new message fell
+    // through to the 500 "internal error" default. Same regex-mismatch
+    // family as #232 (path traversal) and #268 (max depth) — both
+    // surface clean 400s only after the regex chain was extended.
+    //
+    // Live testnet 88780 reproduction (pre-fix):
+    //   write /coll.txt 'data'
+    //   mkdir /coll.txt
+    //   → HTTP 500 {"error":"internal error"}
+    //
+    // Post-fix:
+    //   → HTTP 400 {"error":"bad request","message":"not a directory: /coll.txt"}
+    const { IpfsMfs } = await import("./ipfs-mfs.ts")
+    const mfs = new IpfsMfs(store, unixfs)
+    server.attachSubsystems({ mfs })
+    // Seed a file at /coll.txt
+    await fetch("/api/v0/files/write?arg=/coll.txt&create=true", {
+      method: "POST",
+      headers: { "content-type": "application/octet-stream" },
+      body: new TextEncoder().encode("data"),
+    })
+
+    // (a) mkdir on the file path itself → 400 "not a directory"
+    const res1 = await fetch("/api/v0/files/mkdir?arg=/coll.txt", { method: "POST" })
+    assert.equal(res1.status, 400, `mkdir on file path must be 400, got ${res1.status}`)
+    const body1 = await res1.json() as { error?: string; message?: string }
+    assert.notEqual(body1.error, "internal error",
+      `must not leak 'internal error', got ${JSON.stringify(body1)}`)
+    assert.match(`${body1.error} ${body1.message ?? ""}`, /not a directory|bad request/i,
+      `error must reference "not a directory", got ${JSON.stringify(body1)}`)
+
+    // (b) mkdir UNDER a file path with parents=true → still 400
+    const res2 = await fetch("/api/v0/files/mkdir?arg=/coll.txt/sub&parents=true", { method: "POST" })
+    assert.equal(res2.status, 400, `mkdir under file path must be 400, got ${res2.status}`)
+    const body2 = await res2.json() as { error?: string; message?: string }
+    assert.notEqual(body2.error, "internal error",
+      `must not leak 'internal error', got ${JSON.stringify(body2)}`)
+    assert.match(`${body2.error} ${body2.message ?? ""}`, /not a directory|bad request/i,
+      `error must reference "not a directory", got ${JSON.stringify(body2)}`)
+  })
+
   it("#236: /api/v0/files/cp + /files/mv read second ?arg= for destination (kubo compat)", async () => {
     // Pre-fix the handlers read `?dest=<path>` but kubo HTTP RPC sends
     // dest as a second `?arg=` value. Result: every kubo-CLI / ipfs-http-

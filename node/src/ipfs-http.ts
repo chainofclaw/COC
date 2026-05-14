@@ -1485,7 +1485,16 @@ export class IpfsHttpServer {
           // the 400 that path-too-long / null-byte / max-depth siblings
           // already emit. Treat as client-input error.
           /^path traversal/i.test(msg) ||
-          /^invalid /i.test(msg)
+          /^invalid /i.test(msg) ||
+          // #543: `mkdir` on (or under) an existing file path throws
+          // "not a directory: <path>" (from #302). Pre-fix the regex
+          // catch had `/is a directory/` (the inverse phrase used by
+          // file-read-on-dir) but no `/not a directory/`, so this
+          // shape fell through to the 500 "internal error" default.
+          // Same regex-mismatch family as #232 (path traversal) and
+          // #268 (max depth) — both fixed retroactively when the
+          // mismatch was noticed.
+          /^not a directory/i.test(msg)
         ) {
           httpErr = new HttpError(400, "bad request", msg)
         }
