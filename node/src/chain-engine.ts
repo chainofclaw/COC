@@ -183,12 +183,18 @@ export class ChainEngine {
     // wrong. Geth and Erigon check chainId first because it's
     // immutable for a given signed tx.
     const txChainId = (decoded as { chainId?: bigint | number | null }).chainId
+    const expectedChainId = this.cfg.chainId ?? 18780
     if (
       txChainId !== null &&
       txChainId !== undefined &&
-      BigInt(txChainId) !== BigInt(this.cfg.chainId ?? 18780)
+      BigInt(txChainId) !== BigInt(expectedChainId)
     ) {
-      throw new Error(`invalid chain ID: expected ${this.cfg.chainId}, got ${txChainId}`)
+      // #604: pre-fix the error echoed `this.cfg.chainId` directly, which
+      // is undefined when the engine was constructed without an explicit
+      // chainId (rpc layer defaults to 18780 — see #184). Callers saw
+      // "expected undefined, got 99999" — misleading + same info-quality
+      // family as #156/#176/#182/#505/#507/#601 (cleaner is better).
+      throw new Error(`invalid chain ID: expected ${expectedChainId}, got ${txChainId}`)
     }
     if (this.txHashSet.has(decoded.hash as Hex)) {
       throw new Error("tx already confirmed")
