@@ -1736,6 +1736,12 @@ export class IpfsHttpServer {
           httpErr = new HttpError(404, "not found", msg)
         } else if (
           /is a directory/i.test(msg) ||
+          // #543: mkdir on (or under) an existing file path throws the #302
+          // file-collision guard's `not a directory: <path>`. The chain had
+          // `/is a directory/` (the inverse phrase) but no `/not a directory/`,
+          // so the collision leaked as 500 "internal error" + an ERROR log
+          // line per probe. Same regex-mismatch family as #232/#268/#270.
+          /^not a directory/i.test(msg) ||
           /directory not empty/i.test(msg) ||
           // #270: sibling of `cannot copy directory into its own subdirectory`
           // — mfs.mv throws the same shape with `move` instead of `copy`. The
