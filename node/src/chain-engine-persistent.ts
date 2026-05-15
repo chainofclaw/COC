@@ -632,12 +632,17 @@ export class PersistentChainEngine {
     // re-sign, and re-submit just to learn their chainId was fundamentally
     // wrong. Mirrors the same fix in chain-engine.ts addRawTx.
     const txChainId = (decoded as { chainId?: bigint | number | null }).chainId
+    const expectedChainId = this.cfg.chainId ?? 18780
     if (
       txChainId !== null &&
       txChainId !== undefined &&
-      BigInt(txChainId) !== BigInt(this.cfg.chainId ?? 18780)
+      BigInt(txChainId) !== BigInt(expectedChainId)
     ) {
-      throw new Error(`invalid chain ID: expected ${this.cfg.chainId}, got ${txChainId}`)
+      // #604: mirror the chain-engine.ts fix — echo back the actual
+      // expected ID rather than `this.cfg.chainId` (which can be
+      // undefined when constructed without explicit chainId, leading
+      // to "expected undefined, got 99999" leak).
+      throw new Error(`invalid chain ID: expected ${expectedChainId}, got ${txChainId}`)
     }
 
     // Mirror in-memory engine order: hash dedup first (more specific error
