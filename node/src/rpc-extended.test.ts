@@ -1881,6 +1881,33 @@ test("RPC Extended Methods", async (t) => {
     assert.ok(parent !== null, "client following block1.parentHash must reach the genesis (not null)")
   })
 
+  await t.test("#617: synth-genesis stateRoot is the empty-trie root (not all-zeros)", async () => {
+    // Pre-fix: formatGenesisBlock returned stateRoot=ZERO_HASH while
+    // transactionsRoot/receiptsRoot/withdrawalsRoot were all set to
+    // EMPTY_TRIE_ROOT (keccak256(rlp([]))). ZERO_HASH is NOT a valid
+    // MPT root; the canonical empty state-trie root is 0x56e81f…b421.
+    // Live 88780 reproduction: eth_getBlockByNumber("0x0") returned
+    // a header with 3 fields at the empty-trie hash and stateRoot at
+    // all-zeros — an internally inconsistent block header that breaks
+    // any client validating roots (Hardhat fork detection, anvil
+    // compat, devp2p Status, state-trie walkers).
+    const proposed = await chain.proposeNextBlock()
+    assert.ok(proposed, "need at least one real block so height ≥ 1")
+    const EMPTY_TRIE_ROOT = "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421"
+    const genesis = await rpcCall(port, "eth_getBlockByNumber", ["0x0", false]) as Record<string, unknown>
+    assert.equal(genesis.stateRoot, EMPTY_TRIE_ROOT,
+      `synth-genesis stateRoot must be the empty-trie root, got ${genesis.stateRoot}`)
+    // All four "empty" roots agree — the synth-genesis is internally consistent.
+    assert.equal(genesis.transactionsRoot, EMPTY_TRIE_ROOT)
+    assert.equal(genesis.receiptsRoot, EMPTY_TRIE_ROOT)
+    assert.equal(genesis.withdrawalsRoot, EMPTY_TRIE_ROOT)
+    // Symmetric: by-hash genesis lookup returns the same stateRoot.
+    const ZERO_HASH = "0x" + "0".repeat(64)
+    const byHash = await rpcCall(port, "eth_getBlockByHash", [ZERO_HASH, false]) as Record<string, unknown>
+    assert.equal(byHash.stateRoot, EMPTY_TRIE_ROOT,
+      "by-hash synth-genesis stateRoot must match by-number")
+  })
+
   await t.test("#384: state-query RPCs return defaults at synth-genesis instead of -32001 block-not-found", async () => {
     // Pre-fix: #112 carved a synth-genesis path for eth_getBlockByNumber("earliest")
     // but the state-query RPCs (eth_getBalance/Code/TxCount/StorageAt/call/...)
