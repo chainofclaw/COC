@@ -472,6 +472,39 @@ test("#302: mkdir at root depth with file collision still rejects", async () => 
   }
 })
 
+test("#600: mkdir without parents=true on existing path errors (kubo parity)", async () => {
+  // Pre-fix `if (this.dirs.has(normalized)) return` was unconditional, so
+  //   files/mkdir?arg=/data         → 200 ok (creates)
+  //   files/mkdir?arg=/data         → 200 ok (silent no-op)
+  // kubo's CLI errors the second call with "Error: file already exists",
+  // which is the contract operators rely on to detect race-condition
+  // wins between two concurrent mkdir callers. -p/--parents stays
+  // idempotent (the documented kubo escape hatch).
+  const { mfs, cleanup } = await createMfs()
+  try {
+    await mfs.mkdir("/data")
+    // (a) Second mkdir without parents must REJECT.
+    await assert.rejects(
+      () => mfs.mkdir("/data"),
+      /file already exists: \/data$/,
+      "mkdir on existing dir without parents=true must error",
+    )
+    // (b) mkdir -p on existing dir stays idempotent.
+    await mfs.mkdir("/data", { parents: true })
+    const stat = await mfs.stat("/data")
+    assert.strictEqual(stat.type, "directory", "parents=true must remain idempotent")
+    // (c) Sanity: write() internally calls mkdir(..., parents:true) so
+    //     create-with-parents on an existing path still works.
+    await mfs.write("/data/file.txt", new TextEncoder().encode("ok"),
+      { create: true, parents: true })
+    const data = await mfs.read("/data/file.txt")
+    assert.strictEqual(new TextDecoder().decode(data), "ok",
+      "write+parents on existing dir must not regress")
+  } finally {
+    cleanup()
+  }
+})
+
 test("#418: MFS whitespace-only path components rejected (no silent garbage in namespace)", async () => {
   // Sibling of #380 (empty arg). Pre-fix `arg=%20` (single space),
   // `arg=%09` (tab), `arg=%20%20%20` (multi-space) sailed through

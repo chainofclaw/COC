@@ -1773,7 +1773,11 @@ export class IpfsHttpServer {
           // #539: `mv` / `cp` reject existing destination (data-loss
           // prevention, kubo parity). Map to 400 same as the other
           // client-input-error siblings.
-          /^destination already exists/i.test(msg)
+          /^destination already exists/i.test(msg) ||
+          // #600: `mkdir` without parents=true on existing path now errors
+          // with kubo parity ("file already exists: <path>"). Same shape
+          // as the #539 destination guard — client-input error.
+          /^file already exists/i.test(msg)
         ) {
           httpErr = new HttpError(400, "bad request", msg)
         }

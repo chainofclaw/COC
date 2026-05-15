@@ -53,7 +53,17 @@ export class IpfsMfs {
    */
   async mkdir(path: string, opts?: { parents?: boolean }): Promise<void> {
     const normalized = normalizePath(path)
-    if (this.dirs.has(normalized)) return
+    // #600: kubo CLI errors `mkdir /existing` with "file already exists"
+    // when called without -p; only `mkdir -p` is idempotent. Pre-fix this
+    // returned silently for both shapes, so a caller running
+    //   files/mkdir?arg=/data&parents=false
+    // twice got back 200 ok both times, never learning their first call
+    // had won the race. Sibling write() still relies on idempotence via
+    // its own parents=true call (line 124), which is still honoured.
+    if (this.dirs.has(normalized)) {
+      if (opts?.parents) return
+      throw new Error(`file already exists: ${normalized}`)
+    }
 
     const parts = normalized.split("/").filter(Boolean)
     let current = "/"
