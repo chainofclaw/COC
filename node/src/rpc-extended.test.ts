@@ -251,6 +251,49 @@ test("RPC Extended Methods", async (t) => {
     assert.ok(typeof result.gasUsed === "string")
   })
 
+  await t.test("#614: eth_createAccessList.gasUsed includes intrinsic gas (parity with geth)", async () => {
+    // Pre-fix the handler returned result.gasUsed from evm.traceCall
+    // directly, which is the EVM EXECUTION gas only. For a simple value
+    // transfer (no contract code, no data) execution gas is 0, so
+    // pre-fix the response was {accessList:[], gasUsed:"0x0"} — but the
+    // tx WOULD actually cost 21000 (intrinsic). Tools wiring this number
+    // into `gas:` on a subsequent eth_sendRawTransaction sent txs
+    // guaranteed to fail with "intrinsic gas too low".
+    //
+    // Geth's eth_createAccessList returns the TOTAL tx-gas estimate
+    // including intrinsic (21000 base + per-byte data + creation extras).
+    // Sibling endpoint eth_estimateGas already did this (evm.ts:949);
+    // eth_createAccessList must match.
+    const valueTransfer = await rpcCall(port, "eth_createAccessList", [
+      {
+        from: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        to: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        value: "0x1",
+      },
+    ]) as { accessList: unknown[]; gasUsed: string }
+    // 21000 = 0x5208. Pre-fix this was "0x0".
+    assert.ok(BigInt(valueTransfer.gasUsed) >= 21_000n,
+      `value-transfer createAccessList.gasUsed must include intrinsic 21000+, got ${valueTransfer.gasUsed} = ${BigInt(valueTransfer.gasUsed)}`)
+    assert.notEqual(valueTransfer.gasUsed, "0x0",
+      "createAccessList.gasUsed must NEVER be 0x0 for a deliverable tx (the pre-fix bug)")
+    // Parity with eth_estimateGas (which already adds intrinsic; the
+    // two should be within ~10% of each other since estimateGas adds a
+    // +10% buffer on top of the intrinsic + execution sum).
+    const est = await rpcCall(port, "eth_estimateGas", [{
+      from: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      to: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+      value: "0x1",
+    }]) as string
+    const aclGas = BigInt(valueTransfer.gasUsed)
+    const estGas = BigInt(est)
+    // estimateGas adds 10% buffer; createAccessList doesn't (it's a
+    // simulation result, not an estimate). estGas should be ~aclGas * 1.1.
+    assert.ok(estGas >= aclGas,
+      `estimateGas (${estGas}) must be >= createAccessList gasUsed (${aclGas})`)
+    assert.ok(estGas <= aclGas * 2n,
+      `estimateGas (${estGas}) and createAccessList (${aclGas}) must be in the same order of magnitude`)
+  })
+
   await t.test("eth_sendTransaction sends signed transaction", async () => {
     const accounts = await rpcCall(port, "eth_accounts")
 

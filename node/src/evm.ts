@@ -965,6 +965,21 @@ export class EvmChain {
     return total + total / 10n
   }
 
+  /**
+   * #614: expose intrinsic gas calculation for callers that have already
+   * run the EVM and just need to add the intrinsic floor (e.g.
+   * eth_createAccessList in rpc.ts, which returned ONLY execution gas
+   * and missed the 21000 base + per-byte data cost).
+   */
+  computeIntrinsicGasFor(data: string | undefined, isContractCreation: boolean, blockNumber?: bigint): bigint {
+    const dataBytes = data ? hexToBytes(data.startsWith("0x") ? data as `0x${string}` : (`0x${data}` as `0x${string}`)) : new Uint8Array()
+    return calculateIntrinsicGas(
+      dataBytes,
+      isContractCreation,
+      this.createExecutionCommon(blockNumber),
+    )
+  }
+
   async getCode(address: string, stateRoot?: string): Promise<string> {
     const stateManager = await this.resolveStateManager(stateRoot)
     const code = await stateManager.getCode(Address.fromString(address))
