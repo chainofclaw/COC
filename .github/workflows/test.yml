@@ -14,14 +14,18 @@ jobs:
   test-node:
     name: Node Tests (859+)
     runs-on: ubuntu-latest
-    # Bumped from 10 → 15: with 859+ tests the suite has been hitting the
-    # 10-min cap on cold-cache CI runners (~618 s for the test job alone,
-    # plus ~30-60 s for checkout + npm install + solc install). PRs #599,
-    # #600, #601, #602 each saw Node Tests cancelled at the 10-minute
-    # mark on at least one run. Trim to actual usage once the suite is
-    # parallelised (see follow-up tracker for sharding the node-layer
-    # test files across two runners, which would let us drop back to 10).
-    timeout-minutes: 15
+    # Bumped from 10 → 20 (initially tried 15 but hit it on actual runs).
+    # With 859+ tests across 75 files the suite has been hitting timeouts:
+    #   - 10-min cap: PRs #599-#604 cancelled (~618 s job alone)
+    #   - 15-min cap: this PR's own CI cancelled at exactly 915 s
+    # Cold-cache npm install + solc install + checkout adds ~30-60 s on
+    # top of the test runtime, plus rpc-extended.test.ts alone runs
+    # ~120-180 s, rpc-debug-compatibility ~50 s, ipfs-http ~37 s,
+    # ethers-toolchain-compat ~30 s. Aggregate sits at ~10-13 min on
+    # warm cache and 13-16 min on cold cache.
+    # Follow-up tracker: shard node-layer test files across two runners
+    # so we can drop back to 10 min (each shard runs ~5-8 min).
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
