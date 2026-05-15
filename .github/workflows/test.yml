@@ -14,7 +14,7 @@ jobs:
   test-node:
     name: Node Tests (859+)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -25,7 +25,13 @@ jobs:
       - name: Run node tests
         run: |
           cd node
-          node --experimental-strip-types --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=node-results.xml $(find src -name '*.test.ts' -type f | sort)
+          # #618: --test-force-exit forces the runner to exit once all tests
+          # complete even if a test file left a server / timer / socket
+          # holding the event loop open. Without it, post-test orphan node
+          # workers kept the runner alive past the 20-min timeout and the
+          # job got cancelled despite every test passing. See PR #617's CI
+          # run 25902915926 — 1230+ ✔ logged but job killed at 20m15s.
+          node --experimental-strip-types --test --test-force-exit --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=node-results.xml $(find src -name '*.test.ts' -type f | sort)
         env:
           NODE_ENV: test
       - name: Upload test results
