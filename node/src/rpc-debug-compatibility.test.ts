@@ -1419,4 +1419,39 @@ describe("RPC debug compatibility", () => {
       }
     }
   })
+
+  it("#603: debug_traceTransaction valid-shape-unknown-tx returns -32004 (parity with trace_transaction)", async () => {
+    // Pre-fix `debug_traceTransaction("0x" + 32-byte hash)` for a tx that
+    // isn't in the chain bubbled `new Error("transaction not found: ...")`
+    // from debug-trace.ts:99 → -32603 internal error.  Sibling
+    // `trace_transaction` (rpc.ts:1623) already pre-located + threw
+    // -32004 "transaction not found", so callers using either family got
+    // inconsistent codes for the same condition.  Geth returns -32000 for
+    // not-found; -32004 is COC's choice (already in use by trace_*) so
+    // both families converge on the same code.
+    const unknownHash = "0x" + "ab".repeat(32)
+    let err: { code?: number; message?: string } | undefined
+    try {
+      await rpc.handleRpcMethod("debug_traceTransaction", [unknownHash, {}],
+        CHAIN_ID, evm, engine, p2p)
+      assert.fail("debug_traceTransaction must throw for unknown tx")
+    } catch (e) {
+      err = e as { code?: number; message?: string }
+    }
+    assert.equal(err?.code, -32004,
+      `debug_traceTransaction(unknown) must be -32004, got ${JSON.stringify(err)}`)
+    assert.match(err?.message ?? "", /transaction not found/i,
+      "error message must name the not-found condition")
+    // Parity: trace_transaction returns the same code for the same input.
+    let traceErr: { code?: number; message?: string } | undefined
+    try {
+      await rpc.handleRpcMethod("trace_transaction", [unknownHash],
+        CHAIN_ID, evm, engine, p2p)
+      assert.fail("trace_transaction must throw for unknown tx")
+    } catch (e) {
+      traceErr = e as { code?: number; message?: string }
+    }
+    assert.equal(traceErr?.code, err?.code,
+      "debug_traceTransaction and trace_transaction must return same code for not-found")
+  })
 })
