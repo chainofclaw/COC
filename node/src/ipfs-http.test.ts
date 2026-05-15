@@ -2567,6 +2567,27 @@ describe("#324 IPFS gateway honors HTTP Range header", () => {
     assert.equal(res.status, 200)
     assert.equal(res.headers["accept-ranges"], "bytes")
   })
+
+  it("#609: full-body 200 GET includes Content-Length (parity with HEAD/206 paths)", async () => {
+    // Pre-fix the full-body GET branch omitted `content-length`, while
+    // the sibling HEAD path and 206 Partial Content path both set it
+    // (line ~487 + ~500). Result: clients couldn't pre-allocate buffers,
+    // range-aware downloaders skipped resume capability, and proxies
+    // fell back to chunked transfer-encoding for known-length payloads.
+    // Same header-emission family as #382 (HEAD on 404/405 missing
+    // Content-Length, causing chunked-framing hangs).
+    const data = Buffer.alloc(2048, 0x41)
+    const meta = await unixfs.addFile("clen-test.bin", data)
+    const res = await fetch(`/ipfs/${meta.cid}`)
+    assert.equal(res.status, 200)
+    assert.equal(res.headers["content-length"], String(data.length),
+      `200 GET must set Content-Length=${data.length}, got ${JSON.stringify(res.headers["content-length"])}`)
+    // Parity with HEAD on the same CID.
+    const head = await fetch(`/ipfs/${meta.cid}`, { method: "HEAD" })
+    assert.equal(head.status, 200)
+    assert.equal(head.headers["content-length"], res.headers["content-length"],
+      "HEAD and GET must agree on Content-Length")
+  })
 })
 
 // #312/#313 restoration: PR #429's IPFS rewrite accidentally dropped the
