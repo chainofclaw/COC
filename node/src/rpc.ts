@@ -1512,9 +1512,35 @@ async function handleRpc(
       // eth_sign's order: shape-validate everything that doesn't need
       // keystore, THEN authorize.
       const td = typedData as Record<string, unknown>
-      const types = (td.types ?? {}) as Record<string, Array<{ name: string; type: string }>>
-      const domain = (td.domain ?? {}) as Record<string, unknown>
-      const message = (td.message ?? {}) as Record<string, unknown>
+      // #612: pre-fix `(td.types ?? {}) as Record<...>` was a TS-only cast;
+      // a string / array / number / boolean in `types` flowed straight to
+      // TypedDataEncoder.hash, which then threw a TypeError like
+      //   "_types[type].map is not a function"
+      // or
+      //   "Cannot read properties of undefined (reading 'map')"
+      // — neither has the ethers `.code` string the catch at #182 looks
+      // for, so the message bubbled out as -32603 internal error with
+      // the V8 / ethers internals leaked verbatim. Same family as
+      // #156/#176/#182 — wrap-and-sanitize at the boundary instead of
+      // hoping the downstream catch fires.
+      const rawTypes = td.types
+      if (rawTypes !== undefined && rawTypes !== null &&
+          (typeof rawTypes !== "object" || Array.isArray(rawTypes))) {
+        invalidParams(`invalid typedData.types: expected object, got ${Array.isArray(rawTypes) ? "array" : typeof rawTypes}`)
+      }
+      const types = (rawTypes ?? {}) as Record<string, Array<{ name: string; type: string }>>
+      const rawDomain = td.domain
+      if (rawDomain !== undefined && rawDomain !== null &&
+          (typeof rawDomain !== "object" || Array.isArray(rawDomain))) {
+        invalidParams(`invalid typedData.domain: expected object, got ${Array.isArray(rawDomain) ? "array" : typeof rawDomain}`)
+      }
+      const domain = (rawDomain ?? {}) as Record<string, unknown>
+      const rawMessage = td.message
+      if (rawMessage !== undefined && rawMessage !== null &&
+          (typeof rawMessage !== "object" || Array.isArray(rawMessage))) {
+        invalidParams(`invalid typedData.message: expected object, got ${Array.isArray(rawMessage) ? "array" : typeof rawMessage}`)
+      }
+      const message = (rawMessage ?? {}) as Record<string, unknown>
       // Remove EIP712Domain from types (TypedDataEncoder handles it internally)
       const filteredTypes = { ...types }
       delete filteredTypes.EIP712Domain
@@ -1531,6 +1557,13 @@ async function handleRpc(
           encErr && typeof encErr === "object" && typeof (encErr as { code?: unknown }).code === "string"
         if (isEthersShapeError) {
           invalidParams("invalid typedData: failed to encode")
+        }
+        // #612: TypeError (V8 leak) for malformed type-shape values that
+        // sneak past the shape pre-check — same "clean message" treatment
+        // as #176 instead of letting the V8/ethers internals reach the
+        // wire.
+        if (encErr instanceof TypeError) {
+          invalidParams("invalid typedData: malformed type definition")
         }
         throw encErr
       }

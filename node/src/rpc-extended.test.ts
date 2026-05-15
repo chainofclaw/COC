@@ -2696,6 +2696,42 @@ test("RPC Extended Methods", async (t) => {
       `error must mention keystore, not typedData: ${goodTd.error!.message}`)
   })
 
+  await t.test("#612: eth_signTypedData_v4 rejects non-object types/domain/message with -32602 (no V8 leak)", async () => {
+    // Pre-fix `(td.types ?? {}) as Record<...>` was a TS-only cast. A
+    // string / array / number / boolean in `td.types` (or `td.domain`,
+    // `td.message`) flowed straight into TypedDataEncoder.hash, which
+    // then threw a TypeError like
+    //   "_types[type].map is not a function"
+    // The TypeError didn't carry an ethers `.code` string so the
+    // existing #182 catch missed it → bubble surfaced as -32603 with the
+    // V8 / ethers internals leaked verbatim. Same info-leak family as
+    // #156/#176/#182. Tighten the shape check at the boundary.
+    const probe = async (params: unknown[]) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_signTypedData_v4", params }),
+      })
+      return await r.json() as { error?: { code: number; message: string } }
+    }
+    const owner = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+    // (a) types is a string → -32602
+    const badTypes = await probe([owner, { types: "not-an-object", domain: {}, message: {} }])
+    assert.equal(badTypes.error?.code, -32602,
+      `string types must be -32602, got ${badTypes.error?.code}: ${badTypes.error?.message}`)
+    assert.match(badTypes.error!.message, /typedData\.types/i, "must name the field")
+    assert.doesNotMatch(badTypes.error!.message, /\.map is not a function|Cannot read prop/i,
+      "must not leak V8 TypeError verbatim")
+    // (b) domain is an array → -32602
+    const badDomain = await probe([owner, { types: {}, domain: [1, 2, 3], message: {} }])
+    assert.equal(badDomain.error?.code, -32602)
+    assert.match(badDomain.error!.message, /typedData\.domain/i)
+    // (c) message is a number → -32602
+    const badMsg = await probe([owner, { types: {}, domain: {}, message: 42 }])
+    assert.equal(badMsg.error?.code, -32602)
+    assert.match(badMsg.error!.message, /typedData\.message/i)
+  })
+
   await t.test("#156: eth_sendRawTransaction rejects malformed input with -32602 and clean message (no ethers leak)", async () => {
     // Pre-fix bogus input (e.g. "0xff") flowed into ethers.Transaction.from()
     // and surfaced as -32603 "data short segment too short (buffer=0xff,
