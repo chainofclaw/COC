@@ -2046,13 +2046,44 @@ test("RPC Extended Methods", async (t) => {
     assert.equal(nonHex.error?.code, -32602, "non-hex slot must be -32602")
 
     // Sanity: well-shaped short hex passes the slot validator. The fixture's
-    // in-memory EVM doesn't expose proofs (returns -32603 "requires proof-
-    // capable persistent state manager"), so we only assert the result is
-    // NOT -32602 — the validator gate let the request through.
+    // in-memory EVM doesn't expose proofs — pre-#601 returned -32603
+    // "requires proof-capable persistent state manager", post-#601 returns
+    // -32601 "eth_getProof is not available" (anvil/erigon parity, no
+    // internal class names leaked). Either way, NOT -32602 — the validator
+    // gate let the request through.
     const shortValid = await probe("0x1")
     assert.notEqual(shortValid.error?.code, -32602, `shortValid must clear validator (got ${JSON.stringify(shortValid)})`)
     const mixedCase = await probe("0xAb")
     assert.notEqual(mixedCase.error?.code, -32602, "mixed-case hex must clear validator")
+  })
+
+  await t.test("#601: eth_getProof unsupported backend returns -32601 (was -32603 + class-name leak)", async () => {
+    // Pre-fix: in-memory EVM (or any backend without proof-capable state
+    // manager) threw a plain Error → -32603 internal error with message
+    //   "eth_getProof requires proof-capable persistent state manager support"
+    // which (a) misled clients into thinking the request itself broke
+    // something internal, and (b) leaked the state-manager class name
+    // (same info-disclosure family as #156/#176/#182/#505/#507).
+    // anvil + erigon return -32601 ("method not available") when their
+    // backend doesn't support a method; match that contract.
+    const validAddr = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+    const r = await fetch(`http://127.0.0.1:${port}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0", id: 1, method: "eth_getProof",
+        params: [validAddr, ["0x0"], "latest"],
+      }),
+    })
+    const json = await r.json() as { error?: { code: number; message: string } }
+    assert.equal(json.error?.code, -32601,
+      `unsupported backend must be -32601 method-not-available, got ${json.error?.code}: ${json.error?.message}`)
+    // Clean message — no class names, no implementation details.
+    assert.doesNotMatch(json.error!.message,
+      /persistent state manager|PersistentStateManager|StateManager/i,
+      "must not leak internal class/type names")
+    assert.match(json.error!.message, /eth_getProof|not available|not supported/i,
+      "must name the method or the unavailability")
   })
 
   await t.test("#128: eth_estimateGas rejects malformed to/from addresses with -32602", async () => {
