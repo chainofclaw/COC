@@ -367,6 +367,44 @@ test("BlockIndex: address index - putTransaction indexes from/to", async () => {
   assert.strictEqual(toTxs[0].receipt.transactionHash, "0x1111")
 })
 
+test("BlockIndex: #624 contract-creation tx is indexed under the new contract address", async () => {
+  // Pre-fix the address index only included receipt.from and receipt.to.
+  // Contract-creation txs have `to: null` and put the new contract's address
+  // in `receipt.contractAddress`, so querying coc_getTransactionsByAddress
+  // for that contract returned an empty list — even though the deploy tx
+  // is part of the address's history (etherscan / explorer convention).
+  const db = new MemoryDatabase()
+  const index = new BlockIndex(db)
+
+  const deployer = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as Hex
+  const contractAddr = "0xb2ff9d5e60d68a52cea3cd041b32f1390a880365" as Hex
+
+  const deployHash = ("0x" + "de".repeat(32)) as Hex
+  await index.putTransaction(deployHash, {
+    rawTx: "0x00" as Hex,
+    receipt: {
+      transactionHash: deployHash,
+      blockNumber: 5n,
+      blockHash: ("0x" + "55".repeat(32)) as Hex,
+      from: deployer,
+      to: null,
+      contractAddress: contractAddr,
+      gasUsed: 54250n,
+      status: 1n,
+      logs: [],
+    },
+  })
+
+  // Deployer still sees the tx (via from index)
+  const deployerTxs = await index.getTransactionsByAddress(deployer)
+  assert.strictEqual(deployerTxs.length, 1, "deployer's history includes the deploy tx")
+
+  // NEW: contract address also surfaces the deploy tx
+  const contractTxs = await index.getTransactionsByAddress(contractAddr)
+  assert.strictEqual(contractTxs.length, 1, "contract address must surface its own deploy tx")
+  assert.strictEqual(contractTxs[0].receipt.transactionHash, deployHash)
+})
+
 test("BlockIndex: address index - multiple txs ordered by block", async () => {
   const db = new MemoryDatabase()
   const index = new BlockIndex(db)
