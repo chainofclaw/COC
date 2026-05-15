@@ -2381,6 +2381,20 @@ async function handleRpc(
         // unique block contributes one DB lookup.
         return await Promise.all(txs.map(async (tx) => {
           const fullReceipt = await formatPersistentReceipt(tx, chain)
+          // #531: `input` must carry EVM calldata (the bytes the contract
+          // sees as msg.data), matching eth_getTransactionByHash.input.
+          // Pre-fix this emitted the full RLP envelope (tx.rawTx) under
+          // `input`, so explorer's decodeMethodSelector(tx.input) read the
+          // RLP type byte (0x02) as a function selector and every tx looked
+          // like a contract call. Decode the calldata here; expose the RLP
+          // under a separate `rawTx` field for callers that re-broadcast or
+          // verify the signature themselves.
+          let input: Hex = "0x"
+          try {
+            input = (Transaction.from(tx.rawTx).data ?? "0x") as Hex
+          } catch {
+            input = "0x"
+          }
           return {
             hash: tx.receipt.transactionHash,
             from: tx.receipt.from,
@@ -2389,7 +2403,8 @@ async function handleRpc(
             blockHash: tx.receipt.blockHash,
             gasUsed: `0x${tx.receipt.gasUsed.toString(16)}`,
             status: `0x${tx.receipt.status.toString(16)}`,
-            input: tx.rawTx,
+            input,
+            rawTx: tx.rawTx,
             logs: fullReceipt?.logs ?? [],
           }
         }))
