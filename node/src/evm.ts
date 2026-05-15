@@ -91,6 +91,17 @@ export interface TxInfo {
   v: string
   r: string
   s: string
+  // #610: EIP-2930 (type-1) + EIP-1559 (type-2) accessList — the in-memory
+  // tx cache path used by non-persistent ChainEngine (test fixtures, single-
+  // node devnet without state-trie persistence) was missing this field, so
+  // eth_getTransactionByHash returned every type-1/2 tx WITHOUT accessList
+  // even though it was signed into the RLP. PersistentChainEngine routes
+  // through formatRawTransaction (rpc.ts:4109) which always re-parses, so
+  // production 88780 was unaffected — but the divergence between the two
+  // engines means tests + devnet returned tx shapes that prod didn't.
+  // Same family as #442 (accessList missing from formatRawTransaction's
+  // type-1/2 output).
+  accessList?: Array<{ address: string; storageKeys: string[] }>
 }
 
 export interface ExecutionContext {
@@ -526,6 +537,7 @@ export class EvmChain {
       if (first !== undefined) this.txs.delete(first)
     }
 
+    const accessList1 = extractAccessListFromTypedTx(tx as { type?: number | bigint; accessList?: unknown })
     this.txs.set(txHash, {
       hash: txHash,
       from,
@@ -545,6 +557,7 @@ export class EvmChain {
       v: tx.v !== undefined ? bigIntToHex(tx.v) : "0x0",
       r: tx.r !== undefined ? bigIntToHex(tx.r) : "0x0",
       s: tx.s !== undefined ? bigIntToHex(tx.s) : "0x0",
+      ...(accessList1 !== undefined ? { accessList: accessList1 } : {}),
     })
 
     const storedReceipt = this.receipts.get(txHash)
@@ -751,6 +764,7 @@ export class EvmChain {
     // Skip per-tx cache eviction in block path — call evictCaches() after block completes
     this.receipts.set(txHash, receiptObj)
 
+    const accessList2 = extractAccessListFromTypedTx(tx as { type?: number | bigint; accessList?: unknown })
     this.txs.set(txHash, {
       hash: txHash,
       from,
@@ -770,6 +784,7 @@ export class EvmChain {
       v: tx.v !== undefined ? bigIntToHex(tx.v) : "0x0",
       r: tx.r !== undefined ? bigIntToHex(tx.r) : "0x0",
       s: tx.s !== undefined ? bigIntToHex(tx.s) : "0x0",
+      ...(accessList2 !== undefined ? { accessList: accessList2 } : {}),
     })
 
     return { txHash, gasUsed: result.totalGasSpent, success: result.execResult.exceptionError === undefined, receipt: receiptObj, from, to, contractAddress }
@@ -1412,6 +1427,44 @@ export class EvmChain {
       vm.common.setHardfork(hardfork)
     }
   }
+}
+
+/**
+ * #610: extract the JSON-RPC-shape accessList from an ethereumjs typed tx.
+ * Returns undefined for legacy (type-0) txs so the caller can omit the field;
+ * returns [] for empty accessList on type-1/2 txs (matches formatRawTransaction
+ * in rpc.ts:4114 — "always include the field on type-1/2, even when empty,
+ * because callers spec-decode the presence/absence as a structural signal").
+ */
+function extractAccessListFromTypedTx(tx: {
+  type?: number | bigint
+  accessList?: unknown
+}): Array<{ address: string; storageKeys: string[] }> | undefined {
+  const type = typeof tx.type === "bigint" ? Number(tx.type) : tx.type
+  if (type !== 1 && type !== 2) return undefined
+  const raw = tx.accessList
+  if (!Array.isArray(raw) || raw.length === 0) return []
+  // ethereumjs typed tx exposes accessList as a tuple shape:
+  // [address: Uint8Array, storageKeys: Uint8Array[]] OR
+  // { address: Address, storageKeys: Uint8Array[] } depending on version.
+  // Normalize both shapes to the JSON-RPC wire form.
+  return raw.map((entry) => {
+    if (Array.isArray(entry) && entry.length === 2) {
+      const [addr, keys] = entry as [Uint8Array | string, Array<Uint8Array | string>]
+      const addrHex = typeof addr === "string" ? addr : `0x${Buffer.from(addr).toString("hex")}`
+      const keysHex = (Array.isArray(keys) ? keys : []).map((k) =>
+        typeof k === "string" ? k : `0x${Buffer.from(k).toString("hex")}`,
+      )
+      return { address: addrHex.toLowerCase(), storageKeys: keysHex }
+    }
+    const obj = entry as { address?: { toString(): string } | string; storageKeys?: Array<Uint8Array | string> }
+    const addrRaw = obj.address
+    const addrStr = typeof addrRaw === "string" ? addrRaw : (addrRaw?.toString?.() ?? "")
+    const keysHex = (Array.isArray(obj.storageKeys) ? obj.storageKeys : []).map((k) =>
+      typeof k === "string" ? k : `0x${Buffer.from(k).toString("hex")}`,
+    )
+    return { address: addrStr.toLowerCase(), storageKeys: keysHex }
+  })
 }
 
 function normalizeExecutionContext(context?: bigint | ExecutionContext): ExecutionContext {

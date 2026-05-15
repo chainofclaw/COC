@@ -5277,6 +5277,82 @@ test("RPC Extended Methods", async (t) => {
     )
   })
 
+  await t.test("#610: eth_getTransactionByHash includes accessList for MINED EIP-2930/EIP-1559 txs (in-memory engine path)", async () => {
+    // #442 fixed the mempool path (formatRawTransaction is called when the
+    // tx is still pending). But the post-mining fallback in rpc.ts (~873)
+    // — `evm.getTransaction(hash)` — returns a TxInfo struct that doesn't
+    // include accessList, so non-persistent ChainEngine setups (test
+    // fixtures + single-node devnet) silently dropped the field once the
+    // tx was mined. PersistentChainEngine routes through formatRawTransaction
+    // via its blockIndex so production 88780 wasn't affected — but the
+    // divergence meant in-memory engine returned a shape prod didn't.
+    //
+    // Repro: submit type-1, force a block proposal so the tx leaves mempool,
+    // then GET via eth_getTransactionByHash. Pre-#610 accessList is undefined.
+    const { Wallet } = await import("ethers")
+    const wallet = new Wallet(`0x${"42".repeat(32)}`)
+    await evm.prefund([{ address: wallet.address, balanceWei: "1000000000000000000" }])
+    const startN = await evm.getNonce(wallet.address.toLowerCase() as `0x${string}`)
+    const targetAddr = `0x${"19".repeat(20)}`
+    const slot3 = `0x${"00".repeat(31)}03`
+
+    // EIP-2930 (type 1) — sign, submit, mine.
+    const tx2930 = await wallet.signTransaction({
+      type: 1,
+      to: targetAddr, value: 1n,
+      nonce: Number(startN),
+      gasPrice: 1_000_000_000n, gasLimit: 50_000n, chainId,
+      accessList: [{ address: targetAddr, storageKeys: [slot3] }],
+    })
+    const rRes = await fetch(`http://127.0.0.1:${port}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_sendRawTransaction", params: [tx2930] }),
+    })
+    const submitted = await rRes.json() as { result?: string }
+    assert.ok(submitted.result, "tx must accept")
+    // Force-mine so the tx leaves the mempool and lands in evm.txs.
+    // chain.proposeNextBlock applies a block from currently pending txs.
+    await chain.proposeNextBlock()
+
+    const getRes = await fetch(`http://127.0.0.1:${port}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getTransactionByHash", params: [submitted.result] }),
+    })
+    const got = await getRes.json() as { result?: Record<string, unknown> }
+    assert.ok(got.result, `mined tx must be findable: ${JSON.stringify(got)}`)
+    assert.equal(got.result!.type, "0x1", "type field must be 0x1 for mined EIP-2930")
+    // The bug: accessList missing after mining on the in-memory engine.
+    const acl = got.result!.accessList as Array<{ address: string; storageKeys: string[] }> | undefined
+    assert.ok(Array.isArray(acl),
+      `accessList must be present on MINED EIP-2930 tx (got ${typeof acl}: ${JSON.stringify(got.result)})`)
+    assert.equal(acl!.length, 1, "accessList must have 1 entry")
+    assert.equal(acl![0].address.toLowerCase(), targetAddr.toLowerCase(),
+      "accessList[0].address must match what was signed")
+    assert.deepEqual(acl![0].storageKeys.map(k => k.toLowerCase()), [slot3],
+      "accessList[0].storageKeys must round-trip the signed slot")
+
+    // Sanity: legacy mined tx still has NO accessList (closing parity loop with #442's legacy assertion).
+    const txLegacy = await wallet.signTransaction({
+      type: 0, to: targetAddr, value: 1n,
+      nonce: Number(startN) + 1, gasPrice: 1_000_000_000n, gasLimit: 21_000n, chainId,
+    })
+    const submitLegacy = await fetch(`http://127.0.0.1:${port}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_sendRawTransaction", params: [txLegacy] }),
+    }).then(r => r.json()) as { result?: string }
+    await chain.proposeNextBlock()
+    const getLegacy = await fetch(`http://127.0.0.1:${port}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getTransactionByHash", params: [submitLegacy.result] }),
+    }).then(r => r.json()) as { result?: Record<string, unknown> }
+    assert.equal(getLegacy.result!.accessList, undefined,
+      "MINED legacy tx must NOT carry accessList field")
+  })
+
   await t.test("#342: eth_getFilterChanges for missing/expired filter returns -32000", async () => {
     // Pre-fix returned `[]` for any missing filter — long-running indexers
     // polling past FILTER_TTL_MS (5 min) silently dropped events with no
