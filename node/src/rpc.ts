@@ -1105,7 +1105,17 @@ async function handleRpc(
         return `0x${normalized.padStart(64, "0")}`
       })
       const stateRoot = await resolveHistoricalStateRoot((payload.params ?? [])[2], chain)
-      return await evm.getProof(proofAddr, proofSlots, stateRoot)
+      try {
+        return await evm.getProof(proofAddr, proofSlots, stateRoot)
+      } catch (err) {
+        // #601: backend without proof-capable state manager returns
+        // a tagged error; translate to -32601 so callers can fall back
+        // (anvil/erigon use this code for backend-unsupported methods).
+        if ((err as { rpcMethodUnavailable?: boolean })?.rpcMethodUnavailable) {
+          methodNotFound((err as Error).message)
+        }
+        throw err
+      }
     }
     case "eth_syncing": {
       const syncProgressGetter = (opts as Record<string, unknown> | undefined)?.getSyncProgress as RpcRuntimeOptions["getSyncProgress"] | undefined

@@ -977,7 +977,14 @@ export class EvmChain {
   }> {
     const stateManager = await this.resolveStateManager(stateRoot)
     if (!(stateManager instanceof PersistentStateManager) || typeof stateManager.getProof !== "function") {
-      throw new Error("eth_getProof requires proof-capable persistent state manager support")
+      // #601: surface as a tagged error so the RPC layer maps to -32601
+      // ("method not available") matching anvil/erigon. Pre-fix this fell
+      // through to the default -32603 internal-error path and the message
+      // ("requires proof-capable persistent state manager") leaked internal
+      // implementation details (state-manager class name) to every caller.
+      const err = new Error("eth_getProof is not available: backend does not support state proofs") as Error & { rpcMethodUnavailable?: boolean }
+      err.rpcMethodUnavailable = true
+      throw err
     }
     return stateManager.getProof(
       Address.fromString(address),
