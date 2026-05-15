@@ -395,18 +395,38 @@ export class Mempool {
      * picked if the 1st already drained the wallet.
      */
     const cumulativeSpend = new Map<Hex, bigint>()
+    /**
+     * #615: per-sender deferred queue for txs whose nonce is ahead of
+     * the sender's current expected nonce at visit time. Without this,
+     * the single-pass loop wastes contiguous-nonce txs from the same
+     * sender whenever the global gas-price sort visits them before
+     * their predecessor.
+     *
+     * Repro before fix: PK1 submits nonce 0 @ 1 gwei + nonce 1 @ 5 gwei
+     * + nonce 2 @ 10 gwei. Sort puts [n2, n1, n0]. Loop visits n2 → gap
+     * (skip), n1 → gap (skip), n0 → pick. n1/n2 already passed → only
+     * 1 of 3 picked. High-volume senders (agents, MEV bots, faucets) were
+     * effectively throttled to 1 tx/block whenever their per-nonce gas
+     * prices differed.
+     *
+     * Fix: when a tx is skipped due to gap, queue it sorted by nonce
+     * under its sender. After each successful pick, drain the sender's
+     * deferred queue while the head's nonce matches the freshly-advanced
+     * expected nonce. Each tx is visited at most twice → O(N log N).
+     */
+    const deferred = new Map<Hex, MempoolTx[]>()
 
-    for (const tx of sorted) {
-      if (picked.length >= maxTx) break
-      if (cumulativeGas + tx.gasLimit > blockGasLimit) continue
+    const tryPickOne = (tx: MempoolTx): "picked" | "deferred" | "rejected" => {
+      if (picked.length >= maxTx) return "rejected"
+      if (cumulativeGas + tx.gasLimit > blockGasLimit) return "rejected"
       const next = expected.get(tx.from)
-      if (next === undefined || next === -1n) continue
+      if (next === undefined || next === -1n) return "rejected"
       // Evict transactions whose nonce is already confirmed on-chain
       if (tx.nonce < next) {
         this.removeTx(tx.hash)
-        continue
+        return "rejected"
       }
-      if (tx.nonce !== next) continue
+      if (tx.nonce !== next) return "deferred"
 
       // Phase H3: affordability check
       if (getBalance !== undefined) {
@@ -426,7 +446,7 @@ export class Mempool {
             // sender's nonce queue indefinitely.
             this.removeTx(tx.hash)
           }
-          continue
+          return "rejected"
         }
         cumulativeSpend.set(tx.from, alreadySpent + upfrontCost)
       }
@@ -434,6 +454,42 @@ export class Mempool {
       picked.push(tx)
       cumulativeGas += tx.gasLimit
       expected.set(tx.from, next + 1n)
+      return "picked"
+    }
+
+    const enqueueDeferred = (tx: MempoolTx): void => {
+      let q = deferred.get(tx.from)
+      if (!q) {
+        q = []
+        deferred.set(tx.from, q)
+      }
+      // Insert sorted by nonce ascending. Small per-sender queues in
+      // practice (a few txs); linear insertion is fine.
+      let i = 0
+      while (i < q.length && q[i].nonce < tx.nonce) i++
+      q.splice(i, 0, tx)
+    }
+
+    const drainDeferred = (sender: Hex): void => {
+      const q = deferred.get(sender)
+      if (!q) return
+      while (q.length > 0) {
+        const exp = expected.get(sender)
+        if (exp === undefined || q[0].nonce !== exp) break
+        const head = q.shift()!
+        const r = tryPickOne(head)
+        // If the eligible head was rejected (gas budget exhausted,
+        // affordability), stop draining — subsequent (higher-nonce)
+        // txs from this sender are now stuck behind a non-pickable
+        // head and won't become eligible this block.
+        if (r !== "picked") break
+      }
+    }
+
+    for (const tx of sorted) {
+      const result = tryPickOne(tx)
+      if (result === "deferred") enqueueDeferred(tx)
+      else if (result === "picked") drainDeferred(tx.from)
     }
 
     return picked
