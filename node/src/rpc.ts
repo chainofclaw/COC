@@ -1950,6 +1950,18 @@ async function handleRpc(
         prevPercentile = p
       }
       const newest = await resolveBlockNumber(newestBlock, chain)
+      // #599: pre-fix a numeric newestBlock beyond chain tip silently
+      // produced 1024 fabricated entries (baseFee=baseline, gasUsedRatio=0,
+      // reward=[]) labelled with the requested future block numbers.
+      // Callers building fee strategies off those zeros would think
+      // mainnet had crashed into a deflation spiral. Geth rejects with
+      // -32000 "header not found" for unknown blocks; we match the
+      // shape but use -32602 because the requested range is invalid
+      // input (block doesn't exist yet), not a missing header.
+      const chainHeightForFeeHistory = await Promise.resolve(chain.getHeight())
+      if (newest > chainHeightForFeeHistory) {
+        invalidParams(`newestBlock ${newest} is beyond chain head ${chainHeightForFeeHistory}`)
+      }
       const count = Math.min(blockCount, Number(newest), 1024)
       const baseFees: string[] = []
       const gasUsedRatios: number[] = []
