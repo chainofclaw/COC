@@ -644,6 +644,22 @@ export class PersistentChainEngine {
       // to "expected undefined, got 99999" leak).
       throw new Error(`invalid chain ID: expected ${expectedChainId}, got ${txChainId}`)
     }
+    // #613: enforce EIP-3860 MAX_INITCODE_SIZE = 49152 bytes (mirrors
+    // chain-engine.ts addRawTx). Pre-fix oversized contract-creation
+    // initcode was accepted, gossipped, then failed during EVM execution.
+    // Reject at the boundary so wallets see -32000 immediately, matching
+    // geth/erigon's "max initcode size exceeded" error.
+    const MAX_INITCODE_SIZE = 49152
+    if (!decoded.to) {
+      const initCodeBytes = decoded.data
+        ? (decoded.data.startsWith("0x") ? (decoded.data.length - 2) / 2 : decoded.data.length / 2)
+        : 0
+      if (initCodeBytes > MAX_INITCODE_SIZE) {
+        throw new Error(
+          `max initcode size exceeded: code size ${initCodeBytes} limit ${MAX_INITCODE_SIZE}`,
+        )
+      }
+    }
 
     // Mirror in-memory engine order: hash dedup first (more specific error
     // for same-tx replay), then stale-nonce check (catches different-tx-same-

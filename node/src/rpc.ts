@@ -1250,6 +1250,7 @@ async function handleRpc(
           /^tx already confirmed$/i.test(msg) ||
           /^intrinsic gas too low:/i.test(msg) ||
           /^gasLimit exceeds maximum:/i.test(msg) ||
+          /^max initcode size exceeded:/i.test(msg) ||
           /is poisoned \(hung block execution/i.test(msg)
         ) {
           throw { code: -32000, message: msg }

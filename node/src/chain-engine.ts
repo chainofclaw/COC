@@ -196,6 +196,28 @@ export class ChainEngine {
       // family as #156/#176/#182/#505/#507/#601 (cleaner is better).
       throw new Error(`invalid chain ID: expected ${expectedChainId}, got ${txChainId}`)
     }
+    // #613: enforce EIP-3860 MAX_INITCODE_SIZE = 49152 bytes (2 * MAX_CODE_SIZE).
+    // Pre-fix a contract-creation tx with initcode > 49152 bytes was accepted
+    // by the mempool, gossipped, and only failed at EVM execution time (or
+    // silently produced an invalid receipt depending on backend). Geth +
+    // Erigon both reject at the mempool boundary with
+    //   "max initcode size exceeded: code size <N> limit <49152>"
+    // so wallets/dApps get an actionable -32000 immediately rather than
+    // waiting for a block + receipt to learn their deployment is malformed.
+    // Shanghai/Cancun mandate; mempool.computeIntrinsicGas already accounts
+    // for the per-word cost (mempool.ts:91-95) but the SIZE LIMIT itself
+    // was never wired.
+    const MAX_INITCODE_SIZE = 49152
+    if (!decoded.to) {
+      const initCodeBytes = decoded.data
+        ? (decoded.data.startsWith("0x") ? (decoded.data.length - 2) / 2 : decoded.data.length / 2)
+        : 0
+      if (initCodeBytes > MAX_INITCODE_SIZE) {
+        throw new Error(
+          `max initcode size exceeded: code size ${initCodeBytes} limit ${MAX_INITCODE_SIZE}`,
+        )
+      }
+    }
     if (this.txHashSet.has(decoded.hash as Hex)) {
       throw new Error("tx already confirmed")
     }

@@ -235,3 +235,73 @@ test("duplicate tx is rejected", async () => {
   // This just verifies the flow doesn't crash
   assert.equal(engine.getHeight(), 1n)
 })
+
+test("#613: rejects contract-creation tx with init code > EIP-3860 MAX_INITCODE_SIZE (49152 bytes)", async () => {
+  // Pre-fix oversized contract-creation initcode was accepted by the
+  // mempool, gossipped to peers, then failed at EVM execution time. Geth +
+  // Erigon both reject at the mempool boundary with "max initcode size
+  // exceeded" so wallets get an actionable -32000 immediately. EIP-3860
+  // is Shanghai-onwards mandate; mempool.computeIntrinsicGas already
+  // charges the per-word cost (mempool.ts:91-95) but the SIZE LIMIT
+  // check itself was missing.
+  const { Wallet } = await import("ethers")
+  const wallet = new Wallet("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80")
+  const { engine } = await createTestEngine()
+
+  // (a) Just under the cap → accepted (gas-budget permitting).
+  const okInit = "0x" + "60ff".repeat(24_575)  // 49150 bytes
+  const okTx = await wallet.signTransaction({
+    type: 2, chainId: 18780, nonce: 0,
+    maxFeePerGas: 3_000_000_000n, maxPriorityFeePerGas: 1_000_000_000n,
+    gasLimit: 5_000_000n, to: null, data: okInit,
+  })
+  // Must NOT throw "max initcode size" — gas-related rejections are
+  // separate concerns and out of scope here.
+  await assert.doesNotReject(
+    () => engine.addRawTx(okTx as Hex),
+    /max initcode size/i,
+    "49150-byte initcode (just under 49152) must not trip the size cap",
+  )
+
+  // (b) Just over the cap → rejected with -32000-compatible message.
+  const badInit = "0x" + "60ff".repeat(24_577)  // 49154 bytes
+  const badTx = await wallet.signTransaction({
+    type: 2, chainId: 18780, nonce: 1,
+    maxFeePerGas: 3_000_000_000n, maxPriorityFeePerGas: 1_000_000_000n,
+    gasLimit: 5_000_000n, to: null, data: badInit,
+  })
+  await assert.rejects(
+    () => engine.addRawTx(badTx as Hex),
+    (err: Error) => /max initcode size exceeded: code size 49154 limit 49152/.test(err.message),
+    "49154-byte initcode (just over 49152) must be rejected with EIP-3860 message",
+  )
+
+  // (c) Way over (100KB) → also rejected.
+  const wayInit = "0x" + "60ff".repeat(50_000)  // 100000 bytes
+  const wayTx = await wallet.signTransaction({
+    type: 2, chainId: 18780, nonce: 2,
+    maxFeePerGas: 3_000_000_000n, maxPriorityFeePerGas: 1_000_000_000n,
+    gasLimit: 10_000_000n, to: null, data: wayInit,
+  })
+  await assert.rejects(
+    () => engine.addRawTx(wayTx as Hex),
+    /max initcode size exceeded: code size 100000 limit 49152/,
+    "100KB initcode must be rejected",
+  )
+
+  // (d) Sanity: non-creation tx (to != null) is NOT subject to the cap.
+  // Regular contract calls can have arbitrary data length (subject to
+  // intrinsic gas + block gas limit).
+  const callTx = await wallet.signTransaction({
+    type: 2, chainId: 18780, nonce: 3,
+    maxFeePerGas: 3_000_000_000n, maxPriorityFeePerGas: 1_000_000_000n,
+    gasLimit: 5_000_000n,
+    to: "0x" + "1".repeat(40),  // non-creation
+    data: "0x" + "ab".repeat(60_000),  // 60KB data, but it's a call
+  })
+  await assert.doesNotReject(
+    () => engine.addRawTx(callTx as Hex),
+    /max initcode size/i,
+    "60KB call data on a non-creation tx must not trip the initcode cap",
+  )
+})
