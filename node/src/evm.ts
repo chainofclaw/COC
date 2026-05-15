@@ -1,4 +1,5 @@
 import { VM, createVM, runTx } from "@ethereumjs/vm"
+import { EVMError } from "@ethereumjs/evm"
 import { Hardfork, createCustomCommon, getPresetChainConfig } from "@ethereumjs/common"
 import { Account, Address, bytesToHex, hexToBytes, bigIntToBytes, bigIntToHex, setLengthLeft } from "@ethereumjs/util"
 import { createTxFromRLP, createLegacyTx } from "@ethereumjs/tx"
@@ -159,7 +160,62 @@ export class EvmChain {
     const common = createCustomCommon({ chainId, networkId: chainId, name: "COC" }, base, {
       hardfork,
     })
-    const vmOpts: Record<string, unknown> = { common }
+    // #594: COC runs Cancun-fork (parentBeaconBlockRoot + Cancun opcodes are
+    // active) but does NOT initialise the EIP-4844 KZG trusted setup, so
+    // @ethereumjs/vm omits the `point_evaluation` precompile from its
+    // registry. Pre-fix, calls to 0x000…000a fell through as a regular CALL
+    // to an empty-code address, returning `"0x"` — silently masquerading
+    // as a successful no-op. Contracts that bridge KZG-protected data from
+    // other chains then read `uint256(bytes32(""))` = 0 and proceed as if
+    // verification succeeded.
+    //
+    // Mempool already rejects type-3 blob txs (`mempool.ts` "blob
+    // transactions (type 3) are not supported"), but precompile calls
+    // bypass the mempool entirely (eth_call + contract bytecode). Wire a
+    // stub at 0x0a that always REVERTS with an explicit reason so callers
+    // distinguish "precompile failed" from "precompile returned empty
+    // because chain doesn't support blobs".
+    //
+    // Charges a flat 50_000 gas (matches EIP-4844 spec POINT_EVALUATION_
+    // PRECOMPILE_GAS so gas-usage stays portable with mainnet-compiled
+    // contracts that target this precompile).
+    const KZG_PRECOMPILE_ADDRESS = Address.fromString("0x000000000000000000000000000000000000000a")
+    const KZG_GAS_COST = 50_000n  // EIP-4844 POINT_EVALUATION_PRECOMPILE_GAS
+    const kzgStub = (input: { data: Uint8Array; gasLimit: bigint }) => {
+      if (input.gasLimit < KZG_GAS_COST) {
+        // Out-of-gas: charge all available, no return value.
+        return { exceptionError: new EVMError("out of gas"), executionGasUsed: input.gasLimit, returnValue: new Uint8Array() }
+      }
+      // Always revert. The returnValue is the Solidity-ABI-encoded
+      // `Error(string)`: selector 0x08c379a0 || abi.encode(reason).
+      // Encoded reason: "KZG point_evaluation not implemented on COC"
+      const reason = "KZG point_evaluation not implemented on COC"
+      const reasonBytes = new TextEncoder().encode(reason)
+      // 0x08c379a0 (4) | offset=0x20 (32) | length (32) | data padded to 32-byte multiple
+      const padded = new Uint8Array(Math.ceil(reasonBytes.length / 32) * 32)
+      padded.set(reasonBytes)
+      const selector = hexToBytes("0x08c379a0")
+      const offset = setLengthLeft(bigIntToBytes(32n), 32)
+      const length = setLengthLeft(bigIntToBytes(BigInt(reasonBytes.length)), 32)
+      const ret = new Uint8Array(selector.length + offset.length + length.length + padded.length)
+      ret.set(selector, 0)
+      ret.set(offset, selector.length)
+      ret.set(length, selector.length + offset.length)
+      ret.set(padded, selector.length + offset.length + length.length)
+      return {
+        exceptionError: new EVMError("revert"),
+        executionGasUsed: KZG_GAS_COST,
+        returnValue: ret,
+      }
+    }
+    const vmOpts: Record<string, unknown> = {
+      common,
+      evmOpts: {
+        customPrecompiles: [
+          { address: KZG_PRECOMPILE_ADDRESS, function: kzgStub },
+        ],
+      },
+    }
     if (stateManager) {
       vmOpts.stateManager = stateManager
     }

@@ -214,13 +214,47 @@ test("Precompiled Contracts - Edge Cases", async (t) => {
     assert.ok(result.returnValue !== undefined)
   })
 
-  await t.test("invalid precompile address (0x0a)", async () => {
-    // 不存在的预编译地址应返回空
+  await t.test("#594: KZG point_evaluation (0x0a) reverts with explicit reason on Cancun chain (was silent 0x)", async () => {
+    // Pre-fix #594: COC runs Cancun-fork blocks but doesn't initialise the
+    // EIP-4844 KZG trusted setup, so @ethereumjs/vm omits precompile0a.
+    // Calls fell through as a regular CALL to an empty-code address and
+    // returned `"0x"` — masquerading as a successful no-op. Contracts
+    // that bridge KZG-protected data from Ethereum mainnet would then
+    // read `uint256(bytes32(""))` = 0 and silently proceed as if the
+    // proof verified.
+    //
+    // Fix: register a customPrecompile at 0x0a that ALWAYS reverts with
+    // ABI-encoded Error("KZG point_evaluation not implemented on COC"),
+    // charging EIP-4844's POINT_EVALUATION_PRECOMPILE_GAS (50_000).
+    // Callers now see an explicit revert (the documented EIP-4844
+    // failure mode for invalid input) instead of silent empty bytes.
     const result = await evm.callRaw({
       to: "0x000000000000000000000000000000000000000a",
-      data: "0x1234",
+      data: "0x" + "00".repeat(192),  // canonical EIP-4844 input length
+      gas: "0xf4240",  // 1M gas (well above 50k)
     })
+    // Reverted: failed flag set, gasUsed >= KZG_GAS_COST + base call cost.
+    assert.equal(result.failed, true, "0x0a must REVERT, not return empty")
+    // returnValue should be Solidity-ABI Error(string) shape:
+    //   selector 0x08c379a0 | offset 0x20 | length | reason bytes (padded)
+    assert.match(result.returnValue, /^0x08c379a0/,
+      `returnValue must start with Error(string) selector, got ${result.returnValue?.slice(0, 20)}`)
+    // Decode the reason from the ABI-encoded revert data.
+    // Skip selector (4) + offset (32) + length (32) = 68 bytes (136 hex chars after "0x")
+    const reasonHex = result.returnValue.slice(2 + 136)
+    const reasonBytes = Buffer.from(reasonHex, "hex")
+    // Trim trailing zero padding
+    const reasonStr = reasonBytes.toString("utf8").replace(/\0+$/, "")
+    assert.match(reasonStr, /KZG point_evaluation not implemented on COC/i,
+      `revert reason must mention KZG, got: ${reasonStr}`)
+  })
 
-    assert.equal(result.returnValue, "0x")
+  await t.test("#594: KZG precompile out-of-gas charges gasLimit and reverts", async () => {
+    const result = await evm.callRaw({
+      to: "0x000000000000000000000000000000000000000a",
+      data: "0x" + "00".repeat(192),
+      gas: "0x5208",  // 21k — below the 50k POINT_EVALUATION_PRECOMPILE_GAS
+    })
+    assert.equal(result.failed, true, "OOG must surface as failed call, not empty success")
   })
 })
