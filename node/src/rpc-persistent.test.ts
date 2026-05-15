@@ -478,7 +478,10 @@ test("RPC+Persistent: historical state queries and transaction schema parity", a
     assert.ok(block2?.stateRoot)
 
     const deployTxHash = Transaction.from(deployTx).hash as Hex
-    const contractAddress = getCreateAddress({ from: wallet.address, nonce: 1 })
+    // #466: COC normalizes all address fields to lowercase for parity with
+    // geth/erigon. getCreateAddress returns EIP-55 mixed-case, so lowercase
+    // here to match the wire format.
+    const contractAddress = getCreateAddress({ from: wallet.address, nonce: 1 }).toLowerCase()
 
     const balanceAtBlock1 = await handleRpcMethod("eth_getBalance", [wallet.address, "0x1"], CHAIN_ID, evm, engine, p2p)
     const balanceAtBlock2 = await handleRpcMethod("eth_getBalance", [wallet.address, "0x2"], CHAIN_ID, evm, engine, p2p)
