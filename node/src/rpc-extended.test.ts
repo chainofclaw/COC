@@ -2601,6 +2601,33 @@ test("RPC Extended Methods", async (t) => {
     assert.match(r2.error!.message, /monotonic|ascending|non-decreasing/i, "error must mention ordering")
   })
 
+  await t.test("#599: eth_feeHistory rejects newestBlock beyond chain head (was fabricating future-block data)", async () => {
+    // Pre-fix: requesting newestBlock = 0xffffffffff (future) silently
+    // produced `blockCount` entries labelled with the requested future
+    // numbers, all carrying baseFeePerGas=baseline / gasUsedRatio=0 /
+    // reward=[]. A client wiring this into a fee-prediction heuristic
+    // would think mainnet had crashed into a deflation spiral. Geth
+    // rejects unknown blocks; we reject with -32602 because the
+    // request itself names a block that doesn't exist yet.
+    const probe = async (newest: unknown, count: unknown = "0x4") => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_feeHistory", params: [count, newest, []] }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    }
+    // (a) Future block — reject.
+    const future = await probe("0xffffffffff")
+    assert.equal(future.error?.code, -32602, `future newestBlock must be -32602, got ${future.error?.code}: ${JSON.stringify(future.result)}`)
+    assert.match(future.error!.message, /beyond chain head|newestBlock/i, "error must name newestBlock")
+    // (b) "latest" / "pending" tags MUST still work (they're not "beyond" head).
+    const ok1 = await probe("latest")
+    assert.equal(ok1.error, undefined, `'latest' must not error: ${JSON.stringify(ok1.error)}`)
+    const ok2 = await probe("pending")
+    assert.equal(ok2.error, undefined, `'pending' must not error: ${JSON.stringify(ok2.error)}`)
+  })
+
   await t.test("#162: eth_getLogs validates address + topic shape (parity with eth_newFilter #142)", async () => {
     // Pre-fix `eth_getLogs({address:"0x123"})` silently returned [] —
     // clients couldn't distinguish "no matching logs" from "your filter
