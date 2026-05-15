@@ -3728,6 +3728,46 @@ test("RPC Extended Methods", async (t) => {
     }
   })
 
+  await t.test("#537: coc_submitProposal validates stakeAmount BEFORE the governance-module gate", async () => {
+    // The fixture chain has no governance module, so hasGovernance() is
+    // false. Pre-fix the stakeAmount shape check ran AFTER that gate, so
+    // a malformed stakeAmount surfaced -32601 "governance not enabled" —
+    // the caller could never learn their field was structurally invalid.
+    // #432 lifted the top-level object + required-field checks above the
+    // gate but missed this inner field. Fix: stakeAmount validation runs
+    // first, so the response shape is consistent across governance-on and
+    // governance-off deployments. NO monkey-patch here — exercises the
+    // real governance-disabled path.
+    const probe = async (stakeAmount: unknown) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0", id: 1, method: "coc_submitProposal",
+          params: [{ type: "add_validator", targetId: "v4", proposer: "node-1", stakeAmount }],
+        }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    }
+    // Malformed stakeAmount → -32602 "stakeAmount", NOT -32601 "governance".
+    for (const bad of ["123abc", {}, [], -1, "0xZZ"]) {
+      const r = await probe(bad)
+      assert.equal(r.error?.code, -32602,
+        `stakeAmount=${JSON.stringify(bad)} on a governance-disabled node must be -32602, got ${JSON.stringify(r)}`)
+      assert.match(r.error!.message, /stakeAmount/i,
+        `error must name the malformed field, got "${r.error?.message}"`)
+      assert.doesNotMatch(r.error!.message, /governance/i,
+        `structural error must NOT be masked by the governance gate, got "${r.error?.message}"`)
+    }
+    // Regression sentinel: a shape-VALID stakeAmount still hits the
+    // governance gate — the module-availability check must still run.
+    const valid = await probe("0x100")
+    assert.equal(valid.error?.code, -32601,
+      `shape-valid stakeAmount must still surface -32601 on a governance-disabled node, got ${JSON.stringify(valid)}`)
+    assert.match(valid.error!.message, /governance/i,
+      `module-availability error must mention governance, got "${valid.error?.message}"`)
+  })
+
   await t.test("#220: coc_submitProposal / coc_voteProposal reject null/undefined params[0] (no V8 NPE leak)", async () => {
     // Pre-fix `(payload.params ?? [])[0] as Record<...>` was a no-op
     // cast. With params=[] / [null] the next line accessed .proposer /
