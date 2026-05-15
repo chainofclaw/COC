@@ -1567,9 +1567,20 @@ async function handleRpc(
         value: callParams.value,
         gas: callParams.gas,
       }, {}, executionContext.stateRoot, executionContext)
+      // #614: pre-fix returned `result.gasUsed` directly, which is the
+      // EVM execution gas only. Geth's eth_createAccessList returns the
+      // TOTAL tx-gas estimate INCLUDING intrinsic (21000 base + per-byte
+      // data cost + EIP-3860 init-code-word cost for creations). For a
+      // simple value transfer that's intrinsic 21000 vs the buggy 0x0
+      // we returned. Tools that pre-flight access-list AND set gasLimit
+      // off this number sent txs guaranteed to fail with "intrinsic gas
+      // too low" or out-of-gas. Mirror evm.estimateGas (line ~944) which
+      // already adds intrinsic.
+      const isCreate = !callParams.to || callParams.to === ""
+      const intrinsic = evm.computeIntrinsicGasFor(callParams.data, isCreate, executionContext.blockNumber)
       return {
         accessList: result.accessList,
-        gasUsed: `0x${result.gasUsed.toString(16)}`,
+        gasUsed: `0x${(intrinsic + result.gasUsed).toString(16)}`,
       }
     }
     case "debug_traceCall": {
