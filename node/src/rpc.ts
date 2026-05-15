@@ -2440,7 +2440,15 @@ async function handleRpc(
         validators.push({
           id: v,
           isCurrentProposer: v === currentProposer,
-          nextProposalBlock: Number(h),
+          // #607: pre-fix this emitted a raw JS number (decimal) while
+          // sibling endpoints (eth_blockNumber, coc_chainStats.blockHeight,
+          // coc_validators.currentHeight, coc_nodeInfo.blockHeight) all
+          // return 0x-prefixed hex per Ethereum JSON-RPC convention.
+          // Clients aggregating block numbers from multiple endpoints saw
+          // `nextProposalBlock=88751` ≠ `blockHeight="0x15a8f"` and concluded
+          // the response shape was corrupted. Same format-drift family as
+          // #517 (next-proposer decimal vs hex), #561 (chainId).
+          nextProposalBlock: `0x${h.toString(16)}`,
         })
       }
       return { validators, currentHeight: height, nextProposer: currentProposer }
