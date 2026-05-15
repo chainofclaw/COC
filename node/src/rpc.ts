@@ -43,6 +43,7 @@ import {
   optionalIntegerParam,
   optionalBooleanParam,
   validateTxCallFields,
+  validateStateOverrideUnsupported,
   validateLogFilter,
   sanitizeEthersError,
   sanitizeJsonParseError,
@@ -966,6 +967,10 @@ async function handleRpc(
       // treated non-hex as 0, so {value:"not-hex"} gave a clean gas
       // estimate that ignored the value transfer.
       validateTxCallFields(estParams)
+      // #602: sibling of eth_call — geth honours stateOverride on
+      // eth_estimateGas too. We don't; reject non-empty overrides
+      // rather than silently estimating against unmodified state.
+      validateStateOverrideUnsupported((payload.params ?? [])[2], "eth_estimateGas")
       // Default gas cap to block gas limit (30M) to prevent DoS via unbounded execution
       const gasForEstimate = estParams.gas ?? "0x1c9c380"
       const executionContext = await resolveHistoricalExecutionContext((payload.params ?? [])[1], chain)
@@ -1031,6 +1036,17 @@ async function handleRpc(
       // where malformed input either silently becomes 0 (value) or
       // surfaces as -32603 with V8 message leak (data).
       validateTxCallFields(callParams)
+      // #602: geth/anvil/erigon all honour a 3rd param `stateOverride`
+      // (per-call balance/nonce/code/state overrides). COC's EVM doesn't
+      // wire those into callRaw, but pre-fix params[2] was silently
+      // ignored — including string/array/garbage shapes. A caller using
+      // Tenderly-style simulation (or viem's `eth_call(..., overrides)`)
+      // got back a result computed WITHOUT their override and treated it
+      // as authoritative. Same silent-success family as #172/#238/#192
+      // but worse because the wire shape looks valid. Reject non-empty
+      // overrides with -32601 so callers fall back; allow undefined/null/{}
+      // through as no-ops.
+      validateStateOverrideUnsupported((payload.params ?? [])[2], "eth_call")
       const executionContext = await resolveHistoricalExecutionContext((payload.params ?? [])[1], chain)
       // #384: synth-genesis ⇒ no contracts deployed → empty return.
       // Matches geth/anvil eth_call against an empty-allocs genesis.

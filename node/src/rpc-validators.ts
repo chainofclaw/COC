@@ -607,6 +607,46 @@ export function validateTxCallFields(callParams: Record<string, unknown>): void 
   }
 }
 
+/**
+ * #602: eth_call / eth_estimateGas accept an optional 3rd parameter for
+ * geth-style state overrides:
+ *
+ *   {[address]: {balance?, nonce?, code?, state?, stateDiff?}, …}
+ *
+ * COC's EVM doesn't wire this through to callRaw, but pre-fix the param
+ * was silently ignored — including bogus shapes (string, array, non-empty
+ * object). Tenderly-style simulators and viem's
+ * `eth_call(..., overrides)` got back results computed WITHOUT their
+ * override and treated them as authoritative. Same silent-success family
+ * as #172/#238 but worse because the response shape looks correct.
+ *
+ * Until the EVM supports overrides, reject:
+ *   - non-object shape (string/array/number/bool) → -32602 invalid shape
+ *   - non-empty object → -32601 method-doesn't-support-this-yet
+ *
+ * Accept (no-op): undefined / null / {} — these are spec-allowed.
+ */
+export function validateStateOverrideUnsupported(raw: unknown, methodName: string): void {
+  if (raw === undefined || raw === null) return
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    invalidParams(
+      `invalid stateOverride for ${methodName}: expected object, got ${
+        Array.isArray(raw) ? "array" : typeof raw
+      }`,
+    )
+  }
+  const obj = raw as Record<string, unknown>
+  // Empty object is fine — many wallets always send the param even when
+  // they have no overrides.
+  if (Object.keys(obj).length === 0) return
+  // Non-empty: this backend doesn't apply overrides. Surface via -32601
+  // ("method not available") so callers know to fall back rather than
+  // trusting an unmodified-state result.
+  methodNotFound(
+    `${methodName} stateOverride parameter is not supported on this backend`,
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Log filter (eth_getLogs / eth_newFilter) shape + normalization
 // ---------------------------------------------------------------------------
