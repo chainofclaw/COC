@@ -66,3 +66,8 @@ CLAUDE.zh.md
 docs/*.zh.md
 # gcloud testbed operator config (private — contains GCP project ID, IPs)
 scripts/gcloud/config.env
+
+# Business plan documents (kept locally, not in public repo)
+docs/COC_business_plan*
+docs/*business_plan*
+docs/*business-plan*
