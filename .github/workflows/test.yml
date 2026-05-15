@@ -14,7 +14,14 @@ jobs:
   test-node:
     name: Node Tests (859+)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Bumped from 10 → 15: with 859+ tests the suite has been hitting the
+    # 10-min cap on cold-cache CI runners (~618 s for the test job alone,
+    # plus ~30-60 s for checkout + npm install + solc install). PRs #599,
+    # #600, #601, #602 each saw Node Tests cancelled at the 10-minute
+    # mark on at least one run. Trim to actual usage once the suite is
+    # parallelised (see follow-up tracker for sharding the node-layer
+    # test files across two runners, which would let us drop back to 10).
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
