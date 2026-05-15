@@ -835,6 +835,18 @@ test("RPC Extended Methods", async (t) => {
     // failure) per the existing #332 rpc.ts mapping at line ~1112.
     assert.equal(r1.error!.code, -32602,
       `wrong-chain tx must be -32602 (invalid params), got ${r1.error!.code}`)
+    // #604: pre-fix the message echoed `this.cfg.chainId` directly,
+    // which is undefined when the ChainEngine was constructed without
+    // an explicit chainId (rpc layer falls back to 18780 in the
+    // BigInt comparison via `?? 18780`). Callers saw "expected
+    // undefined, got 99999" — same info-quality family as #156/#176/
+    // #182/#505/#507/#601. The fixture sets chainId to fixtureChainId,
+    // so the message must echo that number rather than the literal
+    // word "undefined".
+    assert.doesNotMatch(r1.error!.message, /expected undefined/i,
+      `chainId error must echo the actual expected ID, not "undefined": ${r1.error!.message}`)
+    assert.match(r1.error!.message, new RegExp(`expected ${Number(BigInt(fixtureChainId))}`),
+      `chainId error must name the actual expected ID (${Number(BigInt(fixtureChainId))}), got: ${r1.error!.message}`)
   })
 
   await t.test("#533: eth_getLogs blockHash resolves to the correct block (non-existent → -32000 'unknown block')", async () => {
