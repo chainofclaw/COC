@@ -51,11 +51,38 @@ export interface BftMessagePayload {
   stateRoot?: Hex
 }
 
+/**
+ * #622 (issue #620): wire payload for gossiping BFT equivocation evidence
+ * across peers. `EquivocationDetector` only sees votes that arrive at the
+ * local node, so equivocators that selectively target subsets end up
+ * detected on one witness and invisible everywhere else. Gossiping the
+ * proof (both signatures over the conflicting `(height, phase, blockHash)`
+ * canonical messages) lets every node converge on the same equivocation
+ * history. height is a decimal string to survive JSON serialization.
+ */
+export interface BftEvidencePayload {
+  validatorId: string
+  height: string
+  phase: "prepare" | "commit"
+  blockHash1: Hex
+  blockHash2: Hex
+  signature1: string
+  signature2: string
+  detectedAtMs: number
+}
+
 export interface P2PHandlers {
   onTx: (rawTx: Hex) => Promise<void>
   onBlock: (block: ChainBlock) => Promise<void>
   onSnapshotRequest: () => ChainSnapshot | Promise<ChainSnapshot>
   onBftMessage?: (msg: BftMessagePayload) => Promise<void>
+  /**
+   * #622: invoked on every inbound `/p2p/bft-evidence` POST. Implementation
+   * verifies signatures via `EquivocationDetector.importEvidence`, applies
+   * the local slash path, and (if newly imported) re-broadcasts the evidence
+   * to peers so the network converges within ~one gossip round.
+   */
+  onBftEvidence?: (msg: BftEvidencePayload) => Promise<void>
   onStateSnapshotRequest?: () => Promise<unknown | null>
   getHeight?: () => Promise<bigint> | bigint
 }
@@ -808,6 +835,29 @@ export class P2PNode {
             return
           }
 
+          // #622 (issue #620): equivocation evidence gossip
+          if (req.url === "/p2p/bft-evidence") {
+            const payload = unsignedPayload as BftEvidencePayload
+            // Shape validation — the handler verifies signatures, but
+            // malformed shape should still be rejected at the wire layer
+            // so we never invoke handler logic on garbage input.
+            if (!payload.validatorId || typeof payload.validatorId !== "string"
+              || !payload.height || (typeof payload.height !== "string" && typeof payload.height !== "number")
+              || !payload.phase || (payload.phase !== "prepare" && payload.phase !== "commit")
+              || !payload.blockHash1 || !payload.blockHash2
+              || !payload.signature1 || !payload.signature2) {
+              throw new Error("missing BFT evidence fields")
+            }
+            // Coerce height to canonical decimal string (handlers expect string-of-decimal)
+            payload.height = String(payload.height)
+            if (this.handlers.onBftEvidence) {
+              await this.handlers.onBftEvidence(payload)
+            }
+            res.writeHead(200)
+            res.end(serializeJson({ ok: true }))
+            return
+          }
+
           res.writeHead(404)
           res.end(serializeJson({ error: "not found" }))
         } catch (error) {
@@ -1099,6 +1149,72 @@ export class P2PNode {
         attempted: allPeers.length,
         failed: failures.length,
         // Cap to first 5 to keep log entry bounded
+        sample: failures.slice(0, 5),
+      })
+    }
+  }
+
+  /**
+   * #622 (issue #620): broadcast a BFT equivocation evidence to all peers.
+   * Mirrors `broadcastBft`'s peer-set + retry + observability so evidence
+   * reaches the same audience as the votes it indicts. Receivers verify
+   * both signatures recover to the claimed validatorId before importing,
+   * so a malicious peer cannot forge evidence accusing an honest validator.
+   *
+   * No outbound dedup — the receiver dedups on `(validatorId, height, phase)`
+   * and returns "duplicate" without re-gossiping, so the network converges
+   * in at most one gossip round.
+   */
+  async broadcastBftEvidence(msg: BftEvidencePayload): Promise<void> {
+    const staticPeers = this.cfg.peers
+    const discoveredPeers = this.cfg.enableDiscovery !== false
+      ? this.discovery.getActivePeers()
+      : []
+    // Same case-insensitive id/url dedup as broadcastBft — PR-1N pattern.
+    const seenIds = new Set<string>()
+    const seenUrls = new Set<string>()
+    const allPeers: NodePeer[] = []
+    for (const p of [...staticPeers, ...discoveredPeers]) {
+      const idLower = (p.id ?? "").toLowerCase()
+      const urlLower = (p.url ?? "").toLowerCase()
+      if (idLower && seenIds.has(idLower)) continue
+      if (urlLower && seenUrls.has(urlLower)) continue
+      if (idLower) seenIds.add(idLower)
+      if (urlLower) seenUrls.add(urlLower)
+      allPeers.push(p)
+    }
+
+    const payloadRecord = ensurePayloadObject(msg as unknown as Record<string, unknown>)
+    const signedPayload = this.cfg.signer
+      ? buildSignedP2PPayload("/p2p/bft-evidence", payloadRecord, this.cfg.signer)
+      : payloadRecord
+    const payloadSize = serializeJson(signedPayload).length
+
+    const failures: Array<{ peerId: string; url: string; reason: string }> = []
+    for (let i = 0; i < allPeers.length; i += BROADCAST_CONCURRENCY) {
+      const batch = allPeers.slice(i, i + BROADCAST_CONCURRENCY)
+      await Promise.all(batch.map(async (peer) => {
+        try {
+          await requestJson(`${peer.url}/p2p/bft-evidence`, "POST", signedPayload)
+          this.scoring.recordSuccess(peer.id)
+          this.bytesSent += payloadSize
+        } catch (err) {
+          this.scoring.recordFailure(peer.id)
+          failures.push({
+            peerId: peer.id,
+            url: peer.url,
+            reason: String(err ?? "unknown").slice(0, 200),
+          })
+        }
+      }))
+    }
+    if (failures.length > 0) {
+      log.warn("broadcastBftEvidence: peer failures", {
+        validator: msg.validatorId,
+        height: msg.height,
+        phase: msg.phase,
+        attempted: allPeers.length,
+        failed: failures.length,
         sample: failures.slice(0, 5),
       })
     }
