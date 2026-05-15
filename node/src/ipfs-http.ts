@@ -494,20 +494,24 @@ export class IpfsHttpServer {
           }
           // No Range header (or unsupported multi-range): full body
           // with #328 CORS + #340 MIME sniff + #326 HEAD body suppression.
+          // #609: pre-fix the full-body GET branch omitted `content-length`
+          // (the HEAD branch correctly emits it). Clients can't pre-
+          // allocate, range-aware downloaders skip resume capability, and
+          // HTTP caches fall back to chunked transfer for what is in fact
+          // a known-length buffer. Sibling 206 path already sets it
+          // (line ~487). Emit it on the 200 path too so all three responses
+          // agree on the wire shape.
+          const fullBodyHeaders: http.OutgoingHttpHeaders = {
+            "content-type": sniffMimeType(data),
+            "content-length": String(data.length),
+            "accept-ranges": "bytes",
+            "access-control-allow-origin": "*",
+          }
           if (req.method === "HEAD") {
-            res.writeHead(200, {
-              "content-type": sniffMimeType(data),
-              "content-length": String(data.length),
-              "accept-ranges": "bytes",
-              "access-control-allow-origin": "*",
-            })
+            res.writeHead(200, fullBodyHeaders)
             res.end()
           } else {
-            res.writeHead(200, {
-              "content-type": sniffMimeType(data),
-              "accept-ranges": "bytes",
-              "access-control-allow-origin": "*",
-            })
+            res.writeHead(200, fullBodyHeaders)
             res.end(data)
           }
         } catch (err) {
