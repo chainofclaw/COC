@@ -362,6 +362,17 @@ export class BlockIndex implements IBlockIndex {
       const toKey = ADDR_TX_PREFIX + tx.receipt.to.toLowerCase() + ":" + blockPad + ":" + hashLower
       ops.push({ type: "put", key: toKey, value: encoder.encode(txHash) })
     }
+    // #624: contract-creation txs carry `to: null` and the new contract's
+    // address is in `receipt.contractAddress` instead. Pre-fix the index
+    // only saw `from` and `to`, so querying coc_getTransactionsByAddress
+    // for the contract returned an empty list even though the creation
+    // tx IS part of the address's history (etherscan/explorer convention).
+    // Index under contractAddress too so the deploy tx surfaces when a
+    // user clicks the contract's transactions tab.
+    if (tx.receipt.contractAddress) {
+      const contractKey = ADDR_TX_PREFIX + tx.receipt.contractAddress.toLowerCase() + ":" + blockPad + ":" + hashLower
+      ops.push({ type: "put", key: contractKey, value: encoder.encode(txHash) })
+    }
 
     return ops
   }
