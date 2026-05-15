@@ -14,7 +14,14 @@ jobs:
   test-node:
     name: Node Tests (859+)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # 10 → 20: with the rpc-block-format.test.ts server leak fixed in
+    # this same PR, real test runtime is ~7-9 min warm-cache, ~10-13
+    # cold-cache. Cold-cache npm install + solc install + checkout adds
+    # ~30-60 s on top. The 10-min cap put every PR exactly on the edge
+    # — see #605 for the full chain of CI-cancellation evidence. Bundle
+    # the bump here so this PR is self-contained: closing the leak AND
+    # giving the runner headroom in one commit.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
