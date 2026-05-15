@@ -487,10 +487,16 @@ test("RPC Extended Methods", async (t) => {
     const r3 = await rpcCall(port, "eth_getFilterLogs", [logFid])
     assert.ok(Array.isArray(r3), "log filter still works")
 
-    // Missing filter case (sanity: #342 unchanged, returns []):
+    // Missing filter case: per the #342 fix landed in PR #573, missing
+    // filter id now returns -32000 "filter not found" (geth semantic),
+    // NOT silent []. Pre-fix this assertion expected `[]` which was the
+    // OLD (pre-#342) behavior; the test fixture was stale since PR #573.
     const missing = "0x" + "00".repeat(16)
-    const r4 = await rpcCall(port, "eth_getFilterLogs", [missing])
-    assert.deepEqual(r4, [], "missing filter returns [] (#342 contract)")
+    const r4raw = await rpcCallRaw(port, "eth_getFilterLogs", [missing])
+    assert.ok(r4raw.error, "missing filter must error (not silent [])")
+    assert.equal(r4raw.error!.code, -32000, `expected -32000, got ${r4raw.error!.code}`)
+    assert.match(r4raw.error!.message, /filter not found/i,
+      `expected "filter not found", got: ${r4raw.error!.message}`)
   })
 
   await t.test("#360: oversize RPC body returns 413 + JSON-RPC error (no ECONNRESET race after res.end)", async () => {
