@@ -225,6 +225,58 @@ describe("Mempool", () => {
     }
   })
 
+  it("#615: same-sender contiguous nonces all picked when prices increase (no single-pass throttle)", async () => {
+    // Pre-fix: global sort by gas price desc puts [n2@10gw, n1@5gw, n0@1gw].
+    // Loop visits n2 → expected=0, gap → skip; n1 → expected=0, gap → skip;
+    // n0 → expected=0, picked. n1/n2 already past — only 1 of 3 picked.
+    // High-volume senders (faucets, MEV bots, agents) were throttled to
+    // 1 tx/block whenever per-nonce gas prices differed.
+    const pool = new Mempool({ chainId: CHAIN_ID })
+    signAndAdd(pool, PK1, 0, "0x3b9aca00") // 1 gwei
+    signAndAdd(pool, PK1, 1, "0x12a05f200") // 5 gwei
+    signAndAdd(pool, PK1, 2, "0x2540be400") // 10 gwei
+
+    const picked = await pool.pickForBlock(10, async () => 0n, 0n)
+    assert.equal(picked.length, 3, "all three contiguous-nonce txs must be picked")
+    assert.equal(picked[0].nonce, 0n)
+    assert.equal(picked[1].nonce, 1n)
+    assert.equal(picked[2].nonce, 2n)
+  })
+
+  it("#615: mixed-sender ordering preserves gas-price priority across senders", async () => {
+    // PK1: nonce 0/1 @ 1gw/10gw. PK2: nonce 0 @ 5gw.
+    // Highest single-tx price is PK1.n1 @ 10gw but it's gapped behind PK1.n0.
+    // Expected order: PK1.n0 (the predecessor that unlocks the higher-priced
+    // n1), then PK2.n0 vs PK1.n1 by price. Total = all 3 picked.
+    const pool = new Mempool({ chainId: CHAIN_ID })
+    signAndAdd(pool, PK1, 0, "0x3b9aca00") // 1 gwei
+    signAndAdd(pool, PK1, 1, "0x2540be400") // 10 gwei
+    signAndAdd(pool, PK2, 0, "0x12a05f200") // 5 gwei
+
+    const picked = await pool.pickForBlock(10, async () => 0n, 0n)
+    assert.equal(picked.length, 3, "all 3 txs must be included")
+    // PK1's two nonces must be in correct order
+    const pk1Picks = picked.filter((p) => p.from === new Wallet(PK1).address.toLowerCase())
+    assert.equal(pk1Picks.length, 2)
+    assert.equal(pk1Picks[0].nonce, 0n)
+    assert.equal(pk1Picks[1].nonce, 1n)
+  })
+
+  it("#615: deferred drain stops at gas-budget exhaustion (no over-fill)", async () => {
+    // PK1 has 3 contiguous nonces; only 2 fit in the gas budget.
+    // The deferred drain must not exceed gas budget when picking the 3rd.
+    const pool = new Mempool({ chainId: CHAIN_ID })
+    signAndAdd(pool, PK1, 0, "0x3b9aca00")
+    signAndAdd(pool, PK1, 1, "0x12a05f200")
+    signAndAdd(pool, PK1, 2, "0x2540be400")
+
+    // 21000 * 2 + 1 — fits exactly 2 txs, third would exceed
+    const picked = await pool.pickForBlock(10, async () => 0n, 0n, 0n, 42_001n)
+    assert.equal(picked.length, 2)
+    assert.equal(picked[0].nonce, 0n)
+    assert.equal(picked[1].nonce, 1n)
+  })
+
   it("does not pick transactions that cannot pay base fee", async () => {
     const pool = new Mempool({ chainId: CHAIN_ID })
     signAndAdd(pool, PK1, 0, "0x3b9aca00") // 1 gwei
