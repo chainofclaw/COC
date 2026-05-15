@@ -11,7 +11,7 @@ import type { IChainEngine } from "./chain-engine-types.ts"
 import type { ChainBlock } from "./blockchain-types.ts"
 import { hasGovernance } from "./chain-engine-types.ts"
 import { P2PNode, buildSignedGetAuth } from "./p2p.ts"
-import type { BftMessagePayload } from "./p2p.ts"
+import type { BftMessagePayload, BftEvidencePayload } from "./p2p.ts"
 import { ConsensusEngine } from "./consensus.ts"
 import type { SnapSyncProvider } from "./consensus.ts"
 import { IpfsBlockstore } from "./ipfs-blockstore.ts"
@@ -35,7 +35,7 @@ import type { EquivocationEvidence } from "./bft.ts"
 import { IpfsMfs } from "./ipfs-mfs.ts"
 import { IpfsPubsub } from "./ipfs-pubsub.ts"
 import type { PubsubMessage } from "./ipfs-pubsub.ts"
-import { BftCoordinator } from "./bft-coordinator.ts"
+import { BftCoordinator, bftCanonicalMessage } from "./bft-coordinator.ts"
 import type { BftMessage } from "./bft.ts"
 import { WireServer } from "./wire-server.ts"
 import { WireClient } from "./wire-client.ts"
@@ -221,6 +221,14 @@ const bftEnabled = config.enableBft && config.validators.length >= 3
 let cachedStateSnapshot: { snapshot: StateSnapshot; tipHash: Hex; cachedAtMs: number } | null = null
 const STATE_SNAPSHOT_CACHE_TTL_MS = 30_000
 
+// #622 (issue #620): forward-declared so the p2p `onBftEvidence` handler
+// (created at p2p init, BEFORE the bft init block runs) can dispatch into
+// the shared equivocation-processing path. The bft init block (later)
+// assigns the actual implementation. When BFT is disabled or the init
+// hasn't run yet, this stays null and `onBftEvidence` drops inbound
+// evidence as a no-op.
+let handleEquivocationEvidence: ((ev: EquivocationEvidence) => void) | null = null
+
 const p2p = new P2PNode(
   {
     bind: config.p2pBind,
@@ -318,6 +326,47 @@ const p2p = new P2PNode(
         // Propagate stateRoot (part of BFT quorum on (hash, stateRoot)).
         if (msg.stateRoot) bftMsg.stateRoot = msg.stateRoot
         await bftCoordinator.handleMessage(bftMsg)
+      }
+      : undefined,
+    // #622 (issue #620): receive equivocation evidence from peers, verify
+    // signatures, dedup, import into the local detector. When import
+    // succeeds (status "imported"), the local `onEquivocation` callback
+    // fires — applying the slash, persisting for relayer pickup, AND
+    // re-gossiping to peers. The receiver re-broadcast is what makes the
+    // network converge in ~one gossip round even when the original
+    // witness only reached a subset of peers.
+    onBftEvidence: bftEnabled
+      ? async (msg: BftEvidencePayload) => {
+        if (!bftCoordinator) return
+        const ev: EquivocationEvidence = {
+          validatorId: msg.validatorId,
+          height: BigInt(msg.height),
+          phase: msg.phase,
+          blockHash1: msg.blockHash1,
+          blockHash2: msg.blockHash2,
+          detectedAtMs: msg.detectedAtMs,
+          signature1: msg.signature1 as Hex,
+          signature2: msg.signature2 as Hex,
+        }
+        const result = bftCoordinator.equivocationDetector.importEvidence(
+          ev,
+          bftCanonicalMessage,
+          (canonical, signature, expectedAddress) =>
+            nodeSigner.verifyNodeSig(canonical, signature, expectedAddress),
+        )
+        if (result === "imported") {
+          // Fire the same downstream path as locally-detected equivocation:
+          // local slash + relayer pickup + RE-GOSSIP. Imports converge the
+          // network on the same evidence set in O(log N) gossip rounds.
+          handleEquivocationEvidence?.(ev)
+        } else if (result === "invalid") {
+          log.warn("rejected bogus BFT evidence from peer", {
+            validator: msg.validatorId,
+            height: msg.height,
+            phase: msg.phase,
+          })
+        }
+        // "duplicate" → silent drop (expected during gossip steady-state)
       }
       : undefined,
     onStateSnapshotRequest: (stateTrie && config.enableSnapSync)
@@ -443,6 +492,83 @@ if (bftEnabled) {
     )
   }
 
+  // #622 (issue #620): factored out of `onEquivocation` so peer-imported
+  // evidence flows through the SAME local-slash + relayer + re-gossip path
+  // as locally-detected evidence. Assigned to the file-scoped forward-
+  // declared `handleEquivocationEvidence` so the p2p `onBftEvidence`
+  // handler (initialized earlier) can dispatch into it.
+  handleEquivocationEvidence = (evidence: EquivocationEvidence) => {
+    log.warn("BFT equivocation detected", {
+      validator: evidence.validatorId,
+      height: evidence.height.toString(),
+      phase: evidence.phase,
+      hash1: evidence.blockHash1,
+      hash2: evidence.blockHash2,
+    })
+
+    // Apply immediate governance slash penalty
+    if (bftSlashingHandler) {
+      const slashEvent = bftSlashingHandler.handleEquivocation(evidence)
+      if (slashEvent) {
+        log.warn("BFT equivocation slash applied", {
+          validatorId: slashEvent.validatorId,
+          slashedAmount: slashEvent.slashedAmount.toString(),
+          remaining: slashEvent.remainingStake.toString(),
+          removed: slashEvent.removed,
+        })
+      }
+    }
+
+    // Persist as SlashEvidence for relayer pickup
+    const nodeIdHex = evidence.validatorId.startsWith("0x")
+      ? evidence.validatorId.padEnd(66, "0")
+      : `0x${evidence.validatorId.padStart(64, "0")}`
+    const rawEvidence: Record<string, unknown> = {
+      type: "bft-equivocation",
+      nodeId: nodeIdHex,
+      validatorId: evidence.validatorId,
+      height: evidence.height.toString(),
+      phase: evidence.phase,
+      blockHash1: evidence.blockHash1,
+      blockHash2: evidence.blockHash2,
+      detectedAtMs: evidence.detectedAtMs,
+    }
+    bftEvidenceStore.push({
+      nodeId: nodeIdHex as `0x${string}`,
+      reasonCode: EvidenceReason.BftEquivocation,
+      evidenceHash: hashSlashEvidencePayload(nodeIdHex as `0x${string}`, rawEvidence),
+      rawEvidence,
+    })
+
+    // #622: gossip evidence to peers so the equivocation history converges
+    // across the network. Without this, only the node that directly
+    // witnessed both conflicting votes can detect the equivocation; nodes
+    // that received only one vote stay unaware, making slashing
+    // inconsistent and on-chain reporting depend on a single relayer
+    // happening to run alongside the witness. Signatures are mandatory
+    // on the wire — pre-PR-I3b paths can produce sig-less evidence, skip
+    // those (peers have nothing to verify against).
+    if (evidence.signature1 && evidence.signature2) {
+      const broadcastPayload: BftEvidencePayload = {
+        validatorId: evidence.validatorId,
+        height: evidence.height.toString(),
+        phase: evidence.phase,
+        blockHash1: evidence.blockHash1,
+        blockHash2: evidence.blockHash2,
+        signature1: evidence.signature1,
+        signature2: evidence.signature2,
+        detectedAtMs: evidence.detectedAtMs,
+      }
+      p2p.broadcastBftEvidence(broadcastPayload).catch((err) => {
+        log.warn("broadcastBftEvidence failed", {
+          validator: evidence.validatorId,
+          height: evidence.height.toString(),
+          error: String(err),
+        })
+      })
+    }
+  }
+
   bftCoordinator = new BftCoordinator({
     localId: config.nodeId,
     validators,
@@ -466,49 +592,7 @@ if (bftEnabled) {
       })
       consensus.markProposerUnreachable(proposerId)
     },
-    onEquivocation: (evidence: EquivocationEvidence) => {
-      log.warn("BFT equivocation detected", {
-        validator: evidence.validatorId,
-        height: evidence.height.toString(),
-        phase: evidence.phase,
-        hash1: evidence.blockHash1,
-        hash2: evidence.blockHash2,
-      })
-
-      // Apply immediate governance slash penalty
-      if (bftSlashingHandler) {
-        const slashEvent = bftSlashingHandler.handleEquivocation(evidence)
-        if (slashEvent) {
-          log.warn("BFT equivocation slash applied", {
-            validatorId: slashEvent.validatorId,
-            slashedAmount: slashEvent.slashedAmount.toString(),
-            remaining: slashEvent.remainingStake.toString(),
-            removed: slashEvent.removed,
-          })
-        }
-      }
-
-      // Persist as SlashEvidence for relayer pickup
-      const nodeIdHex = evidence.validatorId.startsWith("0x")
-        ? evidence.validatorId.padEnd(66, "0")
-        : `0x${evidence.validatorId.padStart(64, "0")}`
-      const rawEvidence: Record<string, unknown> = {
-        type: "bft-equivocation",
-        nodeId: nodeIdHex,
-        validatorId: evidence.validatorId,
-        height: evidence.height.toString(),
-        phase: evidence.phase,
-        blockHash1: evidence.blockHash1,
-        blockHash2: evidence.blockHash2,
-        detectedAtMs: evidence.detectedAtMs,
-      }
-      bftEvidenceStore.push({
-        nodeId: nodeIdHex as `0x${string}`,
-        reasonCode: EvidenceReason.BftEquivocation,
-        evidenceHash: hashSlashEvidencePayload(nodeIdHex as `0x${string}`, rawEvidence),
-        rawEvidence,
-      })
-    },
+    onEquivocation: (evidence: EquivocationEvidence) => handleEquivocationEvidence?.(evidence),
     broadcastMessage: async (msg: BftMessage) => {
       const payload: BftMessagePayload = {
         type: msg.type as "prepare" | "commit",
