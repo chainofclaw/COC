@@ -998,7 +998,8 @@ async function handleRpc(
       }, executionContext.stateRoot, executionContext)
       if (estProbe.failed) {
         // #491: distinguish insufficient-balance from real reverts.
-        throwCallFailure(estProbe)
+        // #509: echo the sender address on the insufficient-funds error.
+        throwCallFailure(estProbe, estParams.from)
       }
       const estimated = await evm.estimateGas({
         from: estParams.from,
@@ -1068,7 +1069,8 @@ async function handleRpc(
       // unknown selector before this fix.
       if (callResult.failed) {
         // #491: distinguish insufficient-balance from real reverts.
-        throwCallFailure(callResult)
+        // #509: echo the sender address on the insufficient-funds error.
+        throwCallFailure(callResult, callParams.from)
       }
       return callResult.returnValue
     }
@@ -3511,12 +3513,22 @@ function throwExecutionReverted(returnValue: string, errorReason?: string): neve
  * actual cause was a balance shortfall. geth uses -32000 "insufficient
  * funds for gas * price + value" for this case.
  */
-function throwCallFailure(result: { returnValue: string; failed: boolean; errorReason?: string }): never {
+function throwCallFailure(
+  result: { returnValue: string; failed: boolean; errorReason?: string },
+  from?: string,
+): never {
   if (result.errorReason === "insufficient balance") {
+    // #509: geth's -32000 insufficient-funds error carries NO `data` field
+    // (there's no revert payload — execution never started) and echoes the
+    // offending sender address. Pre-fix this attached `data: "0x"`, which
+    // is non-canonical noise on a -32000, and omitted the address. The
+    // exact `have N want M` amounts geth appends are not surfaced by
+    // @ethereumjs's "insufficient balance" exceptionError, so the message
+    // stops at the address.
+    const base = "insufficient funds for gas * price + value"
     throw {
       code: -32000,
-      message: "insufficient funds for gas * price + value",
-      data: result.returnValue || "0x",
+      message: from ? `${base}: address ${from.toLowerCase()}` : base,
     }
   }
   // #493: pass the errorReason through so non-revert EVM exceptions get
