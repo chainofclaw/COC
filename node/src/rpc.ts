@@ -1652,6 +1652,17 @@ async function handleRpc(
       // "tx not found" with the coerced garbage leaked back. Same family
       // as #260/#262.
       const txHash = requireTxHashParam(payload.params ?? [], 0)
+      // #603: pre-fix a tx-not-found error from traceTransactionResult
+      // bubbled up as a plain Error → -32603 internal error. Geth's
+      // debug_traceTransaction returns -32000 for the same condition, and
+      // our sibling trace_transaction (rpc.ts:1623) already pre-locates
+      // and surfaces -32004 "transaction not found". Match the sibling
+      // contract so callers get a consistent code for the same condition
+      // regardless of which trace family they call.
+      const debugTxContext = await locateTraceTransactionContext(chain, txHash)
+      if (!debugTxContext) {
+        throw { code: -32004, message: `transaction not found: ${txHash}` }
+      }
       const traceOpts = ((payload.params ?? [])[1] ?? {}) as Record<string, unknown>
       const traceResult = await traceTransactionResult(txHash, chain, evm, {
         disableStorage: Boolean(traceOpts.disableStorage),
