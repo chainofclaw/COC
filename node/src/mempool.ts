@@ -11,6 +11,9 @@
 
 import { Transaction } from "ethers"
 import type { Hex, MempoolTx } from "./blockchain-types.ts"
+import { createLogger } from "./logger.ts"
+
+const log = createLogger("mempool")
 
 export interface MempoolConfig {
   maxSize: number           // max total transactions in pool
@@ -432,17 +435,30 @@ export class Mempool {
      */
     const deferred = new Map<Hex, MempoolTx[]>()
 
+    // #589: per-reason rejection tally. When a proposer builds an empty
+    // block from a non-empty mempool, this breakdown (logged below) is the
+    // first thing needed to root-cause the stall — without it the only
+    // signal is "txs=0" with no indication of which filter ate them.
+    const diag = {
+      nonceUnknown: 0,        // getOnchainNonce failed → expected = -1n
+      staleNonceEvicted: 0,   // tx.nonce < on-chain nonce
+      unaffordable: 0,        // Phase H3 balance check
+      gasOrCountBudget: 0,    // block tx-count / gas limit reached
+      deferredGap: 0,         // tx.nonce ahead of expected (queued)
+    }
+
     const tryPickOne = (tx: MempoolTx): "picked" | "deferred" | "rejected" => {
-      if (picked.length >= maxTx) return "rejected"
-      if (cumulativeGas + tx.gasLimit > blockGasLimit) return "rejected"
+      if (picked.length >= maxTx) { diag.gasOrCountBudget++; return "rejected" }
+      if (cumulativeGas + tx.gasLimit > blockGasLimit) { diag.gasOrCountBudget++; return "rejected" }
       const next = expected.get(tx.from)
-      if (next === undefined || next === -1n) return "rejected"
+      if (next === undefined || next === -1n) { diag.nonceUnknown++; return "rejected" }
       // Evict transactions whose nonce is already confirmed on-chain
       if (tx.nonce < next) {
         this.removeTx(tx.hash)
+        diag.staleNonceEvicted++
         return "rejected"
       }
-      if (tx.nonce !== next) return "deferred"
+      if (tx.nonce !== next) { diag.deferredGap++; return "deferred" }
 
       // Phase H3: affordability check
       if (getBalance !== undefined) {
@@ -450,6 +466,7 @@ export class Mempool {
         const upfrontCost = effectivePrice(tx) * tx.gasLimit + tx.value
         const alreadySpent = cumulativeSpend.get(tx.from) ?? 0n
         if (alreadySpent + upfrontCost > balance) {
+          diag.unaffordable++
           // Cannot afford this tx given balance + earlier picks from
           // this sender. Don't pick. Don't evict either — balance might
           // grow before next block (e.g. inbound transfer), letting
@@ -506,6 +523,24 @@ export class Mempool {
       const result = tryPickOne(tx)
       if (result === "deferred") enqueueDeferred(tx)
       else if (result === "picked") drainDeferred(tx.from)
+    }
+
+    // #589: a proposer that builds an empty block while the mempool holds
+    // pending txs is the exact stall symptom (50-tx burst → 13 empty
+    // proposals across 5 validators). Log the per-reason breakdown so the
+    // next occurrence is root-causable from logs alone rather than needing
+    // a live cluster repro. Only fires on the empty-pick-from-non-empty
+    // case, so it's silent on the normal path (no log spam).
+    if (picked.length === 0 && this.txs.size > 0) {
+      log.warn("pickForBlock produced an empty block from a non-empty mempool", {
+        mempoolSize: this.txs.size,
+        feeEligible: sorted.length,
+        feeFiltered: this.txs.size - sorted.length,
+        baseFeePerGas: baseFeePerGas.toString(),
+        minGasPriceWei: minGasPriceWei.toString(),
+        ...diag,
+        stuckSenders: deferred.size,
+      })
     }
 
     return picked
