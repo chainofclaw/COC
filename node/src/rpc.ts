@@ -4502,9 +4502,21 @@ async function formatBlock(block: Awaited<ReturnType<IChainEngine["getBlockByNum
     baseFeePerGas: `0x${headerView.baseFeePerGas.toString(16)}`,
     withdrawals: [],
     withdrawalsRoot: "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
-    blobGasUsed: `0x${(block.blobGasUsed ?? 0n).toString(16)}`,
-    excessBlobGas: `0x${(block.excessBlobGas ?? 0n).toString(16)}`,
-    parentBeaconBlockRoot: block.parentBeaconBlockRoot ?? ("0x" + "0".repeat(64)),
+    // #596: gate Cancun-only fields (parentBeaconBlockRoot, blobGasUsed,
+    // excessBlobGas) on whether the block actually stored them.
+    // Pre-fix used `block.X ?? defaultZero` which unconditionally emitted
+    // zero defaults — on a Shanghai chain, blocks don't store these
+    // fields at all (chain-engine.ts:497-499 only persists when the
+    // upstream EVM execution set them, which happens iff Cancun is
+    // active). The unconditional emission made eth_getBlockByNumber lie
+    // that the chain was Cancun (claiming all 3 EIP-4844/4788 fields
+    // present), while EVM execution rejected Cancun opcodes
+    // (TLOAD/TSTORE/MCOPY/BLOBHASH/BLOBBASEFEE) as "invalid opcode".
+    // Clients (ethers, viem) handle these fields as optional — emit
+    // them when present, omit when absent, matching the actual fork.
+    ...(block.blobGasUsed !== undefined ? { blobGasUsed: `0x${block.blobGasUsed.toString(16)}` } : {}),
+    ...(block.excessBlobGas !== undefined ? { excessBlobGas: `0x${block.excessBlobGas.toString(16)}` } : {}),
+    ...(block.parentBeaconBlockRoot !== undefined ? { parentBeaconBlockRoot: block.parentBeaconBlockRoot } : {}),
     // #481: default to false so the key is always serialized. Pre-fix a
     // chain block stored without a finalized flag (e.g. genesis-as-real-
     // block on older chains, or any pre-BFT-finalization block) emitted
