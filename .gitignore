@@ -71,3 +71,8 @@ scripts/gcloud/config.env
 docs/COC_business_plan*
 docs/*business_plan*
 docs/*business-plan*
+
+# Pitch deck (kept locally, not in public repo)
+docs/COC_pitch_deck*
+docs/*pitch_deck*
+docs/*pitch-deck*
