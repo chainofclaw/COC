@@ -2792,6 +2792,62 @@ test("RPC Extended Methods", async (t) => {
     assert.equal(ok.error, undefined, `null tx must NOT error: ${JSON.stringify(ok.error)}`)
   })
 
+  await t.test("#602: eth_call/eth_estimateGas reject non-empty stateOverride + bogus shapes", async () => {
+    // Pre-fix `params[2]` (geth-style stateOverride) was silently
+    // dropped at every shape:
+    //   - non-empty object: result computed against UNMODIFIED state,
+    //     and the response shape looked normal — Tenderly/viem
+    //     `eth_call(..., overrides)` callers got authoritative-looking
+    //     wrong answers.
+    //   - string/array/garbage: same silent acceptance, same wrong-state
+    //     simulation.
+    // Same silent-success family as #172/#238/#192. anvil/erigon reject
+    // backend-unsupported features with -32601; geth honours the param.
+    // We don't (yet) honour overrides, so reject explicitly so callers
+    // fall back rather than trust a misleading result.
+    const validTx = { from: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", to: "0x" + "ab".repeat(20) }
+    const probe = async (method: string, override: unknown) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: [validTx, "latest", override] }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    }
+    for (const method of ["eth_call", "eth_estimateGas"]) {
+      // (a) Non-empty override → -32601 backend-not-supported.
+      const nonEmpty = await probe(method, { [validTx.to]: { code: "0xab" } })
+      assert.equal(nonEmpty.error?.code, -32601,
+        `${method} non-empty override must be -32601, got ${nonEmpty.error?.code}: ${JSON.stringify(nonEmpty.error)}`)
+      assert.match(nonEmpty.error!.message, /stateOverride|not supported/i,
+        `${method} error must name stateOverride or unavailability`)
+      // (b) String override (bogus shape) → -32602 invalid shape.
+      const stringOverride = await probe(method, "not an object")
+      assert.equal(stringOverride.error?.code, -32602,
+        `${method} string override must be -32602, got ${stringOverride.error?.code}`)
+      assert.match(stringOverride.error!.message, /expected object/i)
+      // (c) Array override (bogus shape) → -32602.
+      const arrayOverride = await probe(method, [1, 2, 3])
+      assert.equal(arrayOverride.error?.code, -32602,
+        `${method} array override must be -32602, got ${arrayOverride.error?.code}`)
+      // (d) Empty object override → still allowed (spec-permissive).
+      const emptyOverride = await probe(method, {})
+      assert.notEqual(emptyOverride.error?.code, -32601,
+        `${method} empty override must NOT reject as -32601`)
+      assert.notEqual(emptyOverride.error?.code, -32602,
+        `${method} empty override must NOT reject as -32602`)
+      // (e) Missing 3rd param entirely → no error (back-compat).
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: [validTx, "latest"] }),
+      })
+      const noOverride = await r.json() as { error?: { code: number; message: string } }
+      assert.notEqual(noOverride.error?.code, -32601,
+        `${method} without override (2-arg) must NOT reject`)
+    }
+  })
+
   await t.test("#178: eth_sendTransaction validates + honors user-provided nonce", async () => {
     // Pre-fix txParams.nonce was silently dropped — every call used
     // the next sequential mempool nonce regardless of what the user
