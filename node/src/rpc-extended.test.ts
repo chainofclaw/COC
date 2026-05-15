@@ -2786,17 +2786,31 @@ test("RPC Extended Methods", async (t) => {
     assert.doesNotMatch(r2.error!.message, /version=|INVALID_ARGUMENT|code=/, "must not leak ethers internals")
   })
 
-  await t.test("#184: coc_chainStats does not crash when chain.cfg.chainId is undefined", async () => {
-    // Pre-fix `chain.cfg.chainId.toString(16)` assumed chainId was
-    // always set, but ChainEngineConfig.chainId is optional in the
-    // type. Bare undefined.toString() leaked as
-    // -32603 "Cannot read properties of undefined (reading 'toString')".
+  await t.test("#184/#606: coc_chainStats does not crash + chainId matches eth_chainId (no '0x1' lie)", async () => {
+    // #184 (original): pre-fix `chain.cfg.chainId.toString(16)` assumed
+    // chainId was always set, but ChainEngineConfig.chainId is optional
+    // in the type. Bare undefined.toString() leaked as
+    //   -32603 "Cannot read properties of undefined (reading 'toString')"
+    // The fix landed `?? "1"` literal fallback.
+    //
+    // #606 (this PR): the "1" literal silently lied — same node returned
+    // chainId `0x1` from coc_chainStats and the real chainId (e.g.
+    // `0x495c` = 18780) from eth_chainId. Two endpoints disagreed about
+    // which chain you're on, breaking client connection-validation
+    // logic that compares the two. Replace the literal with the RPC
+    // handler's `chainId` parameter (canonical source for eth_chainId).
+    //
     // This fixture deliberately does NOT pass chainId to ChainEngine
-    // (see line 38-48), so chain.cfg.chainId is undefined here — making
-    // this a direct repro of the bug.
+    // (see line 38-48), so chain.cfg.chainId is undefined — direct
+    // repro for both bugs.
     const stats = await rpcCall(port, "coc_chainStats") as Record<string, unknown>
     assert.ok(typeof stats === "object" && stats !== null, "must return an object")
-    assert.equal(stats.chainId, "0x1", `chainId must fall back to "0x1" when cfg.chainId is undefined, got ${stats.chainId}`)
+    // The two endpoints must agree.
+    const ethChainId = await rpcCall(port, "eth_chainId") as string
+    assert.equal(stats.chainId, ethChainId,
+      `coc_chainStats.chainId (${stats.chainId}) must match eth_chainId (${ethChainId}) — same node, same chain`)
+    assert.notEqual(stats.chainId, "0x1",
+      `chainId must NOT fall back to the literal "0x1" — that was the #184 bug fallback that lied`)
     assert.ok(typeof stats.blockHeight === "string", "blockHeight must be hex")
     assert.ok(typeof stats.validatorCount === "number", "validatorCount must be number")
     // Defend against V8 leak in error path.

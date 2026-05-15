@@ -2929,7 +2929,15 @@ async function handleRpc(
           // constructor only defaults it for the mempool, not for cfg
           // itself. Bare `undefined.toString(16)` leaked to clients
           // as -32603 "Cannot read properties of undefined".
-          chainId: `0x${chain.cfg?.chainId?.toString(16) ?? "1"}`,
+          //
+          // #606: the original fix landed `"1"` as the literal fallback,
+          // which silently lied: same node returned chainId `0x1` from
+          // coc_chainStats and `0x495c` (18780) from eth_chainId — two
+          // endpoints disagreeing about which chain you're on. Use the
+          // RPC handler's `chainId` parameter (the canonical source
+          // eth_chainId reads from, rpc.ts:813) so the two endpoints
+          // agree even when ChainEngineConfig.chainId is unset.
+          chainId: `0x${chain.cfg?.chainId?.toString(16) ?? chainId.toString(16)}`,
         }
         chainStatsCache = { result: statsResult, height, mempoolSize: poolStats.size, cachedAtMs: now }
         return statsResult
