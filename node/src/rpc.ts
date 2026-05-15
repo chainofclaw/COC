@@ -4473,7 +4473,18 @@ function formatGenesisBlock(includeTx: boolean) {
     sha3Uncles: ZERO_HASH,
     logsBloom: `0x${"0".repeat(512)}`,
     transactionsRoot: EMPTY_TRIE_ROOT,
-    stateRoot: ZERO_HASH,
+    // #617: stateRoot was ZERO_HASH, which is NOT a valid MPT root.
+    // Sibling roots (transactionsRoot, receiptsRoot, withdrawalsRoot)
+    // all use EMPTY_TRIE_ROOT for consistency with how an empty Ethereum
+    // genesis would actually serialize. Clients that cross-check header
+    // root fields (Hardhat fork detection, anvil compat, devp2p Status
+    // validation, any tool walking the state trie) saw an inconsistent
+    // synth-genesis: 3 fields with the canonical empty-trie hash but
+    // stateRoot at all-zeros. The chain has no pre-allocated accounts
+    // (genesis is synthesised because no real block 0 is persisted),
+    // so the correct stateRoot is keccak256(rlp([])) — same as the
+    // other empty-trie roots.
+    stateRoot: EMPTY_TRIE_ROOT,
     receiptsRoot: EMPTY_TRIE_ROOT,
     miner: ZERO_ADDR,
     difficulty: "0x0",
