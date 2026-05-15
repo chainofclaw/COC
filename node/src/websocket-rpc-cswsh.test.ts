@@ -40,7 +40,14 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 const CHAIN_ID = 18780
-const WS_PORT = 19899
+// #620: randomize the WS port to avoid EADDRINUSE collisions when this
+// suite races other parallel test files. Pre-fix hardcoded 19899 worked
+// when run alone, but Node's test runner schedules files concurrently
+// and another suite occasionally bound 19899 first → this whole file's
+// 3 tests failed with `listen EADDRINUSE` despite the code under test
+// being correct. Three sequential tests use ports [base, base+1, base+2]
+// so leave 8 slots of headroom.
+const WS_PORT = 25000 + Math.floor(Math.random() * 5000)
 
 interface ProbeResult {
   status: number
