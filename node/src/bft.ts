@@ -582,6 +582,94 @@ export class EquivocationDetector {
     return this.evidence
   }
 
+  /**
+   * #621 (issue #620): Import equivocation evidence received via P2P gossip
+   * from a peer. The local detector only ever sees votes it directly received,
+   * so an equivocator that selectively targets vote-recipient subsets ends up
+   * detected on one node and invisible on the others. By gossiping evidence,
+   * every node converges on the same equivocation history (required for
+   * consistent slashing, on-chain reporting, and `coc_getEquivocations` parity
+   * across nodes).
+   *
+   * Returns:
+   *   "imported"  — new evidence accepted; caller should re-gossip
+   *   "duplicate" — already have evidence for (validator, height, phase)
+   *   "invalid"   — signature pair does not verify, or self-recovery mismatch
+   *
+   * The signatures are MANDATORY for imported evidence. Local detection
+   * (recordVote) can tolerate missing signatures for legacy paths, but
+   * over-the-wire evidence must carry both signatures so peers can prove
+   * the validator actually signed two conflicting votes.
+   */
+  importEvidence(
+    ev: EquivocationEvidence,
+    canonicalize: (type: "prepare" | "commit", height: bigint, blockHash: Hex) => string,
+    verify: (message: string, signature: string, expectedAddress: string) => boolean,
+  ): "imported" | "duplicate" | "invalid" {
+    if (ev.phase !== "prepare" && ev.phase !== "commit") return "invalid"
+    if (!ev.signature1 || !ev.signature2) return "invalid"
+    if (ev.blockHash1 === ev.blockHash2) return "invalid"
+
+    const normalizedId = ev.validatorId.toLowerCase()
+    const heightKey = ev.height.toString()
+
+    // Dedup: skip if we already have evidence for this (validator, height, phase).
+    // Two conflicting votes by the same validator at the same (height, phase)
+    // can only equivocate once — additional evidence with the same triple is
+    // redundant by definition.
+    const already = this.evidence.find(
+      (e) => e.validatorId === normalizedId && e.height === ev.height && e.phase === ev.phase,
+    )
+    if (already) return "duplicate"
+
+    // Verify BOTH signatures recover to the claimed validatorId. Without this,
+    // a malicious peer could fabricate evidence accusing any validator.
+    const canonical1 = canonicalize(ev.phase, ev.height, ev.blockHash1)
+    const canonical2 = canonicalize(ev.phase, ev.height, ev.blockHash2)
+    if (!verify(canonical1, ev.signature1, normalizedId)) return "invalid"
+    if (!verify(canonical2, ev.signature2, normalizedId)) return "invalid"
+
+    // Reuse the same per-validator/global cap logic as local recordVote.
+    const validatorCount = this.evidenceCountByValidator.get(normalizedId) ?? 0
+    if (validatorCount >= this.maxEvidencePerValidator) {
+      const oldestIdx = this.evidence.findIndex((e) => e.validatorId === normalizedId)
+      if (oldestIdx >= 0) this.evidence.splice(oldestIdx, 1)
+    }
+    if (this.evidence.length >= this.maxEvidence) {
+      let maxValidator = normalizedId
+      let maxCount = this.evidenceCountByValidator.get(normalizedId) ?? 0
+      for (const [vid, cnt] of this.evidenceCountByValidator) {
+        if (cnt > maxCount) { maxValidator = vid; maxCount = cnt }
+      }
+      const evictIdx = this.evidence.findIndex((e) => e.validatorId === maxValidator)
+      if (evictIdx >= 0) {
+        this.evidence.splice(evictIdx, 1)
+        this.evidenceCountByValidator.set(
+          maxValidator,
+          (this.evidenceCountByValidator.get(maxValidator) ?? 1) - 1,
+        )
+      }
+    }
+
+    // Normalize the validator id case on the stored copy so case-insensitive
+    // lookups (getEvidenceFor) work consistently with recordVote-produced entries.
+    const normalizedEv: EquivocationEvidence = { ...ev, validatorId: normalizedId }
+    this.evidence.push(normalizedEv)
+    this.evidenceCountByValidator.set(
+      normalizedId,
+      Math.min(
+        this.maxEvidencePerValidator,
+        (this.evidenceCountByValidator.get(normalizedId) ?? 0) + 1,
+      ),
+    )
+    log.warn("equivocation evidence imported via gossip", {
+      validator: normalizedId,
+      height: heightKey,
+      phase: ev.phase,
+    })
+    return "imported"
+  }
+
   /** Get evidence for a specific validator (case-insensitive match) */
   getEvidenceFor(validatorId: string): EquivocationEvidence[] {
     const normalized = validatorId.toLowerCase()

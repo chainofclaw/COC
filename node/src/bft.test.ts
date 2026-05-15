@@ -447,6 +447,125 @@ describe("EquivocationDetector", () => {
     assert.equal(removed, 1)
     assert.equal(d.getEvidence().length, 1)
   })
+
+  describe("importEvidence (issue #620 — equivocation gossip)", () => {
+    const sig1 = ("0x" + "11".repeat(65)) as Hex
+    const sig2 = ("0x" + "22".repeat(65)) as Hex
+    const canonical = (type: "prepare" | "commit", height: bigint, blockHash: Hex) =>
+      `bft:${type}:${height.toString()}:${blockHash}`
+
+    it("accepts well-formed evidence and stores it", () => {
+      const d = new EquivocationDetector()
+      const verify = () => true
+      const r = d.importEvidence(
+        { validatorId: "v1", height: 5n, phase: "prepare", blockHash1: hash1, blockHash2: hash2, signature1: sig1, signature2: sig2, detectedAtMs: 1000 },
+        canonical,
+        verify,
+      )
+      assert.equal(r, "imported")
+      assert.equal(d.getEvidence().length, 1)
+      assert.equal(d.getEvidenceFor("v1").length, 1)
+    })
+
+    it("rejects when signature1 doesn't verify", () => {
+      const d = new EquivocationDetector()
+      const verify = (_msg: string, s: string) => s !== sig1
+      const r = d.importEvidence(
+        { validatorId: "v1", height: 5n, phase: "prepare", blockHash1: hash1, blockHash2: hash2, signature1: sig1, signature2: sig2, detectedAtMs: 1000 },
+        canonical,
+        verify,
+      )
+      assert.equal(r, "invalid")
+      assert.equal(d.getEvidence().length, 0)
+    })
+
+    it("rejects when signature2 doesn't verify (different from signature1)", () => {
+      const d = new EquivocationDetector()
+      const verify = (_msg: string, s: string) => s === sig1
+      const r = d.importEvidence(
+        { validatorId: "v1", height: 5n, phase: "prepare", blockHash1: hash1, blockHash2: hash2, signature1: sig1, signature2: sig2, detectedAtMs: 1000 },
+        canonical,
+        verify,
+      )
+      assert.equal(r, "invalid")
+    })
+
+    it("rejects missing signatures (mandatory over the wire)", () => {
+      const d = new EquivocationDetector()
+      const verify = () => true
+      const r = d.importEvidence(
+        { validatorId: "v1", height: 5n, phase: "prepare", blockHash1: hash1, blockHash2: hash2, detectedAtMs: 1000 },
+        canonical,
+        verify,
+      )
+      assert.equal(r, "invalid")
+    })
+
+    it("rejects identical block hashes (not an actual equivocation)", () => {
+      const d = new EquivocationDetector()
+      const r = d.importEvidence(
+        { validatorId: "v1", height: 5n, phase: "prepare", blockHash1: hash1, blockHash2: hash1, signature1: sig1, signature2: sig2, detectedAtMs: 1000 },
+        canonical,
+        () => true,
+      )
+      assert.equal(r, "invalid")
+    })
+
+    it("dedups against existing local detection (same triple, second import is duplicate)", () => {
+      const d = new EquivocationDetector()
+      // Locally detect first
+      d.recordVote("v1", 5n, "prepare", hash1, sig1)
+      d.recordVote("v1", 5n, "prepare", hash2, sig2)
+      assert.equal(d.getEvidence().length, 1)
+      // Then peer gossip arrives for the same equivocation
+      const r = d.importEvidence(
+        { validatorId: "v1", height: 5n, phase: "prepare", blockHash1: hash1, blockHash2: hash2, signature1: sig1, signature2: sig2, detectedAtMs: 1000 },
+        canonical,
+        () => true,
+      )
+      assert.equal(r, "duplicate")
+      assert.equal(d.getEvidence().length, 1)
+    })
+
+    it("dedups against earlier imported evidence (case-insensitive validator id)", () => {
+      const d = new EquivocationDetector()
+      d.importEvidence(
+        { validatorId: "V1", height: 5n, phase: "prepare", blockHash1: hash1, blockHash2: hash2, signature1: sig1, signature2: sig2, detectedAtMs: 1000 },
+        canonical,
+        () => true,
+      )
+      // Same validator (different case) at same (height, phase) → duplicate
+      const r = d.importEvidence(
+        { validatorId: "v1", height: 5n, phase: "prepare", blockHash1: hash2, blockHash2: hash1, signature1: sig2, signature2: sig1, detectedAtMs: 2000 },
+        canonical,
+        () => true,
+      )
+      assert.equal(r, "duplicate")
+      assert.equal(d.getEvidence().length, 1)
+    })
+
+    it("rejects invalid phase", () => {
+      const d = new EquivocationDetector()
+      const r = d.importEvidence(
+        { validatorId: "v1", height: 5n, phase: "propose" as "prepare", blockHash1: hash1, blockHash2: hash2, signature1: sig1, signature2: sig2, detectedAtMs: 1000 },
+        canonical,
+        () => true,
+      )
+      assert.equal(r, "invalid")
+    })
+
+    it("imported evidence is visible via getEvidenceFor (parity with locally-detected)", () => {
+      const d = new EquivocationDetector()
+      d.importEvidence(
+        { validatorId: "0xABCDEF", height: 5n, phase: "commit", blockHash1: hash1, blockHash2: hash2, signature1: sig1, signature2: sig2, detectedAtMs: 1000 },
+        canonical,
+        () => true,
+      )
+      // Case-insensitive lookup
+      assert.equal(d.getEvidenceFor("0xabcdef").length, 1)
+      assert.equal(d.getEvidenceFor("0xABCDEF").length, 1)
+    })
+  })
 })
 
 describe("BftRound stateRoot consensus", () => {
