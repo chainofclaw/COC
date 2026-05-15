@@ -4775,6 +4775,7 @@ test("RPC Extended Methods", async (t) => {
     if (receipt.to && got.to) {
       assert.equal(receipt.to, got.to, "receipt.to must equal tx.to byte-for-byte")
     }
+  })
 
   await t.test("#454: receipt logIndex is block-global (running count across all prior txs in block)", async () => {
     // Per Ethereum spec: "logIndex: log index position in the BLOCK".
@@ -4897,7 +4898,6 @@ test("RPC Extended Methods", async (t) => {
       "eth_getLogs[0].logIndex must equal receipt.logs[0].logIndex (same log, same shape)")
     assert.equal(logsViaFilter[1].logIndex, rec2.logs[0].logIndex,
       "eth_getLogs[1].logIndex must equal receipt.logs[0].logIndex of second tx")
-  })
   })
 
   await t.test("#332: eth_sendRawTransaction replacement-underpriced surfaces as -32000 (not -32603)", async () => {
