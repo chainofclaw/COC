@@ -661,6 +661,13 @@ export class PersistentChainEngine {
       }
     }
 
+    // #529: lift ALL remaining structural checks (missing sender, blob
+    // type 3, gasLimit bounds, intrinsic gas) ahead of the nonce check —
+    // mirrors chain-engine.ts addRawTx. Pre-fix these ran inside
+    // mempool.addRawTx, AFTER the engine nonce check, so a structurally-
+    // broken tx with a stale nonce surfaced the misleading "nonce too low".
+    this.mempool.validateTxStructure(decoded)
+
     // Mirror in-memory engine order: hash dedup first (more specific error
     // for same-tx replay), then stale-nonce check (catches different-tx-same-
     // -nonce). Both run before mempool insertion so we never accept a tx that

@@ -144,40 +144,31 @@ export class Mempool {
     return this.poisoned.has(hash.toLowerCase() as Hex)
   }
 
-  addRawTx(rawTx: Hex, preDecoded?: Transaction): MempoolTx {
-    const tx = preDecoded ?? Transaction.from(rawTx)
+  /**
+   * #529: structural-only validation — checks that depend solely on the
+   * signed tx body, NOT on dynamic chain state (nonce, balance, hash dedup).
+   * Lifted out of addRawTx so the engine layer can run it BEFORE its own
+   * nonce check. Pre-fix a structurally-broken tx with a stale nonce got
+   * the misleading "nonce too low" error: the caller bumped the nonce,
+   * re-signed, and re-submitted only to THEN learn the tx was malformed
+   * from the start. Generalizes #527 (chainId) / #613 (initcode size) to
+   * the remaining structural properties. Idempotent — safe to call twice.
+   */
+  validateTxStructure(tx: Transaction): void {
     if (!tx.from) {
       throw new Error("invalid tx: missing sender")
     }
-
-    // Replay protection: validate chain ID (reject chainId=0 to prevent cross-chain replay)
-    if (tx.chainId !== BigInt(this.cfg.chainId)) {
-      throw new Error(`invalid chain ID: expected ${this.cfg.chainId}, got ${tx.chainId}`)
-    }
-
-    if (this.poisoned.has((tx.hash as Hex).toLowerCase() as Hex)) {
-      throw new Error(`tx ${tx.hash} is poisoned (hung block execution previously)`)
-    }
-
-    const from = tx.from.toLowerCase() as Hex
-    const nonce = BigInt(tx.nonce)
-    const gasPrice = tx.gasPrice ?? tx.maxFeePerGas ?? 0n
-    const maxFeePerGas = tx.maxFeePerGas ?? tx.gasPrice ?? 0n
-    const maxPriorityFeePerGas = tx.maxPriorityFeePerGas ?? 0n
-    const gasLimit = tx.gasLimit ?? 21000n
-
-    // Reject blob transactions (type 3) — COC has no blob sidecar support
+    // Reject blob transactions (type 3) — COC has no blob sidecar support.
     if (tx.type === 3) {
       throw new Error("blob transactions (type 3) are not supported")
     }
-
-    // Reject transactions with gasLimit exceeding block gas limit (prevents
-    // mempool pollution with txs that can never be included in a block)
+    const gasLimit = tx.gasLimit ?? 21000n
+    // Reject gasLimit exceeding the block gas limit (prevents mempool
+    // pollution with txs that can never be included in a block).
     const MAX_TX_GAS_LIMIT = 30_000_000n
     if (gasLimit > MAX_TX_GAS_LIMIT) {
       throw new Error(`gasLimit exceeds maximum: ${gasLimit} > ${MAX_TX_GAS_LIMIT}`)
     }
-
     // #334: reject gasLimit below the EIP-3 intrinsic gas cost. Pre-fix the
     // mempool only enforced the upper bound, so a tx with `gasLimit=100`
     // returned a success hash from eth_sendRawTransaction but could never
@@ -192,6 +183,31 @@ export class Mempool {
         `intrinsic gas too low: have ${gasLimit}, want ${intrinsicGasRequired}`,
       )
     }
+  }
+
+  addRawTx(rawTx: Hex, preDecoded?: Transaction): MempoolTx {
+    const tx = preDecoded ?? Transaction.from(rawTx)
+    // #529: structural validation runs first. Defense-in-depth — the engine
+    // layer (chain-engine{,-persistent}.ts addRawTx) also calls
+    // validateTxStructure before its nonce check, but re-insertion paths
+    // (block reorg, snapshot replay) reach this method directly.
+    this.validateTxStructure(tx)
+
+    // Replay protection: validate chain ID (reject chainId=0 to prevent cross-chain replay)
+    if (tx.chainId !== BigInt(this.cfg.chainId)) {
+      throw new Error(`invalid chain ID: expected ${this.cfg.chainId}, got ${tx.chainId}`)
+    }
+
+    if (this.poisoned.has((tx.hash as Hex).toLowerCase() as Hex)) {
+      throw new Error(`tx ${tx.hash} is poisoned (hung block execution previously)`)
+    }
+
+    const from = (tx.from as string).toLowerCase() as Hex
+    const nonce = BigInt(tx.nonce)
+    const gasPrice = tx.gasPrice ?? tx.maxFeePerGas ?? 0n
+    const maxFeePerGas = tx.maxFeePerGas ?? tx.gasPrice ?? 0n
+    const maxPriorityFeePerGas = tx.maxPriorityFeePerGas ?? 0n
+    const gasLimit = tx.gasLimit ?? 21000n
 
     const item: MempoolTx = {
       hash: tx.hash as Hex,

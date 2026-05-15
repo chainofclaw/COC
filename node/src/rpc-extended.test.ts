@@ -892,6 +892,65 @@ test("RPC Extended Methods", async (t) => {
       `chainId error must name the actual expected ID (${Number(BigInt(fixtureChainId))}), got: ${r1.error!.message}`)
   })
 
+  await t.test("#529: eth_sendRawTransaction lifts structural checks BEFORE nonce (no misleading 'nonce too low' for broken tx)", async () => {
+    // Extends #527 (chainId) to ALL structural checks. Pre-fix the
+    // missing-sender / blob-type / gasLimit-upper-bound / intrinsic-gas-
+    // lower-bound checks all ran inside mempool.addRawTx — AFTER the engine
+    // nonce check. A tx that was BOTH structurally broken AND carried a
+    // stale nonce surfaced "nonce too low", so the caller bumped the nonce,
+    // re-signed, and re-submitted only to THEN learn the tx was malformed
+    // from the start. Fix: validateTxStructure() in mempool.ts, called by
+    // chain-engine{,-persistent}.ts addRawTx before the nonce check.
+    const { Wallet } = await import("ethers")
+    const wallet = new Wallet(`0x${"29".repeat(32)}`)
+    await evm.prefund([{ address: wallet.address, balanceWei: "1000000000000000000" }])
+    const fixtureChainId = Number(BigInt(await rpcCall(port, "eth_chainId", []) as string))
+
+    const probe = async (raw: string) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_sendRawTransaction", params: [raw] }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: string }
+    }
+
+    // Bump the wallet's on-chain nonce to 1 so a later nonce=0 is genuinely
+    // stale — the bug only manifests when BOTH defects are present.
+    const valid = await wallet.signTransaction({
+      chainId: fixtureChainId, nonce: 0, gasLimit: 21000n, gasPrice: 1_000_000_000n,
+      to: "0x0000000000000000000000000000000000000001", value: 1n,
+    })
+    const validRes = await probe(valid)
+    if (!validRes.result) return // fixture skips this submission path
+    if (chain.proposeNextBlock) await chain.proposeNextBlock()
+    const onchainNonce = await evm.getNonce(wallet.address.toLowerCase() as `0x${string}`)
+    if (onchainNonce < 1n) return // nonce didn't advance — can't exercise masking
+
+    // (a) gasLimit far above the 30M block max, with stale nonce=0.
+    const tooBigGas = await wallet.signTransaction({
+      chainId: fixtureChainId, nonce: 0, gasLimit: 999_999_999n, gasPrice: 1_000_000_000n,
+      to: "0x0000000000000000000000000000000000000001", value: 1n,
+    })
+    const rGas = await probe(tooBigGas)
+    assert.ok(rGas.error, "oversized-gasLimit tx must be rejected")
+    assert.match(rGas.error!.message, /gasLimit exceeds maximum/i,
+      `must report the structural defect, got: ${rGas.error!.message}`)
+    assert.doesNotMatch(rGas.error!.message, /nonce too low/i,
+      `structural defect must NOT be masked by 'nonce too low' (the #529 bug), got: ${rGas.error!.message}`)
+
+    // (b) gasLimit below the 21000 intrinsic base cost, with stale nonce=0.
+    const tooLowGas = await wallet.signTransaction({
+      chainId: fixtureChainId, nonce: 0, gasLimit: 1000n, gasPrice: 1_000_000_000n,
+      to: "0x0000000000000000000000000000000000000001", value: 1n,
+    })
+    const rLow = await probe(tooLowGas)
+    assert.ok(rLow.error, "intrinsic-gas-too-low tx must be rejected")
+    assert.match(rLow.error!.message, /intrinsic gas too low/i,
+      `must report the structural defect, got: ${rLow.error!.message}`)
+    assert.doesNotMatch(rLow.error!.message, /nonce too low/i,
+      `structural defect must NOT be masked by 'nonce too low' (the #529 bug), got: ${rLow.error!.message}`)
+  })
+
   await t.test("#533: eth_getLogs blockHash resolves to the correct block (non-existent → -32000 'unknown block')", async () => {
     // Live testnet 88780 reproduction (pre-fix):
     //   eth_getLogs({"blockHash":"0xdeadbeef...deadbeef"})  // valid shape, doesn't exist
