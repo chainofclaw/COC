@@ -1473,6 +1473,37 @@ test("RPC Extended Methods", async (t) => {
     assert.strictEqual(info.chainId, ethId, `coc_nodeInfo.chainId (${info.chainId}) must match eth_chainId (${ethId})`)
   })
 
+  await t.test("#607: coc_validators.nextProposalBlock is 0x-prefixed hex (closing #517 format drift)", async () => {
+    // Pre-fix `nextProposalBlock: Number(h)` emitted a decimal JS number
+    // (e.g. 88751) while every sibling block-height field on the same
+    // response shape returned 0x-prefixed hex per Ethereum JSON-RPC
+    // convention (`currentHeight: "0x15a8e"`, `coc_chainStats.blockHeight:
+    // "0x15a8e"`, `eth_blockNumber: "0x15a8e"`).  Clients aggregating
+    // block numbers from multiple fields saw the same height twice in
+    // two different formats and concluded the response was corrupted.
+    // Same format-drift family as #561 (chainId) and the historical
+    // #517 (next-proposer decimal vs hex) — closes the remaining
+    // instance the comment at #561 explicitly identified.
+    const result = await rpcCall(port, "coc_validators") as {
+      validators: Array<{ id: string; isCurrentProposer: boolean; nextProposalBlock: unknown }>
+      currentHeight: string
+      nextProposer: string
+    }
+    assert.ok(Array.isArray(result.validators), "validators must be array")
+    assert.ok(result.validators.length > 0, "fixture has at least node-1")
+    for (const v of result.validators) {
+      assert.equal(typeof v.nextProposalBlock, "string",
+        `nextProposalBlock must be a string (hex), got ${typeof v.nextProposalBlock}: ${JSON.stringify(v.nextProposalBlock)}`)
+      assert.match(v.nextProposalBlock as string, /^0x[0-9a-f]+$/i,
+        `nextProposalBlock must be 0x-prefixed hex, got ${JSON.stringify(v.nextProposalBlock)}`)
+    }
+    // Sanity: currentHeight (sibling field) is also hex — pre-fix it
+    // already serialized correctly via the bigint→hex JSON replacer,
+    // pin so a future change can't regress it.
+    assert.match(result.currentHeight, /^0x[0-9a-f]+$/i,
+      `currentHeight must be 0x-prefixed hex, got ${JSON.stringify(result.currentHeight)}`)
+  })
+
   await t.test("web3_clientVersion returns version string", async () => {
     const version = await rpcCall(port, "web3_clientVersion")
     assert.strictEqual(version, "COC/0.2")
