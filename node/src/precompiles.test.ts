@@ -257,4 +257,37 @@ test("Precompiled Contracts - Edge Cases", async (t) => {
     })
     assert.equal(result.failed, true, "OOG must surface as failed call, not empty success")
   })
+
+  await t.test("#608: KZG revert holds on the historical-state code path (createVm/eth_call regression)", async () => {
+    // #594 wired the customPrecompile only into EvmChain.create()'s primary
+    // VM. Every callRaw with a non-default execution context (which is what
+    // eth_call / eth_estimateGas / debug_traceCall ALWAYS use — they set
+    // blockNumber via resolveHistoricalExecutionContext) goes through the
+    // private createVm() helper. Pre-#608 that helper omitted the
+    // customPrecompiles list, so KZG silently returned "0x" again on the
+    // production code paths. The unit test at #594 happened to pass because
+    // it called callRaw without a context, hitting the primary-VM branch.
+    //
+    // Repro the historical-state branch by passing an explicit blockNumber
+    // (via the third positional `context` arg). With the #608 fix both code
+    // paths share the same customPrecompiles list, so KZG must revert
+    // identically.
+    const result = await evm.callRaw(
+      {
+        to: "0x000000000000000000000000000000000000000a",
+        data: "0x" + "00".repeat(192),
+        gas: "0xf4240",
+      },
+      undefined,         // stateRoot = use current
+      { blockNumber: 0n },  // forces createVm() branch (callRaw line ~929)
+    )
+    assert.equal(result.failed, true,
+      "0x0a must REVERT on the historical/per-block code path, not silently return 0x")
+    assert.match(result.returnValue, /^0x08c379a0/,
+      "returnValue must carry the same Error(string) revert payload as the primary-VM path")
+    const reasonHex = result.returnValue.slice(2 + 136)
+    const reasonStr = Buffer.from(reasonHex, "hex").toString("utf8").replace(/\0+$/, "")
+    assert.match(reasonStr, /KZG point_evaluation not implemented on COC/i,
+      `revert reason must propagate through createVm path, got: ${reasonStr}`)
+  })
 })

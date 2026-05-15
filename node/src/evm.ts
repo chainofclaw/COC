@@ -134,6 +134,51 @@ const BEACON_ROOTS_RUNTIME_CODE =
   "0x3373fffffffffffffffffffffffffffffffffffffffe14604d57602036146024575f5ffd5b5f35801560495762001fff810690815414603c575f5ffd5b62001fff01545f5260205ff35b5f5ffd5b62001fff42064281555f359062001fff015500"
 const ZERO_BEACON_ROOT = new Uint8Array(32)
 
+// #594 / #608: KZG point_evaluation precompile stub. COC runs Cancun-fork
+// but does NOT initialise the EIP-4844 KZG trusted setup, so @ethereumjs/vm
+// omits the precompile from its registry. Pre-fix calls to 0x000…000a fell
+// through as a regular CALL to an empty-code address and returned `"0x"` —
+// silently masquerading as a successful no-op. #594 wired a stub at 0x0a
+// that ALWAYS REVERTS with an explicit ABI-encoded Error(string) reason.
+//
+// #608: #594 only wired the customPrecompile into `EvmChain.create()`'s
+// primary VM. Every callRaw / estimateGas / traceCall on a historical or
+// block-specific state goes through the private `createVm()` helper which
+// instantiates a separate VM — and that path was missing the customPrecompile
+// list, so KZG silently returned "0x" again on production code paths
+// (eth_call/eth_estimateGas always set executionContext.blockNumber via
+// resolveHistoricalExecutionContext, taking the createVm branch). Extract
+// the stub builder so both VM-construction sites share it.
+const KZG_PRECOMPILE_ADDRESS = Address.fromString("0x000000000000000000000000000000000000000a")
+const KZG_GAS_COST = 50_000n  // EIP-4844 POINT_EVALUATION_PRECOMPILE_GAS
+
+function kzgPrecompileStub(input: { data: Uint8Array; gasLimit: bigint }) {
+  if (input.gasLimit < KZG_GAS_COST) {
+    return { exceptionError: new EVMError("out of gas"), executionGasUsed: input.gasLimit, returnValue: new Uint8Array() }
+  }
+  const reason = "KZG point_evaluation not implemented on COC"
+  const reasonBytes = new TextEncoder().encode(reason)
+  const padded = new Uint8Array(Math.ceil(reasonBytes.length / 32) * 32)
+  padded.set(reasonBytes)
+  const selector = hexToBytes("0x08c379a0")
+  const offset = setLengthLeft(bigIntToBytes(32n), 32)
+  const length = setLengthLeft(bigIntToBytes(BigInt(reasonBytes.length)), 32)
+  const ret = new Uint8Array(selector.length + offset.length + length.length + padded.length)
+  ret.set(selector, 0)
+  ret.set(offset, selector.length)
+  ret.set(length, selector.length + offset.length)
+  ret.set(padded, selector.length + offset.length + length.length)
+  return {
+    exceptionError: new EVMError("revert"),
+    executionGasUsed: KZG_GAS_COST,
+    returnValue: ret,
+  }
+}
+
+const COC_CUSTOM_PRECOMPILES = [
+  { address: KZG_PRECOMPILE_ADDRESS, function: kzgPrecompileStub },
+] as const
+
 export class EvmChain {
   private vm: VM
   private readonly common: ReturnType<typeof createCustomCommon>
@@ -171,60 +216,17 @@ export class EvmChain {
     const common = createCustomCommon({ chainId, networkId: chainId, name: "COC" }, base, {
       hardfork,
     })
-    // #594: COC runs Cancun-fork (parentBeaconBlockRoot + Cancun opcodes are
-    // active) but does NOT initialise the EIP-4844 KZG trusted setup, so
-    // @ethereumjs/vm omits the `point_evaluation` precompile from its
-    // registry. Pre-fix, calls to 0x000…000a fell through as a regular CALL
-    // to an empty-code address, returning `"0x"` — silently masquerading
-    // as a successful no-op. Contracts that bridge KZG-protected data from
-    // other chains then read `uint256(bytes32(""))` = 0 and proceed as if
-    // verification succeeded.
-    //
-    // Mempool already rejects type-3 blob txs (`mempool.ts` "blob
-    // transactions (type 3) are not supported"), but precompile calls
-    // bypass the mempool entirely (eth_call + contract bytecode). Wire a
-    // stub at 0x0a that always REVERTS with an explicit reason so callers
-    // distinguish "precompile failed" from "precompile returned empty
-    // because chain doesn't support blobs".
-    //
-    // Charges a flat 50_000 gas (matches EIP-4844 spec POINT_EVALUATION_
-    // PRECOMPILE_GAS so gas-usage stays portable with mainnet-compiled
-    // contracts that target this precompile).
-    const KZG_PRECOMPILE_ADDRESS = Address.fromString("0x000000000000000000000000000000000000000a")
-    const KZG_GAS_COST = 50_000n  // EIP-4844 POINT_EVALUATION_PRECOMPILE_GAS
-    const kzgStub = (input: { data: Uint8Array; gasLimit: bigint }) => {
-      if (input.gasLimit < KZG_GAS_COST) {
-        // Out-of-gas: charge all available, no return value.
-        return { exceptionError: new EVMError("out of gas"), executionGasUsed: input.gasLimit, returnValue: new Uint8Array() }
-      }
-      // Always revert. The returnValue is the Solidity-ABI-encoded
-      // `Error(string)`: selector 0x08c379a0 || abi.encode(reason).
-      // Encoded reason: "KZG point_evaluation not implemented on COC"
-      const reason = "KZG point_evaluation not implemented on COC"
-      const reasonBytes = new TextEncoder().encode(reason)
-      // 0x08c379a0 (4) | offset=0x20 (32) | length (32) | data padded to 32-byte multiple
-      const padded = new Uint8Array(Math.ceil(reasonBytes.length / 32) * 32)
-      padded.set(reasonBytes)
-      const selector = hexToBytes("0x08c379a0")
-      const offset = setLengthLeft(bigIntToBytes(32n), 32)
-      const length = setLengthLeft(bigIntToBytes(BigInt(reasonBytes.length)), 32)
-      const ret = new Uint8Array(selector.length + offset.length + length.length + padded.length)
-      ret.set(selector, 0)
-      ret.set(offset, selector.length)
-      ret.set(length, selector.length + offset.length)
-      ret.set(padded, selector.length + offset.length + length.length)
-      return {
-        exceptionError: new EVMError("revert"),
-        executionGasUsed: KZG_GAS_COST,
-        returnValue: ret,
-      }
-    }
+    // #594 / #608: see module-level `kzgPrecompileStub` + `COC_CUSTOM_PRECOMPILES`
+    // comment for full context. Both the primary VM constructed here and every
+    // historical/per-block VM constructed by `createVm()` MUST share the same
+    // customPrecompiles list — pre-#608 only this site wired them in, so any
+    // call that took the `createVm` path (eth_call/eth_estimateGas always do,
+    // via resolveHistoricalExecutionContext setting blockNumber) silently
+    // re-introduced the #594 bug.
     const vmOpts: Record<string, unknown> = {
       common,
       evmOpts: {
-        customPrecompiles: [
-          { address: KZG_PRECOMPILE_ADDRESS, function: kzgStub },
-        ],
+        customPrecompiles: COC_CUSTOM_PRECOMPILES,
       },
     }
     if (stateManager) {
@@ -1334,7 +1336,18 @@ export class EvmChain {
   }
 
   private async createVm(stateManager: unknown, blockNumber?: bigint): Promise<VM> {
-    const opts: Record<string, unknown> = { common: this.createExecutionCommon(blockNumber), stateManager }
+    // #608: include `customPrecompiles` so historical/per-block VMs share
+    // the same precompile registry as `this.vm`. Pre-fix this helper omitted
+    // them, so every eth_call/eth_estimateGas/traceCall on a non-default
+    // execution context lost the KZG (0x0a) stub — silently returning "0x"
+    // instead of the explicit revert #594 was supposed to guarantee.
+    const opts: Record<string, unknown> = {
+      common: this.createExecutionCommon(blockNumber),
+      stateManager,
+      evmOpts: {
+        customPrecompiles: COC_CUSTOM_PRECOMPILES,
+      },
+    }
     return createVM(opts as Parameters<typeof createVM>[0])
   }
 
