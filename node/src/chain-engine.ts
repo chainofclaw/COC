@@ -218,6 +218,13 @@ export class ChainEngine {
         )
       }
     }
+    // #529: lift ALL remaining structural checks (missing sender, blob
+    // type 3, gasLimit bounds, intrinsic gas) ahead of the nonce check.
+    // Pre-fix these ran inside mempool.addRawTx — AFTER the engine nonce
+    // check below — so a structurally-broken tx with a stale nonce got the
+    // misleading "nonce too low" error. Generalizes #527 (chainId) and
+    // #613 (initcode size), which already moved their checks up.
+    this.mempool.validateTxStructure(decoded)
     if (this.txHashSet.has(decoded.hash as Hex)) {
       throw new Error("tx already confirmed")
     }
