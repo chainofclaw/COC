@@ -100,6 +100,41 @@ test("MFS: write fails without create flag", async () => {
   }
 })
 
+test("#541: MFS write with default (truncate=false) partial-overwrites and preserves trailing bytes", async () => {
+  const { mfs, cleanup } = await createMfs()
+  try {
+    const enc = (s: string) => new TextEncoder().encode(s)
+    const dec = (u: Uint8Array) => new TextDecoder().decode(u)
+
+    // Write 17 bytes, then a short 3-byte write WITHOUT truncate flag.
+    await mfs.write("/f", enc("BIGGER_OVERWRITE"), { create: true })
+    await mfs.write("/f", enc("ZZ\n"))
+    // Pre-fix: file became "ZZ\n" (3 bytes) — trailing 13 bytes lost.
+    assert.strictEqual(
+      dec(await mfs.read("/f")),
+      "ZZ\nGER_OVERWRITE",
+      "default write must overwrite [0,len) and keep trailing bytes (kubo semantics)",
+    )
+
+    // Regression sentinel: truncate=true still replaces the whole file.
+    await mfs.write("/g", enc("BIGGER_OVERWRITE"), { create: true })
+    await mfs.write("/g", enc("ZZ\n"), { truncate: true })
+    assert.strictEqual(dec(await mfs.read("/g")), "ZZ\n", "truncate=true must replace the whole file")
+
+    // Explicit offset still partial-overwrites.
+    await mfs.write("/h", enc("AAAAAAAA"), { create: true })
+    await mfs.write("/h", enc("xy"), { offset: 3 })
+    assert.strictEqual(dec(await mfs.read("/h")), "AAAxyAAA", "explicit offset partial-overwrite")
+
+    // Default-offset write that extends past the existing length.
+    await mfs.write("/i", enc("ab"), { create: true })
+    await mfs.write("/i", enc("CDEFG"))
+    assert.strictEqual(dec(await mfs.read("/i")), "CDEFG", "default write extending file = max(existing,data)")
+  } finally {
+    cleanup()
+  }
+})
+
 test("MFS: ls lists directory entries", async () => {
   const { mfs, cleanup } = await createMfs()
   try {
