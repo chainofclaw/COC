@@ -2626,20 +2626,17 @@ async function handleRpc(
           invalidParams("invalid targetAddress: expected string")
         }
       }
-      if (!hasGovernance(chain)) {
-        methodNotFound("coc_submitProposal: governance module not enabled on this node")
-      }
-      // Only the local node can submit proposals via RPC
-      const localNodeId = (opts as Record<string, unknown>)?.nodeId as string | undefined
-      if (localNodeId && (proposalParams.proposer as string) !== localNodeId) {
-        throw { code: -32003, message: "unauthorized: can only submit proposals as local node" }
-      }
       // #218: validate stakeAmount shape before `BigInt(...)`. Pre-fix
       // an object/array/non-digit-string flowed straight into BigInt
       // and threw a V8 SyntaxError ("Cannot convert [object Object] to
-      // a BigInt"). Same leak class as #212 (pose-http) — currently
-      // dead path because governance is disabled on prod, but fixing
-      // now avoids the leak surfacing once R3.2 (88780) enables it.
+      // a BigInt").
+      // #537: this block ran AFTER the hasGovernance() gate below, so a
+      // malformed stakeAmount on a governance-disabled node surfaced as
+      // -32601 "governance not enabled" — the caller could never learn
+      // their field was structurally invalid. #432 lifted the top-level
+      // object + required-field checks above the gate but missed this
+      // inner field. Move it up so ALL structural validation runs first
+      // and the response shape is consistent across deployments.
       const stakeRaw = proposalParams.stakeAmount as unknown
       let stakeAmount: bigint | undefined
       if (stakeRaw !== undefined && stakeRaw !== null && stakeRaw !== "") {
@@ -2650,6 +2647,14 @@ async function handleRpc(
           invalidParams("invalid stakeAmount: must be a non-negative integer or 0x-hex")
         }
         stakeAmount = BigInt(stakeRaw as string | number)
+      }
+      if (!hasGovernance(chain)) {
+        methodNotFound("coc_submitProposal: governance module not enabled on this node")
+      }
+      // Only the local node can submit proposals via RPC
+      const localNodeId = (opts as Record<string, unknown>)?.nodeId as string | undefined
+      if (localNodeId && (proposalParams.proposer as string) !== localNodeId) {
+        throw { code: -32003, message: "unauthorized: can only submit proposals as local node" }
       }
       const proposal = chain.governance.submitProposal(
         proposalParams.type as string,
