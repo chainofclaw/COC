@@ -22,7 +22,11 @@ TARGET="${1:-}"
 
 SSH_KEY="${COC_SSH_KEY:-$HOME/.ssh/openclaw_server_key}"
 RPC=https://clawchain.io/api/testnet/rpc
-SYNC_GRACE=120        # GATE 1: max wait for restarted node to catch up
+SYNC_GRACE=180        # GATE 1: max wait for restarted node to catch up
+                      # (a cold COC node boot — state load + replay — can
+                      #  take 60-90s before RPC even answers; 120s left too
+                      #  little headroom and false-aborted a healthy v3 on
+                      #  the 2026-05-16 deploy)
 BFT_GATE_TIMEOUT=150  # GATE 2: max wait for network tip to resume advancing
 BFT_MIN_ADVANCE=5     # GATE 2: blocks the network tip must climb post-restart
 SETTLE=20             # grace after a node passes both gates
