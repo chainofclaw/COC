@@ -1307,6 +1307,48 @@ describe("IpfsHttpServer", () => {
     assert.equal(ok.status, 200, `legal mv must still 200, got ${ok.status}`)
   })
 
+  it("#543: /api/v0/files/mkdir on a file-path collision returns 400 (not 500 'internal error')", async () => {
+    // Pre-fix the route-level catch had `/is a directory/i` (the inverse
+    // phrase, for read-on-dir) but no `/^not a directory/i`. The #302
+    // file-collision guard throws `not a directory: <path>` when mkdir
+    // targets — or descends through — an existing file. Unmatched, it fell
+    // through to 500 "internal error" + an ERROR log line per probe.
+    // Same regex-mismatch family as #232/#268/#270.
+    const { IpfsMfs: MfsCtor543 } = await import("./ipfs-mfs.ts")
+    const mfs = new MfsCtor543(store, unixfs)
+    server.attachSubsystems({ mfs })
+
+    // Seed a file at /coll.txt
+    const seed = await fetch("/api/v0/files/write?arg=/coll.txt&create=true", {
+      method: "POST",
+      headers: { "content-type": "application/octet-stream" },
+      body: new TextEncoder().encode("data"),
+    })
+    assert.equal(seed.status, 200, "seed write must succeed")
+
+    // (a) mkdir directly on the file path
+    const onFile = await fetch("/api/v0/files/mkdir?arg=/coll.txt", { method: "POST" })
+    assert.equal(onFile.status, 400, `mkdir on file path must be 400, got ${onFile.status}`)
+    const onFileBody = await onFile.json() as { error?: string; message?: string }
+    assert.notEqual(onFileBody.error, "internal error",
+      `must not leak 'internal error', got ${JSON.stringify(onFileBody)}`)
+    assert.match(`${onFileBody.error} ${onFileBody.message ?? ""}`, /not a directory/i,
+      `error must reference the actual throw, got ${JSON.stringify(onFileBody)}`)
+
+    // (b) mkdir UNDER a file path with parents=true
+    const underFile = await fetch("/api/v0/files/mkdir?arg=/coll.txt/sub&parents=true", { method: "POST" })
+    assert.equal(underFile.status, 400, `mkdir under file path must be 400, got ${underFile.status}`)
+    const underFileBody = await underFile.json() as { error?: string; message?: string }
+    assert.notEqual(underFileBody.error, "internal error",
+      `must not leak 'internal error', got ${JSON.stringify(underFileBody)}`)
+    assert.match(`${underFileBody.error} ${underFileBody.message ?? ""}`, /not a directory/i,
+      `error must reference the actual throw, got ${JSON.stringify(underFileBody)}`)
+
+    // Sanity: legal mkdir on a fresh path still 200 (regression guard)
+    const okDir = await fetch("/api/v0/files/mkdir?arg=/fresh_dir", { method: "POST" })
+    assert.equal(okDir.status, 200, `legal mkdir must still 200, got ${okDir.status}`)
+  })
+
   it("#545: gateway /ipfs/<cid>/<subpath> returns 404 'no such file' (not misleading 400 'invalid CID')", async () => {
     // Pre-fix `url.pathname.slice(6)` treated the ENTIRE tail (including
     // subpaths) as the CID string. So `/ipfs/<valid-cid>/sub` had
