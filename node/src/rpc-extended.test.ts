@@ -4498,6 +4498,91 @@ test("RPC Extended Methods", async (t) => {
     assert.equal(cocLog.blockHash, recLog.blockHash, "log.blockHash parity")
   })
 
+  await t.test("#531: coc_getTransactionsByAddress.input is EVM calldata, not the RLP envelope", async () => {
+    // Pre-fix this endpoint emitted `input: tx.rawTx` — the full RLP-encoded
+    // signed tx (envelope byte + chainId + nonce + gas + value + sig + …).
+    // But eth_getTransactionByHash.input is the EVM calldata only (msg.data).
+    // Same field name, different content → explorer's decodeMethodSelector
+    // read the RLP type byte (0x02) as a 4-byte function selector and every
+    // tx — even a plain transfer — looked like a contract call.
+    //
+    // Fix: decode tx.rawTx and emit `.data` as `input`; carry the RLP under
+    // a separate `rawTx` field. Deploy a contract that accepts any calldata,
+    // send (a) a call with calldata 0xdeadbeef and (b) a plain transfer, then
+    // assert input shape parity with eth_getTransactionByHash.
+    const DEPLOY_BYTECODE = "0x6006600c60003960066000f360006000a000" // runtime: PUSH1 0 PUSH1 0 LOG0 STOP
+    const { Wallet: EW531 } = await import("ethers")
+    const wallet = new EW531(`0x${"53".repeat(32)}`)
+    await evm.prefund([{ address: wallet.address, balanceWei: "1000000000000000000" }])
+    const startN = await evm.getNonce(wallet.address.toLowerCase() as `0x${string}`)
+
+    const submit531 = async (raw: string) => {
+      const res = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_sendRawTransaction", params: [raw] }),
+      })
+      return await res.json() as { result?: string; error?: { code: number; message: string } }
+    }
+
+    const deployTx = await wallet.signTransaction({
+      type: 0, to: null, value: 0n, data: DEPLOY_BYTECODE,
+      gasLimit: 500_000n, gasPrice: 1_000_000_000n,
+      nonce: Number(startN), chainId,
+    })
+    const deployBody = await submit531(deployTx)
+    if (!deployBody.result) return // fixture skips persistent path
+    if (chain.proposeNextBlock) await chain.proposeNextBlock()
+    const deployReceipt = await rpcCall(port, "eth_getTransactionReceipt", [deployBody.result]) as { contractAddress: string }
+    if (!deployReceipt.contractAddress) return
+
+    // (a) call with explicit calldata 0xdeadbeef
+    const callTx = await wallet.signTransaction({
+      type: 0, to: deployReceipt.contractAddress, value: 0n, data: "0xdeadbeef",
+      gasLimit: 50_000n, gasPrice: 1_000_000_000n,
+      nonce: Number(startN) + 1, chainId,
+    })
+    const callBody = await submit531(callTx)
+    if (!callBody.result) return
+    // (b) plain value transfer, no calldata
+    const transferTx = await wallet.signTransaction({
+      type: 0, to: `0x${"de".repeat(20)}`, value: 1n, data: "0x",
+      gasLimit: 21_000n, gasPrice: 1_000_000_000n,
+      nonce: Number(startN) + 2, chainId,
+    })
+    const transferBody = await submit531(transferTx)
+    if (!transferBody.result) return
+    if (chain.proposeNextBlock) await chain.proposeNextBlock()
+
+    const txsByAddr = await rpcCall(port, "coc_getTransactionsByAddress", [wallet.address.toLowerCase(), 20, true, 0]) as Array<{
+      hash: string
+      input: string
+      rawTx: string
+    }>
+
+    const callEntry = txsByAddr.find((tx) => tx.hash.toLowerCase() === callBody.result!.toLowerCase())
+    const transferEntry = txsByAddr.find((tx) => tx.hash.toLowerCase() === transferBody.result!.toLowerCase())
+    if (!callEntry || !transferEntry) return
+
+    // Value parity with eth_getTransactionByHash.input.
+    const callViaHash = await rpcCall(port, "eth_getTransactionByHash", [callBody.result]) as { input: string }
+    const transferViaHash = await rpcCall(port, "eth_getTransactionByHash", [transferBody.result]) as { input: string }
+
+    assert.equal(callEntry.input, "0xdeadbeef", "call tx input must be the EVM calldata")
+    assert.equal(callEntry.input, callViaHash.input, "input parity with eth_getTransactionByHash")
+    assert.equal(transferEntry.input, "0x", "plain transfer input must be 0x (no calldata)")
+    assert.equal(transferEntry.input, transferViaHash.input, "transfer input parity with eth_getTransactionByHash")
+
+    // Regression sentinel: `input` must NOT be the RLP envelope.
+    assert.notEqual(callEntry.input, callEntry.rawTx, "input must differ from rawTx envelope")
+    assert.notEqual(transferEntry.input, transferEntry.rawTx, "input must differ from rawTx envelope")
+
+    // The RLP is still available under the dedicated `rawTx` field.
+    assert.ok(callEntry.rawTx.startsWith("0x") && callEntry.rawTx.length > callEntry.input.length,
+      "rawTx field must carry the full RLP envelope")
+    assert.ok(transferEntry.rawTx.startsWith("0x") && transferEntry.rawTx.length > 10,
+      "rawTx field present for plain transfer too")
+  })
+
   await t.test("#266: eth_getLogs caps inner topic OR-set (defense-in-depth against O(blocks×logs×topics) amplification)", async () => {
     // solc.compile is synchronous emscripten WASM. A single moderately
     // large source (500 empty contracts ≈ 15 KB) took 5m20s on 88780,
