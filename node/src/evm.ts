@@ -956,14 +956,44 @@ export class EvmChain {
     const executionContext = normalizeExecutionContext(context)
     // Use caller-supplied gas cap or default to 30M (block gas limit)
     const gasCap = params.gas ?? "0x1c9c380"
-    const { gasUsed } = await this.callRaw({ ...params, gas: gasCap }, stateRoot, executionContext)
+    const { gasUsed, failed } = await this.callRaw({ ...params, gas: gasCap }, stateRoot, executionContext)
     const executionCommon = this.createExecutionCommon(executionContext.blockNumber)
     const intrinsicGas = calculateIntrinsicGas(
       params.data ? hexToBytes(params.data) : new Uint8Array(),
       !params.to,
       executionCommon,
     )
+    // #636: no EVM execution (plain value transfer / call to an EOA) → the
+    // cost is deterministically the intrinsic gas. Pre-fix a flat +10%
+    // buffer made eth_estimateGas return 23100 for a 21000 transfer; geth
+    // returns the exact 21000. Return it exactly.
+    if (gasUsed === 0n) {
+      return intrinsicGas
+    }
     const total = intrinsicGas + gasUsed
+    // The call failed even at the full cap — not a gas shortfall (revert /
+    // OOG-regardless). Preserve the historical buffered shape; the rpc
+    // layer probes for reverts separately before reaching here.
+    if (failed) {
+      return total + total / 10n
+    }
+    // #636: a single run reports the gas consumed under a *generous* cap,
+    // which is the exact minimum for gas-independent code (the vast
+    // majority) but can under-state gas-limit-dependent code (the 63/64
+    // call rule, gasleft()-branching). Probe by re-running with the gas
+    // limit set to exactly the observed gasUsed: if it still succeeds the
+    // code is gas-independent and gasUsed IS the exact minimum — return it
+    // with no buffer (geth parity). If the tight re-run fails, the code is
+    // gas-limit-dependent; keep the 10% safety buffer so the estimate
+    // can't under-shoot.
+    const tight = await this.callRaw(
+      { ...params, gas: `0x${gasUsed.toString(16)}` },
+      stateRoot,
+      executionContext,
+    )
+    if (!tight.failed) {
+      return total
+    }
     return total + total / 10n
   }
 

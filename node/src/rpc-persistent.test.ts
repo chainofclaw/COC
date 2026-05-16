@@ -551,7 +551,12 @@ test("RPC+Persistent: historical state queries and transaction schema parity", a
       engine,
       p2p,
     )
-    assert.strictEqual(estimateAtBlock1, "0x5a3c")
+    // #636: at block 1 the contract has no code yet (callAtBlock1 === "0x"),
+    // so the call performs no EVM execution — cost is exactly the 21000
+    // intrinsic gas. Pre-fix eth_estimateGas added a flat +10% buffer and
+    // returned 0x5a3c (23100); it now returns the exact 0x5208 (21000),
+    // matching geth (which never buffers a deterministic estimate).
+    assert.strictEqual(estimateAtBlock1, "0x5208")
     assert.ok(BigInt(String(estimateAtBlock2)) > 0x5208n)
 
     const accessListView = await handleRpcMethod(
