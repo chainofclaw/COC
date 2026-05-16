@@ -4925,7 +4925,7 @@ test("RPC Extended Methods", async (t) => {
             }],
           }),
         })
-        return await r.json() as { error?: { code: number; message: string; data: string }; result?: unknown }
+        return await r.json() as { error?: { code: number; message: string; data?: string }; result?: unknown }
       }
 
       const call = await probe("eth_call")
@@ -4944,6 +4944,18 @@ test("RPC Extended Methods", async (t) => {
         /execution reverted/i,
         `eth_call must NOT use "execution reverted" wording for balance issues`,
       )
+      // #509: geth's -32000 insufficient-funds error echoes the sender
+      // address and carries NO `data` field (no revert payload exists).
+      assert.match(
+        call.error!.message,
+        /address 0xc0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0/i,
+        `eth_call message must echo the sender address, got: ${call.error!.message}`,
+      )
+      assert.equal(
+        call.error!.data,
+        undefined,
+        `eth_call -32000 insufficient-funds must NOT carry a data field, got: ${JSON.stringify(call.error)}`,
+      )
 
       const est = await probe("eth_estimateGas")
       assert.equal(
@@ -4952,6 +4964,11 @@ test("RPC Extended Methods", async (t) => {
         `eth_estimateGas insufficient-balance must be -32000, got ${JSON.stringify(est)}`,
       )
       assert.match(est.error!.message, /insufficient funds for gas \* price \+ value/i)
+      // #509: same address echo + no-data shape for eth_estimateGas.
+      assert.match(est.error!.message, /address 0xc0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0/i,
+        `eth_estimateGas message must echo the sender address, got: ${est.error!.message}`)
+      assert.equal(est.error!.data, undefined,
+        `eth_estimateGas -32000 insufficient-funds must NOT carry a data field`)
 
       // Sanity: a real revert still surfaces as code 3 (regression guard for #286).
       ;(evm as unknown as { callRaw: typeof origCallRaw }).callRaw = async () => ({
