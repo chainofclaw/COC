@@ -5078,6 +5078,66 @@ test("RPC Extended Methods", async (t) => {
     }
   })
 
+  await t.test("#636: eth_estimateGas returns the exact gas, not a flat +10% buffer", async () => {
+    // Pre-fix evm.estimateGas returned `total + total/10n` — a flat 10%
+    // buffer on every estimate. A plain value transfer (deterministically
+    // 21000 gas) estimated 23100; geth returns exactly 21000. The buffer
+    // also compounds with ethers/viem's own client-side margin (double-
+    // buffering → inflated gasLimit on every tx). Fix: gas-independent
+    // calls return the exact minimum; only gas-limit-dependent code keeps
+    // a safety buffer.
+    const { Wallet: EW636 } = await import("ethers")
+    const wallet = new EW636(`0x${"63".repeat(32)}`)
+    await evm.prefund([{ address: wallet.address, balanceWei: "1000000000000000000" }])
+    const fixtureChainId = Number(BigInt(await rpcCall(port, "eth_chainId", []) as string))
+    const startN = await evm.getNonce(wallet.address.toLowerCase() as `0x${string}`)
+
+    // (a) plain value transfer → estimate exactly 21000 (geth parity, no buffer).
+    const xferEst = await rpcCall(port, "eth_estimateGas", [{
+      from: wallet.address, to: `0x${"de".repeat(20)}`, value: "0x1",
+    }]) as string
+    assert.equal(BigInt(xferEst), 21000n,
+      `value transfer must estimate exactly 21000, got ${BigInt(xferEst)} (${xferEst})`)
+
+    // (b) gas-independent contract: estimate must equal the actual gasUsed
+    // exactly. Deploy a pure "return 0x42" contract (no CALL, no gasleft —
+    // gas-independent), call it, and compare estimate to the receipt.
+    const DEPLOY = "0x600a600c60003960" + "0a" + "6000" + "f3" + "604260005260206000f3"
+    const submit = async (raw: string) => {
+      const res = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_sendRawTransaction", params: [raw] }),
+      })
+      return await res.json() as { result?: string; error?: { message: string } }
+    }
+    const deployTx = await wallet.signTransaction({
+      type: 0, to: null, value: 0n, data: DEPLOY,
+      gasLimit: 200_000n, gasPrice: 1_000_000_000n, nonce: Number(startN), chainId: fixtureChainId,
+    })
+    const deployBody = await submit(deployTx)
+    if (!deployBody.result) return // fixture skips the persistent submission path
+    if (chain.proposeNextBlock) await chain.proposeNextBlock()
+    const deployReceipt = await rpcCall(port, "eth_getTransactionReceipt", [deployBody.result]) as { contractAddress?: string }
+    if (!deployReceipt?.contractAddress) return
+    const C = deployReceipt.contractAddress
+
+    const callEst = await rpcCall(port, "eth_estimateGas", [{ from: wallet.address, to: C, data: "0x" }]) as string
+    const callTx = await wallet.signTransaction({
+      type: 0, to: C, value: 0n, data: "0x",
+      gasLimit: 100_000n, gasPrice: 1_000_000_000n, nonce: Number(startN) + 1, chainId: fixtureChainId,
+    })
+    const callBody = await submit(callTx)
+    if (!callBody.result) return
+    if (chain.proposeNextBlock) await chain.proposeNextBlock()
+    const callReceipt = await rpcCall(port, "eth_getTransactionReceipt", [callBody.result]) as { gasUsed?: string }
+    if (!callReceipt?.gasUsed) return
+
+    const actual = BigInt(callReceipt.gasUsed)
+    const estimate = BigInt(callEst)
+    assert.equal(estimate, actual,
+      `gas-independent call: estimate ${estimate} must equal actual gasUsed ${actual} exactly (pre-fix it was actual + 10%)`)
+  })
+
   await t.test("#288: eth_compileSolidity rejects oversize source (DoS gate; pre-fix 14.9 KB blocked event loop 5+ min)", async () => {
     // solc.compile is synchronous emscripten WASM. A single moderately
     // large source (500 empty contracts ≈ 15 KB) took 5m20s on 88780,
