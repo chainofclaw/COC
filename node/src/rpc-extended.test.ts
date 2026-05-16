@@ -823,6 +823,56 @@ test("RPC Extended Methods", async (t) => {
       `must complain about blockHash shape, got: ${badHash.error!.message}`)
   })
 
+  await t.test("#469: state-reading endpoints reject EIP-1898 hybrid {blockHash, blockNumber} with -32602", async () => {
+    // EIP-1898 §Specification: the two object forms of BlockNumberOrHash
+    // ({blockHash, requireCanonical?} and {blockNumber}) are mutually
+    // exclusive. Pre-fix resolveHistoricalExecutionContext matched the
+    // blockHash branch greedily and silently ignored an accompanying
+    // blockNumber — a misconfigured caller (e.g. viem reorg-aware reads
+    // passing both) read a stale hash while ignoring the requested number,
+    // surfacing -32001 "block not found" instead of a shape error. geth,
+    // erigon, infura all reject the hybrid with -32602. The mutex check
+    // landed via #523/#524; this locks it across every endpoint that
+    // shares the resolver (#469 asked for exactly this coverage).
+    const addr = "0x0000000000000000000000000000000000000001"
+    const zeroHash = "0x" + "00".repeat(32)
+    const hybrid = { blockNumber: "0x1", blockHash: zeroHash }
+    const callObj = { to: addr, data: "0x" }
+    const probe = async (method: string, params: unknown[]) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: unknown }
+    }
+    // Each endpoint's BlockNumberOrHash param sits at a different index.
+    const cases: Array<[string, unknown[]]> = [
+      ["eth_getBalance", [addr, hybrid]],
+      ["eth_getCode", [addr, hybrid]],
+      ["eth_getTransactionCount", [addr, hybrid]],
+      ["eth_getStorageAt", [addr, "0x0", hybrid]],
+      ["eth_call", [callObj, hybrid]],
+      ["eth_estimateGas", [callObj, hybrid]],
+      ["eth_createAccessList", [callObj, hybrid]],
+    ]
+    for (const [method, params] of cases) {
+      const r = await probe(method, params)
+      assert.ok(r.error, `${method}: hybrid {blockHash,blockNumber} must error, got result=${JSON.stringify(r.result)}`)
+      assert.equal(r.error!.code, -32602,
+        `${method}: hybrid must be -32602, got ${r.error!.code} (${r.error!.message})`)
+      assert.match(r.error!.message, /EIP-1898|mutually exclusive|forbids.*together/i,
+        `${method}: error must explain the EIP-1898 mutex, got "${r.error!.message}"`)
+      // Defense: must NOT silently run the blockHash branch and report
+      // -32001 block-not-found (the pre-fix bug shape).
+      assert.notEqual(r.error!.code, -32001,
+        `${method}: hybrid must NOT silently take the blockHash branch (-32001), got "${r.error!.message}"`)
+    }
+    // Sanity: a clean {blockNumber} form still resolves on a representative
+    // endpoint — the mutex must not over-reject single-form objects.
+    const okBN = await probe("eth_getBalance", [addr, { blockNumber: "0x0" }])
+    assert.equal(okBN.error, undefined, `clean {blockNumber} must succeed, got ${JSON.stringify(okBN)}`)
+  })
+
   await t.test("#527: eth_sendRawTransaction checks chainId BEFORE nonce (no misleading 'nonce too low' for wrong-chain tx)", async () => {
     // Live testnet 88780 reproduction (pre-fix):
     //   wallet.signTransaction({chainId: 99999, nonce: 0, ...})
