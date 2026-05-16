@@ -202,6 +202,80 @@ describe("Mempool", () => {
     assert.ok(added.hash, "exact-floor tx must be accepted")
   })
 
+  // #638: a tx whose fee cap is below the MIN_BASE_FEE floor (1 gwei) can
+  // never pay baseFee — baseFee never decays below that floor. Pre-fix it
+  // was admitted as `pending`, returned a success hash, and permanently
+  // bricked the sender's head-of-line nonce. Same "unexecutable tx poisons
+  // a nonce slot" class as #334.
+  it("rejects legacy gasPrice below MIN_BASE_FEE floor (#638)", () => {
+    const pool = new Mempool({ chainId: CHAIN_ID })
+    const wallet = new Wallet(PK1)
+    const tx = Transaction.from({
+      to: "0x0000000000000000000000000000000000000001",
+      value: "0x1",
+      nonce: 0,
+      gasLimit: 21000n,
+      gasPrice: 999_999_999n, // 1 wei below the 1 gwei floor
+      chainId: CHAIN_ID,
+      data: "0x",
+    })
+    const signed = wallet.signingKey.sign(tx.unsignedHash)
+    const clone = tx.clone()
+    clone.signature = signed
+    assert.throws(
+      () => pool.addRawTx(clone.serialized as Hex),
+      /fee cap below minimum base fee: have 999999999, want 1000000000/,
+      "sub-floor legacy gasPrice must be rejected at admission",
+    )
+  })
+
+  it("rejects type-2 maxFeePerGas below MIN_BASE_FEE floor (#638)", () => {
+    const pool = new Mempool({ chainId: CHAIN_ID })
+    const wallet = new Wallet(PK1)
+    // Exact #638 reproduction: an EIP-1559 tx with a fee cap under the
+    // baseFee floor — permanently unincludable, yet pre-fix admitted.
+    const tx = Transaction.from({
+      type: 2,
+      to: "0x0000000000000000000000000000000000000001",
+      value: "0x1",
+      nonce: 0,
+      gasLimit: 21000n,
+      maxFeePerGas: 999_999_999n, // below the 1 gwei floor
+      maxPriorityFeePerGas: 0n,
+      chainId: CHAIN_ID,
+      data: "0x",
+    })
+    const signed = wallet.signingKey.sign(tx.unsignedHash)
+    const clone = tx.clone()
+    clone.signature = signed
+    assert.throws(
+      () => pool.addRawTx(clone.serialized as Hex),
+      /fee cap below minimum base fee: have 999999999, want 1000000000/,
+      "sub-floor type-2 maxFeePerGas must be rejected at admission",
+    )
+  })
+
+  it("accepts type-2 maxFeePerGas exactly at MIN_BASE_FEE floor (#638)", () => {
+    const pool = new Mempool({ chainId: CHAIN_ID })
+    const wallet = new Wallet(PK1)
+    const tx = Transaction.from({
+      type: 2,
+      to: "0x0000000000000000000000000000000000000001",
+      value: "0x1",
+      nonce: 0,
+      gasLimit: 21000n,
+      maxFeePerGas: 1_000_000_000n, // exactly 1 gwei — the floor
+      maxPriorityFeePerGas: 0n,
+      chainId: CHAIN_ID,
+      data: "0x",
+    })
+    const signed = wallet.signingKey.sign(tx.unsignedHash)
+    const clone = tx.clone()
+    clone.signature = signed
+    const added = pool.addRawTx(clone.serialized as Hex)
+    assert.ok(added.hash, "exact-floor type-2 tx must be accepted")
+  })
+
   it("picks txs in gas price order with nonce continuity", async () => {
     const pool = new Mempool({ chainId: CHAIN_ID })
     signAndAdd(pool, PK1, 0, "0x3b9aca00") // 1 gwei, nonce 0

@@ -12,6 +12,7 @@
 import { Transaction } from "ethers"
 import type { Hex, MempoolTx } from "./blockchain-types.ts"
 import { createLogger } from "./logger.ts"
+import { MIN_BASE_FEE } from "./base-fee.ts"
 
 const log = createLogger("mempool")
 
@@ -184,6 +185,23 @@ export class Mempool {
     if (gasLimit < intrinsicGasRequired) {
       throw new Error(
         `intrinsic gas too low: have ${gasLimit}, want ${intrinsicGasRequired}`,
+      )
+    }
+    // #638: reject a tx whose fee cap is below the MIN_BASE_FEE floor.
+    // COC's baseFee (base-fee.ts) can never decay below MIN_BASE_FEE, so a
+    // tx whose maxFeePerGas (or legacy gasPrice) is under that floor can
+    // NEVER pay baseFee and thus never be included in a block. Pre-fix
+    // eth_sendRawTransaction still accepted it, returned a hash, and let it
+    // occupy the sender's head-of-line nonce forever — permanently bricking
+    // the account. Same "unexecutable tx poisons a nonce slot" class as
+    // #334 (intrinsic gas); reject at admission, mirroring that fix. This
+    // is deliberately the absolute floor, NOT the current baseFee: a tx
+    // merely below the present baseFee may become includable once baseFee
+    // decays, so only the permanent-impossibility case is rejected here.
+    const feeCap = tx.maxFeePerGas ?? tx.gasPrice ?? 0n
+    if (feeCap < MIN_BASE_FEE) {
+      throw new Error(
+        `fee cap below minimum base fee: have ${feeCap}, want ${MIN_BASE_FEE}`,
       )
     }
   }
