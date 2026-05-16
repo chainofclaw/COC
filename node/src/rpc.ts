@@ -1291,12 +1291,33 @@ async function handleRpc(
       const query = requireFilterObject((payload.params ?? [])[0])
       const id = `0x${randomBytes(16).toString("hex")}`
       const newFilterHeight = await Promise.resolve(chain.getHeight())
-      const fromBlock = parseBlockTag(query.fromBlock, newFilterHeight)
-      const toBlock = query.toBlock !== undefined ? parseBlockTag(query.toBlock, newFilterHeight) : undefined
-      // #142 / #162: validate address + topic shape so malformed inputs
-      // reject at the boundary. Shared with eth_getLogs (#162) — both
-      // consume the same filter shape, both should reject the same way.
+      // #142 / #162 / #186 / #464: validate address + topic + blockHash
+      // shape and the EIP-234 blockHash/range mutex. Shared with
+      // eth_getLogs — both consume the same filter shape, both reject the
+      // same way. Runs before blockHash resolution so the hash is
+      // shape-checked + lowercased by the time we look it up.
       const { address: filterAddress, addresses: filterAddresses, topics: normalizedTopics } = validateLogFilter(query)
+      // #535: resolve a blockHash filter to a concrete single-block range.
+      // Pre-fix eth_newFilter ignored query.blockHash entirely —
+      // parseBlockTag(undefined, height) returned `height`, so a
+      // {blockHash} filter silently became a "latest block" filter, and a
+      // non-existent hash still returned a usable filter id that polled
+      // [] forever (indistinguishable from "block exists, no logs").
+      // Mirror eth_getLogs / queryLogs (#533): resolve to the block,
+      // -32000 "unknown block" on miss.
+      let fromBlock: bigint
+      let toBlock: bigint | undefined
+      if (query.blockHash !== undefined && query.blockHash !== null) {
+        const hashBlock = await Promise.resolve(chain.getBlockByHash(query.blockHash as Hex))
+        if (!hashBlock) {
+          throw { code: -32000, message: "unknown block" }
+        }
+        fromBlock = hashBlock.number
+        toBlock = hashBlock.number
+      } else {
+        fromBlock = parseBlockTag(query.fromBlock, newFilterHeight)
+        toBlock = query.toBlock !== undefined ? parseBlockTag(query.toBlock, newFilterHeight) : undefined
+      }
       const filter: PendingFilter = {
         id,
         kind: "log",

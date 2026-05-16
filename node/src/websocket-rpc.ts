@@ -617,6 +617,15 @@ export class WsRpcServer {
           }
           filterParam = rawFilter as Record<string, unknown>
         }
+        // #535: a blockHash filter is fundamentally incompatible with a
+        // subscription — subscriptions only match FUTURE events, but
+        // blockHash pins a specific PAST block, so the subscription can
+        // never fire. Pre-fix this was silently accepted: clients got a
+        // subscription id that hung forever, never matching any log.
+        // Geth rejects it upfront; mirror that with -32602.
+        if (filterParam.blockHash !== undefined && filterParam.blockHash !== null) {
+          invalidParams("blockHash is not supported for subscription")
+        }
         const filter = validateLogFilter(filterParam)
 
         const handler = (event: LogEvent) => {

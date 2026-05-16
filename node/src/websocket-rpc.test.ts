@@ -452,6 +452,16 @@ describe("WebSocket RPC", () => {
         assert.equal(err.code, -32602,
           `blockHash=${JSON.stringify(bad)} must be -32602, got ${err.code} (${err.message})`)
       }
+      // #535: a WELL-FORMED blockHash is also rejected — a subscription
+      // only matches FUTURE events but blockHash pins a PAST block, so the
+      // subscription could never fire. Pre-fix it was silently accepted
+      // and hung forever. Geth rejects it; mirror that.
+      const validHash = `0x${"ab".repeat(32)}`
+      const blockHashErr = await sendRpcExpectError(ws, "eth_subscribe", ["logs", { blockHash: validHash }])
+      assert.equal(blockHashErr.code, -32602,
+        `valid blockHash on eth_subscribe must be -32602, got ${blockHashErr.code} (${blockHashErr.message})`)
+      assert.match(blockHashErr.message, /blockHash is not supported for subscription/i,
+        `must explain blockHash is unsupported for subscriptions, got "${blockHashErr.message}"`)
       // address: shape-rejected → -32602 (was -32603 pre-fix)
       const addrErr = await sendRpcExpectError(ws, "eth_subscribe", ["logs", { address: "not-an-address" }])
       assert.equal(addrErr.code, -32602,
@@ -483,12 +493,14 @@ describe("WebSocket RPC", () => {
         ["logs", { topics: [inner33] }])
       assert.equal(innerCapErr.code, -32602,
         `inner OR-array of 33 must be -32602, got ${innerCapErr.code} (${innerCapErr.message})`)
-      // Sanity: well-shaped filters still create subscriptions
-      const okHash = `0x${"ab".repeat(32)}`
+      // Sanity: well-shaped filters still create subscriptions. #535:
+      // blockHash is no longer part of the happy path — it's rejected for
+      // subscriptions (asserted above), so a valid filter uses the block
+      // range form instead.
       const okAddr = `0x${"cd".repeat(20)}`
       const okTopic = `0x${"ef".repeat(32)}`
       const sub1 = await sendRpc(ws, "eth_subscribe",
-        ["logs", { fromBlock: "0x1", toBlock: "0x100", blockHash: okHash, address: okAddr, topics: [okTopic] }])
+        ["logs", { fromBlock: "0x1", toBlock: "0x100", address: okAddr, topics: [okTopic] }])
       assert.match(sub1, /^0x[0-9a-f]+$/, `well-shaped filter must create subscription, got ${sub1}`)
     } finally {
       ws.close()

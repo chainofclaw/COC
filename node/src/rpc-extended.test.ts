@@ -1135,12 +1135,61 @@ test("RPC Extended Methods", async (t) => {
     const r3 = await probe([{ blockHash: "0x" + "00".repeat(32), fromBlock: "0x0", toBlock: "latest" }])
     assert.equal(r3.error?.code, -32602, "blockHash+fromBlock+toBlock must reject")
 
-    // Sanity: blockHash alone is OK.
-    const ok = await probe([{ blockHash: "0x" + "00".repeat(32) }])
-    assert.ok(ok.result, `blockHash alone must succeed: ${JSON.stringify(ok)}`)
+    // Sanity: blockHash alone (no range) passes the EIP-234 mutex. #535
+    // additionally resolves the hash to a real block, so propose a block
+    // and use its genuine hash — an all-zeros hash would now -32000.
+    if (typeof chain.proposeNextBlock === "function") {
+      await chain.proposeNextBlock()
+    }
+    const realBlock = await rpcCall(port, "eth_getBlockByNumber", ["0x1", false]) as { hash?: string } | null
+    if (realBlock?.hash) {
+      const ok = await probe([{ blockHash: realBlock.hash }])
+      assert.ok(ok.result, `blockHash alone (real hash) must succeed: ${JSON.stringify(ok)}`)
+    }
     // Sanity: fromBlock alone is OK.
     const ok2 = await probe([{ fromBlock: "0x0", toBlock: "latest" }])
     assert.ok(ok2.result, `fromBlock+toBlock alone must succeed: ${JSON.stringify(ok2)}`)
+  })
+
+  await t.test("#535: eth_newFilter resolves blockHash to a real block (non-existent → -32000 'unknown block')", async () => {
+    // Pre-fix eth_newFilter ignored query.blockHash entirely. The filter
+    // was stored with fromBlock=toBlock=latest because
+    // parseBlockTag(undefined, height) returns height — so a
+    // {blockHash}-only filter silently became a "latest block" filter.
+    // Worse, a non-existent hash still returned a usable filter id that
+    // polled [] forever (indistinguishable from "block exists, no logs").
+    // Same family as #533 (eth_getLogs blockHash silent ignore). Geth's
+    // contract: -32000 "unknown block" for an unknown blockHash.
+    const probe = async (params: unknown[]) => {
+      const r = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_newFilter", params }),
+      })
+      return await r.json() as { error?: { code: number; message: string }; result?: string }
+    }
+
+    // Non-existent (but well-formed) blockHash → -32000 "unknown block",
+    // NOT a usable filter id.
+    const bogus = await probe([{ blockHash: `0x${"de".repeat(32)}` }])
+    assert.equal(bogus.error?.code, -32000,
+      `non-existent blockHash must be -32000, got ${JSON.stringify(bogus)}`)
+    assert.match(bogus.error!.message, /unknown block/i,
+      `error must say "unknown block", got "${bogus.error?.message}"`)
+    assert.equal(bogus.result, undefined, "must NOT return a filter id for an unknown block")
+
+    // A real block hash → valid filter id. Propose a block first so 0x1
+    // exists and is indexed by getBlockByHash (the fixture genesis stub is
+    // not hash-indexed — same approach as the #533 sibling test).
+    if (typeof chain.proposeNextBlock === "function") {
+      await chain.proposeNextBlock()
+    }
+    const blockByNum = await rpcCall(port, "eth_getBlockByNumber", ["0x1", false]) as { hash: string } | null
+    if (blockByNum?.hash) {
+      const ok = await probe([{ blockHash: blockByNum.hash }])
+      assert.ok(ok.result, `real blockHash must create a filter, got ${JSON.stringify(ok)}`)
+      assert.match(ok.result!, /^0x[0-9a-f]+$/, "filter id must be a hex string")
+    }
   })
 
   await t.test("#114: eth_getBlockReceipts shape matches eth_getTransactionReceipt", async () => {
