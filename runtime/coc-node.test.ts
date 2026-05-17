@@ -40,4 +40,22 @@ describe("coc-node HTTP server source", () => {
       "coc-node.ts must not have a bare GET-only /health check",
     )
   })
+
+  it("#666: /pose/receipt must reject unknown challenge types, not echo-and-sign them", () => {
+    // Pre-fix the receipt fallback built `responseBody = {ok:true, echo:
+    // payload.payload}` for any non-U/S/R challenge type and SIGNED it — a
+    // signing oracle: an unauthenticated caller could register a bogus-type
+    // challenge via /pose/challenge then obtain a node-signed receipt (v1
+    // EIP-191 or v2 EIP-712) over arbitrary attacker-supplied JSON.
+    assert.doesNotMatch(
+      SRC,
+      /echo:\s*payload\.payload/,
+      "coc-node.ts must not echo-and-sign caller-supplied payload.payload",
+    )
+    assert.match(
+      SRC,
+      /unknown challenge type/,
+      "coc-node.ts must explicitly reject unknown PoSe challenge types",
+    )
+  })
 })

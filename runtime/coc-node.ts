@@ -312,10 +312,17 @@ const server = http.createServer((req, res) => {
           .catch(() => buildUptimeResponse(null));
         return;
       }
-      const responseBody =
-        kind === "R"
-          ? buildRelayResponseBody(payload.challengeId, challenge, responseAtMs)
-          : { ok: true, echo: payload.payload ?? null };
+      // Only U/S/R are valid PoSe challenge types (U and S already returned
+      // above). Reject anything else — pre-fix an unknown type fell through
+      // to a fallback that echoed the caller-supplied request field back
+      // into the receipt body and the node SIGNED it, turning /pose/receipt
+      // into a signing oracle: an unauthenticated caller could register a
+      // bogus-type challenge via /pose/challenge and obtain a node-signed
+      // receipt over arbitrary attacker-supplied JSON.
+      if (kind !== "R") {
+        return json(res, 400, { error: `unknown challenge type: ${String(kind)}` });
+      }
+      const responseBody = buildRelayResponseBody(payload.challengeId, challenge, responseAtMs);
       // Phase C: v2 Relay receipt carries tipHash + EIP-712 signature,
       // same shape as Uptime/Storage. Without these the agent's
       // verifyV2Receipt rejects with "invalid tipHash". Fall back to v1
