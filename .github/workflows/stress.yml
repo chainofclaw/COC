@@ -1,0 +1,78 @@
+name: Stress & Chaos
+
+# Devnet-dependent test lanes, kept separate from the main Test workflow
+# because they spawn real node processes (start-devnet.sh) rather than
+# in-process fixtures.
+#
+# - stress-probes: every push / PR — boots a 3-node devnet and runs the
+#   chain-dependent EVM/RPC stress probes.
+# - chaos-devnet: weekly + manual only — spawns a 5-node BFT cluster and
+#   injects validator faults (~5 min, too heavy for every PR).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC — chaos soak
+  workflow_dispatch:
+
+concurrency:
+  group: stress-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  stress-probes:
+    name: EVM/RPC Stress Probes (3-node devnet)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: cd node && npm install --no-audit --no-fund
+      - run: npm install --no-save ethers
+      - name: Start 3-node devnet
+        run: bash scripts/start-devnet.sh 3
+      - name: Run EVM-coverage + RPC-validation probes
+        run: |
+          # burst-throughput.test.ts is intentionally NOT run here: a
+          # concurrent tx burst triggers the open stateRoot-divergence bug
+          # #642 (it deadlocks BFT). Re-add it once #642 is fixed.
+          node --experimental-strip-types --test --test-force-exit \
+            tests/stress/evm-coverage.test.ts \
+            tests/stress/rpc-validation.test.ts
+        env:
+          COC_STRESS_RPC: http://127.0.0.1:28780
+          NODE_ENV: test
+      - name: Stop devnet
+        if: always()
+        run: bash scripts/stop-devnet.sh 3 || true
+
+  chaos-devnet:
+    name: Consensus Chaos (5-node devnet)
+    # Heavy: spawns 5 node processes and runs validator-fault scenarios
+    # (~5 min). Weekly soak + manual dispatch only — never on a PR.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: cd node && npm install --no-audit --no-fund
+      - run: npm install --no-save ethers
+      - name: Run consensus chaos scenarios
+        run: |
+          # The suite spawns/tears down the devnet itself via start-devnet.sh.
+          node --experimental-strip-types --test --test-force-exit \
+            tests/stress/chaos-devnet.test.ts
+        env:
+          COC_CHAOS_DEVNET: "1"
+          NODE_ENV: test
+      - name: Stop devnet
+        if: always()
+        run: bash scripts/stop-devnet.sh 5 || true
