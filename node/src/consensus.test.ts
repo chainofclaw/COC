@@ -1,7 +1,13 @@
 import test, { describe, it } from "node:test"
 import assert from "node:assert/strict"
 import { ChainEngine } from "./chain-engine.ts"
-import { ConsensusEngine, NO_PROGRESS_TIMEOUT_MS, NO_PROGRESS_STAGGER_MS } from "./consensus.ts"
+import {
+  ConsensusEngine,
+  NO_PROGRESS_TIMEOUT_MS,
+  NO_PROGRESS_STAGGER_MS,
+  PROPOSER_UNREACHABLE_FAST_TIMEOUT_MS,
+  PROPOSER_MISS_ROUND_TIMEOUT_MS,
+} from "./consensus.ts"
 import type { SnapSyncProvider } from "./consensus.ts"
 import { EvmChain } from "./evm.ts"
 import { hashBlockPayload, zeroHash } from "./hash.ts"
@@ -553,8 +559,9 @@ test("Phase H15 stagger: only fallback proposer arms override, not all nodes", a
   //
   // Setup: 3-validator chain [node-1, node-2, node-3]. Height 0 → stuck height 1.
   // expectedProposer(1) = node-1 (stuck). Fallback = expectedProposer(2) = node-2.
-  // node-2 should fire at elapsed ≥ NO_PROGRESS_TIMEOUT_MS. node-3 fires at
-  // ≥ NO_PROGRESS_TIMEOUT_MS + NO_PROGRESS_STAGGER_MS. node-1 never fires.
+  // Post-PR-1M the watchdog self-marks node-1 on a liveness basis, so node-2
+  // fires once the stall passes the miss-round window and node-3 one stagger
+  // interval later. node-1 (the stuck proposer) never fires.
 
   const validators = ["node-1", "node-2", "node-3"]
   const stuckHeight = 1n // height we're stuck on
@@ -580,26 +587,35 @@ test("Phase H15 stagger: only fallback proposer arms override, not all nodes", a
     return (c as any).noProgressProposerOverride === true
   }
 
-  // Threshold values relative to live constants — keeps the assertions
-  // accurate even if the timeout is retuned (was 120s pre-558b697, 600s now).
-  const PRIMARY_BELOW = NO_PROGRESS_TIMEOUT_MS - 5_000
-  const PRIMARY_ABOVE = NO_PROGRESS_TIMEOUT_MS + 5_000
-  const SECONDARY_BELOW = NO_PROGRESS_TIMEOUT_MS + NO_PROGRESS_STAGGER_MS - 5_000
-  const SECONDARY_ABOVE = NO_PROGRESS_TIMEOUT_MS + NO_PROGRESS_STAGGER_MS + 5_000
+  // PR-1M (#635): the watchdog self-marks the stuck proposer once the stall
+  // exceeds PROPOSER_MISS_ROUND_TIMEOUT_MS, so the base drops to the 15s fast
+  // path even with no onProposerStuck evidence. The stagger SPACING is
+  // unchanged (NO_PROGRESS_STAGGER_MS) — only the base shifts from the 600s
+  // slow path to the fast path. Primary fallback's effective arm point is
+  // therefore max(FAST, MISS_ROUND); each subsequent fallback adds one stagger.
+  const FAST = PROPOSER_UNREACHABLE_FAST_TIMEOUT_MS
+  const STAG = NO_PROGRESS_STAGGER_MS
+  const PRIMARY_ARM = Math.max(FAST, PROPOSER_MISS_ROUND_TIMEOUT_MS)
+  const SECONDARY_ARM = FAST + STAG
 
-  // Stuck proposer (node-1) never arms override even far past secondary threshold.
-  assert.equal(await watchdogFires("node-1", SECONDARY_ABOVE), false, "stuck proposer never arms override")
+  // Stuck proposer (node-1) never arms override even far past the slow path.
+  assert.equal(
+    await watchdogFires("node-1", NO_PROGRESS_TIMEOUT_MS + STAG + 5_000),
+    false,
+    "stuck proposer never arms override",
+  )
 
-  // Primary fallback (node-2, offset=1) arms at elapsed ≥ NO_PROGRESS_TIMEOUT_MS.
-  assert.equal(await watchdogFires("node-2", PRIMARY_BELOW), false, "node-2 does NOT fire below primary threshold")
-  assert.equal(await watchdogFires("node-2", PRIMARY_ABOVE), true,  "node-2 fires above primary threshold")
+  // Primary fallback (node-2, offset=1) arms once the stall passes the
+  // miss-round window (PR-1M promotes node-1, base becomes FAST).
+  assert.equal(await watchdogFires("node-2", PRIMARY_ARM - 5_000), false, "node-2 does NOT fire below primary threshold")
+  assert.equal(await watchdogFires("node-2", PRIMARY_ARM + 5_000), true,  "node-2 fires above primary threshold")
 
-  // Secondary fallback (node-3, offset=2) fires at ≥ NO_PROGRESS_TIMEOUT_MS + stagger.
-  assert.equal(await watchdogFires("node-3", PRIMARY_ABOVE), false, "node-3 does NOT fire below secondary threshold")
-  assert.equal(await watchdogFires("node-3", SECONDARY_ABOVE), true, "node-3 fires above secondary threshold")
+  // Secondary fallback (node-3, offset=2) fires one stagger interval later.
+  assert.equal(await watchdogFires("node-3", SECONDARY_ARM - 5_000), false, "node-3 does NOT fire below secondary threshold")
+  assert.equal(await watchdogFires("node-3", SECONDARY_ARM + 5_000), true, "node-3 fires above secondary threshold")
 
   // Without nodeId the watchdog is disabled (safe fallback)
-  assert.equal(await watchdogFires("", SECONDARY_ABOVE * 2), false, "no-nodeId: watchdog disabled")
+  assert.equal(await watchdogFires("", NO_PROGRESS_TIMEOUT_MS * 2), false, "no-nodeId: watchdog disabled")
 })
 
 test("Phase J2.2: self-stuck proposer with active round force-clears its own BFT round", async () => {

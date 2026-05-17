@@ -6,6 +6,7 @@ import {
   NO_PROGRESS_STAGGER_MS,
   PROPOSER_UNREACHABLE_FAST_TIMEOUT_MS,
   PROPOSER_UNREACHABLE_TTL_MS,
+  PROPOSER_MISS_ROUND_TIMEOUT_MS,
 } from "./consensus.ts"
 
 /**
@@ -21,6 +22,12 @@ import {
  *   3. checkNoProgressWatchdog 当 stuck proposer 不可达时,fast-path 用
  *      PROPOSER_UNREACHABLE_FAST_TIMEOUT_MS (15s) 替代 600s 触发 fallback
  *   4. unreachable 标记 60s TTL,持续 unreachable 期间会被 BFT timeout / wire 事件刷新
+ *
+ * PR-1M (chainofclaw/COC#635): markProposerUnreachable 的唯一触发源
+ * onProposerStuck 只在收到 propose 后才会 fire。"完全停止 propose" 的 validator
+ * 永远不会被标记,每个 slot 都落 600s 慢路径(88780 2026-05-16 实测 444-624s/slot)。
+ * 修复:checkNoProgressWatchdog 在链停滞超过 PROPOSER_MISS_ROUND_TIMEOUT_MS 后,
+ * 直接基于活性把卡住的 peer proposer 提升为 unreachable —— 不依赖是否收到 propose。
  */
 
 const VALIDATORS_5 = ["node-1", "node-2", "node-3", "node-4", "node-5"]
@@ -119,25 +126,83 @@ test("PR-1A: fast watchdog fires at 15s when stuck proposer marked unreachable",
   assert.equal((c as any).noProgressProposerOverride, true, "fast watchdog arms when proposer unreachable")
 })
 
-test("PR-1A: without unreachable evidence, slow path (600s) governs", async () => {
-  const mockChain = mkMockChain(VALIDATORS_5)
+test("PR-1M: watchdog promotes a never-proposing proposer to unreachable past the miss-round window", async () => {
+  // #635: a validator that stops proposing entirely produces no propose,
+  // so onProposerStuck never fires and PR-1A never marks it. The watchdog
+  // must self-detect the stall on a pure-liveness basis.
   const c = new ConsensusEngine(
-    mockChain,
+    mkMockChain(VALIDATORS_5),
     mkMockP2p(),
     { blockTimeMs: 1000, syncIntervalMs: 300_000 },
     { bft: mkMockBft(), nodeId: "node-2" },
   )
 
-  // No markProposerUnreachable call. Even at 30s elapsed (well past fast threshold),
-  // the override must NOT arm — without evidence we keep the conservative behaviour.
-  ;(c as any).lastBftProgressAtMs = Date.now() - 30_000
+  // No markProposerUnreachable call, no reachabilityProvider — zero PR-1A
+  // evidence. Below the miss-round window: not promoted, override stays off.
+  ;(c as any).lastBftProgressAtMs = Date.now() - (PROPOSER_MISS_ROUND_TIMEOUT_MS - 3_000)
   await (c as any).checkNoProgressWatchdog()
-  assert.equal((c as any).noProgressProposerOverride, false, "no evidence: slow path")
+  assert.equal((c as any).isProposerUnreachable("node-1"), false, "below window: not promoted")
+  assert.equal((c as any).noProgressProposerOverride, false, "below window: override not armed")
 
-  // Slow path eventually fires at NO_PROGRESS_TIMEOUT_MS as before
-  ;(c as any).lastBftProgressAtMs = Date.now() - (NO_PROGRESS_TIMEOUT_MS + 5_000)
+  // Past the miss-round window: the watchdog promotes node-1 to unreachable
+  // and — because the promotion drops baseTimeoutMs to the 15s fast path —
+  // arms the override on the same tick.
+  ;(c as any).lastBftProgressAtMs = Date.now() - (PROPOSER_MISS_ROUND_TIMEOUT_MS + 10_000)
   await (c as any).checkNoProgressWatchdog()
-  assert.equal((c as any).noProgressProposerOverride, true, "slow path still works")
+  assert.equal((c as any).isProposerUnreachable("node-1"), true, "past window: liveness-promoted to unreachable")
+  assert.equal((c as any).noProgressProposerOverride, true, "past window: fast path arms via PR-1M")
+})
+
+test("PR-1M: miss-round promotion is suppressed during startup grace", async () => {
+  // During PR-1H startup grace the wire mesh has not converged; a stalled
+  // slot may be a transient cold-start artifact, not a dead validator.
+  // PR-1M must not promote — the slow path stands until grace expires.
+  const c = new ConsensusEngine(
+    mkMockChain(VALIDATORS_5),
+    mkMockP2p(),
+    { blockTimeMs: 1000, syncIntervalMs: 300_000 },
+    { bft: mkMockBft(), nodeId: "node-2" },
+  )
+  ;(c as any).startedAtMs = Date.now() - 5_000 // 5s in — well inside 60s grace
+
+  ;(c as any).lastBftProgressAtMs = Date.now() - (PROPOSER_MISS_ROUND_TIMEOUT_MS + 30_000)
+  await (c as any).checkNoProgressWatchdog()
+  assert.equal((c as any).isProposerUnreachable("node-1"), false, "no liveness promotion during grace")
+  assert.equal((c as any).noProgressProposerOverride, false, "fast path stays disarmed during grace")
+})
+
+test("PR-1M: miss-round promotion is suppressed on N<4 clusters", async () => {
+  // PR-1J/PR-1L disable the PR-1A fast path entirely below 4 validators
+  // (skip-then-quorum math breaks down); PR-1M honors the same contract.
+  const c = new ConsensusEngine(
+    mkMockChain(VALIDATORS_5),
+    mkMockP2p(),
+    { blockTimeMs: 1000, syncIntervalMs: 300_000 },
+    { bft: mkMockBft(), nodeId: "node-2", validatorCountProvider: () => 3 },
+  )
+  ;(c as any).startedAtMs = Date.now() - 90_000 // past grace
+
+  ;(c as any).lastBftProgressAtMs = Date.now() - (PROPOSER_MISS_ROUND_TIMEOUT_MS + 30_000)
+  await (c as any).checkNoProgressWatchdog()
+  assert.equal((c as any).isProposerUnreachable("node-1"), false, "no liveness promotion on N=3")
+  assert.equal((c as any).noProgressProposerOverride, false, "fast path stays disarmed on N=3")
+})
+
+test("PR-1M: stuck proposer is never self-promoted (self-stuck has its own J2.2 path)", async () => {
+  // The miss-round promotion only applies to PEER proposers. When the local
+  // node is itself the stuck proposer, markProposerUnreachable must not be
+  // reached for self — self-stuck is handled by the J2.2 force-clear path.
+  const c = new ConsensusEngine(
+    mkMockChain(VALIDATORS_5),
+    mkMockP2p(),
+    { blockTimeMs: 1000, syncIntervalMs: 300_000 },
+    { bft: mkMockBft(), nodeId: "node-1" }, // node-1 == expectedProposer(1)
+  )
+
+  ;(c as any).lastBftProgressAtMs = Date.now() - (PROPOSER_MISS_ROUND_TIMEOUT_MS + 30_000)
+  await (c as any).checkNoProgressWatchdog()
+  assert.equal((c as any).isProposerUnreachable("node-1"), false, "self is never liveness-promoted")
+  assert.equal((c as any).noProgressProposerOverride, false, "self-stuck path does not arm rotation override")
 })
 
 test("PR-1A: fast path respects rotation stagger across multiple fallbacks", async () => {
@@ -433,5 +498,28 @@ test("PR-1A: TTL constant is reasonable", () => {
   assert.ok(
     PROPOSER_UNREACHABLE_TTL_MS <= NO_PROGRESS_TIMEOUT_MS,
     "TTL <= slow timeout",
+  )
+})
+
+test("PR-1M: miss-round window relates sensibly to the other thresholds", () => {
+  // Required invariants:
+  //   FAST < MISS_ROUND  — larger than FAST so a round about to resolve is
+  //     not falsely promoted, and so the override arms on the same watchdog
+  //     tick the liveness mark is set (baseTimeoutMs drops to FAST).
+  //   MISS_ROUND < TTL   — the mark must outlive the detection window so it
+  //     cannot expire before the fast-path override fires.
+  //   MISS_ROUND < NO_PROGRESS_TIMEOUT_MS — the liveness path must beat the
+  //     conservative H15 slow path (the whole point of #635).
+  assert.ok(
+    PROPOSER_UNREACHABLE_FAST_TIMEOUT_MS < PROPOSER_MISS_ROUND_TIMEOUT_MS,
+    "fast timeout < miss-round window",
+  )
+  assert.ok(
+    PROPOSER_MISS_ROUND_TIMEOUT_MS < PROPOSER_UNREACHABLE_TTL_MS,
+    "miss-round window < TTL",
+  )
+  assert.ok(
+    PROPOSER_MISS_ROUND_TIMEOUT_MS < NO_PROGRESS_TIMEOUT_MS,
+    "miss-round window < slow timeout",
   )
 })
