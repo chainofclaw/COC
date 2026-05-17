@@ -224,6 +224,60 @@ describe("ValidatorGovernance", () => {
     assert.ok(gov.getProposal(p2.id))
   })
 
+  it("counts votes against the creation-time snapshot, not the live set", () => {
+    // Security regression: resolveProposal used to weigh votes against the
+    // *live* validator set. Shrinking that set (a slash, another proposal
+    // executing) between votes inflated the approval ratio of already-cast
+    // votes, so the configured approvalThresholdPercent stopped being
+    // enforced. Resolution must use the electorate snapshotted at creation.
+    const gov5 = new ValidatorGovernance({
+      minStake: 1000000000000000000n,
+      maxValidators: 10,
+      proposalDurationEpochs: 24n,
+      approvalThresholdPercent: 67,
+      minVoterPercent: 50,
+    })
+    gov5.initGenesis([
+      { id: "v1", address: "0x1", stake: STAKE },
+      { id: "v2", address: "0x2", stake: STAKE },
+      { id: "v3", address: "0x3", stake: STAKE },
+      { id: "v4", address: "0x4", stake: STAKE },
+      { id: "v5", address: "0x5", stake: STAKE },
+    ])
+
+    const p = gov5.submitProposal("remove_validator", "v5", "v1")
+    // 3 of 5 approve = 60% of the 5-validator electorate — below the 67%
+    // threshold, so the proposal must NOT pass.
+    gov5.vote(p.id, "v1", true)
+    gov5.vote(p.id, "v2", true)
+    gov5.vote(p.id, "v3", true)
+    assert.equal(gov5.getProposal(p.id)!.status, "pending", "3/5 = 60% must not approve")
+
+    // A non-voting validator leaves the live set (e.g. slashed to zero).
+    gov5.deactivateValidator("v4")
+
+    // The final vote re-triggers resolution. Against the live set this would
+    // be 3/4 = 75% ≥ 67% and wrongly execute; against the snapshot it stays
+    // 3/5 = 60% and the proposal remains pending.
+    gov5.vote(p.id, "v5", false)
+    assert.equal(gov5.getProposal(p.id)!.status, "pending", "snapshot keeps approval at 3/5 = 60%")
+    assert.equal(gov5.getValidator("v5")!.active, true, "v5 must not have been removed")
+  })
+
+  it("rejects a vote from a validator added after the proposal was created", () => {
+    const p = gov.submitProposal("remove_validator", "v3", "v1")
+    // Add v4 AFTER p was created — it is active but not in p's electorate.
+    const addV4 = gov.submitProposal("add_validator", "v4", "v1", { targetAddress: "0x4444", stakeAmount: STAKE })
+    gov.vote(addV4.id, "v1", true)
+    gov.vote(addV4.id, "v2", true)
+    gov.vote(addV4.id, "v3", true)
+    assert.equal(gov.getValidator("v4")!.active, true)
+    assert.throws(
+      () => gov.vote(p.id, "v4", true),
+      /not an active validator when the proposal was created/,
+    )
+  })
+
   it("returns governance stats summary", () => {
     gov.advanceEpoch(5n)
     gov.submitProposal("add_validator", "v4", "v1", { targetAddress: "0x4444", stakeAmount: STAKE })
