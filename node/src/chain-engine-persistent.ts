@@ -775,46 +775,7 @@ export class PersistentChainEngine {
     // without stateRoot" — hash-only quorum for that round. This is the same
     // fail-open contract the previous stub promised.
     if (!this.stateTrie) return undefined
-
-    // Phase R2 (2026-05-06): refuse speculative compute when our chain tip
-    // doesn't match the proposed block's parent. Two failure modes this
-    // closes:
-    //   (a) we're mid-applyBlock for the parent height — trie's committed
-    //       root is still N-1, but the block claims parent=N. Computing
-    //       against N-1's state would produce a wrong stateRoot and our
-    //       prepare vote would poison BFT quorum.
-    //   (b) we have an off-by-one / fork-choice gap — same outcome.
-    // Returning undefined falls through to hash-only quorum (BftCoordinator
-    // contract), which is safe for liveness; we just skip stating a stateRoot
-    // we couldn't produce honestly.
-    const localTip = await this.getTip()
-    const expectedParentHash = block.parentHash?.toLowerCase()
-    const localTipHash = localTip?.hash?.toLowerCase()
-    if (expectedParentHash && localTipHash && expectedParentHash !== localTipHash) {
-      log.warn("Phase R2: speculative compute aborted — parent mismatch", {
-        height: block.number.toString(),
-        blockParent: expectedParentHash,
-        localTip: localTipHash,
-      })
-      return undefined
-    }
-
-    // Phase R2: force a sync pass on the parent trie so any dirty storage
-    // sub-tries (e.g. BEACON_ROOTS write from the previous applyBlock that
-    // hasn't yet propagated its storageRoot into the account record) are
-    // flushed into the trie before we shallowCopy. Without this, the fork
-    // inherits a stale account record whose storageRoot points at the
-    // pre-write state, and computeStateRoot returns a non-canonical root.
-    // computeStateRoot is idempotent + cheap when dirtyAddresses is empty;
-    // it's a defensive flush, not a fast path.
-    try {
-      await this.stateTrie.computeStateRoot()
-    } catch (err) {
-      log.warn("Phase R2: parent-trie sync threw — continuing with potentially stale fork", {
-        height: block.number.toString(),
-        error: String(err),
-      })
-    }
+    const stateTrie = this.stateTrie
 
     // Phase H1 diagnostic: env-gated detailed logging to identify the
     // mechanism behind the recurring proposer-vs-non-proposer divergence
@@ -868,9 +829,59 @@ export class PersistentChainEngine {
       return adversarial as Hex
     }
 
+    // #642: take the parent snapshot — the Phase-R2 parent-tip check, the
+    // dirty-storage flush, and forkForDryRun — under the same FIFO queue as
+    // applyBlock. Run unsynchronized, computeStateRoot()'s `trie.put` and the
+    // shallowCopy land in a checkpoint frame that an in-flight applyBlock is
+    // concurrently mutating, corrupting the shared PersistentStateTrie so the
+    // node's committed stateRoot no longer matches its trie — surfacing as a
+    // proposer-vs-voter divergence on the next empty block and a permanent
+    // BFT deadlock. The fork returned here is an immutable point-in-time
+    // snapshot, so the replay below runs OUTSIDE the lock and never blocks
+    // consensus.
     let dryTrie: IStateTrie | null = null
     try {
-      dryTrie = await this.stateTrie.forkForDryRun()
+      dryTrie = await this.runStateExclusive(async (): Promise<IStateTrie | null> => {
+        // Phase R2 (2026-05-06): refuse speculative compute when our chain
+        // tip doesn't match the proposed block's parent. Computing against
+        // the wrong parent state would poison our BFT prepare vote. Checked
+        // inside the queue so the tip cannot advance before the fork is taken.
+        const localTip = await this.getTip()
+        const expectedParentHash = block.parentHash?.toLowerCase()
+        const localTipHash = localTip?.hash?.toLowerCase()
+        if (expectedParentHash && localTipHash && expectedParentHash !== localTipHash) {
+          log.warn("Phase R2: speculative compute aborted — parent mismatch", {
+            height: block.number.toString(),
+            blockParent: expectedParentHash,
+            localTip: localTipHash,
+          })
+          return null
+        }
+        // Phase R2: flush dirty storage sub-tries into their account records
+        // before shallowCopy so the fork doesn't inherit a stale storageRoot
+        // pointer (e.g. a BEACON_ROOTS write from the previous applyBlock).
+        // Idempotent + cheap when dirtyAddresses is empty; race-free here
+        // because the queue excludes any concurrent applyBlock.
+        try {
+          await stateTrie.computeStateRoot()
+        } catch (err) {
+          log.warn("Phase R2: parent-trie sync threw — continuing with potentially stale fork", {
+            height: block.number.toString(),
+            error: String(err),
+          })
+        }
+        return await stateTrie.forkForDryRun()
+      })
+    } catch (err) {
+      log.warn("speculative stateRoot compute: parent snapshot failed", {
+        height: block.number.toString(),
+        error: String(err),
+      })
+      return undefined
+    }
+    if (!dryTrie) return undefined
+
+    try {
       // Phase H1 diag point 1: state of fork BEFORE any block context
       await dumpBeaconState(dryTrie, "post-fork")
 
@@ -1071,6 +1082,30 @@ export class PersistentChainEngine {
     // Absorb rejections into the chain-tracking promise so the next caller's
     // `then(run, run)` continues; per-caller rejection is still exposed via `current`.
     this.applyQueue = current.catch(() => {})
+    return current
+  }
+
+  /**
+   * #642: serialize an operation that snapshots or mutates the shared
+   * PersistentStateTrie / EVM state manager against applyBlock (and against
+   * other such operations) by chaining it onto the same FIFO queue.
+   *
+   * applyBlock is not the only writer of the shared trie: speculativelyCompute-
+   * StateRoot's Phase-R2 dirty-storage flush does `trie.put` on it, and
+   * forkForDryRun's shallowCopy must observe a consistent root. Run those
+   * unsynchronized, they interleave with an in-flight applyBlock at an `await`
+   * boundary — landing writes in the wrong checkpoint frame and mutating
+   * accountCache/dirtyAddresses mid-iteration — so the node's committed
+   * stateRoot drifts from its actual trie state (#642 deadlock).
+   *
+   * The callback must be SHORT (a snapshot/flush), not a full block replay:
+   * it blocks applyBlock for its whole duration. Rejections stay with the
+   * caller's returned promise and do not poison the queue.
+   */
+  private runStateExclusive<T>(fn: () => Promise<T>): Promise<T> {
+    const prior = this.applyQueue
+    const current = prior.then(fn, fn)
+    this.applyQueue = current.then(() => {}, () => {})
     return current
   }
 
