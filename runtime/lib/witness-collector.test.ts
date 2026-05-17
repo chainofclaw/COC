@@ -1,7 +1,7 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 import type { Hex32 } from "../../services/common/pose-types.ts"
-import { collectBatchWitnessSignatures } from "./witness-collector.ts"
+import { collectBatchWitnessSignatures, collectWitnesses } from "./witness-collector.ts"
 
 // Test the bitmap/quorum logic in isolation (no real HTTP)
 describe("witness-collector", () => {
@@ -185,5 +185,87 @@ describe("witness-collector", () => {
     assert.equal(result.requiredCount, 2)
     assert.equal(result.quorumMet, false)
     assert.equal(result.signatures.length, 1)
+  })
+
+  it("collectWitnesses sets each bit from the assigned index", async () => {
+    const challengeId = `0x${"a1".repeat(32)}` as Hex32
+    const nodeId = `0x${"b2".repeat(32)}` as Hex32
+    const responseBodyHash = `0x${"c3".repeat(32)}` as Hex32
+    const sig = `0x${"dd".repeat(65)}`
+
+    const result = await collectWitnesses(
+      {
+        witnessNodes: [
+          { url: "http://w0.local", witnessIndex: 0 },
+          { url: "http://w1.local", witnessIndex: 1 },
+          { url: "http://w2.local", witnessIndex: 2 },
+        ],
+        requiredWitnesses: 2,
+        timeoutMs: 1000,
+      },
+      challengeId,
+      nodeId,
+      responseBodyHash,
+      async (_url, _method, body) => {
+        const p = body as { witnessIndex: number }
+        return {
+          status: 200,
+          json: {
+            challengeId, nodeId, responseBodyHash,
+            witnessIndex: p.witnessIndex,
+            attestedAtMs: 1n,
+            witnessSig: sig,
+          },
+        }
+      },
+    )
+
+    assert.equal(result.bitmap, 0b111)
+    assert.equal(result.attestations.length, 3)
+    assert.equal(result.quorumMet, true)
+  })
+
+  it("collectWitnesses rejects a response claiming a slot it was not assigned (#668)", async () => {
+    const challengeId = `0x${"a1".repeat(32)}` as Hex32
+    const nodeId = `0x${"b2".repeat(32)}` as Hex32
+    const responseBodyHash = `0x${"c3".repeat(32)}` as Hex32
+    const sig = `0x${"dd".repeat(65)}`
+
+    // The witness assigned slot 1 lies and claims slot 0. Its response must
+    // be dropped — the bitmap bit is pinned to the collector-assigned index,
+    // never the witness-claimed one, so evidenceLeaf.witnessBitmap stays
+    // semantically honest ("bit i == witness i attested").
+    const result = await collectWitnesses(
+      {
+        witnessNodes: [
+          { url: "http://w0.local", witnessIndex: 0 },
+          { url: "http://w1.local", witnessIndex: 1 },
+          { url: "http://w2.local", witnessIndex: 2 },
+        ],
+        requiredWitnesses: 2,
+        timeoutMs: 1000,
+      },
+      challengeId,
+      nodeId,
+      responseBodyHash,
+      async (url, _method, body) => {
+        const p = body as { witnessIndex: number }
+        const claimed = url.includes("w1.local") ? 0 : p.witnessIndex
+        return {
+          status: 200,
+          json: {
+            challengeId, nodeId, responseBodyHash,
+            witnessIndex: claimed,
+            attestedAtMs: 1n,
+            witnessSig: sig,
+          },
+        }
+      },
+    )
+
+    // w1's wrong-index response is dropped; only honest w0 + w2 remain.
+    assert.equal(result.bitmap, 0b101)
+    assert.equal(result.attestations.length, 2)
+    assert.equal(result.quorumMet, true)
   })
 })
