@@ -3,8 +3,15 @@ import assert from "node:assert/strict"
 import { mkdtemp, rm } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
+import { keccak256 } from "ethers"
 import { IpfsBlockstore } from "./ipfs-blockstore.ts"
 import type { IpfsBlock, CidString } from "./ipfs-types.ts"
+
+/** Content-addressed CID for `bytes` in the "0x…" keccak256 convention —
+ *  what the blockstore's remote-fetch verification accepts. */
+function cidFor(bytes: Uint8Array): CidString {
+  return keccak256(bytes) as CidString
+}
 
 let tmpDir: string
 let store: IpfsBlockstore
@@ -113,8 +120,8 @@ describe("IpfsBlockstore", () => {
   // gracefully delegates to the hook on ENOENT and caches the result.
 
   it("get falls back to fetchRemote when CID is missing locally, caches result", async () => {
-    const cid = "QmRemoteOnly1" as CidString
     const remoteBytes = Buffer.from("fetched from peer")
+    const cid = cidFor(remoteBytes)
     let fetchCalls = 0
     store.setHooks({
       fetchRemote: async (requested) => {
@@ -132,6 +139,29 @@ describe("IpfsBlockstore", () => {
     const second = await store.get(cid)
     assert.deepEqual(second.bytes, remoteBytes)
     assert.equal(fetchCalls, 1, "cached locally after first fetch")
+  })
+
+  it("get: a remote block that does not hash to the CID is rejected", async () => {
+    // Security regression (#658): the pull path (wire-client →
+    // requestBlockFromAny → fetchRemote) forwards peer bytes verbatim. A
+    // malicious provider serving bytes that do not match the requested CID
+    // must not have the forgery returned to the caller, cached to disk, or
+    // re-advertised — content addressing has to be enforced on the pull.
+    const genuine = Buffer.from("the real content")
+    const cid = cidFor(genuine)
+    const forged = Buffer.from("attacker-controlled payload")
+    let onPutCalls = 0
+    store.setHooks({
+      fetchRemote: async () => forged, // peer lies about the content
+      onPut: () => { onPutCalls++ },
+    })
+
+    await assert.rejects(
+      () => store.get(cid),
+      (err: NodeJS.ErrnoException) => err.code === "ENOENT",
+      "a forged remote block must surface as a miss, not be returned",
+    )
+    assert.equal(onPutCalls, 0, "a forged block must not be cached")
   })
 
   it("get returns ENOENT when fetchRemote yields null (no peer had it)", async () => {
@@ -190,8 +220,8 @@ describe("IpfsBlockstore", () => {
   })
 
   it("fetchRemote result is cached via put, so onPut fires for remote fetches too", async () => {
-    const cid = "QmRemoteWithOnPut" as CidString
     const remoteBytes = Buffer.from("from peer")
+    const cid = cidFor(remoteBytes)
     let onPutCalls = 0
     store.setHooks({
       fetchRemote: async () => remoteBytes,
@@ -204,9 +234,10 @@ describe("IpfsBlockstore", () => {
   it("setHooks merges partial updates without wiping existing hooks", async () => {
     let fetchCalls = 0
     let putCalls = 0
-    store.setHooks({ fetchRemote: async () => { fetchCalls++; return Buffer.from("x") } })
+    const mergeBytes = Buffer.from("x")
+    store.setHooks({ fetchRemote: async () => { fetchCalls++; return mergeBytes } })
     store.setHooks({ onPut: () => { putCalls++ } })
-    await store.get("QmMerge" as CidString) // triggers fetch → put
+    await store.get(cidFor(mergeBytes)) // triggers fetch → put
     assert.equal(fetchCalls, 1)
     assert.equal(putCalls, 1)
   })
@@ -236,11 +267,12 @@ describe("IpfsBlockstore", () => {
 
   it("fetchRemote cache-back tags onPut with source=remote-cache", async () => {
     const received: Array<{ cid: string; source: string | undefined }> = []
+    const peerBytes = Buffer.from("from-peer")
     store.setHooks({
-      fetchRemote: async () => Buffer.from("from-peer"),
+      fetchRemote: async () => peerBytes,
       onPut: (cid, _bytes, opts) => { received.push({ cid, source: opts?.source }) },
     })
-    await store.get("QmFetched" as CidString)
+    await store.get(cidFor(peerBytes))
     assert.equal(received.length, 1)
     assert.equal(received[0].source, "remote-cache")
   })

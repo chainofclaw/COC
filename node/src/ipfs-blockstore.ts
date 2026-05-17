@@ -1,6 +1,12 @@
 import { mkdir, readFile, writeFile, access, readdir, stat as statFile, rename, unlink } from "node:fs/promises"
 import { join } from "node:path"
+import { keccak256 } from "ethers"
+import { CID } from "multiformats/cid"
+import { sha256 } from "multiformats/hashes/sha2"
 import type { IpfsBlock, CidString } from "./ipfs-types.ts"
+import { createLogger } from "./logger.ts"
+
+const log = createLogger("ipfs-blockstore")
 
 const BLOCKS_DIR = "blocks"
 const PINS_FILE = "pins.json"
@@ -288,6 +294,19 @@ export class IpfsBlockstore {
       }
       if (!remote) throw err
 
+      // Content-addressing enforcement. The pull path is otherwise
+      // unverified end-to-end — wire-client, requestBlockFromAny and
+      // fetchRemote all forward peer bytes verbatim — so a malicious
+      // provider could serve forged bytes for any CID. Without this check
+      // we would return the forgery to the caller (gateway user / UnixFS
+      // readFile), cache it, and re-advertise it as a provider, poisoning
+      // the network. A block that does not hash to the CID we asked for is
+      // treated as a miss: surface the original ENOENT, do not cache.
+      if (!(await cidMatchesBytes(cid, remote))) {
+        log.warn("remote block failed content-address verification, rejecting", { cid })
+        throw err
+      }
+
       // Cache locally BEFORE returning so the second GET is a hot path.
       // Routed through the private doPut with source="remote-cache" so the
       // onPut hook still fires for DHT self-announce (cheap, desirable —
@@ -470,6 +489,32 @@ export class IpfsBlockstore {
     const tmpPath = `${this.pinsPath()}.${process.pid}.${++this.pinsTmpCounter}.tmp`
     await writeFile(tmpPath, JSON.stringify({ pins: [...pins] }, null, 2))
     await rename(tmpPath, this.pinsPath())
+  }
+}
+
+/**
+ * Verify that `bytes` is the content addressed by `cid`. COC uses two CID
+ * conventions (see ipfs-blockstore layout / `/api/v0/add`):
+ *   1. Legacy "0x…" keccak256 hex — raw-block blockstore layout.
+ *   2. IPFS CIDv1 (sha256 multihash) — UnixFS / raw codec.
+ * A CID whose multihash is not sha256, or any parse failure, fails closed
+ * (returns false) — COC never emits such CIDs, so legitimate content always
+ * verifies and anything else is rejected.
+ */
+export async function cidMatchesBytes(cid: string, bytes: Uint8Array): Promise<boolean> {
+  if (cid.startsWith("0x")) {
+    return keccak256(bytes).toLowerCase() === cid.toLowerCase()
+  }
+  try {
+    const parsed = CID.parse(cid)
+    const digest = await sha256.digest(bytes)
+    if (parsed.multihash.digest.length !== digest.digest.length) return false
+    for (let i = 0; i < digest.digest.length; i++) {
+      if (parsed.multihash.digest[i] !== digest.digest[i]) return false
+    }
+    return true
+  } catch {
+    return false
   }
 }
 
