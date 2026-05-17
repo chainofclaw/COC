@@ -11,6 +11,8 @@ import {
   MAX_DATA_SHARDS,
   MAX_PARITY_SHARDS,
   DEFAULT_SHARD_SIZE,
+  MAX_SHARD_SIZE,
+  MAX_STRIPES,
   type ErasureManifest,
   type ErasureStripe,
 } from "./ipfs-erasure.ts"
@@ -474,5 +476,71 @@ describe("ipfs-erasure storage-overhead expectations", () => {
     const totalShardBytes = r.shardBlocks.reduce((sum, b) => sum + b.bytes.byteLength, 0)
     const expected = file.byteLength * (6 + 3) / 6
     assert.equal(totalShardBytes, expected)
+  })
+})
+
+describe("ipfs-erasure decode resource caps (crafted-manifest DoS)", () => {
+  // Security regression: an erasure manifest is content-addressed but its
+  // *content* is attacker-chosen — anyone can publish a crafted dag-cbor
+  // manifest and have a victim resolve its CID via /api/v0/cat. decodeFile
+  // derives Buffer.alloc sizes and a fetch loop straight from manifest
+  // fields, so a few-hundred-byte manifest declaring a huge shardSize /
+  // stripe count could force a multi-GB allocation and OOM the node.
+  const noFetch = async () => null
+
+  it("rejects a manifest whose shardSize would force a multi-GB allocation", async () => {
+    const manifest = {
+      v: 1, scheme: "rs", n: 4, m: 2,
+      shardSize: 2_000_000_000, // ~2 GB — pre-fix fed straight into Buffer.alloc
+      fileSize: 0,
+      stripes: [{ data: [], parity: [] }],
+    } as unknown as ErasureManifest
+    await assert.rejects(
+      () => decodeFile(manifest, noFetch),
+      (err: ErasureError) => err.code === "invalid_params",
+      "an oversized shardSize must be rejected before allocation",
+    )
+  })
+
+  it("rejects a manifest declaring more stripes than MAX_STRIPES", async () => {
+    const stripes = Array.from({ length: MAX_STRIPES + 1 }, () => ({ data: [], parity: [] }))
+    const manifest = {
+      v: 1, scheme: "rs", n: 4, m: 2, shardSize: DEFAULT_SHARD_SIZE, fileSize: 0, stripes,
+    } as unknown as ErasureManifest
+    await assert.rejects(
+      () => decodeFile(manifest, noFetch),
+      (err: ErasureError) => err.code === "malformed_manifest",
+    )
+  })
+
+  it("rejects a manifest whose decoded coverage exceeds the cap", async () => {
+    // Each field is individually in range; only the product is abusive:
+    // 64 stripes × 4 data shards × 16 MiB = 4 GiB of output buffer.
+    const stripes = Array.from({ length: 64 }, () => ({ data: [], parity: [] }))
+    const manifest = {
+      v: 1, scheme: "rs", n: 4, m: 2, shardSize: MAX_SHARD_SIZE, fileSize: 0, stripes,
+    } as unknown as ErasureManifest
+    await assert.rejects(
+      () => decodeFile(manifest, noFetch),
+      (err: ErasureError) => err.code === "malformed_manifest",
+    )
+  })
+
+  it("decodeManifest rejects a manifest whose stripes is not an array", async () => {
+    const bytes = encodeManifest({
+      v: 1, scheme: "rs", n: 4, m: 2, shardSize: DEFAULT_SHARD_SIZE, fileSize: 0,
+      stripes: "not-an-array",
+    } as unknown as ErasureManifest)
+    assert.throws(
+      () => decodeManifest(bytes),
+      (err: ErasureError) => err.code === "malformed_manifest",
+    )
+  })
+
+  it("a well-formed manifest still decodes (caps are not over-broad)", async () => {
+    const file = randomBytes(3 * DEFAULT_SHARD_SIZE + 17)
+    const r = await encodeFile(file, { n: 4, m: 2 })
+    const back = await decodeFile(r.manifest, makeShardStore(r.shardBlocks).fetch)
+    assert.deepEqual(Array.from(back), Array.from(file))
   })
 })
