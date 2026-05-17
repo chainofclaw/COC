@@ -44,10 +44,12 @@ export function verifyDIDAuth(
   expectedAddress: string,
   maxClockSkewMs = 300_000, // 5 minutes
 ): boolean {
-  // Verify timestamp freshness
-  const diff = timestampMs > 0n
-    ? (timestampMs > BigInt(Date.now()) ? timestampMs - BigInt(Date.now()) : BigInt(Date.now()) - timestampMs)
-    : 0n
+  // Verify timestamp freshness. A non-positive timestamp is never a fresh
+  // value — reject it outright. (Pre-fix `timestampMs <= 0n` collapsed `diff`
+  // to 0n, silently *passing* the freshness check — a never-expiring auth.)
+  if (timestampMs <= 0n) return false
+  const now = BigInt(Date.now())
+  const diff = timestampMs > now ? timestampMs - now : now - timestampMs
   if (diff > BigInt(maxClockSkewMs)) return false
 
   const message = buildDIDAuthMessage(response.did, response.challenge, timestampMs)

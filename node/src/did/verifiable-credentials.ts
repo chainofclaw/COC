@@ -99,7 +99,13 @@ export function buildFieldMerkleTree(
 
     for (let i = 0; i < layer.length; i += 2) {
       if (i + 1 < layer.length) {
-        const parent = hashInternal(layer[i], layer[i + 1])
+        // Sort the pair before hashing so the tree matches what
+        // verifySelectiveDisclosure reconstructs (it folds proofs with
+        // smaller-hash-first). A positional hash here made every legit
+        // disclosure whose pair was out of sort-order fail verification.
+        const parent = layer[i] < layer[i + 1]
+          ? hashInternal(layer[i], layer[i + 1])
+          : hashInternal(layer[i + 1], layer[i])
         nextLayer.push(parent)
 
         // Add sibling to proof for all leaves in left subtree
