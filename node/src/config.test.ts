@@ -112,6 +112,12 @@ describe("validateConfig", () => {
     assert.equal(validateConfig({ dhtRequireAuthenticatedVerify: false }).length, 0)
   })
 
+  it("validates loopback RPC auth opt-in setting", () => {
+    assert.ok(validateConfig({ allowLoopbackRpcAuth: "true" as any }).length > 0)
+    assert.equal(validateConfig({ allowLoopbackRpcAuth: true }).length, 0)
+    assert.equal(validateConfig({ allowLoopbackRpcAuth: false }).length, 0)
+  })
+
   it("accepts valid port range", () => {
     assert.equal(validateConfig({ rpcPort: 1 }).length, 0)
     assert.equal(validateConfig({ rpcPort: 65535 }).length, 0)
@@ -282,6 +288,36 @@ describe("loadNodeConfig", () => {
       else process.env.COC_NODE_KEY = previousEnv.COC_NODE_KEY
       if (previousEnv.COC_NODE_PK === undefined) delete process.env.COC_NODE_PK
       else process.env.COC_NODE_PK = previousEnv.COC_NODE_PK
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it("does not trust loopback RPC callers unless explicitly enabled", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "coc-config-loopback-auth-"))
+    const previousEnv = {
+      COC_DATA_DIR: process.env.COC_DATA_DIR,
+      COC_NODE_CONFIG: process.env.COC_NODE_CONFIG,
+      COC_RPC_ALLOW_LOOPBACK_ADMIN: process.env.COC_RPC_ALLOW_LOOPBACK_ADMIN,
+    }
+
+    try {
+      process.env.COC_DATA_DIR = tempDir
+      delete process.env.COC_NODE_CONFIG
+      delete process.env.COC_RPC_ALLOW_LOOPBACK_ADMIN
+
+      const defaultCfg = await loadNodeConfig()
+      assert.equal(defaultCfg.allowLoopbackRpcAuth, false)
+
+      process.env.COC_RPC_ALLOW_LOOPBACK_ADMIN = "1"
+      const enabledCfg = await loadNodeConfig()
+      assert.equal(enabledCfg.allowLoopbackRpcAuth, true)
+    } finally {
+      if (previousEnv.COC_DATA_DIR === undefined) delete process.env.COC_DATA_DIR
+      else process.env.COC_DATA_DIR = previousEnv.COC_DATA_DIR
+      if (previousEnv.COC_NODE_CONFIG === undefined) delete process.env.COC_NODE_CONFIG
+      else process.env.COC_NODE_CONFIG = previousEnv.COC_NODE_CONFIG
+      if (previousEnv.COC_RPC_ALLOW_LOOPBACK_ADMIN === undefined) delete process.env.COC_RPC_ALLOW_LOOPBACK_ADMIN
+      else process.env.COC_RPC_ALLOW_LOOPBACK_ADMIN = previousEnv.COC_RPC_ALLOW_LOOPBACK_ADMIN
       await rm(tempDir, { recursive: true, force: true })
     }
   })

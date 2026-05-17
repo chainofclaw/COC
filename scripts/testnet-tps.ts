@@ -10,9 +10,16 @@
  * Usage: node --experimental-strip-types scripts/testnet-tps.ts [rpc_url]
  */
 import { ethers } from "ethers"
+import { HARDHAT_DEV_PRIVATE_KEYS, resolvePrivateKeyForRpc } from "./lib/key-safety.mjs"
 
-const RPC = process.argv[2] || "http://199.192.16.79:28780"
-const DEPLOYER_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+const RPC = process.argv[2] || process.env.COC_STRESS_RPC || "http://127.0.0.1:28780"
+const DEPLOYER_KEY = resolvePrivateKeyForRpc({
+  envValue: process.env.DEPLOYER_PRIVATE_KEY ?? process.env.COC_STRESS_PRIVATE_KEY,
+  envName: "DEPLOYER_PRIVATE_KEY",
+  fallbackDevKey: HARDHAT_DEV_PRIVATE_KEYS[0],
+  rpcUrl: RPC,
+  label: "testnet TPS benchmark",
+})
 const NUM_SENDERS = 8
 const FUND_EACH = ethers.parseEther("50")
 

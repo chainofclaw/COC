@@ -14,6 +14,17 @@ PROJ="$COC_GCP_PROJECT"
 NET="$COC_GCP_NETWORK"
 SUBNET="$COC_GCP_SUBNET"
 
+if [[ -z "${COC_GCP_OPERATOR_IP_CIDR:-}" || "$COC_GCP_OPERATOR_IP_CIDR" == "REPLACE_WITH_YOUR_OPERATOR_IP/32" ]]; then
+  echo "ERROR: set COC_GCP_OPERATOR_IP_CIDR to your operator IP/CIDR before creating management firewall rules." >&2
+  exit 3
+fi
+
+if [[ "$COC_GCP_OPERATOR_IP_CIDR" == "0.0.0.0/0" && "${COC_GCP_ALLOW_OPEN_OPERATOR_CIDR:-0}" != "1" ]]; then
+  echo "ERROR: refusing to open RPC/SSH/metrics management ports to 0.0.0.0/0." >&2
+  echo "       Set COC_GCP_ALLOW_OPEN_OPERATOR_CIDR=1 only for an isolated lab network." >&2
+  exit 3
+fi
+
 echo "==> Project: $PROJ"
 gcloud config set project "$PROJ" >/dev/null
 

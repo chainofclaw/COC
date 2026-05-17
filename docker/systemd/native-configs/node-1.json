@@ -52,7 +52,7 @@
   "enableWireProtocol": true,
   "enableDht": true,
   "enableSnapSync": true,
-  "enableAdminRpc": true,
+  "enableAdminRpc": false,
   "blockTimeMs": 3000,
   "finalityDepth": 3,
   "maxTxPerBlock": 100,

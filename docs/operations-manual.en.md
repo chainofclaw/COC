@@ -172,6 +172,7 @@ Configuration is loaded from `{COC_DATA_DIR}/node-config.json` and can be overri
 |----------|---------|-------------|
 | `COC_RPC_AUTH_TOKEN` | (none) | Bearer token for RPC auth |
 | `COC_ENABLE_ADMIN_RPC` | `false` | Enable admin_* namespace |
+| `COC_RPC_ALLOW_LOOPBACK_ADMIN` | `false` | Treat loopback RPC requests as admin/governance-authorized without Bearer auth; keep disabled behind reverse proxies |
 | `COC_DEV_ACCOUNTS` | (none) | Set `1` to enable dev accounts |
 | `COC_SIGNATURE_ENFORCEMENT` | `enforce` | `off` / `monitor` / `enforce` |
 | `COC_P2P_AUTH_MODE` | `enforce` | P2P inbound auth mode |

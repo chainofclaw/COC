@@ -225,6 +225,8 @@ interface RpcAuthOptions {
   authToken?: string
   /** Enable admin RPC namespace (admin_*) */
   enableAdminRpc?: boolean
+  /** Explicitly trust loopback as an admin/governance caller. Default false. */
+  allowLoopbackRpcAuth?: boolean
 }
 
 interface RpcRuntimeOptions {
@@ -489,7 +491,8 @@ export function startRpcServer(
         // AND governance-mutating RPC methods. Computed unconditionally so the
         // governance gate (coc_submitProposal / coc_voteProposal) does not
         // depend on the admin-RPC feature flag being enabled.
-        const callerAuthorized = !!rpcAuthOptions?.authToken || isLoopbackAddress(clientIp)
+        const callerAuthorized = !!rpcAuthOptions?.authToken
+          || (rpcAuthOptions?.allowLoopbackRpcAuth === true && isLoopbackAddress(clientIp))
         rpcOpts.callerAuthorized = callerAuthorized
         if (rpcAuthOptions?.enableAdminRpc) {
           rpcOpts.enableAdminRpc = true
@@ -499,7 +502,8 @@ export function startRpcServer(
           // admin_removePeer (network split), admin_pruneStalePhantoms
           // (CPU DoS), admin_nodeInfo (info leak). Require either:
           //   (a) global Bearer auth was set and validated above, OR
-          //   (b) the request came from loopback (127.0.0.1 / ::1).
+          //   (b) loopback trust was explicitly enabled and the request
+          //       came from loopback (127.0.0.1 / ::1).
           // No RFC1918 allow — operators wanting LAN access must set
           // COC_RPC_AUTH_TOKEN explicitly.
           rpcOpts.adminAuthorized = callerAuthorized
@@ -2598,7 +2602,7 @@ async function handleRpc(
       // node's id is public — so without this gate any remote RPC client
       // could submit validator-governance proposals as the node.
       if (!(opts as Record<string, unknown>)?.callerAuthorized) {
-        unauthorized("coc_submitProposal requires a loopback request or RPC auth token")
+        unauthorized("coc_submitProposal requires RPC auth token or explicit loopback trust")
       }
       // #234: pre-fix the plain `new Error(...)` fell through to the
       // outer catch's `-32603 internal error` default. Per JSON-RPC
@@ -2693,7 +2697,7 @@ async function handleRpc(
       // public). Without this gate any remote RPC client could cast the
       // node's stake-weighted validator-governance vote.
       if (!(opts as Record<string, unknown>)?.callerAuthorized) {
-        unauthorized("coc_voteProposal requires a loopback request or RPC auth token")
+        unauthorized("coc_voteProposal requires RPC auth token or explicit loopback trust")
       }
       // #234: same -32601 mapping as coc_submitProposal.
       // #220: same null-check as coc_submitProposal — params=[] / [null]
@@ -3254,7 +3258,7 @@ async function handleRpc(
         methodNotFound("admin methods disabled (set enableAdminRpc=true)")
       }
       if (!(opts as Record<string, unknown>)?.adminAuthorized) {
-        unauthorized("admin methods require Bearer auth or loopback request")
+        unauthorized("admin methods require Bearer auth or explicit loopback trust")
       }
       const height = await Promise.resolve(chain.getHeight())
       const mempoolStats = chain.mempool.stats()
@@ -3280,7 +3284,7 @@ async function handleRpc(
         methodNotFound("admin methods disabled")
       }
       if (!(opts as Record<string, unknown>)?.adminAuthorized) {
-        unauthorized("admin methods require Bearer auth or loopback request")
+        unauthorized("admin methods require Bearer auth or explicit loopback trust")
       }
       // #240: pre-fix `String(...)` silently coerced numbers/bools to
       // plausible-looking strings ("123", "true"), bypassing the
@@ -3322,7 +3326,7 @@ async function handleRpc(
         methodNotFound("admin methods disabled")
       }
       if (!(opts as Record<string, unknown>)?.adminAuthorized) {
-        unauthorized("admin methods require Bearer auth or loopback request")
+        unauthorized("admin methods require Bearer auth or explicit loopback trust")
       }
       // #240: same shape guard as admin_addPeer — pre-fix `String(true)`
       // = "true" silently masqueraded as a peerId and the removePeer
@@ -3344,7 +3348,7 @@ async function handleRpc(
         methodNotFound("admin methods disabled")
       }
       if (!(opts as Record<string, unknown>)?.adminAuthorized) {
-        unauthorized("admin methods require Bearer auth or loopback request")
+        unauthorized("admin methods require Bearer auth or explicit loopback trust")
       }
       const peers = p2p.getPeers?.() ?? p2p.discovery.getActivePeers()
       return peers.map((peer: { id: string; url?: string }) => ({
@@ -3364,7 +3368,7 @@ async function handleRpc(
         methodNotFound("admin methods disabled")
       }
       if (!(opts as Record<string, unknown>)?.adminAuthorized) {
-        unauthorized("admin methods require Bearer auth or loopback request")
+        unauthorized("admin methods require Bearer auth or explicit loopback trust")
       }
       const persistentChain = chain as unknown as { pruneStalePhantoms?: () => Promise<{
         scanned: number

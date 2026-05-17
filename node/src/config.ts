@@ -125,6 +125,8 @@ export interface NodeConfig {
   rpcAuthToken?: string
   // Admin RPC methods enabled
   enableAdminRpc: boolean
+  // Treat loopback requests as admin/governance-authorized without Bearer auth.
+  allowLoopbackRpcAuth: boolean
   // Node running mode: full (default pruning), archive (no pruning), light (aggressive pruning), sequencer (L2 rollup — no consensus overhead)
   nodeMode: "full" | "archive" | "light" | "sequencer"
   // Block signature enforcement: "off" = ignore, "monitor" = warn, "enforce" = reject
@@ -381,6 +383,10 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     process.env.COC_ENABLE_ADMIN_RPC ?? (user as Record<string, unknown>).enableAdminRpc,
     false,
   )
+  const allowLoopbackRpcAuth = parseBooleanFlag(
+    process.env.COC_RPC_ALLOW_LOOPBACK_ADMIN ?? (user as Record<string, unknown>).allowLoopbackRpcAuth,
+    false,
+  )
 
   // Node running mode
   const nodeModeRaw = process.env.COC_NODE_MODE ?? (user as Record<string, unknown>).nodeMode
@@ -586,6 +592,7 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     nodePrivateKey,
     rpcAuthToken,
     enableAdminRpc,
+    allowLoopbackRpcAuth,
     ...user,
     poseNonceRegistryPath,
     poseNonceRegistryTtlMs,
@@ -621,6 +628,7 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     wireBind,
     rpcAuthToken,
     enableAdminRpc,
+    allowLoopbackRpcAuth,
     soulRegistryAddress,
     didRegistryAddress,
     nodeMode,
@@ -896,6 +904,10 @@ export function validateConfig(cfg: Partial<NodeConfig>): string[] {
 
   if (cfg.p2pRequireInboundAuth !== undefined && typeof cfg.p2pRequireInboundAuth !== "boolean") {
     errors.push("p2pRequireInboundAuth must be a boolean")
+  }
+
+  if (cfg.allowLoopbackRpcAuth !== undefined && typeof cfg.allowLoopbackRpcAuth !== "boolean") {
+    errors.push("allowLoopbackRpcAuth must be a boolean")
   }
 
   if (cfg.p2pInboundAuthMode !== undefined) {

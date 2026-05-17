@@ -41,10 +41,10 @@ module.exports = {
         // Active probe knobs — use loopback on prod to avoid hairpin-NAT cold-start
         PROBE_RPC: 'http://127.0.0.1:28780',
         PROBE_CHAIN_ID: '88780',
-        PROBE_PK: '0x8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba', // Hardhat #5, prefunded 1000 COC
+        PROBE_PK: process.env.PROBE_PK || '',
         PROBE_TX_TIMEOUT_MS: '30000',
         // Remediation knobs
-        DEPLOYER_PK: '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80', // Hardhat #0, ~10M COC
+        DEPLOYER_PK: process.env.DEPLOYER_PK || '',
         FAUCET_ADDR: '0x47f9940cCf9777C0407F094A1B0d8c50b0DD01BF',
         FAUCET_MIN_COC: '1000',
         FAUCET_REFUND_COC: '50000',
