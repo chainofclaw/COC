@@ -485,6 +485,12 @@ export function startRpcServer(
           return sendError(res, null, "parse error: invalid JSON", -32700)
         }
         const rpcOpts: Record<string, unknown> = {}
+        // Loopback OR a validated global Bearer token authorizes admin-class
+        // AND governance-mutating RPC methods. Computed unconditionally so the
+        // governance gate (coc_submitProposal / coc_voteProposal) does not
+        // depend on the admin-RPC feature flag being enabled.
+        const callerAuthorized = !!rpcAuthOptions?.authToken || isLoopbackAddress(clientIp)
+        rpcOpts.callerAuthorized = callerAuthorized
         if (rpcAuthOptions?.enableAdminRpc) {
           rpcOpts.enableAdminRpc = true
           // #336: admin methods are gated by enableAdminRpc but pre-fix
@@ -496,8 +502,7 @@ export function startRpcServer(
           //   (b) the request came from loopback (127.0.0.1 / ::1).
           // No RFC1918 allow — operators wanting LAN access must set
           // COC_RPC_AUTH_TOKEN explicitly.
-          const hasGlobalAuth = !!rpcAuthOptions?.authToken
-          rpcOpts.adminAuthorized = hasGlobalAuth || isLoopbackAddress(clientIp)
+          rpcOpts.adminAuthorized = callerAuthorized
         }
         const resolvedNodeId = nodeId ?? runtimeOptions?.nodeId
         if (resolvedNodeId) {
@@ -2588,6 +2593,13 @@ async function handleRpc(
       }))
     }
     case "coc_submitProposal": {
+      // Governance-mutating: gate to loopback / Bearer-auth callers. The
+      // later `proposer === localNodeId` check is NOT authentication — the
+      // node's id is public — so without this gate any remote RPC client
+      // could submit validator-governance proposals as the node.
+      if (!(opts as Record<string, unknown>)?.callerAuthorized) {
+        unauthorized("coc_submitProposal requires a loopback request or RPC auth token")
+      }
       // #234: pre-fix the plain `new Error(...)` fell through to the
       // outer catch's `-32603 internal error` default. Per JSON-RPC
       // §5.1, -32603 is for server faults; "feature not enabled on
@@ -2675,6 +2687,14 @@ async function handleRpc(
       }
     }
     case "coc_voteProposal": {
+      // Governance-mutating: gate to loopback / Bearer-auth callers. A vote
+      // crossing the threshold mutates the validator set via executeProposal,
+      // and `voterId === localNodeId` is not authentication (the node's id is
+      // public). Without this gate any remote RPC client could cast the
+      // node's stake-weighted validator-governance vote.
+      if (!(opts as Record<string, unknown>)?.callerAuthorized) {
+        unauthorized("coc_voteProposal requires a loopback request or RPC auth token")
+      }
       // #234: same -32601 mapping as coc_submitProposal.
       // #220: same null-check as coc_submitProposal — params=[] / [null]
       // pre-fix bubbled "Cannot read properties of null (reading 'voterId')"
