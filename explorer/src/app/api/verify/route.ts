@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createHash, timingSafeEqual } from 'node:crypto'
 import { verifyContract, type VerifyParams } from '@/lib/solc-verify'
+import { getVerifyRateLimitClientIp } from '@/lib/verify-client-ip'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -16,20 +17,6 @@ const VERIFY_API_KEY = process.env.COC_VERIFY_API_KEY
 
 type Bucket = { count: number; resetAt: number }
 const rateBuckets = new Map<string, Bucket>()
-
-function getClientIp(request: NextRequest): string {
-  const xRealIp = request.headers.get('x-real-ip')
-  if (xRealIp) return xRealIp
-  const xForwardedFor = request.headers.get('x-forwarded-for')
-  if (xForwardedFor) {
-    const parts = xForwardedFor
-      .split(',')
-      .map((value) => value.trim())
-      .filter(Boolean)
-    return parts[parts.length - 1] ?? 'unknown'
-  }
-  return 'unknown'
-}
 
 function isValidApiKey(provided: string, expected: string): boolean {
   const providedHash = createHash('sha256').update(provided).digest()
@@ -79,7 +66,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       }
     }
 
-    const clientIp = getClientIp(request)
+    const clientIp = getVerifyRateLimitClientIp(request.headers)
     const rateKey = `${clientIp}:${request.headers.get('x-verify-api-key') ?? 'anon'}`
     const limit = checkAndConsumeRateLimit(rateKey)
     if (!limit.allowed) {
