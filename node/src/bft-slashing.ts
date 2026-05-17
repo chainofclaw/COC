@@ -44,6 +44,16 @@ export class BftSlashingHandler {
   private readonly governance: ValidatorGovernance
   private readonly slashHistory: SlashEvent[] = []
   private readonly onSlash?: (event: SlashEvent) => void
+  /**
+   * Order-independent keys of equivocations already slashed. A single
+   * equivocation must be slashed exactly once: peer-gossiped evidence
+   * (issue #620) reaches handleEquivocation, so without dedup a malicious
+   * peer could re-gossip one valid evidence repeatedly and drain a
+   * validator's whole stake 10% at a time. Node-side analogue of the
+   * on-chain EquivocationDetector replay fix (#651).
+   */
+  private readonly consumedEvidence = new Set<string>()
+  private static readonly MAX_CONSUMED_EVIDENCE = 10_000
 
   constructor(
     governance: ValidatorGovernance,
@@ -71,6 +81,25 @@ export class BftSlashingHandler {
       })
       return null
     }
+
+    // Replay guard: one equivocation = one slash. The two block hashes are
+    // sorted so swapping blockHash1/blockHash2 can't forge a fresh key.
+    const evidenceKey = this.evidenceKey(evidence)
+    if (this.consumedEvidence.has(evidenceKey)) {
+      log.warn("equivocation evidence already slashed, ignoring replay", {
+        validatorId: evidence.validatorId,
+        height: evidence.height.toString(),
+        phase: evidence.phase,
+      })
+      return null
+    }
+    // Evict oldest keys (Set preserves insertion order) before recording.
+    while (this.consumedEvidence.size >= BftSlashingHandler.MAX_CONSUMED_EVIDENCE) {
+      const oldest = this.consumedEvidence.values().next().value
+      if (oldest === undefined) break
+      this.consumedEvidence.delete(oldest)
+    }
+    this.consumedEvidence.add(evidenceKey)
 
     // Calculate slash amount
     const slashAmount = (validator.stake * BigInt(this.config.slashPercent)) / 100n
@@ -115,6 +144,18 @@ export class BftSlashingHandler {
 
     this.onSlash?.(event)
     return event
+  }
+
+  /**
+   * Order-independent dedup key for one equivocation. The two conflicting
+   * block hashes are lowercased and sorted so blockHash1/blockHash2 swap
+   * cannot mint a fresh key for the same offence.
+   */
+  private evidenceKey(evidence: EquivocationEvidence): string {
+    const [loHash, hiHash] = [evidence.blockHash1, evidence.blockHash2]
+      .map((h) => h.toLowerCase())
+      .sort()
+    return `${evidence.validatorId.toLowerCase()}|${evidence.height}|${evidence.phase}|${loHash}|${hiHash}`
   }
 
   /** Get all slash events */
