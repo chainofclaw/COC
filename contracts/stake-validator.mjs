@@ -17,10 +17,17 @@
  * requestUnstake/withdraw).
  */
 import { JsonRpcProvider, Wallet, Contract, SigningKey, keccak256, getBytes, parseEther, formatEther } from "ethers"
+import { HARDHAT_DEV_PRIVATE_KEYS, resolvePrivateKeyForRpc } from "../scripts/lib/key-safety.mjs"
 
 const RPC = process.env.RPC || "http://209.74.64.88:28780"
 const REGISTRY = process.env.REGISTRY || "0xB7f8BC63BbcaD18155201308C8f3540b07f84F5e"
-const FUNDER_KEY = process.env.FUNDER_KEY || "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+const FUNDER_KEY = resolvePrivateKeyForRpc({
+  envValue: process.env.FUNDER_KEY,
+  envName: "FUNDER_KEY",
+  fallbackDevKey: HARDHAT_DEV_PRIVATE_KEYS[0],
+  rpcUrl: RPC,
+  label: "validator staking",
+})
 const STAKER_KEY = process.env.STAKER_KEY
 if (!STAKER_KEY) { console.error("ERROR: STAKER_KEY env required"); process.exit(2) }
 const STAKE_ETH = process.env.STAKE_ETH || "32"

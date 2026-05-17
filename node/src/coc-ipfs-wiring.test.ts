@@ -19,11 +19,18 @@ import assert from "node:assert/strict"
 import { mkdtemp, rm } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
+import { keccak256 } from "ethers"
 import { IpfsBlockstore } from "./ipfs-blockstore.ts"
 import type { CidString } from "./ipfs-types.ts"
 import { DhtNetwork } from "./dht-network.ts"
 import { WireConnectionManager } from "./wire-connection-manager.ts"
 import { buildCocIpfsWiring } from "./coc-ipfs-wiring.ts"
+
+/** Content-addressed CID ("0x…" keccak256 convention) for `bytes` — the
+ *  blockstore's remote-fetch path verifies pulled blocks against this. */
+function cidFor(bytes: Uint8Array): CidString {
+  return keccak256(bytes) as CidString
+}
 
 // Factory for a DHT network with no live peers — we only exercise the
 // in-memory provider record map. Matches the pattern in
@@ -73,8 +80,8 @@ describe("coc-ipfs-wiring", () => {
   })
 
   it("blockstore.get local miss → DHT providers → peer pull → cached", async () => {
-    const cid = "QmWiredCid" as CidString
     const peerBytes = Buffer.from("remote content")
+    const cid = cidFor(peerBytes)
     const dht = makeDht()
     dht.putProvider(cid, "peer-a", 60_000)
     const connMgr = makeConnMgr(new Map([["peer-a", peerBytes]]))
@@ -100,10 +107,11 @@ describe("coc-ipfs-wiring", () => {
   })
 
   it("remote fetch self-announces via onPut so other peers can discover us", async () => {
-    const cid = "QmSelfAnnounce" as CidString
+    const announceBytes = Buffer.from("x")
+    const cid = cidFor(announceBytes)
     const dht = makeDht("0xmyself")
     dht.putProvider(cid, "peer-a", 60_000)
-    const connMgr = makeConnMgr(new Map([["peer-a", Buffer.from("x")]]))
+    const connMgr = makeConnMgr(new Map([["peer-a", announceBytes]]))
 
     const wiring = buildCocIpfsWiring({
       localNodeId: "0xmyself",
@@ -718,33 +726,40 @@ describe("coc-ipfs-wiring", () => {
   })
 
   it("first-success over multiple providers returns the fastest", async () => {
-    const cid = "QmRace" as CidString
+    // Content addressing means every honest provider serves byte-identical
+    // content for a CID — the race is purely latency. Assert the result is
+    // the genuine content and that we did not block on the slow provider.
+    const content = Buffer.from("raced content")
+    const cid = cidFor(content)
     const dht = makeDht()
     dht.putProvider(cid, "slow", 60_000)
     dht.putProvider(cid, "fast", 60_000)
 
     const mgr = new WireConnectionManager({ nodeId: "local", chainId: 1 })
-    const mk = (id: string, bytes: Uint8Array, delay: number) => ({
+    const mk = (id: string, delay: number) => ({
       isConnected: () => true,
       getRemoteNodeId: () => id,
       requestBlock: async () => {
         await new Promise((r) => setTimeout(r, delay))
-        return bytes
+        return content
       },
       disconnect: () => {},
     }) as unknown as import("./wire-client.ts").WireClient
     // @ts-expect-error
-    mgr.connections.set("slow", { client: mk("slow", Buffer.from("slow"), 200), host: "h", port: 1, connectedAtMs: 0 })
+    mgr.connections.set("slow", { client: mk("slow", 200), host: "h", port: 1, connectedAtMs: 0 })
     // @ts-expect-error
-    mgr.connections.set("fast", { client: mk("fast", Buffer.from("fast"), 10), host: "h", port: 2, connectedAtMs: 0 })
+    mgr.connections.set("fast", { client: mk("fast", 10), host: "h", port: 2, connectedAtMs: 0 })
 
     const wiring = buildCocIpfsWiring({
       localNodeId: "0xaa", blockstore, dht, connMgr: mgr,
     })
     blockstore.setHooks(wiring.blockstoreHooks)
 
+    const startMs = Date.now()
     const block = await blockstore.get(cid)
-    assert.equal(block.bytes.toString(), "fast")
+    const elapsedMs = Date.now() - startMs
+    assert.deepEqual(Array.from(block.bytes), Array.from(content))
+    assert.ok(elapsedMs < 150, `fast provider must win the race (elapsed ${elapsedMs}ms)`)
     mgr.stop()
   })
 
@@ -927,8 +942,8 @@ describe("coc-ipfs-wiring", () => {
   // null instantly and synchronous /api/v0/get returned 404 even though
   // the peer was holding the bytes.
   it("fetchRemote falls back to connected peers when DHT has no providers (#71 Bug B)", async () => {
-    const cid = "QmFallback" as CidString
     const remoteBytes = Buffer.from("via connected peer")
+    const cid = cidFor(remoteBytes)
     const dht = makeDht("0xaa")
     // Note: no putProvider call — DHT is empty for this CID.
 

@@ -43,14 +43,20 @@ export default function PostDetailPage() {
 
     setSubmitting(true)
     try {
-      const message = buildSignMessage('reply', { post_id: postId, timestamp: Date.now() })
+      const content = replyContent.trim()
+      const message = buildSignMessage('reply', {
+        post_id: postId,
+        content,
+        parent_reply_id: replyingTo ?? null,
+        timestamp: Date.now(),
+      })
       const signature = await signMessage(message)
 
       const res = await fetch(`/api/forum/posts/${postId}/replies`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          content: replyContent,
+          content,
           address,
           signature,
           message,
@@ -70,7 +76,7 @@ export default function PostDetailPage() {
 
   const handleVotePost = async (type: 'up' | 'down') => {
     if (!isConnected || !address) return { upvotes: post?.upvotes || 0, downvotes: post?.downvotes || 0 }
-    const message = buildSignMessage('vote', { target: 'post', id: postId, type })
+    const message = buildSignMessage('vote', { target: 'post', id: postId, type, timestamp: Date.now() })
     const signature = await signMessage(message)
     const res = await fetch(`/api/forum/posts/${postId}/vote`, {
       method: 'POST',
@@ -82,7 +88,7 @@ export default function PostDetailPage() {
 
   const handleVoteReply = async (replyId: number, type: 'up' | 'down') => {
     if (!isConnected || !address) return { upvotes: 0, downvotes: 0 }
-    const message = buildSignMessage('vote', { target: 'reply', id: replyId, type })
+    const message = buildSignMessage('vote', { target: 'reply', id: replyId, type, timestamp: Date.now() })
     const signature = await signMessage(message)
     const res = await fetch(`/api/forum/posts/${postId}/vote`, {
       method: 'POST',

@@ -1,4 +1,4 @@
-import { keccak256, parseEther, Wallet } from "ethers"
+import { keccak256, parseEther } from "ethers"
 import { appendFileSync, existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { loadNodeConfig } from "./config.ts"
@@ -14,7 +14,7 @@ import { P2PNode, buildSignedGetAuth } from "./p2p.ts"
 import type { BftMessagePayload, BftEvidencePayload } from "./p2p.ts"
 import { ConsensusEngine } from "./consensus.ts"
 import type { SnapSyncProvider } from "./consensus.ts"
-import { IpfsBlockstore } from "./ipfs-blockstore.ts"
+import { IpfsBlockstore, cidMatchesBytes } from "./ipfs-blockstore.ts"
 import { UnixFsBuilder } from "./ipfs-unixfs.ts"
 import { IpfsHttpServer } from "./ipfs-http.ts"
 import { createNodeSigner } from "./crypto/signer.ts"
@@ -178,8 +178,9 @@ if (existsSync(poisonStorePath)) {
   }
 }
 
-// Node identity signer — created early so Wire/BFT/PoSe all share the same key
-const nodePrivateKey = config.nodePrivateKey ?? process.env.COC_NODE_PK ?? Wallet.createRandom().privateKey
+// Node identity signer — created early so Wire/BFT/PoSe all share the same key.
+// loadNodeConfig resolves COC_NODE_KEY/COC_NODE_PK, persisted node-key, or a new key.
+const nodePrivateKey = config.nodePrivateKey
 const nodeSigner = createNodeSigner(nodePrivateKey)
 
 // Attach signer to chain engine for block proposer signatures
@@ -1405,7 +1406,16 @@ startRpcServer(
         const remoteId = client.getRemoteNodeId()
         if (!remoteId || !peerSet.has(remoteId.toLowerCase())) continue
         const bytes = await client.requestBlock(cid, 5000)
-        if (bytes && bytes.length > 0) return bytes
+        if (!bytes || bytes.length === 0) continue
+        // Content-addressing enforcement. This pull bypasses the
+        // IpfsBlockstore (and its #658 verification), so a peer could
+        // otherwise serve forged bytes for `cid` straight back to the
+        // coc_ipfsFetchBlockFromPeer RPC caller — and, for the C2.4 audit
+        // sampling use case, a malicious "independent" peer could forge a
+        // false audit failure against an honest prover. A block that does
+        // not hash to `cid` is discarded; try the next provider.
+        if (!(await cidMatchesBytes(cid, bytes))) continue
+        return bytes
       }
       return null
     },
@@ -1450,6 +1460,7 @@ startRpcServer(
   {
     authToken: config.rpcAuthToken,
     enableAdminRpc: config.enableAdminRpc,
+    allowLoopbackRpcAuth: config.allowLoopbackRpcAuth,
   },
 )
 

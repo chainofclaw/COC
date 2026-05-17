@@ -8,7 +8,7 @@
 // rebuilding a node, wiping leveldb) must remain manual.
 //
 //   1. refund-faucet  — fund the testnet faucet hot-wallet from the
-//                       Hardhat-#0 deployer when balance drops below
+//                       DEPLOYER_PK account when balance drops below
 //                       FAUCET_MIN_COC (default 1000). Refund amount:
 //                       FAUCET_REFUND_COC (default 50000). Rate: 1/day.
 //
@@ -22,11 +22,11 @@
 import { ethers } from 'ethers'
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { HARDHAT_DEV_PRIVATE_KEYS, resolvePrivateKeyForRpc } from '../lib/key-safety.mjs'
 
 const cfg = {
   rpc: process.env.PROBE_RPC || 'https://clawchain.io/api/testnet/rpc',
   chainId: Number(process.env.PROBE_CHAIN_ID || '88780'),
-  deployerPk: process.env.DEPLOYER_PK || '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80',
   faucetAddr: process.env.FAUCET_ADDR || '0x47f9940cCf9777C0407F094A1B0d8c50b0DD01BF',
   faucetMin: Number(process.env.FAUCET_MIN_COC || '1000'),
   faucetRefund: Number(process.env.FAUCET_REFUND_COC || '50000'),
@@ -43,6 +43,13 @@ const cfg = {
     { name: 'v5', host: '159.198.36.25',   unit: 'coc-node@1'  },
   ],
 }
+cfg.deployerPk = resolvePrivateKeyForRpc({
+  envValue: process.env.DEPLOYER_PK,
+  envName: 'DEPLOYER_PK',
+  fallbackDevKey: HARDHAT_DEV_PRIVATE_KEYS[0],
+  rpcUrl: cfg.rpc,
+  label: 'synthetic remediation',
+})
 
 function loadState() {
   try {

@@ -16,6 +16,7 @@
 
 const { expect } = require("chai")
 const { ethers } = require("hardhat")
+const { malleateSignature } = require("./signature-utils.cjs")
 
 // Helper: register a node from a random wallet with proper ownership sig
 async function registerNode(manager, funder, opts = {}) {
@@ -661,6 +662,29 @@ describe("PoSeManager: Extended Coverage", function () {
   })
 
   describe("endpoint attestation", function () {
+    it("rejects high-s ownership signatures", async function () {
+      const operator = ethers.Wallet.createRandom().connect(ethers.provider)
+      await owner.sendTransaction({ to: operator.address, value: ethers.parseEther("5") })
+
+      const pubkey = operator.signingKey.publicKey
+      const nodeId = ethers.keccak256(pubkey)
+      const serviceCommitment = ethers.keccak256(ethers.toUtf8Bytes("svc-high-s-owner"))
+      const endpointCommitment = ethers.keccak256(ethers.toUtf8Bytes(`ep-high-s-owner-${Date.now()}`))
+      const metadataHash = ethers.keccak256(ethers.toUtf8Bytes("meta"))
+      const ownershipMsgHash = ethers.keccak256(
+        ethers.solidityPacked(["string", "bytes32", "address"], ["coc-register:", nodeId, operator.address])
+      )
+      const ownershipSig = malleateSignature(await operator.signMessage(ethers.getBytes(ownershipMsgHash)))
+      const bond = await manager.requiredBond(operator.address)
+
+      await expect(
+        manager.connect(operator).registerNode(
+          nodeId, pubkey, 1, serviceCommitment, endpointCommitment, metadataHash, ownershipSig, "0x",
+          { value: bond }
+        )
+      ).to.be.revertedWithCustomError(manager, "InvalidOwnershipProof")
+    })
+
     it("valid endpoint attestation passes", async function () {
       const operator = ethers.Wallet.createRandom().connect(ethers.provider)
       await owner.sendTransaction({ to: operator.address, value: ethers.parseEther("5") })
@@ -690,6 +714,35 @@ describe("PoSeManager: Extended Coverage", function () {
 
       const node = await manager.getNode(nodeId)
       expect(node.active).to.be.true
+    })
+
+    it("rejects high-s endpoint attestations", async function () {
+      const operator = ethers.Wallet.createRandom().connect(ethers.provider)
+      await owner.sendTransaction({ to: operator.address, value: ethers.parseEther("5") })
+
+      const pubkey = operator.signingKey.publicKey
+      const nodeId = ethers.keccak256(pubkey)
+      const serviceCommitment = ethers.keccak256(ethers.toUtf8Bytes("svc-high-s-attest"))
+      const endpointCommitment = ethers.keccak256(ethers.toUtf8Bytes(`ep-high-s-attest-${Date.now()}`))
+      const metadataHash = ethers.keccak256(ethers.toUtf8Bytes("meta"))
+
+      const ownershipMsgHash = ethers.keccak256(
+        ethers.solidityPacked(["string", "bytes32", "address"], ["coc-register:", nodeId, operator.address])
+      )
+      const ownershipSig = await operator.signMessage(ethers.getBytes(ownershipMsgHash))
+
+      const endpointMsgHash = ethers.keccak256(
+        ethers.solidityPacked(["string", "bytes32", "bytes32"], ["coc-endpoint:", endpointCommitment, nodeId])
+      )
+      const endpointAttestation = malleateSignature(await operator.signMessage(ethers.getBytes(endpointMsgHash)))
+      const bond = await manager.requiredBond(operator.address)
+
+      await expect(
+        manager.connect(operator).registerNode(
+          nodeId, pubkey, 1, serviceCommitment, endpointCommitment, metadataHash, ownershipSig, endpointAttestation,
+          { value: bond }
+        )
+      ).to.be.revertedWithCustomError(manager, "InvalidOwnershipProof")
     })
 
     it("invalid endpoint attestation reverts", async function () {

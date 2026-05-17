@@ -7,6 +7,9 @@ import {PoSeManagerStorage} from "./PoSeManagerStorage.sol";
 import {MerkleProofLite} from "./MerkleProofLite.sol";
 
 contract PoSeManager is IPoSeManager, PoSeManagerStorage {
+    uint256 internal constant SECP256K1N_HALF =
+        0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0;
+
     uint16 internal constant BPS_DENOMINATOR = 10_000;
 
     error InvalidNodeId();
@@ -358,6 +361,7 @@ contract PoSeManager is IPoSeManager, PoSeManagerStorage {
         }
         if (v < 27) v += 27;
         require(v == 27 || v == 28, "invalid v value");
+        if (uint256(s) > SECP256K1N_HALF) revert InvalidOwnershipProof();
 
         address recovered = ecrecover(ethSignedHash, v, r, s);
         if (recovered == address(0)) revert InvalidOwnershipProof();
@@ -387,6 +391,7 @@ contract PoSeManager is IPoSeManager, PoSeManagerStorage {
         }
         if (v < 27) v += 27;
         require(v == 27 || v == 28, "invalid attestation v value");
+        if (uint256(s) > SECP256K1N_HALF) revert InvalidOwnershipProof();
 
         address recovered = ecrecover(ethSignedHash, v, r, s);
         if (recovered == address(0)) revert InvalidOwnershipProof();

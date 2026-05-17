@@ -15,6 +15,7 @@
 
 const { expect } = require("chai")
 const { ethers } = require("hardhat")
+const { malleateSignature } = require("./signature-utils.cjs")
 
 // Register a node on PoSeManagerV2
 async function registerNode(manager, funder, opts = {}) {
@@ -150,6 +151,44 @@ describe("PoSeManagerV2", function () {
     await manager.setAllowEmptyWitnessSubmission(true)
   })
 
+  describe("initialize", function () {
+    it("rejects repeated initialization", async function () {
+      const chainId = (await ethers.provider.getNetwork()).chainId
+
+      await expect(
+        manager.initialize(chainId, await manager.getAddress(), ethers.parseEther("0.01"))
+      ).to.be.revertedWithCustomError(manager, "AlreadyInitialized")
+    })
+
+    it("rejects a zero verifying contract", async function () {
+      const Factory = await ethers.getContractFactory("PoSeManagerV2")
+      const fresh = await Factory.deploy()
+      await fresh.waitForDeployment()
+      const chainId = (await ethers.provider.getNetwork()).chainId
+
+      await expect(
+        fresh.initialize(chainId, ethers.ZeroAddress, ethers.parseEther("0.01"))
+      ).to.be.revertedWithCustomError(fresh, "ZeroAddress")
+    })
+
+    it("rejects a zero challenge bond minimum", async function () {
+      const Factory = await ethers.getContractFactory("PoSeManagerV2")
+      const fresh = await Factory.deploy()
+      await fresh.waitForDeployment()
+      const chainId = (await ethers.provider.getNetwork()).chainId
+
+      await expect(
+        fresh.initialize(chainId, await fresh.getAddress(), 0)
+      ).to.be.revertedWithCustomError(fresh, "BondTooLow")
+    })
+
+    it("rejects lowering challenge bond minimum to zero", async function () {
+      await expect(
+        manager.setChallengeBondMin(0)
+      ).to.be.revertedWithCustomError(manager, "BondTooLow")
+    })
+  })
+
   describe("Node registration", function () {
     it("registers a node and tracks it as active", async function () {
       const { nodeId } = await registerNode(manager, deployer)
@@ -163,6 +202,35 @@ describe("PoSeManagerV2", function () {
       await registerNode(manager, deployer)
       await registerNode(manager, deployer)
       expect(await manager.getActiveNodeCount()).to.equal(3)
+    })
+
+    it("rejects high-s ownership signatures", async function () {
+      const operator = ethers.Wallet.createRandom().connect(ethers.provider)
+      await deployer.sendTransaction({ to: operator.address, value: ethers.parseEther("5") })
+
+      const pubkey = operator.signingKey.publicKey
+      const nodeId = ethers.keccak256(pubkey)
+      const serviceCommitment = ethers.keccak256(ethers.toUtf8Bytes("svc-high-s"))
+      const endpointCommitment = ethers.keccak256(ethers.toUtf8Bytes(`ep-high-s-${Date.now()}`))
+      const metadataHash = ethers.keccak256(ethers.toUtf8Bytes("meta"))
+      const messageHash = ethers.keccak256(
+        ethers.solidityPacked(["string", "bytes32", "address"], ["coc-register:", nodeId, operator.address])
+      )
+      const ownershipSig = malleateSignature(await operator.signMessage(ethers.getBytes(messageHash)))
+
+      await expect(
+        manager.connect(operator).registerNode(
+          nodeId,
+          pubkey,
+          7,
+          serviceCommitment,
+          endpointCommitment,
+          metadataHash,
+          ownershipSig,
+          "0x",
+          { value: ethers.parseEther("0.1") },
+        )
+      ).to.be.revertedWithCustomError(manager, "InvalidOwnershipProof")
     })
   })
 

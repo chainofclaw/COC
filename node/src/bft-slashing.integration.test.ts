@@ -125,6 +125,44 @@ describe("BFT Slashing Integration", () => {
       assert.equal(slasher.getSlashesFor("validator-0").length, 2)
       assert.equal(gov.getTreasuryBalance(), 190n)
     })
+
+    it("does not re-slash for a replayed (identical) equivocation evidence", () => {
+      // Security regression (#664): peer-gossiped equivocation evidence
+      // reaches handleEquivocation, so a malicious peer could re-gossip ONE
+      // valid evidence repeatedly and drain a validator 10% at a time. One
+      // equivocation must produce exactly one slash.
+      const gov = setupGovernance([1000n, 100n, 100n])
+      const slasher = new BftSlashingHandler(gov, { slashPercent: 10 })
+
+      const evidence: EquivocationEvidence = {
+        validatorId: "validator-0",
+        height: 10n,
+        phase: "prepare",
+        blockHash1: "0xaaa" as Hex,
+        blockHash2: "0xbbb" as Hex,
+        detectedAtMs: Date.now(),
+      }
+
+      const first = slasher.handleEquivocation(evidence)
+      assert.ok(first, "first delivery slashes")
+      assert.equal(gov.getValidator("validator-0")!.stake, 900n)
+
+      // Replay the identical evidence — must be a no-op.
+      const replay = slasher.handleEquivocation(evidence)
+      assert.equal(replay, null, "replayed evidence must not slash again")
+      assert.equal(gov.getValidator("validator-0")!.stake, 900n, "stake unchanged on replay")
+
+      // Hash order swapped — still the same equivocation, still rejected.
+      const swapped = slasher.handleEquivocation({
+        ...evidence,
+        blockHash1: "0xbbb" as Hex,
+        blockHash2: "0xaaa" as Hex,
+      })
+      assert.equal(swapped, null, "hash-swapped replay must not slash again")
+      assert.equal(gov.getValidator("validator-0")!.stake, 900n)
+
+      assert.equal(slasher.getSlashesFor("validator-0").length, 1, "exactly one slash recorded")
+    })
   })
 
   describe("slash event callback", () => {

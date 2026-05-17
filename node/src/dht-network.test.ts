@@ -323,6 +323,49 @@ describe("DhtNetwork", () => {
     assert.ok(result.every((p) => /^0x[0-9a-f]+$/i.test(p.id)))
   })
 
+  it("should drop FIND_NODE peers whose address is an SSRF target", async () => {
+    // A malicious FIND_NODE response must not be able to inject a peer
+    // pointing at cloud metadata / link-local — verifyPeer would otherwise
+    // open a connection to that internal endpoint. Devnet loopback/RFC1918
+    // stay allowed (same policy as peer-discovery.ts isSSRFTarget).
+    const seedClient = {
+      isConnected: () => true,
+      findNode: async () => [
+        { id: "0xddd", address: "169.254.169.254:19781" }, // cloud-metadata SSRF target
+        { id: "0xeee", address: "[::ffff:169.254.169.254]:19781" }, // hex IPv4-mapped form
+        { id: "0xfff", address: "10.0.0.4:19781" }, // legitimate devnet peer
+      ],
+      getRemoteNodeId: () => "0xbbb",
+    } as unknown as WireClient
+    const goodPeerClient = {
+      isConnected: () => true,
+      findNode: async () => [],
+      getRemoteNodeId: () => "0xfff",
+    } as unknown as WireClient
+
+    const wireClientByPeerId = new Map<string, WireClient>()
+    wireClientByPeerId.set("0xbbb", seedClient)
+    wireClientByPeerId.set("0xfff", goodPeerClient)
+
+    const discovered: DhtPeer[] = []
+    const network = new DhtNetwork({
+      localId: "0xaaa",
+      bootstrapPeers: [{ id: "0xbbb", address: "10.0.0.1", port: 19781 }],
+      wireClients: [],
+      wireClientByPeerId,
+      onPeerDiscovered: (peer) => discovered.push(peer),
+    })
+
+    network.start()
+    await network.iterativeLookup("0xccc")
+    network.stop()
+
+    assert.equal(network.routingTable.getPeer("0xddd"), null, "metadata-address peer must be dropped")
+    assert.equal(network.routingTable.getPeer("0xeee"), null, "IPv4-mapped metadata peer must be dropped")
+    assert.ok(!discovered.some((p) => p.id === "0xddd" || p.id === "0xeee"), "SSRF-target peers must not be discovered")
+    assert.ok(network.routingTable.getPeer("0xfff"), "legitimate devnet peer still added")
+  })
+
   it("should not keep newly discovered peers that fail verification", async () => {
     const seedClient = {
       isConnected: () => true,

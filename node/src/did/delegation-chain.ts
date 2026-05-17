@@ -17,25 +17,30 @@ export function scopeCovers(parent: DelegationScope, child: DelegationScope): bo
   // Action matching
   if (parent.action !== "*" && parent.action !== child.action) return false
 
-  // Constraint narrowing
-  if (child.constraints && parent.constraints) {
-    if (parent.constraints.epochMin !== undefined && child.constraints.epochMin !== undefined) {
-      if (child.constraints.epochMin < parent.constraints.epochMin) return false
+  // Constraint narrowing: every constraint the PARENT sets must also be
+  // present in the child and at least as restrictive. A child that omits a
+  // parent-set constraint is WIDER (e.g. unlimited maxValue, any node), not
+  // narrower — so it is NOT covered. A child may add constraints the parent
+  // lacks (that only narrows further).
+  if (parent.constraints) {
+    const pc = parent.constraints
+    const cc = child.constraints
+    if (pc.epochMin !== undefined) {
+      if (cc?.epochMin === undefined || cc.epochMin < pc.epochMin) return false
     }
-    if (parent.constraints.epochMax !== undefined && child.constraints.epochMax !== undefined) {
-      if (child.constraints.epochMax > parent.constraints.epochMax) return false
+    if (pc.epochMax !== undefined) {
+      if (cc?.epochMax === undefined || cc.epochMax > pc.epochMax) return false
     }
-    if (parent.constraints.maxValue !== undefined && child.constraints.maxValue !== undefined) {
-      if (child.constraints.maxValue > parent.constraints.maxValue) return false
+    if (pc.maxValue !== undefined) {
+      if (cc?.maxValue === undefined || cc.maxValue > pc.maxValue) return false
     }
-    if (parent.constraints.nodeIds && child.constraints.nodeIds) {
-      const parentSet = new Set(parent.constraints.nodeIds.map(id => id.toLowerCase()))
-      for (const nodeId of child.constraints.nodeIds) {
+    if (pc.nodeIds) {
+      if (!cc?.nodeIds) return false
+      const parentSet = new Set(pc.nodeIds.map(nid => nid.toLowerCase()))
+      for (const nodeId of cc.nodeIds) {
         if (!parentSet.has(nodeId.toLowerCase())) return false
       }
     }
-  } else if (child.constraints && !parent.constraints) {
-    // Child has constraints parent doesn't — child is narrower, that's fine
   }
 
   return true
@@ -227,13 +232,16 @@ export async function verifyDelegationProof(
   const chainResult = await verifyDelegationChain(proof.chain, nowMs, context, eip712Verifier)
   if (!chainResult.valid) return chainResult
 
-  // Verify that the leaf delegatee's scopes cover the requested action
+  // Verify that the leaf delegatee's scopes cover the requested action.
+  // An action descriptor carries no constraints — constraint enforcement
+  // (maxValue, epoch bounds, nodeIds) happens at execution time against the
+  // action payload — so coverage here is a resource + action match, not a
+  // constraint subset (which strict scopeCovers would now reject).
   const leafCred = proof.chain[proof.chain.length - 1]
-  const actionScope: DelegationScope = {
-    resource: proof.leafAction.resource,
-    action: proof.leafAction.action,
-  }
-  const covered = leafCred.scopes.some(s => scopeCovers(s, actionScope))
+  const covered = leafCred.scopes.some(
+    s => resourceMatches(s.resource, proof.leafAction.resource)
+      && (s.action === "*" || s.action === proof.leafAction.action),
+  )
   if (!covered) {
     return { valid: false, error: "leaf delegation scopes do not cover the requested action" }
   }

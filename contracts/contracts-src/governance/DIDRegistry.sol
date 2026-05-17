@@ -81,6 +81,8 @@ contract DIDRegistry {
     uint64  public constant MIN_DELEGATION_INTERVAL = 60; // 1 minute
     uint256 public constant MAX_VERIFICATION_METHODS = 8;
     uint256 public constant MAX_DELEGATIONS_PER_AGENT = 32;
+    uint256 internal constant SECP256K1N_HALF =
+        0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0;
 
     // Key purpose bitmask
     uint8 public constant PURPOSE_AUTH = 0x01;
@@ -191,12 +193,14 @@ contract DIDRegistry {
     error CredentialNotFound();
     error CredentialAlreadyRevoked();
     error InvalidCredentialHash();
+    error ZeroAddress();
 
     // -----------------------------------------------------------------------
     //  Constructor
     // -----------------------------------------------------------------------
 
     constructor(address _soulRegistry) {
+        if (_soulRegistry == address(0)) revert ZeroAddress();
         soulRegistry = ISoulRegistry(_soulRegistry);
         DOMAIN_SEPARATOR = keccak256(
             abi.encode(
@@ -362,6 +366,9 @@ contract DIDRegistry {
             DelegationRecord storage parent = delegations[parentDelegation];
             if (parent.delegator == bytes32(0)) revert DelegationNotFound();
             if (parent.revoked) revert DelegationAlreadyRevoked();
+            // Emergency revocation must also block chain extension — it only
+            // bumps globalRevocationEpoch, never the per-record `revoked` flag.
+            if (parent.issuedAt < globalRevocationEpoch[parent.delegator]) revert DelegationAlreadyRevoked();
             if (parent.expiresAt < uint64(block.timestamp)) revert DelegationExpired();
             // Delegatee of parent must be our delegator
             if (parent.delegatee != delegator) revert NotOwner();
@@ -434,14 +441,22 @@ contract DIDRegistry {
         return _agentDelegations[agentId];
     }
 
-    /// @notice Check if a delegation is currently valid
-    function isDelegationValid(bytes32 delegationId) external view returns (bool) {
-        DelegationRecord storage d = delegations[delegationId];
-        if (d.delegator == bytes32(0)) return false;
-        if (d.revoked) return false;
-        if (d.expiresAt < uint64(block.timestamp)) return false;
-        if (d.issuedAt < globalRevocationEpoch[d.delegator]) return false;
-        return true;
+    /// @notice Check if a delegation is currently valid.
+    /// @dev Revocation is transitive: the whole ancestor chain is walked, so a
+    ///      child is invalid the moment any ancestor is revoked, expired, or
+    ///      globally revoked. The walk is bounded by MAX_DELEGATION_DEPTH.
+    function isDelegationValid(bytes32 delegationId) public view returns (bool) {
+        bytes32 cur = delegationId;
+        for (uint256 hops = 0; hops <= uint256(MAX_DELEGATION_DEPTH); hops++) {
+            DelegationRecord storage d = delegations[cur];
+            if (d.delegator == bytes32(0)) return false;
+            if (d.revoked) return false;
+            if (d.expiresAt < uint64(block.timestamp)) return false;
+            if (d.issuedAt < globalRevocationEpoch[d.delegator]) return false;
+            if (d.depth == 0) return true; // reached the root — chain is clean
+            cur = d.parentDelegation;
+        }
+        return false; // chain exceeds the depth bound — treat as invalid
     }
 
     // -----------------------------------------------------------------------
@@ -468,6 +483,7 @@ contract DIDRegistry {
         bytes calldata sig
     ) external onlySoulOwner(parentAgentId) {
         if (ephemeralId == bytes32(0)) revert InvalidAgentId();
+        if (ephemeralAddress == address(0)) revert InvalidKeyAddress();
         if (ephemeralIdentities[ephemeralId].parentAgentId != bytes32(0)) revert EphemeralAlreadyExists();
         if (expiresAt <= uint64(block.timestamp)) revert InvalidExpiry();
 
@@ -603,6 +619,7 @@ contract DIDRegistry {
 
         if (v < 27) v += 27;
         if (v != 27 && v != 28) revert InvalidSignature();
+        if (uint256(s) > SECP256K1N_HALF) revert InvalidSignature();
 
         address recovered = ecrecover(hash, v, r, s);
         if (recovered == address(0)) revert InvalidSignature();

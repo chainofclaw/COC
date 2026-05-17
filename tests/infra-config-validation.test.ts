@@ -15,6 +15,7 @@ import { join } from "node:path"
 const ROOT = join(import.meta.dirname, "..")
 const DOCKER_DIR = join(ROOT, "docker")
 const TESTNET_CONFIGS = join(DOCKER_DIR, "testnet-configs")
+const HARDHAT_PRIVATE_KEY = /0x(?:ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80|59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d|5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a|7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6|47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a|8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba|92db14e403b83dfe3df233f83dfa3a0d7096f21ca9b0d6d6b8d88b2b4ec1564e|dbda1821b80551c9d65939329250298aa3472ba22feea921c0cf5d620ea67b97|2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6)\b/i
 
 // Helper to read JSON config
 async function readJsonConfig(path: string): Promise<Record<string, unknown>> {
@@ -107,6 +108,136 @@ describe("Security: secret hygiene", () => {
       /私钥\s*`0x[0-9a-fA-F]{64}`/,
       "deployment docs must not show real private keys inline",
     )
+  })
+
+  it("testnet compose requires faucet key injection and keeps IPFS HTTP local-only", async () => {
+    const compose = await readFile(join(DOCKER_DIR, "docker-compose.testnet.yml"), "utf-8")
+
+    assert.ok(
+      compose.includes("COC_FAUCET_PRIVATE_KEY=${COC_FAUCET_KEY:?"),
+      "testnet faucet must require COC_FAUCET_KEY instead of falling back to a public key",
+    )
+    assert.doesNotMatch(
+      compose,
+      /COC_FAUCET_PRIVATE_KEY=\$\{COC_FAUCET_KEY:-0x[0-9a-fA-F]{64}\}/,
+      "testnet faucet must not include a literal default private key",
+    )
+    assert.ok(
+      compose.includes('"127.0.0.1:28786:5001"'),
+      "IPFS HTTP API should bind to localhost by default",
+    )
+    assert.doesNotMatch(
+      compose,
+      /^\s*-\s*"28786:5001"/m,
+      "IPFS HTTP API must not publish on all interfaces by default",
+    )
+  })
+
+  it("testnet prover services use canonical COC_NODE_KEY env var", async () => {
+    const compose = await readFile(join(DOCKER_DIR, "docker-compose.testnet.yml"), "utf-8")
+
+    assert.doesNotMatch(
+      compose,
+      /^\s*-\s*COC_NODE_PK=/m,
+      "prover services must not set legacy COC_NODE_PK",
+    )
+    assert.match(compose, /COC_NODE_KEY=\$\{COC_NODE1_KEY:/)
+    assert.match(compose, /COC_NODE_KEY=\$\{COC_NODE2_KEY:/)
+    assert.match(compose, /COC_NODE_KEY=\$\{COC_NODE3_KEY:/)
+  })
+
+  it("deployment compose files do not ship literal node or runtime private keys", async () => {
+    const files = [
+      "docker-compose.testnet.yml",
+      "docker-compose.external.yml",
+      "docker-compose.light.yml",
+    ]
+
+    for (const file of files) {
+      const content = await readFile(join(DOCKER_DIR, file), "utf-8")
+      assert.doesNotMatch(
+        content,
+        /^\s*-\s*COC_(?:NODE_KEY|OPERATOR_PK|SLASHER_PK)=0x[0-9a-fA-F]{64}$/m,
+        `${file} must not include literal deployment private keys`,
+      )
+      assert.doesNotMatch(
+        content,
+        /COC_(?:NODE_KEY|OPERATOR_PK|SLASHER_PK)=\$\{[A-Z0-9_]+:-0x[0-9a-fA-F]{64}\}/,
+        `${file} must not include literal private-key fallbacks`,
+      )
+      assert.doesNotMatch(
+        content,
+        HARDHAT_PRIVATE_KEY,
+        `${file} must not publish Hardhat private keys in deployment config`,
+      )
+    }
+  })
+
+  it("native systemd env templates do not publish validator private keys or IPFS admin API", async () => {
+    const files = [
+      "systemd/native-env/node-1.env",
+      "systemd/native-env/node-2.env",
+      "systemd/native-env/node-3.env",
+      "systemd/native-env/node-multiserver.env.template",
+    ]
+
+    for (const file of files) {
+      const content = await readFile(join(DOCKER_DIR, file), "utf-8")
+      assert.doesNotMatch(
+        content,
+        /^COC_NODE_KEY=0x[0-9a-fA-F]{64}$/m,
+        `${file} must not include a literal validator private key`,
+      )
+    }
+
+    const node1 = await readFile(join(DOCKER_DIR, "systemd/native-env/node-1.env"), "utf-8")
+    assert.match(node1, /^COC_IPFS_BIND=127\.0\.0\.1$/m)
+    assert.doesNotMatch(node1, /^COC_IPFS_BIND=0\.0\.0\.0$/m)
+
+    const multiServer = await readFile(join(DOCKER_DIR, "systemd/native-env/node-multiserver.env.template"), "utf-8")
+    assert.match(multiServer, /^COC_IPFS_BIND=127\.0\.0\.1$/m)
+    assert.doesNotMatch(multiServer, /^COC_IPFS_BIND=0\.0\.0\.0$/m)
+  })
+
+  it("monitoring compose requires Grafana password injection and local-only ports", async () => {
+    const compose = await readFile(join(DOCKER_DIR, "docker-compose.monitoring.yml"), "utf-8")
+
+    assert.ok(
+      compose.includes("GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?"),
+      "Grafana admin password must be provided by deployment environment",
+    )
+    assert.doesNotMatch(
+      compose,
+      /GF_SECURITY_ADMIN_PASSWORD=(?:admin|password|cocprowl)/,
+      "monitoring compose must not ship a fixed weak Grafana password",
+    )
+    assert.ok(compose.includes('"127.0.0.1:9090:9090"'))
+    assert.ok(compose.includes('"127.0.0.1:3100:3000"'))
+    assert.doesNotMatch(compose, /^\s*-\s*"9090:9090"/m)
+    assert.doesNotMatch(compose, /^\s*-\s*"3100:3000"/m)
+  })
+
+  it("public-RPC automation scripts do not default to literal private keys", async () => {
+    const files = [
+      "scripts/synthetic/active-probe.mjs",
+      "scripts/synthetic/stress-probe.mjs",
+      "scripts/synthetic/remediate.mjs",
+      "contracts/stake-validator.mjs",
+      "contracts/unstake-validator.mjs",
+    ]
+
+    for (const relative of files) {
+      const content = await readFile(join(ROOT, relative), "utf-8")
+      assert.doesNotMatch(
+        content,
+        /process\.env\.[A-Z0-9_]+\s*(?:\|\||\?\?)\s*['"]0x[0-9a-fA-F]{64}['"]/,
+        `${relative} must not use a literal private key fallback`,
+      )
+      assert.ok(
+        content.includes("resolvePrivateKeyForRpc"),
+        `${relative} should gate dev private key fallback by RPC target`,
+      )
+    }
   })
 })
 

@@ -151,7 +151,7 @@ Configuration is loaded from `{COC_DATA_DIR}/node-config.json` and can be overri
 |----------|---------|-------------|
 | `COC_DATA_DIR` | `~/.clawdbot/coc` | Data directory |
 | `COC_NODE_CONFIG` | `{dataDir}/node-config.json` | Config file path |
-| `COC_NODE_KEY` | auto-generated | Node private key (0x + 64 hex) |
+| `COC_NODE_KEY` | auto-generated | Node private key (0x + 64 hex); `COC_NODE_PK` is accepted only as a legacy alias |
 | `COC_RPC_BIND` | `0.0.0.0` | RPC listen address |
 | `COC_RPC_PORT` | 18780 | RPC port |
 | `COC_WS_BIND` | `0.0.0.0` | WebSocket listen address |
@@ -550,7 +550,7 @@ node --experimental-strip-types wallet/coc-wallet.ts nonce <address> [--rpc <url
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `COC_RPC_URL` | `http://127.0.0.1:18780` | RPC endpoint |
-| `COC_WALLET_PASSWORD` | `coc-default-password` | Keystore password fallback (change this in real environments) |
+| `COC_WALLET_PASSWORD` | unset | Keystore password for create/import/send; set explicitly or pass `--password` |
 
 Keystore location: `~/.coc/keystore/{address}.json`
 
@@ -570,7 +570,7 @@ The PoSe runtime service exposes these HTTP endpoints:
 
 ```bash
 COC_DATA_DIR=/data/coc \
-COC_NODE_PK=0x... \
+COC_NODE_KEY=0x... \
   node --experimental-strip-types runtime/coc-node.ts
 ```
 

@@ -54,7 +54,7 @@ services:
     environment:
       - COC_DATA_DIR=/data/coc
       - COC_NODE_CONFIG=/data/coc/node-config.json
-      - COC_NODE_KEY=0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6
+      - COC_NODE_KEY=${COC_LIGHT1_KEY:?set COC_LIGHT1_KEY in the deployment environment}
       - COC_NODE_MODE=light
       - COC_IPFS_MAX_BYTES=200000000
       - COC_DEV_RELAXED_QUORUM=0
@@ -80,7 +80,7 @@ services:
     environment:
       - COC_DATA_DIR=/data/coc
       - COC_NODE_CONFIG=/data/coc/node-config.json
-      - COC_NODE_KEY=0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a
+      - COC_NODE_KEY=${COC_LIGHT2_KEY:?set COC_LIGHT2_KEY in the deployment environment}
       - COC_NODE_MODE=light
       - COC_IPFS_MAX_BYTES=200000000
       - COC_DEV_RELAXED_QUORUM=0

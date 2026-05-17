@@ -23,16 +23,15 @@ services:
       - "29781:19781"
       - "9101:9100"
       # IPFS HTTP API (UnixFS /api/v0/add, /api/v0/cat, /ipfs/<cid> gateway).
-      # Single public entry — node-2/3 keep 5001 internal-only by design.
-      # ⚠ No auth, no rate limit on the exposed port — testnet only.
-      - "28786:5001"
+      # Local-only by default; expose through an authenticated reverse proxy if needed.
+      - "127.0.0.1:28786:5001"
     volumes:
       - node1-data:/data/coc
       - ./testnet-configs/node-1.json:/data/coc/node-config.json:ro
     environment:
       - COC_DATA_DIR=/data/coc
       - COC_NODE_CONFIG=/data/coc/node-config.json
-      - COC_NODE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+      - COC_NODE_KEY=${COC_NODE1_KEY:?set COC_NODE1_KEY in the deployment environment}
       # Phase H stability env (defaults to disabled in production):
       #   COC_DIAG_SPEC_ROOT=1       — enable speculative-compute divergence diagnostics
       #   COC_DEV_RELAXED_QUORUM=1   — DEV-ONLY 2-of-3 BFT quorum; loses Byzantine safety
@@ -56,7 +55,7 @@ services:
     environment:
       - COC_DATA_DIR=/data/coc
       - COC_NODE_CONFIG=/data/coc/node-config.json
-      - COC_NODE_KEY=0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
+      - COC_NODE_KEY=${COC_NODE2_KEY:?set COC_NODE2_KEY in the deployment environment}
       - COC_DIAG_SPEC_ROOT=${COC_DIAG_SPEC_ROOT:-0}
       - COC_DEV_RELAXED_QUORUM=${COC_DEV_RELAXED_QUORUM:-0}
       - COC_BFT_AUTO_RECOVERY=${COC_BFT_AUTO_RECOVERY:-0}
@@ -76,7 +75,7 @@ services:
     environment:
       - COC_DATA_DIR=/data/coc
       - COC_NODE_CONFIG=/data/coc/node-config.json
-      - COC_NODE_KEY=0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a
+      - COC_NODE_KEY=${COC_NODE3_KEY:?set COC_NODE3_KEY in the deployment environment}
       - COC_DIAG_SPEC_ROOT=${COC_DIAG_SPEC_ROOT:-0}
       - COC_DEV_RELAXED_QUORUM=${COC_DEV_RELAXED_QUORUM:-0}
       - COC_BFT_AUTO_RECOVERY=${COC_BFT_AUTO_RECOVERY:-0}
@@ -96,7 +95,7 @@ services:
     environment:
       - COC_DATA_DIR=/data/coc
       - COC_NODE_CONFIG=/data/coc/node-config.json
-      - COC_NODE_KEY=0x4bbbf85ce3377467afe5d46f804f221813b2bb87f24d81f60f1fcdbf7cbf4356
+      - COC_NODE_KEY=${COC_SYNC_NODE_KEY:?set COC_SYNC_NODE_KEY in the deployment environment}
       - COC_DIAG_SPEC_ROOT=${COC_DIAG_SPEC_ROOT:-0}
       - COC_DEV_RELAXED_QUORUM=${COC_DEV_RELAXED_QUORUM:-0}
       - COC_BFT_AUTO_RECOVERY=${COC_BFT_AUTO_RECOVERY:-0}
@@ -136,7 +135,7 @@ services:
       - "3003:3003"
     environment:
       - COC_FAUCET_RPC_URL=http://node-1:18780
-      - COC_FAUCET_PRIVATE_KEY=${COC_FAUCET_KEY:-0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a}
+      - COC_FAUCET_PRIVATE_KEY=${COC_FAUCET_KEY:?set COC_FAUCET_KEY in the deployment environment}
     depends_on:
       node-1:
         condition: service_healthy
@@ -165,7 +164,7 @@ services:
     command: ["runtime/coc-node.ts"]
     environment:
       - COC_CONFIG=/app/config.json
-      - COC_NODE_PK=${COC_NODE1_PK:-0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80}
+      - COC_NODE_KEY=${COC_NODE1_KEY:?set COC_NODE1_KEY in the deployment environment}
       - COC_RPC_URL=http://node-1:18780
     volumes:
       - node1-data:/data/coc:ro    # ← :ro is mandatory; see header comment
@@ -188,7 +187,7 @@ services:
     container_name: coc-prover-2
     environment:
       - COC_CONFIG=/app/config.json
-      - COC_NODE_PK=${COC_NODE2_PK:-0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d}
+      - COC_NODE_KEY=${COC_NODE2_KEY:?set COC_NODE2_KEY in the deployment environment}
       - COC_RPC_URL=http://node-2:18780
     volumes:
       - node2-data:/data/coc:ro
@@ -208,7 +207,7 @@ services:
     container_name: coc-prover-3
     environment:
       - COC_CONFIG=/app/config.json
-      - COC_NODE_PK=${COC_NODE3_PK:-0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a}
+      - COC_NODE_KEY=${COC_NODE3_KEY:?set COC_NODE3_KEY in the deployment environment}
       - COC_RPC_URL=http://node-3:18780
     volumes:
       - node3-data:/data/coc:ro
@@ -233,7 +232,7 @@ services:
     environment:
       - COC_DATA_DIR=/data/coc/runtime
       - COC_CONFIG=/data/coc/runtime/agent.json
-      - COC_OPERATOR_PK=${COC_OPERATOR_PK:-0x8b3a350cf5c34c9194ca3a545d6546d9f8b66d0f6937f33ce3cbb7a7e3c7eca0}
+      - COC_OPERATOR_PK=${COC_OPERATOR_PK:?set COC_OPERATOR_PK in the deployment environment}
     volumes:
       - runtime-data:/data/coc/runtime
       - ./testnet-runtime-configs/agent.json:/data/coc/runtime/agent.json:ro
@@ -260,12 +259,8 @@ services:
     environment:
       - COC_DATA_DIR=/data/coc/runtime
       - COC_CONFIG=/data/coc/runtime/relayer.json
-      # Hardhat #0 — same key as PoSeManagerV2 deployer/owner so finalizeEpochV2
-      # / initEpochNonce (onlyOwner) succeed. The previously-default key
-      # (0xdbda...c4c → 0x8642...DA45) reverted with "not owner" because the
-      # contract was deployed under #0. Override only if you transferOwnership
-      # to a separate operational signer.
-      - COC_SLASHER_PK=${COC_SLASHER_PK:-0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80}
+      # Must match the operational owner/slasher for the deployed PoSeManagerV2.
+      - COC_SLASHER_PK=${COC_SLASHER_PK:?set COC_SLASHER_PK in the deployment environment}
     volumes:
       - runtime-data:/data/coc/runtime
       - ./testnet-runtime-configs/relayer.json:/data/coc/runtime/relayer.json:ro

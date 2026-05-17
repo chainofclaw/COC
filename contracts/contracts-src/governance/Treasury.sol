@@ -50,6 +50,7 @@ contract Treasury {
     error TransferFailed();
     error ZeroAmount();
     error ZeroAddress();
+    error DuplicateSigner();
     error InvalidProposal();
 
     modifier onlySigner() {
@@ -63,10 +64,12 @@ contract Treasury {
     }
 
     constructor(address[5] memory _signers, address _governance) {
+        if (_governance == address(0)) revert ZeroAddress();
         owner = msg.sender;
         governance = _governance;
         for (uint8 i = 0; i < MAX_SIGNERS; i++) {
-            require(_signers[i] != address(0), "zero signer");
+            if (_signers[i] == address(0)) revert ZeroAddress();
+            if (isSigner[_signers[i]]) revert DuplicateSigner();
             signers[i] = _signers[i];
             isSigner[_signers[i]] = true;
         }
@@ -144,6 +147,7 @@ contract Treasury {
     // --- Admin ---
 
     function setGovernance(address _governance) external onlyOwner {
+        if (_governance == address(0)) revert ZeroAddress();
         governance = _governance;
         emit GovernanceUpdated(_governance);
     }
@@ -152,6 +156,7 @@ contract Treasury {
         require(index < MAX_SIGNERS, "invalid index");
         if (newSigner == address(0)) revert ZeroAddress();
         address old = signers[index];
+        if (newSigner != old && isSigner[newSigner]) revert DuplicateSigner();
         isSigner[old] = false;
         signers[index] = newSigner;
         isSigner[newSigner] = true;

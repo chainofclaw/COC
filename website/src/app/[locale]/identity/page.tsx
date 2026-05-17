@@ -4,6 +4,7 @@ import { WalletConnect } from '@/components/identity/WalletConnect'
 import { FactionSelector } from '@/components/identity/FactionSelector'
 import { IdentityCard } from '@/components/identity/IdentityCard'
 import { useWalletContext } from '@/components/shared/WalletProvider'
+import { buildSignMessage } from '@/lib/auth'
 import { useTranslations } from 'next-intl'
 import { useState, useEffect } from 'react'
 
@@ -34,7 +35,11 @@ export default function IdentityPage() {
     if (!address) return
     setLoading(true)
     try {
-      const message = `COC Identity Registration\nAddress: ${address}\nFaction: ${detectedFaction}\nTimestamp: ${Date.now()}`
+      const message = buildSignMessage('identityRegister', {
+        address: address.toLowerCase(),
+        faction: detectedFaction,
+        timestamp: Date.now(),
+      })
       const signature = await signMessage(message)
 
       const res = await fetch('/api/identity/register', {

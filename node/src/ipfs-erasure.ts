@@ -55,6 +55,16 @@ export const MAX_PARITY_SHARDS = ReedSolomon.MAX_M
 export const DEFAULT_SHARD_SIZE = 262144
 export const SHARD_SIZE_ALIGNMENT = 8
 
+// Decode-side resource caps. An erasure manifest is attacker-controllable:
+// any CID a client asks `/api/v0/cat` to resolve can be a crafted dag-cbor
+// manifest, and `decodeFile` derives Buffer.alloc sizes and a fetch loop
+// directly from manifest fields. Without these caps a few-hundred-byte
+// manifest declaring a huge `shardSize` / `stripes` count forces a
+// multi-GB allocation and OOMs the node.
+export const MAX_SHARD_SIZE = 16 * 1024 * 1024          // 16 MiB — wire payload cap; a larger shard could never be fetched as a block
+export const MAX_STRIPES = 16_384                       // bounds the decode loop + shard-fetch fan-out
+export const MAX_ERASURE_FILE_SIZE = 256 * 1024 * 1024  // 256 MiB — bounds the decoded-output buffer
+
 /** A single erasure-coded stripe — N data shard CIDs + M parity shard CIDs. */
 export interface ErasureStripe {
   data: CidString[]
@@ -118,6 +128,9 @@ function validateParams(params: ErasureParams): { n: number; m: number; shardSiz
   }
   if (shardSize % SHARD_SIZE_ALIGNMENT !== 0) {
     throw new ErasureError("invalid_params", `shardSize must be a multiple of ${SHARD_SIZE_ALIGNMENT}`)
+  }
+  if (shardSize > MAX_SHARD_SIZE) {
+    throw new ErasureError("invalid_params", `shardSize exceeds MAX_SHARD_SIZE (${MAX_SHARD_SIZE})`)
   }
   return { n, m, shardSize }
 }
@@ -250,8 +263,20 @@ export async function decodeFile(
   const { n, m, shardSize, fileSize, stripes } = manifest
   validateParams({ n, m, shardSize })
 
+  // Bound every allocation/iteration derived from the (attacker-controllable)
+  // manifest before touching Buffer.alloc — see MAX_* cap rationale above.
+  if (!Array.isArray(stripes)) {
+    throw new ErasureError("malformed_manifest", "manifest stripes must be an array")
+  }
+  if (stripes.length > MAX_STRIPES) {
+    throw new ErasureError("malformed_manifest", `stripe count ${stripes.length} exceeds MAX_STRIPES (${MAX_STRIPES})`)
+  }
   const stripeSize = n * shardSize
-  const out = Buffer.alloc(stripes.length * stripeSize)
+  const totalCoverage = stripes.length * stripeSize
+  if (totalCoverage > MAX_ERASURE_FILE_SIZE) {
+    throw new ErasureError("malformed_manifest", `decoded size ${totalCoverage} exceeds MAX_ERASURE_FILE_SIZE (${MAX_ERASURE_FILE_SIZE})`)
+  }
+  const out = Buffer.alloc(totalCoverage)
   const ctx = ReedSolomon.create(n, m)
 
   for (let s = 0; s < stripes.length; s++) {
@@ -366,6 +391,13 @@ export function decodeManifest(bytes: Uint8Array): ErasureManifest {
   }
   if (decoded.v !== 1 || decoded.scheme !== "rs") {
     throw new ErasureError("unsupported_manifest", `unsupported v=${decoded.v} scheme=${decoded.scheme}`)
+  }
+  // Structural guard at the parse boundary: `stripes` must be an array so
+  // `decodeFile`'s `stripes.length` / iteration cannot fault or be tricked.
+  // Allocation-size caps (shardSize / stripe count / coverage) are enforced
+  // in decodeFile, where the dangerous Buffer.alloc math lives.
+  if (!Array.isArray(decoded.stripes)) {
+    throw new ErasureError("malformed_manifest", "manifest stripes must be an array")
   }
   return decoded
 }

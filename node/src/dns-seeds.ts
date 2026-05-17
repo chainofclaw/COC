@@ -127,7 +127,36 @@ export class DnsSeedResolver {
   }
 }
 
-function isPrivateHost(hostname: string): boolean {
+/**
+ * Extract the embedded IPv4 of an IPv4-mapped IPv6 address (::ffff:0:0/96)
+ * in dotted-quad form, or null when `addr` is not IPv4-mapped.
+ *
+ * WHATWG URL.hostname canonicalizes IPv4-mapped literals to the *hex* tail
+ * form ("::ffff:127.0.0.1" → "::ffff:7f00:1"), so any consumer that assumes
+ * a dotted "::ffff:a.b.c.d" tail sees nothing. This handles both the hex
+ * tail and the dotted tail, plus leading all-zero hextet groups.
+ */
+function ipv4MappedToDotted(addr: string): string | null {
+  const marker = addr.lastIndexOf("ffff:")
+  if (marker < 0) return null
+  // Everything before the "ffff" hextet must be zeros/colons — otherwise
+  // this is an ordinary address that merely contains an "ffff" hextet
+  // (e.g. "2001:db8::ffff:1"), not an IPv4-mapped address.
+  if (!/^[0:]*$/.test(addr.slice(0, marker))) return null
+  const tail = addr.slice(marker + 5)
+  if (tail.includes(".")) {
+    return /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(tail) ? tail : null
+  }
+  const groups = tail.split(":")
+  if (groups.length !== 2 || !groups.every((g) => /^[0-9a-f]{1,4}$/.test(g))) {
+    return null
+  }
+  const hi = parseInt(groups[0], 16)
+  const lo = parseInt(groups[1], 16)
+  return `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`
+}
+
+export function isPrivateHost(hostname: string): boolean {
   // Strip brackets from IPv6 literals (URL.hostname returns "[::1]" → "::1")
   const h = hostname.startsWith("[") && hostname.endsWith("]")
     ? hostname.slice(1, -1)
@@ -137,8 +166,9 @@ function isPrivateHost(hostname: string): boolean {
   // IPv6 ULA (fc00::/7 = fc00::/8 + fd00::/8) and link-local (fe80::/10)
   const lower = h.toLowerCase()
   if (lower.startsWith("fc") || lower.startsWith("fd") || lower.startsWith("fe80")) return true
-  // IPv4-mapped IPv6
-  const v4 = lower.startsWith("::ffff:") ? lower.slice(7) : lower
+  // IPv4-mapped IPv6 — resolve to the embedded IPv4 so the range checks
+  // below also cover mapped loopback / RFC1918 / link-local targets.
+  const v4 = ipv4MappedToDotted(lower) ?? lower
   const parts = v4.split(".")
   // Pure IPv6 addresses (not IPv4 or IPv4-mapped) that didn't match above:
   // conservatively treat as non-private (public IPv6)

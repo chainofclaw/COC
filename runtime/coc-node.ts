@@ -1,6 +1,6 @@
 import http from "node:http";
+import { randomBytes } from "node:crypto";
 import { join } from "node:path";
-import { Wallet } from "ethers";
 import { loadConfig } from "./lib/config.ts";
 import { InMemoryStore } from "./lib/state.ts";
 import { recordChallengeBounded } from "./lib/bounded-challenge-store.ts";
@@ -43,7 +43,7 @@ if (poseStorageFromBlockstore) {
 const storageBlockstore = poseStorageFromBlockstore ? new IpfsBlockstore(storageDir) : undefined;
 const merkleLeavesCache = new MerkleLeavesCache(500);
 
-const nodePrivateKey = process.env.COC_NODE_PK || Wallet.createRandom().privateKey;
+const nodePrivateKey = resolveRuntimeNodePrivateKey();
 const nodeSigner = createNodeSigner(nodePrivateKey);
 
 // v2: EIP-712 signer for PoSe v2 protocol
@@ -53,6 +53,15 @@ const verifyingContract = config.verifyingContract ?? config.poseManagerV2Addres
 const nodeSignerV2 = useV2
   ? createNodeSignerV2(nodePrivateKey, buildDomain(BigInt(chainId), verifyingContract))
   : null;
+
+function resolveRuntimeNodePrivateKey(): string {
+  const canonical = process.env.COC_NODE_KEY?.trim();
+  const legacy = process.env.COC_NODE_PK?.trim();
+  if (canonical && legacy && canonical !== legacy) {
+    throw new Error("COC_NODE_KEY and COC_NODE_PK are both set but differ");
+  }
+  return canonical || legacy || "0x" + randomBytes(32).toString("hex");
+}
 
 async function signReceiptV2(
   challengeId: string,
@@ -496,4 +505,3 @@ async function fetchBlockHash(blockNumber: number): Promise<string | null> {
     return null;
   }
 }
-

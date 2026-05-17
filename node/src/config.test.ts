@@ -6,6 +6,9 @@ import { join } from "node:path"
 import { Hardfork } from "@ethereumjs/common"
 import { loadNodeConfig, validateConfig } from "./config.ts"
 
+const NODE_KEY_A = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+const NODE_KEY_B = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
+
 describe("validateConfig", () => {
   it("returns no errors for valid partial config", () => {
     const errors = validateConfig({
@@ -221,6 +224,68 @@ describe("validateConfig", () => {
 })
 
 describe("loadNodeConfig", () => {
+  it("accepts legacy COC_NODE_PK as a node key fallback", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "coc-config-node-key-"))
+    const previousEnv = {
+      COC_DATA_DIR: process.env.COC_DATA_DIR,
+      COC_NODE_CONFIG: process.env.COC_NODE_CONFIG,
+      COC_NODE_KEY: process.env.COC_NODE_KEY,
+      COC_NODE_PK: process.env.COC_NODE_PK,
+    }
+
+    try {
+      process.env.COC_DATA_DIR = tempDir
+      delete process.env.COC_NODE_CONFIG
+      delete process.env.COC_NODE_KEY
+      process.env.COC_NODE_PK = NODE_KEY_A
+
+      const cfg = await loadNodeConfig()
+      assert.equal(cfg.nodePrivateKey, NODE_KEY_A)
+    } finally {
+      if (previousEnv.COC_DATA_DIR === undefined) delete process.env.COC_DATA_DIR
+      else process.env.COC_DATA_DIR = previousEnv.COC_DATA_DIR
+      if (previousEnv.COC_NODE_CONFIG === undefined) delete process.env.COC_NODE_CONFIG
+      else process.env.COC_NODE_CONFIG = previousEnv.COC_NODE_CONFIG
+      if (previousEnv.COC_NODE_KEY === undefined) delete process.env.COC_NODE_KEY
+      else process.env.COC_NODE_KEY = previousEnv.COC_NODE_KEY
+      if (previousEnv.COC_NODE_PK === undefined) delete process.env.COC_NODE_PK
+      else process.env.COC_NODE_PK = previousEnv.COC_NODE_PK
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it("rejects conflicting COC_NODE_KEY and COC_NODE_PK values", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "coc-config-node-key-conflict-"))
+    const previousEnv = {
+      COC_DATA_DIR: process.env.COC_DATA_DIR,
+      COC_NODE_CONFIG: process.env.COC_NODE_CONFIG,
+      COC_NODE_KEY: process.env.COC_NODE_KEY,
+      COC_NODE_PK: process.env.COC_NODE_PK,
+    }
+
+    try {
+      process.env.COC_DATA_DIR = tempDir
+      delete process.env.COC_NODE_CONFIG
+      process.env.COC_NODE_KEY = NODE_KEY_A
+      process.env.COC_NODE_PK = NODE_KEY_B
+
+      await assert.rejects(
+        () => loadNodeConfig(),
+        /COC_NODE_KEY and COC_NODE_PK are both set but differ/,
+      )
+    } finally {
+      if (previousEnv.COC_DATA_DIR === undefined) delete process.env.COC_DATA_DIR
+      else process.env.COC_DATA_DIR = previousEnv.COC_DATA_DIR
+      if (previousEnv.COC_NODE_CONFIG === undefined) delete process.env.COC_NODE_CONFIG
+      else process.env.COC_NODE_CONFIG = previousEnv.COC_NODE_CONFIG
+      if (previousEnv.COC_NODE_KEY === undefined) delete process.env.COC_NODE_KEY
+      else process.env.COC_NODE_KEY = previousEnv.COC_NODE_KEY
+      if (previousEnv.COC_NODE_PK === undefined) delete process.env.COC_NODE_PK
+      else process.env.COC_NODE_PK = previousEnv.COC_NODE_PK
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
+
   it("loads hardfork from config file and lets env override it", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "coc-config-hardfork-"))
     const configPath = join(tempDir, "node-config.json")

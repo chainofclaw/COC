@@ -9,6 +9,7 @@
 
 const { expect } = require("chai")
 const { ethers } = require("hardhat")
+const { malleateSignature } = require("./signature-utils.cjs")
 
 // Helper: register a PoSe node for an operator wallet
 async function registerNode(pose, operator) {
@@ -81,6 +82,18 @@ describe("Security: FactionRegistry", function () {
     ).to.be.revertedWithCustomError(registry, "InvalidAttestation")
   })
 
+  it("rejects high-s claw attestations", async function () {
+    const agentId = ethers.keccak256(ethers.toUtf8Bytes("high-s-attestation"))
+    const msgHash = ethers.keccak256(
+      ethers.solidityPacked(["bytes32", "address"], [agentId, user1.address])
+    )
+    const attestation = malleateSignature(await user1.signMessage(ethers.getBytes(msgHash)))
+
+    await expect(
+      registry.connect(user1).registerClaw(agentId, attestation)
+    ).to.be.revertedWithCustomError(registry, "InvalidAttestation")
+  })
+
   it("prevents agentId reuse across different addresses", async function () {
     const agentId = ethers.keccak256(ethers.toUtf8Bytes("shared-agent"))
     const msgHash1 = ethers.keccak256(
@@ -129,6 +142,12 @@ describe("Security: FactionRegistry", function () {
     await expect(
       registry.connect(user1).setVerifier(user1.address)
     ).to.be.revertedWithCustomError(registry, "NotOwner")
+  })
+
+  it("rejects zero verifier", async function () {
+    await expect(
+      registry.connect(owner).setVerifier(ethers.ZeroAddress)
+    ).to.be.revertedWithCustomError(registry, "ZeroAddress")
   })
 
   it("new verifier can verify after setVerifier", async function () {
@@ -406,13 +425,38 @@ describe("Security: GovernanceDAO", function () {
 
 describe("Security: Treasury", function () {
   let treasury, owner, user1, signer2, signer3, signer4, signer5
+  let T
 
   beforeEach(async function () {
     ;[owner, user1, signer2, signer3, signer4, signer5] = await ethers.getSigners()
-    const T = await ethers.getContractFactory("Treasury")
+    T = await ethers.getContractFactory("Treasury")
     const signerAddrs = [owner.address, user1.address, signer2.address, signer3.address, signer4.address]
     treasury = await T.deploy(signerAddrs, owner.address) // owner as governance
     await treasury.waitForDeployment()
+  })
+
+  it("rejects duplicate multisig signers at deployment", async function () {
+    const signerAddrs = [owner.address, user1.address, signer2.address, signer3.address, owner.address]
+    await expect(
+      T.deploy(signerAddrs, owner.address)
+    ).to.be.revertedWithCustomError(treasury, "DuplicateSigner")
+  })
+
+  it("rejects zero governance at deployment and update time", async function () {
+    const signerAddrs = [owner.address, user1.address, signer2.address, signer3.address, signer4.address]
+    await expect(
+      T.deploy(signerAddrs, ethers.ZeroAddress)
+    ).to.be.revertedWithCustomError(treasury, "ZeroAddress")
+
+    await expect(
+      treasury.setGovernance(ethers.ZeroAddress)
+    ).to.be.revertedWithCustomError(treasury, "ZeroAddress")
+  })
+
+  it("rejects replacing a signer with an existing signer", async function () {
+    await expect(
+      treasury.replaceSigner(4, user1.address)
+    ).to.be.revertedWithCustomError(treasury, "DuplicateSigner")
   })
 
   it("rejects zero-amount withdrawal via proposal", async function () {

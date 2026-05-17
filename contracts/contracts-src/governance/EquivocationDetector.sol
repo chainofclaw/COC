@@ -58,6 +58,11 @@ contract EquivocationDetector {
     /// @dev nodeId → block number of last slash. Cooldown gate.
     mapping(bytes32 => uint256) public lastSlashedAtBlock;
 
+    /// @dev Order-independent equivocation key → consumed. Each distinct
+    ///      equivocation may slash exactly once; the cooldown alone only
+    ///      rate-limits replay, it never prevents it.
+    mapping(bytes32 => bool) public consumedEvidence;
+
     // ── Events ───────────────────────────────────────────────────────────
 
     event EquivocationProven(
@@ -79,6 +84,7 @@ contract EquivocationDetector {
     error SignersDiffer();
     error SignerNotNodeIdTrailer();
     error CooldownActive(uint256 unlockBlock);
+    error EvidenceAlreadyUsed();
     error OnlyOwner();
     error ZeroAddress();
 
@@ -136,6 +142,19 @@ contract EquivocationDetector {
         // (last 20 bytes; matches ecrecover output convention).
         address expected = address(uint160(uint256(nodeId)));
         if (signerA != expected) revert SignerNotNodeIdTrailer();
+
+        // One equivocation, one slash — forever. Keyed order-independently
+        // over the hash pair so swapping hashA/hashB cannot mint fresh
+        // evidence. Without this, the cooldown only paces an unbounded replay
+        // that drains the validator's whole stake from a single past offense.
+        (bytes32 loHash, bytes32 hiHash) = uint256(hashA) < uint256(hashB)
+            ? (hashA, hashB)
+            : (hashB, hashA);
+        bytes32 evidenceKey = keccak256(
+            abi.encodePacked(nodeId, keccak256(bytes(phase)), height, loHash, hiHash)
+        );
+        if (consumedEvidence[evidenceKey]) revert EvidenceAlreadyUsed();
+        consumedEvidence[evidenceKey] = true;
 
         // Cooldown gate
         uint256 unlock = lastSlashedAtBlock[nodeId] + slashCooldownBlocks;

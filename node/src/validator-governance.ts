@@ -37,6 +37,15 @@ export interface GovernanceProposal {
   createdAtEpoch: bigint
   expiresAtEpoch: bigint
   votes: Map<string, boolean> // validatorId -> approve/reject
+  /**
+   * Electorate snapshotted at proposal creation: validatorId -> stake. Vote
+   * weighting and the approval/participation denominators are computed
+   * against this, NOT the live validator set — otherwise validator-set
+   * churn between votes (another proposal executing, a slash) silently
+   * moves the denominator and the configured approvalThresholdPercent
+   * stops being enforced consistently.
+   */
+  voterSnapshot: Map<string, bigint>
   status: "pending" | "approved" | "rejected" | "expired"
 }
 
@@ -246,6 +255,14 @@ export class ValidatorGovernance {
       }
     }
 
+    // Snapshot the electorate (active validators + their stake) at creation.
+    // resolveProposal counts votes against this fixed set so the threshold
+    // can't be shifted by validator-set churn while the proposal is open.
+    const voterSnapshot = new Map<string, bigint>()
+    for (const v of this.validators.values()) {
+      if (v.active) voterSnapshot.set(v.id, v.stake)
+    }
+
     const id = `proposal-${this.nextProposalId++}`
     const proposal: GovernanceProposal = {
       id,
@@ -257,6 +274,7 @@ export class ValidatorGovernance {
       createdAtEpoch: this.currentEpoch,
       expiresAtEpoch: this.currentEpoch + this.config.proposalDurationEpochs,
       votes: new Map(), // No auto-vote — proposer must explicitly vote
+      voterSnapshot,
       status: "pending",
     }
 
@@ -272,8 +290,14 @@ export class ValidatorGovernance {
     if (!proposal) throw new Error("proposal not found")
     if (proposal.status !== "pending") throw new Error("proposal not pending")
 
-    const voter = this.validators.get(voterId)
-    if (!voter?.active) throw new Error("voter is not an active validator")
+    // Eligibility is fixed to the creation-time electorate: only validators
+    // that were active when the proposal was created may vote, and they vote
+    // with their snapshotted stake. A validator added after creation cannot
+    // vote on an already-open proposal (which would let an attacker swing
+    // pending proposals by adding validators).
+    if (!proposal.voterSnapshot.has(voterId)) {
+      throw new Error("voter was not an active validator when the proposal was created")
+    }
 
     // Prevent vote flipping: once a validator has voted, their vote is immutable.
     // Without this, a validator could change their vote to manipulate quorum timing
@@ -343,30 +367,29 @@ export class ValidatorGovernance {
     const proposal = this.proposals.get(proposalId)
     if (!proposal || proposal.status !== "pending") return
 
-    const activeValidators = this.getActiveValidators()
-    // Use stake (bigint) directly to avoid votingPower truncation errors
-    // (e.g., 3 equal validators get power 3333 each = 9999, not 10000)
-    const totalStake = activeValidators.reduce((sum, v) => sum + v.stake, 0n)
+    // Denominator + vote weights come from the creation-time snapshot, not
+    // the live validator set — see GovernanceProposal.voterSnapshot. Use
+    // stake (bigint) directly to avoid votingPower truncation errors
+    // (e.g., 3 equal validators get power 3333 each = 9999, not 10000).
+    const snapshot = proposal.voterSnapshot
+    let totalStake = 0n
+    for (const stake of snapshot.values()) totalStake += stake
 
-    // Check minimum participation
+    // Check minimum participation + count approval, both against snapshot
+    // stake. Votes from IDs absent from the snapshot are ignored (defensive;
+    // vote() already rejects them at cast time).
     let votedStake = 0n
-    for (const [voterId] of proposal.votes) {
-      const v = this.validators.get(voterId)
-      if (v?.active) votedStake += v.stake
+    let approvalStake = 0n
+    for (const [voterId, approve] of proposal.votes) {
+      const stake = snapshot.get(voterId)
+      if (stake === undefined) continue
+      votedStake += stake
+      if (approve) approvalStake += stake
     }
 
     // Use basis points (10000 = 100%) to avoid BigInt integer division truncation
     const participationBps = totalStake > 0n ? Number(votedStake * 10000n / totalStake) : 0
     if (participationBps < this.config.minVoterPercent * 100) return
-
-    // Count approval stake
-    let approvalStake = 0n
-    for (const [voterId, approve] of proposal.votes) {
-      if (approve) {
-        const v = this.validators.get(voterId)
-        if (v?.active) approvalStake += v.stake
-      }
-    }
 
     const approvalBps = totalStake > 0n ? Number(approvalStake * 10000n / totalStake) : 0
 

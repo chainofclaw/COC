@@ -7,6 +7,7 @@
 
 const { expect } = require("chai")
 const { ethers } = require("hardhat")
+const { malleateSignature } = require("./signature-utils.cjs")
 
 // ---------------------------------------------------------------------------
 //  EIP-712 Helpers
@@ -175,6 +176,15 @@ describe("DIDRegistry", function () {
     await registerSoul(soulRegistry, soulDomain, owner, agentId, identityCid)
   })
 
+  describe("constructor", function () {
+    it("should reject zero SoulRegistry address", async function () {
+      const DIDFactory = await ethers.getContractFactory("DIDRegistry")
+      await expect(
+        DIDFactory.deploy(ethers.ZeroAddress)
+      ).to.be.revertedWithCustomError(didRegistry, "ZeroAddress")
+    })
+  })
+
   // -----------------------------------------------------------------------
   //  DID Document
   // -----------------------------------------------------------------------
@@ -217,6 +227,20 @@ describe("DIDRegistry", function () {
       })
       await expect(didRegistry.connect(owner).updateDIDDocument(agentId, newCid, sig))
         .to.be.revertedWithCustomError(didRegistry, "InvalidSignature")
+    })
+
+    it("should reject high-s signatures", async function () {
+      const newCid = randomBytes32()
+      const nonce = await didRegistry.nonces(agentId)
+      const sig = await owner.signTypedData(didDomain, UPDATE_DID_DOCUMENT_TYPES, {
+        agentId,
+        newDocumentCid: newCid,
+        nonce,
+      })
+
+      await expect(
+        didRegistry.connect(owner).updateDIDDocument(agentId, newCid, malleateSignature(sig))
+      ).to.be.revertedWithCustomError(didRegistry, "InvalidSignature")
     })
   })
 
@@ -545,6 +569,25 @@ describe("DIDRegistry", function () {
       await expect(
         didRegistry.connect(owner).createEphemeralIdentity(agentId, ephemeralId, other.address, scopeHash2, expiresAt, sig)
       ).to.be.revertedWithCustomError(didRegistry, "EphemeralAlreadyExists")
+    })
+
+    it("should reject zero ephemeral address", async function () {
+      const ephemeralId = randomBytes32()
+      const scopeHash = randomBytes32()
+      const expiresAt = await futureTimestamp(3600)
+      const nonce = await didRegistry.nonces(agentId)
+      const sig = await owner.signTypedData(didDomain, CREATE_EPHEMERAL_IDENTITY_TYPES, {
+        parentAgentId: agentId,
+        ephemeralId,
+        ephemeralAddress: ethers.ZeroAddress,
+        scopeHash,
+        expiresAt,
+        nonce,
+      })
+
+      await expect(
+        didRegistry.connect(owner).createEphemeralIdentity(agentId, ephemeralId, ethers.ZeroAddress, scopeHash, expiresAt, sig)
+      ).to.be.revertedWithCustomError(didRegistry, "InvalidKeyAddress")
     })
   })
 

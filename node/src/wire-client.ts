@@ -9,10 +9,19 @@ import net from "node:net"
 import { FrameDecoder, MessageType, encodeJsonPayload, decodeJsonPayload, buildWireHandshakeMessage } from "./wire-protocol.ts"
 import type { WireFrame, FindNodePayload, FindNodeResponsePayload, BlockRequestPayload, BlockResponsePayload } from "./wire-protocol.ts"
 import type { NodeSigner, SignatureVerifier } from "./crypto/signer.ts"
+import { BoundedSet } from "./p2p.ts"
 import crypto from "node:crypto"
 import { createLogger } from "./logger.ts"
 
 const log = createLogger("wire-client")
+
+// Process-wide dedup of server handshake nonces. wire-server.ts guards its
+// side with a per-server BoundedSet; the client side needs the equivalent so
+// a captured server handshake (valid for the 5-min freshness window) cannot
+// be replayed to impersonate that server across the node's WireClients.
+// Shared at module scope = one set per node process, mirroring the single
+// per-server set on the listener side.
+const seenHandshakeNonces = new BoundedSet<string>(10_000)
 
 const MIN_RECONNECT_MS = 1_000
 const MAX_RECONNECT_MS = 30_000
@@ -587,6 +596,13 @@ export class WireClient {
             this.socket?.destroy()
             return
           }
+          // Strict digits-only check — parseInt("123abc",10) silently returns
+          // 123, which would let a crafted nonce pass the freshness check.
+          if (!/^\d{1,15}$/.test(nonceParts[0])) {
+            log.warn("peer handshake nonce timestamp invalid format", { peer: hs.nodeId })
+            this.socket?.destroy()
+            return
+          }
           const nonceTs = parseInt(nonceParts[0], 10)
           if (isNaN(nonceTs) || Math.abs(Date.now() - nonceTs) > 300_000) {
             log.warn("peer handshake nonce timestamp invalid or stale", { peer: hs.nodeId, nonceTs })
@@ -607,6 +623,16 @@ export class WireClient {
             this.socket?.destroy()
             return
           }
+          // Replay protection: the signature above stays valid for the whole
+          // 5-min freshness window, so without per-nonce dedup a captured
+          // server handshake could be replayed to impersonate that server.
+          // Checked after sig verify so a forged-sig frame can't burn a nonce.
+          if (seenHandshakeNonces.has(hs.nonce)) {
+            log.warn("peer handshake nonce replay detected", { peer: hs.nodeId })
+            this.socket?.destroy()
+            return
+          }
+          seenHandshakeNonces.add(hs.nonce)
         }
         // Reject identity switch: if handshake already completed with a different nodeId,
         // this is either a re-handshake attack or protocol violation.
