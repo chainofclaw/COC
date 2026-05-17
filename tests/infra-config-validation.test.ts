@@ -143,6 +143,17 @@ describe("Security: secret hygiene", () => {
       /^\s*-\s*"28786:5001"/m,
       "IPFS HTTP API must not publish on all interfaces by default",
     )
+    for (const port of ["9101", "9102", "9103", "9104"]) {
+      assert.ok(
+        compose.includes(`"127.0.0.1:${port}:9100"`),
+        `node metrics port ${port} should bind to localhost on the host`,
+      )
+      assert.doesNotMatch(
+        compose,
+        new RegExp(`^\\s*-\\s*"${port}:9100"`, "m"),
+        `node metrics port ${port} must not publish on all host interfaces`,
+      )
+    }
   })
 
   it("testnet prover services use canonical COC_NODE_KEY env var", async () => {
@@ -316,6 +327,42 @@ describe("Security: secret hygiene", () => {
       bootstrap,
       /refusing to open RPC\/SSH\/metrics management ports to 0\.0\.0\.0\/0/,
       "bootstrap script should fail closed for world-open management CIDRs",
+    )
+  })
+
+  it("metrics HTTP server binds to localhost unless explicitly overridden", async () => {
+    const metricsServer = await readFile(join(ROOT, "node", "src", "metrics-server.ts"), "utf-8")
+    const index = await readFile(join(ROOT, "node", "src", "index.ts"), "utf-8")
+
+    assert.match(
+      metricsServer,
+      /opts\.bind \?\? "127\.0\.0\.1"/,
+      "metrics server must default to localhost",
+    )
+    assert.doesNotMatch(
+      metricsServer,
+      /opts\.bind \?\? "0\.0\.0\.0"/,
+      "metrics server must not default to all interfaces",
+    )
+    assert.ok(
+      index.includes("COC_METRICS_BIND"),
+      "node entrypoint should expose an explicit metrics bind override",
+    )
+  })
+
+  it("runtime examples do not allow empty PoSe batch witnesses by default", async () => {
+    const configExample = await readJsonConfig(join(ROOT, "config.example.json"))
+    const agentConfig = await readJsonConfig(join(ROOT, "docker", "testnet-runtime-configs", "agent.json"))
+
+    assert.equal(
+      configExample.allowEmptyBatchWitnessSubmission,
+      false,
+      "config.example.json must default to strict witness submission",
+    )
+    assert.equal(
+      agentConfig.allowEmptyBatchWitnessSubmission,
+      false,
+      "testnet runtime agent config must not allow empty batch witness submission",
     )
   })
 })

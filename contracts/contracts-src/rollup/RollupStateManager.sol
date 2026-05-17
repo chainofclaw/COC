@@ -28,6 +28,7 @@ contract RollupStateManager is IRollupStateManager {
     address public insuranceFund;
     address public owner;
     address public challengeResolver;
+    mapping(address => uint256) public pendingWithdrawals;
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert OnlyOwner();
@@ -70,6 +71,9 @@ contract RollupStateManager is IRollupStateManager {
         if (msg.value < PROPOSER_BOND) {
             revert InsufficientBond(PROPOSER_BOND, msg.value);
         }
+        if (msg.value > PROPOSER_BOND) {
+            revert IncorrectBond(PROPOSER_BOND, msg.value);
+        }
         if (l2BlockNumber <= lastSubmittedBlock) {
             revert BlockNumberNotIncreasing(l2BlockNumber, lastSubmittedBlock);
         }
@@ -111,6 +115,9 @@ contract RollupStateManager is IRollupStateManager {
         }
         if (msg.value < CHALLENGER_BOND) {
             revert InsufficientBond(CHALLENGER_BOND, msg.value);
+        }
+        if (msg.value > CHALLENGER_BOND) {
+            revert IncorrectBond(CHALLENGER_BOND, msg.value);
         }
 
         proposal.challenged = true;
@@ -173,17 +180,18 @@ contract RollupStateManager is IRollupStateManager {
                 lastSubmittedBlock = 0;
             }
 
-            // Burn by sending to address(0) is not possible in EVM, so we just keep it locked
-            // Return challenger bond + reward
-            _safeTransfer(challenge.challenger, challenge.bond + challengerReward);
+            // Burn by sending to address(0) is not possible in EVM, so we just keep it locked.
+            // Return challenger bond + reward. A rejecting receiver must not
+            // block challenge resolution, so failed payments become pull funds.
+            _payOrCredit(challenge.challenger, challenge.bond + challengerReward);
 
             // Send insurance portion
             if (insuranceFund != address(0) && insuranceAmount > 0) {
-                _safeTransfer(insuranceFund, insuranceAmount);
+                _payOrCredit(insuranceFund, insuranceAmount);
             }
         } else {
             // Challenger was wrong — forfeit challenger bond to proposer
-            _safeTransfer(proposal.proposer, challenge.bond);
+            _payOrCredit(proposal.proposer, challenge.bond);
         }
 
         emit ChallengeResolved(l2BlockNumber, proposerAtFault);
@@ -228,8 +236,8 @@ contract RollupStateManager is IRollupStateManager {
 
         proposal.finalized = true;
 
-        // Refund proposer bond
-        _safeTransfer(proposal.proposer, PROPOSER_BOND);
+        // Refund proposer bond. Rejected ETH must not block finalization.
+        _payOrCredit(proposal.proposer, PROPOSER_BOND);
 
         // Update latest finalized block
         if (l2BlockNumber > _latestFinalizedBlock) {
@@ -261,12 +269,29 @@ contract RollupStateManager is IRollupStateManager {
         return _outputs[l2BlockNumber].finalized;
     }
 
+    /// @notice Claim ETH that could not be delivered during protocol payouts.
+    function withdrawPayments() external override {
+        uint256 amount = pendingWithdrawals[msg.sender];
+        if (amount == 0) revert NoPendingWithdrawal();
+
+        pendingWithdrawals[msg.sender] = 0;
+        (bool ok, ) = msg.sender.call{value: amount}("");
+        if (!ok) {
+            revert TransferFailed();
+        }
+
+        emit WithdrawalClaimed(msg.sender, amount);
+    }
+
     // ── Internal ────────────────────────────────────────────────────────
 
-    function _safeTransfer(address to, uint256 amount) internal {
+    function _payOrCredit(address to, uint256 amount) internal {
         if (amount == 0 || to == address(0)) return;
         (bool ok, ) = to.call{value: amount}("");
-        require(ok, "ETH transfer failed");
+        if (!ok) {
+            pendingWithdrawals[to] += amount;
+            emit WithdrawalCredited(to, amount);
+        }
     }
 
     /// @notice Accept ETH deposits (for bond top-ups)

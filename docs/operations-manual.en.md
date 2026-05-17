@@ -162,6 +162,7 @@ Configuration is loaded from `{COC_DATA_DIR}/node-config.json` and can be overri
 | `COC_WIRE_PORT` | 19781 | Wire protocol port |
 | `COC_IPFS_BIND` | `0.0.0.0` | IPFS listen address |
 | `COC_IPFS_PORT` | 5001 | IPFS port |
+| `COC_METRICS_BIND` | `127.0.0.1` | Prometheus metrics listen address |
 | `COC_METRICS_PORT` | 9100 | Prometheus metrics port |
 | `COC_DEV_MODE` | `false` | Dev mode (binds to 127.0.0.1) |
 | `COC_NODE_MODE` | `full` | Node mode: `full` / `archive` / `light` |
@@ -694,7 +695,7 @@ docker compose -f docker/docker-compose.monitoring.yml up -d
 
 ### Prometheus Metrics Endpoint
 
-Each node exposes metrics at `http://<host>:<COC_METRICS_PORT>/metrics` (default 9100).
+Each node exposes metrics at `http://<COC_METRICS_BIND>:<COC_METRICS_PORT>/metrics` (default `127.0.0.1:9100`). Set `COC_METRICS_BIND` explicitly when a Prometheus host must scrape over the network.
 
 Key metrics:
 - `coc_block_height` — current block number

@@ -1800,6 +1800,7 @@ if (wireServer && dhtNetwork) {
 
 // Prometheus metrics server
 const metricsPort = Number(process.env.COC_METRICS_PORT ?? 9100)
+const metricsBind = process.env.COC_METRICS_BIND ?? "127.0.0.1"
 const metricsHandle = startMetricsServer({
   getBlockHeight: () => chain.getHeight(),
   getTxPoolPending: () => chain.mempool.stats().size,
@@ -1818,7 +1819,7 @@ const metricsHandle = startMetricsServer({
   // ops/alerts/prometheus-rules.yml have a real series to evaluate.
   getEquivocationsTotal: bftCoordinator ? () => bftCoordinator!.getEquivocationsTotal() : undefined,
   getForkChoiceMaxDepth: () => consensus.getForkChoiceMaxDepth(),
-}, { port: metricsPort })
+}, { port: metricsPort, bind: metricsBind })
 
 // Graceful shutdown — shared by SIGINT and SIGTERM
 let shuttingDown = false

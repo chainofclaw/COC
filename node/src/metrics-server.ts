@@ -18,7 +18,7 @@ export function startMetricsServer(
   opts: MetricsServerOpts = {},
 ): { stop: () => void } {
   const port = opts.port ?? 9100
-  const bind = opts.bind ?? "0.0.0.0"
+  const bind = opts.bind ?? "127.0.0.1"
   const collectIntervalMs = opts.collectIntervalMs ?? 5000
 
   metrics.setSource(source)
