@@ -18,7 +18,10 @@ let mockNonce = 0
 interface MockRpcOptions {
   balance?: bigint
   failSend?: boolean
+  responseDelayMs?: number
 }
+
+let mockSendRawTxCount = 0
 
 function handleSingleRpc(body: { id: number; method: string; params?: unknown[] }, opts: MockRpcOptions) {
   const balance = opts.balance ?? 1000000000000000000000n // 1000 ETH default
@@ -74,6 +77,7 @@ function handleSingleRpc(body: { id: number; method: string; params?: unknown[] 
         return { jsonrpc: "2.0", id: body.id, error: { code: -32000, message: "tx failed" } }
       }
       mockNonce++
+      mockSendRawTxCount++
       // ethers.js verifies the returned hash matches keccak256(rawTx)
       const rawTx = (body.params ?? [])[0] as string
       result = keccak256(rawTx)
@@ -102,7 +106,10 @@ function createMockRpcServer(opts: MockRpcOptions = {}): Promise<{ server: Serve
     const server = createServer((req: IncomingMessage, res: ServerResponse) => {
       const chunks: Buffer[] = []
       req.on("data", (c: Buffer) => chunks.push(c))
-      req.on("end", () => {
+      req.on("end", async () => {
+        if (opts.responseDelayMs) {
+          await new Promise((done) => setTimeout(done, opts.responseDelayMs))
+        }
         const raw = Buffer.concat(chunks).toString()
         let parsed: unknown
         try {
@@ -148,6 +155,7 @@ afterEach(() => {
     activeServer = null
   }
   mockNonce = 0
+  mockSendRawTxCount = 0
 })
 
 describe("Faucet drip flow", () => {
@@ -195,6 +203,36 @@ describe("Faucet drip flow", () => {
     )
   })
 
+  it("serializes concurrent drips for the same address", async () => {
+    const { server, port } = await createMockRpcServer({ responseDelayMs: 40 })
+    activeServer = server
+
+    const faucet = new Faucet({
+      rpcUrl: `http://127.0.0.1:${port}`,
+      privateKey: FUNDED_PK,
+      dripAmountEth: "10",
+      dailyGlobalLimitEth: "10000",
+      perAddressCooldownMs: 60_000,
+    })
+    activeFaucets.push(faucet)
+
+    const results = await Promise.allSettled([
+      faucet.requestDrip(VALID_ADDRESS),
+      faucet.requestDrip(VALID_ADDRESS),
+      faucet.requestDrip(VALID_ADDRESS),
+    ])
+
+    assert.equal(results.filter((r) => r.status === "fulfilled").length, 1)
+    const rejected = results.filter((r): r is PromiseRejectedResult => r.status === "rejected")
+    assert.equal(rejected.length, 2)
+    for (const result of rejected) {
+      assert.ok(result.reason instanceof FaucetError)
+      assert.equal(result.reason.statusCode, 429)
+      assert.match(result.reason.message, /Rate limited/)
+    }
+    assert.equal(mockSendRawTxCount, 1)
+  })
+
   it("allows drip to different addresses", async () => {
     const { server, port } = await createMockRpcServer()
     activeServer = server
@@ -239,6 +277,36 @@ describe("Faucet drip flow", () => {
         return true
       },
     )
+  })
+
+  it("serializes concurrent daily limit checks", async () => {
+    const { server, port } = await createMockRpcServer({ responseDelayMs: 40 })
+    activeServer = server
+
+    const faucet = new Faucet({
+      rpcUrl: `http://127.0.0.1:${port}`,
+      privateKey: FUNDED_PK,
+      dripAmountEth: "10",
+      dailyGlobalLimitEth: "10",
+      perAddressCooldownMs: 0,
+    })
+    activeFaucets.push(faucet)
+
+    const results = await Promise.allSettled([
+      faucet.requestDrip("0x70997970C51812dc3A010C7d01b50e0d17dc79C8"),
+      faucet.requestDrip("0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"),
+      faucet.requestDrip("0x90F79bf6EB2c4f870365E785982E1f101E93b906"),
+    ])
+
+    assert.equal(results.filter((r) => r.status === "fulfilled").length, 1)
+    const rejected = results.filter((r): r is PromiseRejectedResult => r.status === "rejected")
+    assert.equal(rejected.length, 2)
+    for (const result of rejected) {
+      assert.ok(result.reason instanceof FaucetError)
+      assert.equal(result.reason.statusCode, 429)
+      assert.match(result.reason.message, /Daily faucet limit/)
+    }
+    assert.equal(mockSendRawTxCount, 1)
   })
 
   it("rejects when faucet balance is too low", async () => {

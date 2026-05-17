@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { readFileSync } from "node:fs"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
+import { resolveFaucetClientIp } from "./client-ip.ts"
 import { Faucet, FaucetError } from "./faucet.ts"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -123,9 +124,7 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
     }
 
     if (req.url === "/faucet/request" && req.method === "POST") {
-      const ip = req.headers["x-forwarded-for"]?.toString().split(",")[0]?.trim()
-        ?? req.socket.remoteAddress
-        ?? "unknown"
+      const ip = resolveFaucetClientIp(req)
 
       if (!checkIpRateLimit(ip)) {
         jsonResponse(res, 429, { error: "Too many requests from this IP" })

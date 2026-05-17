@@ -31,6 +31,7 @@ export class Faucet {
 
   // address → last drip record
   private readonly records = new Map<string, DripRecord>()
+  private dripQueue: Promise<void> = Promise.resolve()
   private dailyDripTotal = 0n
   private dailyDripCount = 0
   private dailyResetMs = this.nextMidnight()
@@ -54,6 +55,15 @@ export class Faucet {
       throw new FaucetError("Invalid address format", 400)
     }
 
+    const result = this.dripQueue.then(() => this.executeDrip(toAddress))
+    this.dripQueue = result.then(
+      () => undefined,
+      () => undefined,
+    )
+    return result
+  }
+
+  private async executeDrip(toAddress: string): Promise<{ txHash: string; amount: string }> {
     // Check daily reset
     this.maybeResetDaily()
 

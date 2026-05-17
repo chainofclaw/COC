@@ -208,7 +208,16 @@
 
         if (res.ok) {
           result.className = 'result success';
-          result.innerHTML = 'Sent <strong>' + data.amount + ' ' + data.unit + '</strong><br>Tx: <code>' + data.txHash + '</code>';
+          result.textContent = '';
+          result.append(document.createTextNode('Sent '));
+
+          const amount = document.createElement('strong');
+          amount.textContent = data.amount + ' ' + data.unit;
+          result.append(amount, document.createElement('br'), document.createTextNode('Tx: '));
+
+          const txHash = document.createElement('code');
+          txHash.textContent = data.txHash;
+          result.append(txHash);
         } else {
           result.className = 'result error';
           result.textContent = data.error || 'Request failed';

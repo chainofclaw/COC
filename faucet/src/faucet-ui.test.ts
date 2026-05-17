@@ -59,6 +59,19 @@ describe("Faucet Web UI", () => {
     assert.ok(html.includes("result error"), "should have error result styling")
     assert.ok(html.includes("result success"), "should have success result styling")
   })
+
+  it("renders success data with textContent instead of dynamic innerHTML", () => {
+    const html = readFileSync(INDEX_PATH, "utf-8")
+
+    assert.ok(html.includes("document.createTextNode('Sent ')"), "should build dynamic success output with DOM nodes")
+    assert.ok(html.includes("document.createElement('strong')"), "should create amount element explicitly")
+    assert.ok(html.includes("txHash.textContent = data.txHash"), "should assign tx hash as text")
+    assert.doesNotMatch(
+      html,
+      /result\.innerHTML\s*=\s*['"`][\s\S]*data\./,
+      "success path must not concatenate API data into innerHTML",
+    )
+  })
 })
 
 describe("Faucet server static serving", () => {
