@@ -2,6 +2,7 @@ import { describe, it, afterEach } from "node:test"
 import assert from "node:assert/strict"
 import net from "node:net"
 import { WireServer } from "./wire-server.ts"
+import { WireClient } from "./wire-client.ts"
 import { FrameDecoder, MessageType, encodeJsonPayload, buildWireHandshakeMessage } from "./wire-protocol.ts"
 import { createNodeSigner } from "./crypto/signer.ts"
 
@@ -110,5 +111,61 @@ describe("Wire handshake auth", () => {
 
     const frames = await receiveFrames(socket, decoder, 1)
     assert.ok(frames.length >= 1)
+  })
+
+  it("wire-client rejects a replayed server handshake nonce", async () => {
+    // Security regression: wire-server dedups handshake nonces; wire-client
+    // did not. A captured server handshake stays valid for the 5-min
+    // freshness window, so without client-side per-nonce dedup it could be
+    // replayed to impersonate that server. A fake peer here replays one
+    // fixed signed handshake to every connection — the first client must
+    // accept it, every later client must reject the reused nonce.
+    const port = getRandomPort()
+    const serverSigner = createNodeSigner("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80")
+    const clientSigner = createNodeSigner("0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d")
+
+    const FIXED_NONCE = `${Date.now()}:wire-client-replay-regression`
+    const hsMsg = buildWireHandshakeMessage(serverSigner.nodeId, 18780, FIXED_NONCE)
+    const handshakeFrame = encodeJsonPayload(MessageType.Handshake, {
+      nodeId: serverSigner.nodeId,
+      chainId: 18780,
+      height: "0",
+      nonce: FIXED_NONCE,
+      signature: serverSigner.sign(hsMsg),
+    })
+    // Fake peer: replays the identical signed handshake to every connection.
+    const fake = net.createServer((s) => {
+      s.on("data", () => {})
+      s.on("error", () => {})
+      s.write(handshakeFrame)
+    })
+    await new Promise<void>((r) => fake.listen(port, "127.0.0.1", () => r()))
+
+    const mkClient = (onConnected: () => void) => new WireClient({
+      host: "127.0.0.1",
+      port,
+      nodeId: clientSigner.nodeId,
+      chainId: 18780,
+      signer: clientSigner,
+      verifier: clientSigner,
+      onConnected,
+    })
+
+    let firstConnected = false
+    const client1 = mkClient(() => { firstConnected = true })
+    client1.connect()
+    await new Promise((r) => setTimeout(r, 500))
+
+    let secondConnected = false
+    const client2 = mkClient(() => { secondConnected = true })
+    client2.connect()
+    await new Promise((r) => setTimeout(r, 500))
+
+    client1.disconnect()
+    client2.disconnect()
+    await new Promise<void>((r) => fake.close(() => r()))
+
+    assert.ok(firstConnected, "first client accepts a fresh-nonce server handshake")
+    assert.ok(!secondConnected, "second client must reject the replayed handshake nonce")
   })
 })
