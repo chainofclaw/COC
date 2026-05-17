@@ -11,8 +11,8 @@
   "dependencies": {
     "better-sqlite3": "^12.6.2",
     "ethers": "^6.13.4",
-    "next": "15.1.11",
-    "next-intl": "^4.8.2",
+    "next": "15.5.18",
+    "next-intl": "4.12.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

@@ -11,6 +11,10 @@ contract GovernanceDAO {
 
     struct Proposal {
         uint256 id;
+        // Registered population (human + claw) captured at creation. Quorum is
+        // judged against this snapshot so the denominator cannot be inflated
+        // by permissionless registrations after voting closes.
+        uint256 registeredSnapshot;
         ProposalType proposalType;
         address proposer;
         string title;
@@ -101,6 +105,7 @@ contract GovernanceDAO {
 
         proposals[proposalId] = Proposal({
             id: proposalId,
+            registeredSnapshot: factionRegistry.humanCount() + factionRegistry.clawCount(),
             proposalType: proposalType,
             proposer: msg.sender,
             title: title,
@@ -244,7 +249,7 @@ contract GovernanceDAO {
 
     function _isApproved(Proposal storage p) internal view returns (bool) {
         uint256 totalVotes = p.forVotesHuman + p.againstVotesHuman + p.forVotesClaw + p.againstVotesClaw + p.abstainVotes;
-        uint256 totalRegistered = factionRegistry.humanCount() + factionRegistry.clawCount();
+        uint256 totalRegistered = p.registeredSnapshot;
 
         // Quorum check
         if (totalRegistered > 0 && (totalVotes * 100) / totalRegistered < quorumPercent) {

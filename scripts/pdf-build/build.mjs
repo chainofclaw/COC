@@ -3,7 +3,7 @@
 // Usage: node build.mjs <input.md> <output.pdf>
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import MarkdownIt from 'markdown-it';
@@ -327,8 +327,7 @@ console.log(`✓ HTML generated: ${tmpHtml} (${html.length} bytes)`);
 
 // Render to PDF via Chrome headless
 const chromeBin = '/usr/bin/google-chrome';
-const cmd = [
-  chromeBin,
+const chromeArgs = [
   '--headless=new',
   '--no-sandbox',
   '--disable-gpu',
@@ -338,12 +337,12 @@ const cmd = [
   `--print-to-pdf=${outputPath}`,
   `--print-to-pdf-no-header`,
   `file://${tmpHtml}`,
-].join(' ');
+];
 
-console.log(`→ ${cmd}`);
+console.log(`→ ${chromeBin} ${chromeArgs.map((arg) => JSON.stringify(arg)).join(' ')}`);
 
 try {
-  execSync(cmd, { stdio: 'inherit' });
+  execFileSync(chromeBin, chromeArgs, { stdio: 'inherit' });
   console.log(`✓ PDF generated: ${outputPath}`);
 } catch (e) {
   console.error('PDF generation failed:', e.message);

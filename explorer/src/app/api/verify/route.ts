@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createHash, timingSafeEqual } from 'node:crypto'
 import { verifyContract, type VerifyParams } from '@/lib/solc-verify'
 import { getVerifyRateLimitClientIp } from '@/lib/verify-client-ip'
+import { getVerifyRateLimitKey } from '@/lib/verify-rate-limit'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -50,14 +51,27 @@ function checkAndConsumeRateLimit(key: string): { allowed: boolean; retryAfterSe
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
+    const clientIp = getVerifyRateLimitClientIp(request.headers)
+    const requestApiKey = request.headers.get('x-verify-api-key')
+
     if (REQUIRE_VERIFY_API_KEY) {
+      const authLimit = checkAndConsumeRateLimit(getVerifyRateLimitKey(clientIp, null, 'auth'))
+      if (!authLimit.allowed) {
+        return NextResponse.json(
+          { verified: false, matchPct: 0, error: 'Rate limit exceeded, try again later' },
+          {
+            status: 429,
+            headers: { 'Retry-After': String(authLimit.retryAfterSeconds) },
+          },
+        )
+      }
+
       if (!VERIFY_API_KEY) {
         return NextResponse.json(
           { verified: false, matchPct: 0, error: 'Verification API is not configured' },
           { status: 503 },
         )
       }
-      const requestApiKey = request.headers.get('x-verify-api-key')
       if (!requestApiKey || !isValidApiKey(requestApiKey, VERIFY_API_KEY)) {
         return NextResponse.json(
           { verified: false, matchPct: 0, error: 'Unauthorized verification request' },
@@ -66,8 +80,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       }
     }
 
-    const clientIp = getVerifyRateLimitClientIp(request.headers)
-    const rateKey = `${clientIp}:${request.headers.get('x-verify-api-key') ?? 'anon'}`
+    const rateKey = getVerifyRateLimitKey(clientIp, requestApiKey)
     const limit = checkAndConsumeRateLimit(rateKey)
     if (!limit.allowed) {
       return NextResponse.json(

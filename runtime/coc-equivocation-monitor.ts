@@ -19,22 +19,31 @@
 import { Contract, JsonRpcProvider, Wallet, type Log } from "ethers"
 import { readFile } from "node:fs/promises"
 import { createLogger } from "../node/src/logger.ts"
+import { resolvePrivateKey } from "./lib/key-material.ts"
 
 const log = createLogger("coc-equivocation-monitor")
 
 const NODE_URL = process.env.COC_NODE_URL ?? "http://127.0.0.1:18780"
 const L1_RPC = process.env.COC_L1_RPC_URL ?? NODE_URL
-const SLASHER_PK = process.env.COC_SLASHER_PK ?? ""
+const SLASHER_PK = resolveSlasherPrivateKey()
 const POLL_MS = Number(process.env.COC_EQUIVOCATION_POLL_MS ?? 30_000)
-
-if (!SLASHER_PK) {
-  console.error("COC_SLASHER_PK env required")
-  process.exit(2)
-}
 
 const provider = new JsonRpcProvider(L1_RPC)
 const slasher = new Wallet(SLASHER_PK, provider)
 log.info("equivocation monitor booting", { slasher: slasher.address })
+
+function resolveSlasherPrivateKey(): string {
+  try {
+    return resolvePrivateKey({
+      envValue: process.env.COC_SLASHER_PK,
+      envFilePath: process.env.COC_SLASHER_PK_FILE,
+      label: "slasher",
+    })
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error))
+    process.exit(2)
+  }
+}
 
 interface EquivocationEvent {
   nodeId: `0x${string}`

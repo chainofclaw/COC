@@ -760,11 +760,18 @@ function parseBooleanFlag(input: unknown, fallback: boolean): boolean {
 }
 
 async function resolveNodeKey(dataDir: string): Promise<string> {
-  // Priority 1: environment variable (validate format)
-  if (process.env.COC_NODE_KEY) {
-    const envKey = process.env.COC_NODE_KEY.trim()
+  // Priority 1: environment variable (validate format). COC_NODE_KEY is
+  // canonical; COC_NODE_PK is accepted for older runtime/deployment files.
+  const canonicalEnvKey = process.env.COC_NODE_KEY?.trim()
+  const legacyEnvKey = process.env.COC_NODE_PK?.trim()
+  if (canonicalEnvKey || legacyEnvKey) {
+    if (canonicalEnvKey && legacyEnvKey && canonicalEnvKey !== legacyEnvKey) {
+      throw new Error("COC_NODE_KEY and COC_NODE_PK are both set but differ")
+    }
+
+    const envKey = canonicalEnvKey ?? legacyEnvKey!
     if (!isValidPrivateKeyHex(envKey)) {
-      throw new Error("COC_NODE_KEY env var must be a 0x-prefixed 64-character hex string (66 chars total)")
+      throw new Error("COC_NODE_KEY/COC_NODE_PK env var must be a 0x-prefixed 64-character hex string (66 chars total)")
     }
     return envKey
   }

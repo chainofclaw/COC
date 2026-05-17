@@ -9,8 +9,8 @@ passed=0; failed=0; failures=""
 pass() { passed=$((passed+1)); echo "  ✅ $1${2:+ — $2}"; }
 fail() { failed=$((failed+1)); failures="$failures $1"; echo "  ❌ $1${2:+ — $2}"; }
 
-# JSON field extractor using node (no python3 in slim container)
-jq_() { node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const o=JSON.parse(d);console.log(eval('o.'+process.argv[1]))}catch{console.log('')}})" "$1"; }
+# JSON top-level field extractor using node (no python3 in slim container)
+jq_() { node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const k=process.argv[1];if(!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(k))return;const o=JSON.parse(d);const v=o?.[k];console.log(v ?? '')}catch{console.log('')}})" "$1"; }
 
 echo "══════════════════════════════════════════════════════"
 echo "  COC DID + IPFS/P2P Storage Test Suite"

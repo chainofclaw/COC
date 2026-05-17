@@ -81,6 +81,8 @@ contract DIDRegistry {
     uint64  public constant MIN_DELEGATION_INTERVAL = 60; // 1 minute
     uint256 public constant MAX_VERIFICATION_METHODS = 8;
     uint256 public constant MAX_DELEGATIONS_PER_AGENT = 32;
+    uint256 internal constant SECP256K1N_HALF =
+        0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0;
 
     // Key purpose bitmask
     uint8 public constant PURPOSE_AUTH = 0x01;
@@ -191,12 +193,14 @@ contract DIDRegistry {
     error CredentialNotFound();
     error CredentialAlreadyRevoked();
     error InvalidCredentialHash();
+    error ZeroAddress();
 
     // -----------------------------------------------------------------------
     //  Constructor
     // -----------------------------------------------------------------------
 
     constructor(address _soulRegistry) {
+        if (_soulRegistry == address(0)) revert ZeroAddress();
         soulRegistry = ISoulRegistry(_soulRegistry);
         DOMAIN_SEPARATOR = keccak256(
             abi.encode(
@@ -468,6 +472,7 @@ contract DIDRegistry {
         bytes calldata sig
     ) external onlySoulOwner(parentAgentId) {
         if (ephemeralId == bytes32(0)) revert InvalidAgentId();
+        if (ephemeralAddress == address(0)) revert InvalidKeyAddress();
         if (ephemeralIdentities[ephemeralId].parentAgentId != bytes32(0)) revert EphemeralAlreadyExists();
         if (expiresAt <= uint64(block.timestamp)) revert InvalidExpiry();
 
@@ -603,6 +608,7 @@ contract DIDRegistry {
 
         if (v < 27) v += 27;
         if (v != 27 && v != 28) revert InvalidSignature();
+        if (uint256(s) > SECP256K1N_HALF) revert InvalidSignature();
 
         address recovered = ecrecover(hash, v, r, s);
         if (recovered == address(0)) revert InvalidSignature();

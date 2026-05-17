@@ -29,13 +29,20 @@ export function CreatePostForm() {
     setSubmitting(true)
     setError(null)
     try {
-      const message = buildSignMessage('createPost', { title, category, timestamp: Date.now() })
+      const postTitle = title.trim()
+      const postContent = content.trim()
+      const message = buildSignMessage('createPost', {
+        title: postTitle,
+        content: postContent,
+        category,
+        timestamp: Date.now(),
+      })
       const signature = await signMessage(message)
 
       const res = await fetch('/api/forum/posts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title, content, category, address, signature, message }),
+        body: JSON.stringify({ title: postTitle, content: postContent, category, address, signature, message }),
       })
 
       if (!res.ok) {

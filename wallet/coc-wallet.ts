@@ -40,10 +40,18 @@ function stripFlags(args: string[]): string[] {
   return result
 }
 
-function getPassword(args: string[]): string {
+export function getPassword(args: string[], env: NodeJS.ProcessEnv = process.env): string | undefined {
   const idx = args.indexOf("--password")
   if (idx !== -1 && args[idx + 1]) return args[idx + 1]
-  return process.env.COC_WALLET_PASSWORD ?? "coc-default-password"
+  return env.COC_WALLET_PASSWORD
+}
+
+export function requirePassword(args: string[], env: NodeJS.ProcessEnv = process.env): string {
+  const password = getPassword(args, env)
+  if (!password) {
+    throw new Error("Wallet password required: pass --password or set COC_WALLET_PASSWORD")
+  }
+  return password
 }
 
 // ---------------------------------------------------------------------------
@@ -173,7 +181,7 @@ Commands:
 
 Options:
   --rpc <url>        RPC endpoint (default: $COC_RPC_URL or http://127.0.0.1:18780)
-  --password <pwd>   Keystore password (default: $COC_WALLET_PASSWORD)
+  --password <pwd>   Keystore password for create/import/send (or $COC_WALLET_PASSWORD)
 `)
 }
 
@@ -183,17 +191,16 @@ Options:
 
 export async function main(argv: string[]): Promise<void> {
   const rpcUrl = getRpcUrl(argv)
-  const password = getPassword(argv)
   const args = stripFlags(argv)
   const cmd = args[0]
 
   switch (cmd) {
     case "create":
-      await cmdCreate(password)
+      await cmdCreate(requirePassword(argv))
       break
     case "import":
       if (!args[1]) throw new Error("Usage: coc-wallet import <private-key|mnemonic>")
-      await cmdImport(args.slice(1).join(" "), password)
+      await cmdImport(args.slice(1).join(" "), requirePassword(argv))
       break
     case "balance":
       if (!args[1]) throw new Error("Usage: coc-wallet balance <address>")
@@ -201,7 +208,7 @@ export async function main(argv: string[]): Promise<void> {
       break
     case "send":
       if (!args[1] || !args[2] || !args[3]) throw new Error("Usage: coc-wallet send <from> <to> <amount>")
-      await cmdSend(rpcUrl, args[1], args[2], args[3], password)
+      await cmdSend(rpcUrl, args[1], args[2], args[3], requirePassword(argv))
       break
     case "tx":
       if (!args[1]) throw new Error("Usage: coc-wallet tx <hash>")

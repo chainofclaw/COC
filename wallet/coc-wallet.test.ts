@@ -4,6 +4,7 @@ import { Wallet, parseEther, formatEther } from "ethers"
 import { writeFile, readFile, rm, mkdir } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
+import { getPassword, requirePassword } from "./coc-wallet.ts"
 
 // We test the exported main() and internal helpers indirectly
 // by importing the module functions.
@@ -60,6 +61,19 @@ describe("coc-wallet", () => {
   it("tx construction with parseEther", () => {
     const value = parseEther("1.5")
     assert.equal(value, 1500000000000000000n)
+  })
+
+  it("does not use a default keystore password", () => {
+    assert.equal(getPassword([], {}), undefined)
+    assert.throws(
+      () => requirePassword([], {}),
+      /Wallet password required/,
+    )
+  })
+
+  it("accepts password from flag or environment", () => {
+    assert.equal(getPassword(["--password", "from-flag"], {}), "from-flag")
+    assert.equal(getPassword([], { COC_WALLET_PASSWORD: "from-env" }), "from-env")
   })
 
   it("keystore file save and load", async () => {

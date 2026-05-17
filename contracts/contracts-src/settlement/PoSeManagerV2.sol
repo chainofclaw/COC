@@ -23,6 +23,8 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
     uint16 public constant SLASH_INSURANCE_BPS = 2000;      // 20% to insurance
     uint64 public constant REVEAL_WINDOW_EPOCHS = 2;
     uint64 public constant ADJUDICATION_WINDOW_EPOCHS = 2;
+    uint256 internal constant SECP256K1N_HALF =
+        0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0;
 
     // --- v2 storage ---
     mapping(uint64 => uint64) public challengeNonces;
@@ -42,6 +44,7 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
     uint256 public insuranceBalance;
     bytes32 public DOMAIN_SEPARATOR;
     bool public allowEmptyWitnessSubmission = false;
+    bool public initialized;
     uint256 private _challengeCounter;
 
     // --- Token emission ---
@@ -58,6 +61,7 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
 
     event EmissionMinted(uint64 indexed epochId, uint256 amount);
     event ExpiredRewardsSwept(uint64 indexed epochId, uint256 toFoundation, uint256 burned);
+    event Initialized(uint256 chainId, address verifyingContract, uint256 challengeBondMin);
 
     // Active node tracking for witness set selection
     bytes32[] internal _activeNodeIds;
@@ -79,8 +83,15 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
     error AlreadyUnbonding();
     error UnlockNotReached();
     error NoBondToWithdraw();
+    error AlreadyInitialized();
+    error ZeroAddress();
 
     function initialize(uint256 chainId, address verifyingContract, uint256 _challengeBondMin) external onlyOwner {
+        if (initialized) revert AlreadyInitialized();
+        if (verifyingContract == address(0)) revert ZeroAddress();
+        if (_challengeBondMin == 0) revert BondTooLow();
+
+        initialized = true;
         DOMAIN_SEPARATOR = keccak256(
             abi.encode(
                 keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
@@ -91,6 +102,7 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
             )
         );
         challengeBondMin = _challengeBondMin;
+        emit Initialized(chainId, verifyingContract, _challengeBondMin);
     }
 
     /**
@@ -636,6 +648,7 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
     }
 
     function setChallengeBondMin(uint256 newMin) external onlyOwner {
+        if (newMin == 0) revert BondTooLow();
         challengeBondMin = newMin;
     }
 
@@ -712,6 +725,7 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
         }
         if (v < 27) v += 27;
         if (v != 27 && v != 28) return address(0);
+        if (uint256(s) > SECP256K1N_HALF) return address(0);
         return ecrecover(digest, v, r, s);
     }
 
@@ -726,6 +740,7 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
         }
         if (v < 27) v += 27;
         if (v != 27 && v != 28) return address(0);
+        if (uint256(s) > SECP256K1N_HALF) return address(0);
         return ecrecover(digest, v, r, s);
     }
 
@@ -771,6 +786,7 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
         }
         if (v < 27) v += 27;
         require(v == 27 || v == 28, "invalid v value");
+        if (uint256(s) > SECP256K1N_HALF) revert InvalidOwnershipProof();
         address recovered = ecrecover(ethSignedHash, v, r, s);
         if (recovered == address(0)) revert InvalidOwnershipProof();
         address nodeAddr = _pubkeyToAddress(pubkeyNode);
@@ -795,6 +811,7 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
         }
         if (v < 27) v += 27;
         require(v == 27 || v == 28, "invalid attestation v value");
+        if (uint256(s) > SECP256K1N_HALF) revert InvalidOwnershipProof();
         address recovered = ecrecover(ethSignedHash, v, r, s);
         if (recovered == address(0)) revert InvalidOwnershipProof();
         address nodeAddr = _pubkeyToAddress(pubkeyNode);

@@ -4,6 +4,9 @@ pragma solidity ^0.8.24;
 /// @title FactionRegistry - Maps addresses to Human or Claw factions
 /// @notice Faction is immutable once registered to prevent speculative switching
 contract FactionRegistry {
+    uint256 internal constant SECP256K1N_HALF =
+        0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0;
+
     enum Faction { None, Human, Claw }
 
     struct Identity {
@@ -35,6 +38,7 @@ contract FactionRegistry {
     error InvalidAgentId();
     error AgentIdTaken();
     error InvalidAttestation();
+    error ZeroAddress();
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
@@ -107,6 +111,7 @@ contract FactionRegistry {
     }
 
     function setVerifier(address newVerifier) external onlyOwner {
+        if (newVerifier == address(0)) revert ZeroAddress();
         verifier = newVerifier;
         emit VerifierUpdated(newVerifier);
     }
@@ -139,6 +144,7 @@ contract FactionRegistry {
         }
         if (v < 27) v += 27;
         if (v != 27 && v != 28) return address(0);
+        if (uint256(s) > SECP256K1N_HALF) return address(0);
 
         return ecrecover(hash, v, r, s);
     }

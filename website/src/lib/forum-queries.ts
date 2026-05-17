@@ -118,6 +118,14 @@ export function getPost(id: number): ForumPost | undefined {
   `).get(id) as ForumPost | undefined
 }
 
+export function isPostAuthor(postId: number, address: string): boolean {
+  const db = getDb()
+  const row = db.prepare(
+    'SELECT 1 FROM forum_posts WHERE id = ? AND lower(author_address) = lower(?)'
+  ).get(postId, address) as Record<string, number> | undefined
+  return Boolean(row)
+}
+
 export function createPost(data: {
   title: string
   content: string
@@ -145,6 +153,30 @@ export function getReplies(postId: number): ForumReply[] {
     WHERE r.post_id = ?
     ORDER BY r.created_at ASC
   `).all(postId) as ForumReply[]
+}
+
+export function getReply(id: number): ForumReply | undefined {
+  const db = getDb()
+  return db.prepare(`
+    SELECT r.*, i.faction as author_faction, i.display_name as author_display_name
+    FROM forum_replies r
+    LEFT JOIN identities i ON r.author_address = i.address
+    WHERE r.id = ?
+  `).get(id) as ForumReply | undefined
+}
+
+export function replyBelongsToPost(replyId: number, postId: number): boolean {
+  const db = getDb()
+  const row = db.prepare(
+    'SELECT 1 FROM forum_replies WHERE id = ? AND post_id = ?'
+  ).get(replyId, postId) as Record<string, number> | undefined
+  return Boolean(row)
+}
+
+export function voteTargetExists(targetType: 'post' | 'reply', targetId: number, postId?: number): boolean {
+  if (targetType === 'post') return Boolean(getPost(targetId))
+  if (postId !== undefined) return replyBelongsToPost(targetId, postId)
+  return Boolean(getReply(targetId))
 }
 
 export function createReply(data: {

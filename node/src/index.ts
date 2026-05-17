@@ -1,4 +1,4 @@
-import { keccak256, parseEther, Wallet } from "ethers"
+import { keccak256, parseEther } from "ethers"
 import { appendFileSync, existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { loadNodeConfig } from "./config.ts"
@@ -178,8 +178,9 @@ if (existsSync(poisonStorePath)) {
   }
 }
 
-// Node identity signer — created early so Wire/BFT/PoSe all share the same key
-const nodePrivateKey = config.nodePrivateKey ?? process.env.COC_NODE_PK ?? Wallet.createRandom().privateKey
+// Node identity signer — created early so Wire/BFT/PoSe all share the same key.
+// loadNodeConfig resolves COC_NODE_KEY/COC_NODE_PK, persisted node-key, or a new key.
+const nodePrivateKey = config.nodePrivateKey
 const nodeSigner = createNodeSigner(nodePrivateKey)
 
 // Attach signer to chain engine for block proposer signatures

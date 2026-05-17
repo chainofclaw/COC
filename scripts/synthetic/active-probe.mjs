@@ -20,20 +20,27 @@
 // Env knobs:
 //   PROBE_RPC               default https://clawchain.io/api/testnet/rpc
 //   PROBE_CHAIN_ID          default 88780
-//   PROBE_PK                default Hardhat #5 well-known dev key
+//   PROBE_PK                required for public RPCs; localhost/devnet uses Hardhat #5
 //   PROBE_TX_TIMEOUT_MS     default 30000 (per-tx wait)
 //   PROBE_REPORT_JSON       optional path; if set, writes report JSON here
 
 import { ethers } from 'ethers'
 import { writeFileSync } from 'node:fs'
+import { HARDHAT_DEV_PRIVATE_KEYS, resolvePrivateKeyForRpc } from '../lib/key-safety.mjs'
 
 const cfg = {
   rpc: process.env.PROBE_RPC || 'https://clawchain.io/api/testnet/rpc',
   chainId: Number(process.env.PROBE_CHAIN_ID || '88780'),
-  probePk: process.env.PROBE_PK || '0x8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba',
   txTimeoutMs: Number(process.env.PROBE_TX_TIMEOUT_MS || '30000'),
   reportJson: process.env.PROBE_REPORT_JSON || null,
 }
+cfg.probePk = resolvePrivateKeyForRpc({
+  envValue: process.env.PROBE_PK,
+  envName: 'PROBE_PK',
+  fallbackDevKey: HARDHAT_DEV_PRIVATE_KEYS[5],
+  rpcUrl: cfg.rpc,
+  label: 'synthetic active probe',
+})
 
 // Hand-assembled minimal counter contract (27 bytes total) — see ./README.md.
 // init code stores 0 at slot 0, returns runtime (10 bytes). Runtime SLOAD's
