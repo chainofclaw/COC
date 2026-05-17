@@ -99,6 +99,30 @@ const NO_PROGRESS_MAX_VALIDATORS = 10
 export const PROPOSER_UNREACHABLE_FAST_TIMEOUT_MS = 15_000
 export const PROPOSER_UNREACHABLE_TTL_MS = 60_000
 
+// PR-1M (2026-05-17, chainofclaw/COC#635): liveness-based miss-round window.
+//
+// onProposerStuck — the BFT coordinator callback that feeds PR-1A's
+// `unreachableProposers` marks — only fires when a propose was actually
+// RECEIVED for the stuck round (it reads `activeRound.proposedBlock.proposer`).
+// A validator that stops proposing ENTIRELY never produces that propose, so
+// onProposerStuck never fires, so it is never marked, so every one of its
+// rotation slots falls through to the multi-minute H15 slow path — degrading
+// the chain to <1 bpm on a single-validator outage (#635: 88780 2026-05-16,
+// 0xb939e5 proposed 10x then went silent → 444-624s halt per slot).
+//
+// checkNoProgressWatchdog promotes a peer proposer into the unreachable set
+// once the chain has been stalled at its slot for this long — a
+// propose-independent liveness trigger that complements onProposerStuck.
+// Must satisfy FAST < MISS_ROUND < TTL: larger than FAST so a round about to
+// resolve is not falsely promoted and so the override arms on the same tick
+// the mark is set; smaller than TTL so the mark cannot expire before the
+// override fires. The watchdog samples at NO_PROGRESS_STAGGER_MS granularity,
+// so keep this below that interval for first-tick detection.
+// Env-overridable via COC_PROPOSER_MISS_ROUND_TIMEOUT_MS.
+export const PROPOSER_MISS_ROUND_TIMEOUT_MS = Number(
+  process.env.COC_PROPOSER_MISS_ROUND_TIMEOUT_MS ?? 20_000,
+)
+
 /**
  * PR-1H (2026-05-11): startup grace period for PR-1A's fast-path. Within
  * `PROPOSER_REACHABILITY_STARTUP_GRACE_MS` after consensus.start(),
@@ -519,12 +543,42 @@ export class ConsensusEngine {
     const stuckProposerId = this.chain.expectedProposer(stuckHeight).toLowerCase()
     const localNodeId = this.nodeId?.toLowerCase()
 
+    // PR-1M (2026-05-17, #635): liveness-based unreachability promotion.
+    // onProposerStuck cannot see a validator that stops proposing entirely
+    // (no propose → no `activeRound.proposedBlock` → callback never fires),
+    // so such a proposer is never marked and its slots fall through to the
+    // slow path. The watchdog itself holds a propose-independent signal:
+    // `elapsed` is how long the chain has not progressed and `stuckProposerId`
+    // owns the non-advancing slot. Once that stall exceeds the miss-round
+    // window the proposer has demonstrably failed to drive its round — so
+    // promote it into `unreachableProposers` here, which makes `baseTimeoutMs`
+    // below resolve to the 15s fast path on this same tick. markProposerUnreachable
+    // already enforces the PR-1H startup-grace and PR-1J N<4 gates, so this
+    // inherits the same false-positive protections as the onProposerStuck path
+    // (during grace / on tiny clusters the mark no-ops and the slow path stands).
+    if (
+      stuckProposerId !== localNodeId
+      && elapsed >= PROPOSER_MISS_ROUND_TIMEOUT_MS
+      && !this.isProposerUnreachable(stuckProposerId)
+    ) {
+      this.markProposerUnreachable(stuckProposerId)
+      if (this.isProposerUnreachable(stuckProposerId)) {
+        log.warn("PR-1M: no progress at proposer slot past miss-round window — marking unreachable", {
+          stuckProposerId,
+          stuckHeight: stuckHeight.toString(),
+          elapsedMs: elapsed,
+          missRoundTimeoutMs: PROPOSER_MISS_ROUND_TIMEOUT_MS,
+        })
+      }
+    }
+
     // PR-1A: if we have direct evidence the stuck proposer is unreachable
     // (recent BFT round timed out at their slot, or wire socket is closed),
     // bypass the conservative 600s H15 timeout. The fast path keeps the same
     // rotation-stagger logic so only one fallback fires per tick — preventing
     // the 2026-05-02 equivocation storm — but with FAST=15s as the base
     // threshold instead of SLOW=600s. Falls through to slow path otherwise.
+    // PR-1M may have just promoted the stuck proposer above on a liveness basis.
     const stuckUnreachable = this.isProposerUnreachable(stuckProposerId)
     const baseTimeoutMs = stuckUnreachable
       ? PROPOSER_UNREACHABLE_FAST_TIMEOUT_MS
