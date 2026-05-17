@@ -10,6 +10,7 @@ interface IRollupStateManager {
     event OutputChallenged(uint64 indexed l2BlockNumber, address challenger, uint256 bond);
     event ChallengeResolved(uint64 indexed l2BlockNumber, bool proposerFault);
     event OutputFinalized(uint64 indexed l2BlockNumber, bytes32 outputRoot);
+    event ChallengeResolverUpdated(address indexed oldResolver, address indexed newResolver);
 
     // ── Errors ──────────────────────────────────────────────────────────
     error OutputAlreadySubmitted(uint64 l2BlockNumber);
@@ -22,6 +23,9 @@ interface IRollupStateManager {
     error ChallengeAlreadyResolved(uint64 l2BlockNumber);
     error InsufficientBond(uint256 required, uint256 provided);
     error BlockNumberNotIncreasing(uint64 provided, uint64 lastSubmitted);
+    error OnlyOwner();
+    error OnlyChallengeResolver();
+    error ZeroAddress();
 
     // ── Write ───────────────────────────────────────────────────────────
     function submitOutputRoot(
@@ -36,6 +40,8 @@ interface IRollupStateManager {
         uint64 l2BlockNumber,
         bytes32 correctStateRoot
     ) external;
+
+    function setChallengeResolver(address newResolver) external;
 
     function finalizeOutput(uint64 l2BlockNumber) external;
 

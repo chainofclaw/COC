@@ -26,6 +26,18 @@ contract RollupStateManager is IRollupStateManager {
     uint64 public lastSubmittedBlock;
     uint64 private _latestFinalizedBlock;
     address public insuranceFund;
+    address public owner;
+    address public challengeResolver;
+
+    modifier onlyOwner() {
+        if (msg.sender != owner) revert OnlyOwner();
+        _;
+    }
+
+    modifier onlyChallengeResolver() {
+        if (msg.sender != challengeResolver) revert OnlyChallengeResolver();
+        _;
+    }
 
     constructor(
         uint256 challengeWindowSeconds,
@@ -40,6 +52,8 @@ contract RollupStateManager is IRollupStateManager {
         PROPOSER_BOND = proposerBondWei;
         CHALLENGER_BOND = challengerBondWei;
         insuranceFund = insuranceFundAddress;
+        owner = msg.sender;
+        challengeResolver = msg.sender;
     }
 
     // ── Submit Output Root ──────────────────────────────────────────────
@@ -124,7 +138,7 @@ contract RollupStateManager is IRollupStateManager {
     function resolveChallenge(
         uint64 l2BlockNumber,
         bytes32 correctStateRoot
-    ) external override {
+    ) external override onlyChallengeResolver {
         RollupTypes.OutputChallenge storage challenge = _challenges[l2BlockNumber];
         if (challenge.createdAt == 0) {
             revert ChallengeNotFound(l2BlockNumber);
@@ -171,6 +185,16 @@ contract RollupStateManager is IRollupStateManager {
         }
 
         emit ChallengeResolved(l2BlockNumber, proposerAtFault);
+    }
+
+    /// @notice Update the authorized challenge resolver.
+    /// @param newResolver Address allowed to resolve challenges.
+    function setChallengeResolver(address newResolver) external override onlyOwner {
+        if (newResolver == address(0)) revert ZeroAddress();
+
+        address oldResolver = challengeResolver;
+        challengeResolver = newResolver;
+        emit ChallengeResolverUpdated(oldResolver, newResolver);
     }
 
     // ── Finalize Output ─────────────────────────────────────────────────

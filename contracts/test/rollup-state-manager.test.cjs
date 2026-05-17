@@ -228,6 +228,12 @@ describe("RollupStateManager", function () {
       expect(challengerAfter - challengerBefore).to.equal(expectedReward)
     })
 
+    it("rejects non-resolver challenge resolution", async function () {
+      await expect(
+        manager.connect(challenger).resolveChallenge(100, sampleStateRoot),
+      ).to.be.revertedWithCustomError(manager, "OnlyChallengeResolver")
+    })
+
     it("resolves in challenger fault (correct state root)", async function () {
       const proposerBefore = await ethers.provider.getBalance(proposer.address)
 
@@ -271,6 +277,53 @@ describe("RollupStateManager", function () {
       await expect(
         manager.resolveChallenge(100, sampleStateRoot),
       ).to.be.revertedWithCustomError(manager, "ChallengeAlreadyResolved")
+    })
+  })
+
+  describe("challenge resolver authorization", function () {
+    it("sets deployer as owner and initial resolver", async function () {
+      expect(await manager.owner()).to.equal(deployer.address)
+      expect(await manager.challengeResolver()).to.equal(deployer.address)
+    })
+
+    it("allows owner to update resolver", async function () {
+      const tx = await manager
+        .connect(deployer)
+        .setChallengeResolver(challenger.address)
+
+      await expect(tx)
+        .to.emit(manager, "ChallengeResolverUpdated")
+        .withArgs(deployer.address, challenger.address)
+      expect(await manager.challengeResolver()).to.equal(challenger.address)
+    })
+
+    it("rejects resolver updates from non-owner", async function () {
+      await expect(
+        manager.connect(challenger).setChallengeResolver(challenger.address),
+      ).to.be.revertedWithCustomError(manager, "OnlyOwner")
+    })
+
+    it("rejects zero address resolver", async function () {
+      await expect(
+        manager.connect(deployer).setChallengeResolver(ethers.ZeroAddress),
+      ).to.be.revertedWithCustomError(manager, "ZeroAddress")
+    })
+
+    it("allows updated resolver to resolve a challenge", async function () {
+      await manager
+        .connect(proposer)
+        .submitOutputRoot(100, sampleOutputRoot, sampleStateRoot, {
+          value: PROPOSER_BOND,
+        })
+      await manager
+        .connect(challenger)
+        .challengeOutputRoot(100, { value: CHALLENGER_BOND })
+      await manager.connect(deployer).setChallengeResolver(challenger.address)
+
+      const tx = await manager.connect(challenger).resolveChallenge(100, sampleStateRoot)
+      await expect(tx)
+        .to.emit(manager, "ChallengeResolved")
+        .withArgs(100, false)
     })
   })
 

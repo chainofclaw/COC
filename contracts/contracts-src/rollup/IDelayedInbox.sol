@@ -12,6 +12,7 @@ interface IDelayedInbox {
     error QueueIndexOutOfRange(uint256 provided, uint256 queueLength);
     error NotYetForceable(uint256 queueIndex, uint64 enqueuedAt, uint256 inclusionDelay);
     error AlreadyIncluded(uint256 queueIndex);
+    error AlreadyForceIncluded(uint256 queueIndex);
     error NotSequencer(address caller);
 
     function enqueueTransaction(bytes calldata l2Tx) external;

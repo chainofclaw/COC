@@ -14,6 +14,7 @@ contract DelayedInbox is IDelayedInbox {
     address public owner;
 
     RollupTypes.ForcedTx[] private _queue;
+    mapping(uint256 => bool) private _forceIncluded;
 
     modifier onlySequencer() {
         if (msg.sender != sequencer) revert NotSequencer(msg.sender);
@@ -56,10 +57,14 @@ contract DelayedInbox is IDelayedInbox {
         if (entry.included) {
             revert AlreadyIncluded(queueIndex);
         }
+        if (_forceIncluded[queueIndex]) {
+            revert AlreadyForceIncluded(queueIndex);
+        }
         if (block.timestamp < entry.enqueuedAt + INCLUSION_DELAY) {
             revert NotYetForceable(queueIndex, entry.enqueuedAt, INCLUSION_DELAY);
         }
 
+        _forceIncluded[queueIndex] = true;
         emit TransactionForceIncluded(queueIndex);
     }
 

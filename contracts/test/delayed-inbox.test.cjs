@@ -111,6 +111,30 @@ describe("DelayedInbox", function () {
       const tx = await inbox.connect(user2).forceInclude(0)
       await expect(tx).to.emit(inbox, "TransactionForceIncluded").withArgs(0)
     })
+
+    it("rejects duplicate force-include for the same queue item", async function () {
+      await ethers.provider.send("evm_increaseTime", [INCLUSION_DELAY + 1])
+      await ethers.provider.send("evm_mine", [])
+
+      await inbox.connect(user1).forceInclude(0)
+
+      await expect(
+        inbox.connect(user2).forceInclude(0),
+      ).to.be.revertedWithCustomError(inbox, "AlreadyForceIncluded")
+    })
+
+    it("allows sequencer to mark included after force-include event", async function () {
+      await ethers.provider.send("evm_increaseTime", [INCLUSION_DELAY + 1])
+      await ethers.provider.send("evm_mine", [])
+
+      await inbox.connect(user1).forceInclude(0)
+
+      const tx = await inbox.connect(sequencer).markIncluded(0)
+      await expect(tx).to.emit(inbox, "TransactionIncluded").withArgs(0)
+
+      const item = await inbox.getQueueItem(0)
+      expect(item.included).to.equal(true)
+    })
   })
 
   describe("markIncluded", function () {
