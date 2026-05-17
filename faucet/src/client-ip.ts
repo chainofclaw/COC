@@ -20,11 +20,17 @@ function firstHeaderValue(value: HeaderValue): string | undefined {
   return trimmed || undefined
 }
 
-function firstForwardedFor(value: HeaderValue): string | undefined {
-  return firstHeaderValue(value)
+function lastForwardedFor(value: HeaderValue): string | undefined {
+  // A trusted reverse proxy APPENDS the address it observed to
+  // X-Forwarded-For (standard nginx `proxy_add_x_forwarded_for`). The
+  // rightmost entry is therefore the only one a client cannot forge —
+  // taking the leftmost would let any client prepend an arbitrary IP and
+  // bypass per-IP rate limiting entirely.
+  const items = firstHeaderValue(value)
     ?.split(",")
     .map((item) => item.trim())
-    .find(Boolean)
+    .filter(Boolean)
+  return items && items.length > 0 ? items[items.length - 1] : undefined
 }
 
 export function resolveFaucetClientIp(
@@ -35,7 +41,7 @@ export function resolveFaucetClientIp(
     const realIp = firstHeaderValue(req.headers["x-real-ip"])
     if (realIp) return realIp
 
-    const forwardedFor = firstForwardedFor(req.headers["x-forwarded-for"])
+    const forwardedFor = lastForwardedFor(req.headers["x-forwarded-for"])
     if (forwardedFor) return forwardedFor
   }
 
