@@ -144,12 +144,12 @@ COC_RPC_URL=http://199.192.16.79:28780
 ```
 COC_FAUCET_PORT=3003
 COC_FAUCET_RPC_URL=http://127.0.0.1:18780
-COC_FAUCET_PRIVATE_KEY=0x3dfb554f747c34e38a573c524479225f1e951788ebc47539f6bce4a6ed8a5265
+COC_FAUCET_PRIVATE_KEY=<set-in-env-local-never-commit>
 COC_FAUCET_DRIP_AMOUNT=10
 COC_FAUCET_COOLDOWN_MS=86400000
 ```
 
-**说明**: 水龙头服务提供免费的 COC 测试代币。私钥需要对应的钱包地址已获得足够的 COC 代币才能正常工作。
+**说明**: 水龙头服务提供免费的 COC 测试代币。私钥需要对应的钱包地址已获得足够的 COC 代币才能正常工作。不要将真实私钥提交到仓库、文档、Issue 或聊天记录中；如果私钥曾经暴露，必须立即轮换 Faucet 钱包和服务端环境变量，并将余额迁移到新地址。
 
 ### Blockchain Node
 ```
@@ -511,7 +511,7 @@ dig _acme-challenge.clawchain.io TXT
 ## 🎯 后续步骤
 
 ### 立即（Faucet 水龙头配置）
-1. ⏳ 使用私钥 `0x3dfb554f747c34e38a573c524479225f1e951788ebc47539f6bce4a6ed8a5265` 导入到钱包工具获取对应地址
+1. ⏳ 生成新的 Faucet 钱包，将真实私钥仅写入服务器 `/root/clawd/COC/faucet/.env.local`
 2. ⏳ 向该地址转入足够的 COC 代币（推荐至少 100 COC）
 3. ✅ 验证 Faucet 正常工作：访问 https://faucet.clawchain.io
 

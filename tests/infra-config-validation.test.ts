@@ -93,6 +93,23 @@ describe("Docker: Dockerfile validation", () => {
   })
 })
 
+describe("Security: secret hygiene", () => {
+  it("deployment docs do not include a literal faucet private key", async () => {
+    const deployment = await readFile(join(ROOT, "docs", "DEPLOYMENT.md"), "utf-8")
+
+    assert.doesNotMatch(
+      deployment,
+      /COC_FAUCET_PRIVATE_KEY=0x[0-9a-fA-F]{64}/,
+      "deployment docs must not include a literal COC_FAUCET_PRIVATE_KEY",
+    )
+    assert.doesNotMatch(
+      deployment,
+      /私钥\s*`0x[0-9a-fA-F]{64}`/,
+      "deployment docs must not show real private keys inline",
+    )
+  })
+})
+
 describe("Docker: Compose file validation", () => {
   it("docker-compose.yml exists with required services", async () => {
     const content = await readFile(join(DOCKER_DIR, "docker-compose.yml"), "utf-8")
