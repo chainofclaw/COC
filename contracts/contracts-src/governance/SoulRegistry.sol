@@ -243,6 +243,13 @@ contract SoulRegistry {
         _verifySig(structHash, ownershipSig, msg.sender);
         nonces[agentId] = nonce + 1;
 
+        // Recovery-critical state is keyed by agentId and survives
+        // deactivateSoul(). A re-registered agentId must start from a clean
+        // slate — otherwise the new soul silently inherits the previous
+        // owner's guardians and resurrection key, which could seize it.
+        delete _guardians[agentId];
+        delete resurrectionConfigs[agentId];
+
         souls[agentId] = SoulIdentity({
             agentId: agentId,
             owner: msg.sender,
@@ -495,6 +502,13 @@ contract SoulRegistry {
         if (req.initiatedAt == 0) revert RecoveryNotFound();
         if (req.executed) revert RecoveryAlreadyExecuted();
 
+        SoulIdentity storage soul = souls[req.agentId];
+        // The soul must still be active, and the request must postdate the
+        // current registration — a deactivated + re-registered agentId
+        // invalidates any recovery request aimed at a prior incarnation.
+        if (!soul.active) revert SoulNotActive();
+        if (req.initiatedAt < soul.registeredAt) revert RecoveryNotFound();
+
         uint256 snapshotCount = uint256(req.guardianSnapshot);
         uint256 threshold = (snapshotCount * 2 + 2) / 3; // ceil(2/3)
         if (req.approvalCount < threshold) revert RecoveryNotReady();
@@ -505,7 +519,6 @@ contract SoulRegistry {
 
         req.executed = true;
 
-        SoulIdentity storage soul = souls[req.agentId];
         address oldOwner = soul.owner;
 
         // Transfer ownership
