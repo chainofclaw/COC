@@ -246,3 +246,85 @@ describe("P2P inbound security scoring", () => {
     assert.equal(banned.status, 429)
   })
 })
+
+describe("P2P bft-message dedicated rate limiter", () => {
+  // Regression: a tx-gossip burst that drained the shared 240/60s inbound
+  // budget used to 429 /p2p/bft-message too, starving consensus and wedging
+  // block production. BFT traffic must ride its own generous limiter.
+  it("does not throttle /p2p/bft-message when the shared inbound budget is drained", async () => {
+    const port = 30400 + Math.floor(Math.random() * 200)
+    const p2p = new P2PNode(
+      {
+        bind: "127.0.0.1",
+        port,
+        peers: [],
+        nodeId: "test-node-bft-rl",
+        enableDiscovery: false,
+        inboundRateLimitWindowMs: 60_000,
+        inboundRateLimitMaxRequests: 2, // tiny shared budget
+        inboundBftRateLimitMaxRequests: 1_000, // generous BFT budget
+      },
+      {
+        onTx: async () => {},
+        onBlock: async () => {},
+        onSnapshotRequest: () => ({ height: 0, latestHash: "0x0" as Hex, blocks: [] }) as unknown as ChainSnapshot,
+      },
+    )
+    startedNodes.push(p2p)
+    p2p.start()
+    await new Promise((r) => setTimeout(r, 100))
+
+    // Drain the shared budget on a non-BFT route.
+    const peersUrl = `http://127.0.0.1:${port}/p2p/peers`
+    await fetch(peersUrl)
+    await fetch(peersUrl)
+    assert.equal((await fetch(peersUrl)).status, 429, "shared budget exhausted")
+
+    // bft-message rides its own limiter — never rate-limited here.
+    const bftUrl = `http://127.0.0.1:${port}/p2p/bft-message`
+    for (let i = 0; i < 25; i++) {
+      const res = await fetch(bftUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ type: "prepare", height: "1" }),
+      })
+      assert.notEqual(res.status, 429, `bft-message #${i} must not be rate-limited`)
+    }
+  })
+
+  it("throttles /p2p/bft-message once its own budget is exhausted", async () => {
+    const port = 30600 + Math.floor(Math.random() * 200)
+    const p2p = new P2PNode(
+      {
+        bind: "127.0.0.1",
+        port,
+        peers: [],
+        nodeId: "test-node-bft-rl-cap",
+        enableDiscovery: false,
+        inboundBftRateLimitWindowMs: 60_000,
+        inboundBftRateLimitMaxRequests: 2,
+      },
+      {
+        onTx: async () => {},
+        onBlock: async () => {},
+        onSnapshotRequest: () => ({ height: 0, latestHash: "0x0" as Hex, blocks: [] }) as unknown as ChainSnapshot,
+      },
+    )
+    startedNodes.push(p2p)
+    p2p.start()
+    await new Promise((r) => setTimeout(r, 100))
+
+    const bftUrl = `http://127.0.0.1:${port}/p2p/bft-message`
+    const send = () =>
+      fetch(bftUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ type: "prepare", height: "1" }),
+      })
+    assert.notEqual((await send()).status, 429)
+    assert.notEqual((await send()).status, 429)
+    const throttled = await send()
+    assert.equal(throttled.status, 429, "bft-message 429s once its own budget is spent")
+    assert.equal((await throttled.json()).error, "rate limit exceeded")
+  })
+})

@@ -107,6 +107,14 @@ export interface P2PConfig {
   peerMaxAgeMs?: number
   inboundRateLimitWindowMs?: number
   inboundRateLimitMaxRequests?: number
+  /**
+   * Dedicated rate-limit budget for /p2p/bft-message. Consensus traffic gets
+   * its own generous limiter so a tx-gossip burst on the shared inbound
+   * budget cannot throttle BFT messages and deadlock block production.
+   * Defaults: 60_000 ms window, 1200 requests.
+   */
+  inboundBftRateLimitWindowMs?: number
+  inboundBftRateLimitMaxRequests?: number
   enableInboundAuth?: boolean
   inboundAuthMode?: "off" | "monitor" | "enforce"
   authMaxClockSkewMs?: number
@@ -397,6 +405,11 @@ export class P2PNode {
   // forceSnapSync actually needed to fetch peer state during divergence
   // recovery, peers responded 429 because the budget was already drained.
   private readonly chainSnapshotRateLimiter: RateLimiter
+  // Dedicated limiter for /p2p/bft-message. Consensus traffic must not share
+  // the general inbound budget — a tx-gossip burst or BFT-timeout re-broadcast
+  // storm could starve it and deadlock the chain (the shared limiter defeated
+  // the ban-exemption already wired for bft-message).
+  private readonly bftMessageRateLimiter: RateLimiter
   private readonly authNonceTracker: PersistentAuthNonceTracker
   public readonly seenTx = new BoundedSet<Hex>(50_000)
   public readonly seenBlocks = new BoundedSet<Hex>(10_000)
@@ -465,9 +478,23 @@ export class P2PNode {
     const chainSnapLimit = (cfg as unknown as { inboundChainSnapshotRateLimitMaxRequests?: number })
       .inboundChainSnapshotRateLimitMaxRequests ?? 120
     this.chainSnapshotRateLimiter = new RateLimiter(60_000, chainSnapLimit)
+    // Dedicated, high-capacity limiter for /p2p/bft-message. BFT traffic is
+    // signature-authenticated downstream and bounded by the consensus
+    // protocol (propose/prepare/commit per round, scaling with validator
+    // count). Sharing the 240/60s general inbound budget let a tx-gossip
+    // burst — and the extra rounds spawned by a single BFT timeout — starve
+    // consensus messages, deadlocking block production: rejected bft-messages
+    // forced round timeouts, whose re-broadcasts drove yet more rejections.
+    // Steady-state inbound is ~3 msgs/round × peers × ~20 rounds/min; 1200/60s
+    // leaves >4x headroom and still bounds garbage-flood CPU cost.
+    this.bftMessageRateLimiter = new RateLimiter(
+      cfg.inboundBftRateLimitWindowMs ?? 60_000,
+      cfg.inboundBftRateLimitMaxRequests ?? 1200,
+    )
     setInterval(() => this.inboundRateLimiter.cleanup(), 300_000).unref()
     setInterval(() => this.stateSnapshotRateLimiter.cleanup(), 300_000).unref()
     setInterval(() => this.chainSnapshotRateLimiter.cleanup(), 300_000).unref()
+    setInterval(() => this.bftMessageRateLimiter.cleanup(), 300_000).unref()
     setInterval(() => this.authNonceTracker.cleanup(), 300_000).unref()
     if (cfg.authNonceRegistryPath) {
       setInterval(() => this.authNonceTracker.compact(), 60 * 60 * 1000).unref()
@@ -531,12 +558,20 @@ export class P2PNode {
         res.end(serializeJson({ error: "peer temporarily banned" }))
         return
       }
-      if ((req.url ?? "").startsWith("/p2p/") && !this.inboundRateLimiter.allow(clientIp)) {
-        this.rateLimitedRequests += 1
-        this.scoring.recordTimeout(inboundIpPeerId)
-        res.writeHead(429, { "content-type": "application/json" })
-        res.end(serializeJson({ error: "rate limit exceeded" }))
-        return
+      if (url.startsWith("/p2p/")) {
+        // Consensus messages use their own generous limiter so a tx-gossip
+        // burst on the shared budget can never throttle BFT into a deadlock.
+        const isBft = url === "/p2p/bft-message"
+        const limiter = isBft ? this.bftMessageRateLimiter : this.inboundRateLimiter
+        if (!limiter.allow(clientIp)) {
+          this.rateLimitedRequests += 1
+          // A throttled BFT message must never escalate to a peer ban — that
+          // would knock the validator off the consensus path entirely.
+          if (!isBft) this.scoring.recordTimeout(inboundIpPeerId)
+          res.writeHead(429, { "content-type": "application/json" })
+          res.end(serializeJson({ error: "rate limit exceeded" }))
+          return
+        }
       }
 
       if (req.method === "GET" && req.url === "/p2p/chain-snapshot") {
