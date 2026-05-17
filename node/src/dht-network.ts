@@ -14,6 +14,7 @@ import net from "node:net"
 import nodeCrypto from "node:crypto"
 import { RoutingTable, ALPHA, K, sortByDistance, parseHostPort } from "./dht.ts"
 import type { DhtPeer } from "./dht.ts"
+import { isSSRFTarget } from "./peer-discovery.ts"
 import { WireClient } from "./wire-client.ts"
 import type { WireClientConfig } from "./wire-client.ts"
 import type { NodeSigner, SignatureVerifier } from "./crypto/signer.ts"
@@ -297,6 +298,13 @@ export class DhtNetwork {
           if (peerId === this.cfg.localId.toLowerCase()) continue
           if (!isValidNodeId(peerId)) continue
           if (!newPeer.address || typeof newPeer.address !== "string") continue
+          // Reject peer addresses pointing at SSRF targets (cloud metadata /
+          // link-local). FIND_NODE responses are untrusted; without this a
+          // malicious peer could induce verification connects to internal
+          // endpoints. Same canonical policy as peer-discovery.ts — devnet
+          // loopback / RFC1918 stay allowed.
+          const hostPort = parseHostPort(newPeer.address)
+          if (hostPort && isSSRFTarget(hostPort.host)) continue
 
           const normalizedPeer: DhtPeer = {
             id: peerId,

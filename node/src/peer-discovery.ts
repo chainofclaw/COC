@@ -484,8 +484,11 @@ function normalizePeer(peer: NodePeer): NodePeer | null {
 }
 
 /** Block link-local and null IPs that are common SSRF targets (cloud metadata, etc.).
- *  Does NOT block RFC1918 (10.x, 172.16-31.x, 192.168.x) to preserve devnet compatibility. */
-function isSSRFTarget(hostname: string): boolean {
+ *  Does NOT block RFC1918 (10.x, 172.16-31.x, 192.168.x) to preserve devnet compatibility.
+ *  Exported so the DHT (dht-network.ts) applies the identical policy to peer
+ *  addresses learned from FIND_NODE — one canonical implementation, no divergent
+ *  copies (the kind of drift that produced #657). */
+export function isSSRFTarget(hostname: string): boolean {
   const h = hostname.startsWith("[") && hostname.endsWith("]")
     ? hostname.slice(1, -1) : hostname
   const lower = h.toLowerCase()
