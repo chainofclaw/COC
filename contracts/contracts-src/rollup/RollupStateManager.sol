@@ -163,6 +163,16 @@ contract RollupStateManager is IRollupStateManager {
             uint256 challengerReward = (totalSlash * SLASH_CHALLENGER_BPS) / 10000;
             uint256 insuranceAmount = totalSlash - burnAmount - challengerReward;
 
+            // Effects before interactions (CEI): invalidate the output up-front.
+            // Otherwise a malicious challenger could reenter finalizeOutput()
+            // during the payout below and refund the at-fault proposer's bond.
+            delete _outputs[l2BlockNumber];
+            // Reset lastSubmittedBlock if this was the latest
+            if (l2BlockNumber == lastSubmittedBlock) {
+                // Simplified: in production, scan backward for last valid output
+                lastSubmittedBlock = 0;
+            }
+
             // Burn by sending to address(0) is not possible in EVM, so we just keep it locked
             // Return challenger bond + reward
             _safeTransfer(challenge.challenger, challenge.bond + challengerReward);
@@ -170,14 +180,6 @@ contract RollupStateManager is IRollupStateManager {
             // Send insurance portion
             if (insuranceFund != address(0) && insuranceAmount > 0) {
                 _safeTransfer(insuranceFund, insuranceAmount);
-            }
-
-            // Invalidate the output (do NOT finalize)
-            delete _outputs[l2BlockNumber];
-            // Reset lastSubmittedBlock if this was the latest
-            if (l2BlockNumber == lastSubmittedBlock) {
-                // Simplified: in production, scan backward for last valid output
-                lastSubmittedBlock = 0;
             }
         } else {
             // Challenger was wrong — forfeit challenger bond to proposer
