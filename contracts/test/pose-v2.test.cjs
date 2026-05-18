@@ -83,7 +83,30 @@ function pairHash(a, b) {
   return ethers.keccak256(ethers.solidityPacked(["bytes32", "bytes32"], [x, y]))
 }
 
-async function submitSingleLeafBatchV2(manager, epochId, leafHash, submitter = manager) {
+const WITNESS_TYPEHASH = ethers.keccak256(
+  ethers.toUtf8Bytes("WitnessAttestation(bytes32 challengeId,bytes32 nodeId,bytes32 responseBodyHash,uint8 witnessIndex)")
+)
+
+async function signWitness(manager, witness, merkleRoot, witnessIndex = 0) {
+  const domainSeparator = await manager.DOMAIN_SEPARATOR()
+  const structHash = ethers.keccak256(
+    ethers.AbiCoder.defaultAbiCoder().encode(
+      ["bytes32", "bytes32", "bytes32", "bytes32", "uint8"],
+      [WITNESS_TYPEHASH, merkleRoot, witness.nodeId, merkleRoot, witnessIndex],
+    )
+  )
+  const digest = ethers.keccak256(ethers.concat(["0x1901", domainSeparator, structHash]))
+  return witness.operator.signingKey.sign(digest).serialized
+}
+
+async function submitSingleLeafBatchV2(
+  manager,
+  epochId,
+  leafHash,
+  submitter = manager,
+  witnessBitmap = 0,
+  witnessSignatures = [],
+) {
   const sampleProofs = [{ leaf: leafHash, merkleProof: [leafHash], leafIndex: 0 }]
   const sampleCommitment = ethers.keccak256(
     ethers.solidityPacked(["bytes32", "uint32", "bytes32"], [ethers.ZeroHash, 0, leafHash])
@@ -96,8 +119,8 @@ async function submitSingleLeafBatchV2(manager, epochId, leafHash, submitter = m
     pairHash(leafHash, leafHash),
     summaryHash,
     sampleProofs,
-    0,
-    [],
+    witnessBitmap,
+    witnessSignatures,
   )
   const receipt = await tx.wait()
   const event = receipt.logs.find((l) => {
@@ -303,6 +326,27 @@ describe("PoSeManagerV2", function () {
   })
 
   describe("submitBatchV2 witness mode", function () {
+    it("rejects non-owner empty witness submissions when no witness set exists", async function () {
+      const [, otherSubmitter] = await ethers.getSigners()
+      const latestBlock = await ethers.provider.getBlock("latest")
+      const epochId = Math.floor(Number(latestBlock.timestamp) / 3600)
+      const leafHash = ethers.keccak256(ethers.toUtf8Bytes("no-witness-non-owner"))
+
+      await expect(
+        submitSingleLeafBatchV2(manager, epochId, leafHash, manager.connect(otherSubmitter))
+      ).to.be.revertedWithCustomError(manager, "InvalidWitnessQuorum")
+    })
+
+    it("allows owner empty witness submissions when no witness set exists", async function () {
+      const latestBlock = await ethers.provider.getBlock("latest")
+      const epochId = Math.floor(Number(latestBlock.timestamp) / 3600)
+      const leafHash = ethers.keccak256(ethers.toUtf8Bytes("no-witness-owner"))
+
+      await submitSingleLeafBatchV2(manager, epochId, leafHash)
+
+      expect(await manager.getEpochBatchIds(epochId)).to.have.lengthOf(1)
+    })
+
     it("reverts empty witness submissions when transition mode is disabled", async function () {
       await registerNode(manager, deployer)
       await manager.setAllowEmptyWitnessSubmission(false)
@@ -314,19 +358,35 @@ describe("PoSeManagerV2", function () {
         submitSingleLeafBatchV2(manager, epochId, leafHash)
       ).to.be.revertedWithCustomError(manager, "InvalidWitnessQuorum")
     })
+
+    it("rejects non-owner empty witness submissions when transition mode is enabled", async function () {
+      const [, otherSubmitter] = await ethers.getSigners()
+      await registerNode(manager, deployer)
+      const latestBlock = await ethers.provider.getBlock("latest")
+      const epochId = Math.floor(Number(latestBlock.timestamp) / 3600)
+      const leafHash = ethers.keccak256(ethers.toUtf8Bytes("empty-witness-non-owner"))
+
+      await expect(
+        submitSingleLeafBatchV2(manager, epochId, leafHash, manager.connect(otherSubmitter))
+      ).to.be.revertedWithCustomError(manager, "InvalidWitnessQuorum")
+    })
   })
 
   describe("submitBatchV2 duplicate root guard", function () {
     it("rejects the same merkle root for an epoch from a different submitter", async function () {
       const [, otherSubmitter] = await ethers.getSigners()
+      const witness = await registerNode(manager, deployer)
+      await manager.setAllowEmptyWitnessSubmission(false)
       const latestBlock = await ethers.provider.getBlock("latest")
       const epochId = Math.floor(Number(latestBlock.timestamp) / 3600)
       const leafHash = ethers.keccak256(ethers.toUtf8Bytes("duplicate-root-same-epoch"))
+      const merkleRoot = pairHash(leafHash, leafHash)
+      const witnessSignature = await signWitness(manager, witness, merkleRoot)
 
-      await submitSingleLeafBatchV2(manager, epochId, leafHash)
+      await submitSingleLeafBatchV2(manager, epochId, leafHash, manager, 1, [witnessSignature])
 
       await expect(
-        submitSingleLeafBatchV2(manager, epochId, leafHash, manager.connect(otherSubmitter))
+        submitSingleLeafBatchV2(manager, epochId, leafHash, manager.connect(otherSubmitter), 1, [witnessSignature])
       ).to.be.revertedWithCustomError(manager, "BatchAlreadySubmitted")
 
       expect(await manager.getEpochBatchIds(epochId)).to.have.lengthOf(1)

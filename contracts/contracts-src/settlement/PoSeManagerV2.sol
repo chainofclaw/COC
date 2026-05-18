@@ -201,7 +201,7 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
         if (sampleProofs.length == 0 || sampleProofs.length > type(uint16).max) revert InvalidBatch();
 
         // Validate witness quorum.
-        // Transition mode: allow empty witness set/signatures to avoid deadlock during rollout.
+        // Bootstrap/transition submissions without witness signatures are owner-only.
         _validateWitnessQuorum(epochId, witnessBitmap, witnessSignatures, merkleRoot);
 
         batchId = _batchId(epochId, merkleRoot, summaryHash, msg.sender);
@@ -684,15 +684,21 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
         bytes[] calldata witnessSignatures,
         bytes32 merkleRoot
     ) internal view {
+        bytes32[] memory witnessSet = getWitnessSet(epochId);
+        uint256 m = witnessSet.length;
+
+        if (m == 0) {
+            if (msg.sender != owner) revert InvalidWitnessQuorum();
+            if (witnessBitmap != 0 || witnessSignatures.length != 0) revert InvalidWitnessQuorum();
+            return;
+        }
+
         if (witnessBitmap == 0 && witnessSignatures.length == 0) {
-            if (!allowEmptyWitnessSubmission && getWitnessSet(epochId).length > 0) {
+            if (!allowEmptyWitnessSubmission || msg.sender != owner) {
                 revert InvalidWitnessQuorum();
             }
             return;
         }
-        bytes32[] memory witnessSet = getWitnessSet(epochId);
-        uint256 m = witnessSet.length;
-        if (m == 0) return; // no witnesses required if no active nodes
 
         uint256 required = (2 * m + 2) / 3; // ceil(2m/3)
         uint256 count = 0;
