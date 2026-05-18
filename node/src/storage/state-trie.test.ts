@@ -840,3 +840,73 @@ test("PersistentStateTrie: computeStateRoot syncs dirty storage tries before rea
     "computeStateRoot must reflect storage writes (account record synced from dirty storage trie)",
   )
 })
+
+test("PersistentStateTrie: #671 — getStorageTrie must not evict a dirty in-flight storage trie", async () => {
+  // #671 (residual #642-class race). PersistentStateTrie.put() writes the
+  // account trie at `await this.trie.put(...)` BEFORE it refreshes
+  // accountCache. A concurrent storage reader entering getStorageTrie()
+  // during that await window passes the *pre-SSTORE* storageRoot. The cached
+  // storage trie's live root no longer matches it, so getStorageTrie's
+  // stale-cache guard DELETES the trie — discarding the uncommitted writes
+  // held in its open checkpoint frame. The in-flight applyBlock then commits
+  // a storageRoot that omits this block's writes → a divergent stateRoot
+  // that deadlocks BFT on the next empty block.
+  //
+  // This drives that exact interleave deterministically: it recreates the
+  // accountCache-stale window by hand, then asserts the block's commit still
+  // reflects the in-frame write.
+  const db = new MemoryDatabase()
+  const trie = new PersistentStateTrie(db)
+  await trie.init()
+
+  const C = "0xc0ffee0000000000000000000000000000000c0c"
+  const slot = "0x" + "00".repeat(32)
+  const v0 = "0x" + "00".repeat(31) + "07"
+  const v1 = "0x" + "00".repeat(31) + "2a"
+  const pokeAccountCache = (storageRoot: string, base: Record<string, unknown>) => {
+    ;(trie as unknown as { accountCache: Map<string, unknown> }).accountCache.set(C, {
+      ...base,
+      storageRoot,
+    })
+  }
+
+  // Block 1: give C a committed storage slot. C's storage trie is then cached
+  // in `storageTries` with no open checkpoint frame.
+  await trie.checkpoint()
+  await trie.putStorageAt(C, slot, v0)
+  await trie.commit()
+  const rootAfterBlock1 = (await trie.get(C))!.storageRoot
+
+  // Block 2 begins (mimics applyBlock): checkpoint() opens a frame on the
+  // account trie AND on every cached storage trie — including C's.
+  await trie.checkpoint()
+  // SSTORE v1 — lands in C's storage-trie checkpoint frame (in-memory only).
+  await trie.putStorageAt(C, slot, v1)
+  const cAccount = (await trie.get(C))!
+  const rootAfterBlock2Write = cAccount.storageRoot
+  assert.notStrictEqual(rootAfterBlock2Write, rootAfterBlock1, "v1 advanced C's storage root")
+
+  // Simulate a concurrent reader that captured C's account during put()'s
+  // `await this.trie.put` window — accountCache still holds the pre-v1
+  // storageRoot. Recreate that state, then issue a storage read: it routes
+  // getStorageTrie(C, <stale root>).
+  pokeAccountCache(rootAfterBlock1, cAccount)
+  await trie.getStorageAt(C, "0x" + "00".repeat(31) + "01")
+
+  // Restore accountCache to the post-write root, exactly as applyBlock's
+  // put() does once its await window closes.
+  pokeAccountCache(rootAfterBlock2Write, cAccount)
+
+  // applyBlock commits block 2.
+  await trie.commit()
+
+  // The committed state MUST still carry v1. If getStorageTrie evicted C's
+  // dirty storage trie, its frame (holding v1) was dropped and commit stamped
+  // the stale root — this read returns v0, the #671 divergence.
+  const committed = await trie.getStorageAt(C, slot)
+  assert.strictEqual(
+    BigInt(committed),
+    BigInt(v1),
+    "#671: block-2 SSTORE survived a concurrent stale-root storage read",
+  )
+})
