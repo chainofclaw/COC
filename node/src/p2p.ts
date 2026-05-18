@@ -744,8 +744,19 @@ export class P2PNode {
       req.on("end", async () => {
         if (aborted) return
         this.bytesReceived += bodySize
+        let parsedBody: Record<string, unknown>
         try {
-          const parsedBody = JSON.parse(body || "{}") as Record<string, unknown>
+          parsedBody = JSON.parse(body || "{}") as Record<string, unknown>
+        } catch {
+          // Malformed JSON is a client error (400), not a server fault.
+          // Pre-fix it threw into the catch-all below, which both mislabels
+          // it 500 and emits an error-level log line per request — letting
+          // an unauthenticated client spam error logs (#669).
+          res.writeHead(400, { "content-type": "application/json" })
+          res.end(serializeJson({ error: "invalid JSON" }))
+          return
+        }
+        try {
           const declaredSenderId = extractAuthSenderId(parsedBody)
           const inboundSenderPeerId = declaredSenderId ? this.inboundSenderPeerId(declaredSenderId) : undefined
           const isBftMessage = req.url === "/p2p/bft-message"

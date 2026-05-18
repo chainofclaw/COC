@@ -152,6 +152,42 @@ describe("P2P node-info endpoint", () => {
   })
 })
 
+describe("P2P gossip server malformed-JSON handling (#669)", () => {
+  it("answers a malformed-JSON body with 400, not 500", async () => {
+    const port = 29700 + Math.floor(Math.random() * 200)
+    const p2p = new P2PNode(
+      {
+        bind: "127.0.0.1",
+        port,
+        peers: [],
+        nodeId: "test-node-669",
+        enableDiscovery: false,
+      },
+      {
+        onTx: async () => {},
+        onBlock: async () => {},
+        onSnapshotRequest: () => ({ height: 0, latestHash: "0x0" as Hex, blocks: [] }) as unknown as ChainSnapshot,
+      },
+    )
+    startedNodes.push(p2p)
+    p2p.start()
+    await new Promise((r) => setTimeout(r, 100))
+
+    // Pre-fix JSON.parse threw into the catch-all → 500 + an error-level
+    // log line per request, both reachable by an unauthenticated client.
+    for (const path of ["/", "/p2p/tx", "/p2p/gossip-tx"]) {
+      const res = await fetch(`http://127.0.0.1:${port}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{bad json",
+      })
+      assert.equal(res.status, 400, `${path} malformed JSON must be 400`)
+      const j = await res.json()
+      assert.equal(j.error, "invalid JSON")
+    }
+  })
+})
+
 describe("P2P inbound rate limit", () => {
   it("returns 429 when request rate exceeds configured limit", async () => {
     const port = 29900 + Math.floor(Math.random() * 200)

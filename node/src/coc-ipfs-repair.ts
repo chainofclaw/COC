@@ -27,7 +27,7 @@ import type { IpfsBlockstore } from "./ipfs-blockstore.ts"
 import type { DhtNetwork } from "./dht-network.ts"
 import type { PushToKResult } from "./coc-ipfs-wiring.ts"
 import type { CidString } from "./ipfs-types.ts"
-import { decodeManifest, ErasureError, type ErasureManifest } from "./ipfs-erasure.ts"
+import { decodeManifest, ErasureError, MAX_STRIPES, validateParams, type ErasureManifest } from "./ipfs-erasure.ts"
 import { createLogger } from "./logger.ts"
 
 // Native binding required for parity reconstruction. Loaded the same way
@@ -322,6 +322,19 @@ export class IpfsRepairLoop {
       try {
         const block = await this.deps.blockstore.get(manifestCid as CidString)
         manifest = decodeManifest(block.bytes)
+        // decodeManifest deliberately defers the allocation-size caps to
+        // decodeFile. repairManifest is a second allocating consumer —
+        // Buffer.alloc(n*shardSize) per stripe — so enforce the same
+        // n/m/shardSize/stripe-count caps here (#670). An ErasureError is
+        // caught just below and counted as a parse failure: an oversized
+        // manifest is skipped and the repair loop stays healthy.
+        validateParams(manifest)
+        if (manifest.stripes.length > MAX_STRIPES) {
+          throw new ErasureError(
+            "malformed_manifest",
+            `stripe count ${manifest.stripes.length} exceeds MAX_STRIPES (${MAX_STRIPES})`,
+          )
+        }
       } catch (err) {
         if (err instanceof ErasureError && err.code === "unsupported_manifest") {
           // Not one of ours (e.g. a future v2 manifest, or an arbitrary

@@ -6,7 +6,7 @@
 #   COC_CHAIN_ID    - chain ID (default: 18780)
 #   COC_BOOT_HOST   - single host for all nodes (bare-metal mode)
 #   COC_DOCKER=1    - Docker mode: each node same ports, hostname=node-N
-#   COC_ENABLE_ADMIN_RPC - expose admin_* RPC on generated node configs (default: true)
+#   COC_ENABLE_ADMIN_RPC - expose admin_* RPC on generated node configs (default: false)
 #   COC_DHT_REQUIRE_AUTHENTICATED_VERIFY - require authenticated DHT verify (default: true)
 #   COC_P2P_AUTH_MODE - P2P inbound auth mode (default: enforce)
 #   COC_POSE_AUTH_MODE - PoSe inbound auth mode (default: enforce)
@@ -49,7 +49,7 @@ const outDir = '${OUT_DIR}';
 const chainId = ${CHAIN_ID};
 const bootHost = '${BOOT_HOST}';
 const dockerMode = '${DOCKER_MODE}' === '1';
-const enableAdminRpc = ['1', 'true', 'yes', 'on'].includes(String(process.env.COC_ENABLE_ADMIN_RPC ?? 'true').toLowerCase());
+const enableAdminRpc = ['1', 'true', 'yes', 'on'].includes(String(process.env.COC_ENABLE_ADMIN_RPC ?? 'false').toLowerCase());
 const dhtRequireAuthenticatedVerify = ['1', 'true', 'yes', 'on'].includes(String(process.env.COC_DHT_REQUIRE_AUTHENTICATED_VERIFY ?? 'true').toLowerCase());
 const p2pInboundAuthMode = String(process.env.COC_P2P_AUTH_MODE ?? 'enforce');
 const poseInboundAuthMode = String(process.env.COC_POSE_AUTH_MODE ?? 'enforce');

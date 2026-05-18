@@ -115,7 +115,7 @@ export class ErasureError extends Error {
   }
 }
 
-function validateParams(params: ErasureParams): { n: number; m: number; shardSize: number } {
+export function validateParams(params: ErasureParams): { n: number; m: number; shardSize: number } {
   const n = params.n
   const m = params.m
   const shardSize = params.shardSize ?? DEFAULT_SHARD_SIZE

@@ -11,10 +11,10 @@ import { isLoopbackAddress } from "./rpc.ts"
 // enabled (necessary for ops tooling like phantom pruning), any anonymous
 // internet caller could invoke admin_addPeer (peer-list pollution),
 // admin_removePeer (network split), admin_pruneStalePhantoms (CPU DoS),
-// admin_nodeInfo (info leak). Fix: require either Bearer auth OR loopback
-// source IP. This suite verifies both paths and a real-IP rejection.
+// admin_nodeInfo (info leak). Fix: require Bearer auth by default; loopback
+// source IP is accepted only when explicitly opted in for local ops.
 
-async function startTestRpc(opts?: { authToken?: string; enableAdminRpc?: boolean }): Promise<{
+async function startTestRpc(opts?: { authToken?: string; enableAdminRpc?: boolean; allowLoopbackRpcAuth?: boolean }): Promise<{
   port: number
   close: () => Promise<void>
 }> {
@@ -59,8 +59,8 @@ async function startTestRpc(opts?: { authToken?: string; enableAdminRpc?: boolea
     undefined,
     undefined,
     opts?.authToken
-      ? { authToken: opts.authToken, enableAdminRpc: opts.enableAdminRpc ?? true }
-      : { enableAdminRpc: opts.enableAdminRpc ?? true },
+      ? { authToken: opts.authToken, enableAdminRpc: opts.enableAdminRpc ?? true, allowLoopbackRpcAuth: opts.allowLoopbackRpcAuth }
+      : { enableAdminRpc: opts.enableAdminRpc ?? true, allowLoopbackRpcAuth: opts.allowLoopbackRpcAuth },
   )
   await new Promise((r) => setTimeout(r, 50))
   return {
@@ -100,14 +100,23 @@ test("isLoopbackAddress recognizes 127.x.x.x / ::1 / IPv4-mapped IPv6", () => {
   assert.equal(isLoopbackAddress("126.0.0.1"), false)
 })
 
-test("#336: loopback request can call admin_* without auth token", async (t) => {
+test("#336: loopback request cannot call admin_* without explicit opt-in", async (t) => {
   process.env.COC_RPC_RATE_LIMIT_DISABLED = "1"
   const { port, close } = await startTestRpc({ enableAdminRpc: true })
   t.after(async () => { await close() })
 
-  // Test client is 127.0.0.1 — should succeed
   const r = await call(port, "admin_nodeInfo")
-  assert.ok(r.result, `loopback caller must access admin_nodeInfo, got: ${JSON.stringify(r)}`)
+  assert.equal(r.error?.code, -32003, `loopback caller must not be implicitly trusted, got: ${JSON.stringify(r)}`)
+  assert.match(r.error!.message, /explicit loopback trust/)
+})
+
+test("#336: loopback request can call admin_* when explicitly opted in", async (t) => {
+  process.env.COC_RPC_RATE_LIMIT_DISABLED = "1"
+  const { port, close } = await startTestRpc({ enableAdminRpc: true, allowLoopbackRpcAuth: true })
+  t.after(async () => { await close() })
+
+  const r = await call(port, "admin_nodeInfo")
+  assert.ok(r.result, `explicitly trusted loopback caller must access admin_nodeInfo, got: ${JSON.stringify(r)}`)
 })
 
 test("#336: admin methods reject when admin enabled but rpcAuth is set + no token sent (remote)", async (t) => {
@@ -155,11 +164,11 @@ test("#336: all 5 admin_* handlers reject when admin enabled but adminAuthorized
   // the gate's throw produces the expected -32003 envelope.
   const { unauthorized } = await import("./rpc-validators.ts")
   try {
-    unauthorized("admin methods require Bearer auth or loopback request")
+    unauthorized("admin methods require Bearer auth or explicit loopback trust")
     assert.fail("unauthorized must throw")
   } catch (e: unknown) {
     const err = e as { code: number; message: string }
     assert.equal(err.code, -32003, "unauthorized must throw -32003")
-    assert.match(err.message, /require Bearer auth or loopback/)
+    assert.match(err.message, /explicit loopback trust/)
   }
 })

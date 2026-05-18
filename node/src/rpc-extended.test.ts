@@ -113,7 +113,7 @@ test("RPC Extended Methods", async (t) => {
         ],
       }
     },
-  })
+  }, { allowLoopbackRpcAuth: true })
   t.after(async () => {
     await new Promise<void>((resolve, reject) => {
       server.close((error) => {
@@ -4246,7 +4246,7 @@ test("RPC Extended Methods", async (t) => {
       "127.0.0.1", adminPort, chainId, evm, chain, p2p,
       undefined, undefined, "admin-test", undefined,
       undefined,                            // runtimeOptions
-      { enableAdminRpc: true },             // rpcAuthOptions (12th arg)
+      { enableAdminRpc: true, allowLoopbackRpcAuth: true }, // rpcAuthOptions (12th arg)
     )
     try {
       const probe = async (method: string, params: unknown[]) => {
@@ -4314,7 +4314,7 @@ test("RPC Extended Methods", async (t) => {
       "127.0.0.1", adminPort, chainId, evm, chain, p2p,
       undefined, undefined, "admin-test", undefined,
       undefined,
-      { enableAdminRpc: true },
+      { enableAdminRpc: true, allowLoopbackRpcAuth: true },
     )
     try {
       const probe = async (url: string) => {

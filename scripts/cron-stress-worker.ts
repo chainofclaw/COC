@@ -13,9 +13,16 @@
  */
 import { ethers } from "ethers"
 import { readFileSync, writeFileSync } from "node:fs"
+import { HARDHAT_DEV_PRIVATE_KEYS, resolvePrivateKeyForRpc } from "./lib/key-safety.mjs"
 
 const RPC_URL = process.argv[2] || "http://127.0.0.1:28780"
-const DEPLOYER_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+const DEPLOYER_KEY = resolvePrivateKeyForRpc({
+  envValue: process.env.COC_STRESS_PRIVATE_KEY ?? process.env.DEPLOYER_PRIVATE_KEY,
+  envName: "COC_STRESS_PRIVATE_KEY",
+  fallbackDevKey: HARDHAT_DEV_PRIVATE_KEYS[0],
+  rpcUrl: RPC_URL,
+  label: "cron stress worker",
+})
 const CONFIRM_TIMEOUT_S = 20
 const STATE_PATH = "/tmp/coc-stress-contracts.json"
 

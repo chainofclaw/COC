@@ -20,6 +20,7 @@ const CHALLENGER_BOND = ethers.parseEther("0.5")
 
 describe("RollupStateManager", function () {
   let manager
+  let rejecting
   let deployer, proposer, challenger, insuranceFund
   let sampleOutputRoot, sampleStateRoot
 
@@ -34,6 +35,10 @@ describe("RollupStateManager", function () {
       insuranceFund.address,
     )
     await manager.waitForDeployment()
+
+    const Rejecting = await ethers.getContractFactory("RollupRejectingReceiver")
+    rejecting = await Rejecting.deploy(await manager.getAddress())
+    await rejecting.waitForDeployment()
 
     // Sample data
     sampleStateRoot = ethers.keccak256(ethers.toUtf8Bytes("state-root-1"))
@@ -75,6 +80,16 @@ describe("RollupStateManager", function () {
             value: ethers.parseEther("0.5"),
           }),
       ).to.be.revertedWithCustomError(manager, "InsufficientBond")
+    })
+
+    it("rejects overpaid proposer bond", async function () {
+      await expect(
+        manager
+          .connect(proposer)
+          .submitOutputRoot(100, sampleOutputRoot, sampleStateRoot, {
+            value: PROPOSER_BOND + 1n,
+          }),
+      ).to.be.revertedWithCustomError(manager, "IncorrectBond")
     })
 
     it("rejects duplicate block number (caught by non-increasing check)", async function () {
@@ -180,6 +195,14 @@ describe("RollupStateManager", function () {
       ).to.be.revertedWithCustomError(manager, "InsufficientBond")
     })
 
+    it("rejects overpaid challenger bond", async function () {
+      await expect(
+        manager
+          .connect(challenger)
+          .challengeOutputRoot(100, { value: CHALLENGER_BOND + 1n }),
+      ).to.be.revertedWithCustomError(manager, "IncorrectBond")
+    })
+
     it("rejects challenge after window elapsed", async function () {
       await ethers.provider.send("evm_increaseTime", [CHALLENGE_WINDOW + 1])
       await ethers.provider.send("evm_mine", [])
@@ -277,6 +300,46 @@ describe("RollupStateManager", function () {
       await expect(
         manager.resolveChallenge(100, sampleStateRoot),
       ).to.be.revertedWithCustomError(manager, "ChallengeAlreadyResolved")
+    })
+
+    it("credits a rejecting challenger instead of blocking proposer-fault resolution", async function () {
+      const otherStateRoot = ethers.keccak256(ethers.toUtf8Bytes("state-root-2"))
+      const otherOutputRoot = ethers.keccak256(ethers.toUtf8Bytes("output-root-2"))
+      await manager
+        .connect(proposer)
+        .submitOutputRoot(200, otherOutputRoot, otherStateRoot, {
+          value: PROPOSER_BOND,
+        })
+      await rejecting.challengeOutputRoot(200, { value: CHALLENGER_BOND })
+
+      const correctRoot = ethers.keccak256(ethers.toUtf8Bytes("correct-root"))
+      const tx = await manager.resolveChallenge(200, correctRoot)
+      await expect(tx)
+        .to.emit(manager, "ChallengeResolved")
+        .withArgs(200, true)
+
+      const rejectingAddress = await rejecting.getAddress()
+      const expectedCredit =
+        CHALLENGER_BOND + (PROPOSER_BOND * 3000n) / 10000n
+      expect(await manager.pendingWithdrawals(rejectingAddress)).to.equal(expectedCredit)
+    })
+
+    it("credits a rejecting proposer instead of blocking challenger-fault resolution", async function () {
+      const otherStateRoot = ethers.keccak256(ethers.toUtf8Bytes("state-root-2"))
+      const otherOutputRoot = ethers.keccak256(ethers.toUtf8Bytes("output-root-2"))
+      await rejecting.submitOutputRoot(200, otherOutputRoot, otherStateRoot, {
+        value: PROPOSER_BOND,
+      })
+      await manager
+        .connect(challenger)
+        .challengeOutputRoot(200, { value: CHALLENGER_BOND })
+
+      const tx = await manager.resolveChallenge(200, otherStateRoot)
+      await expect(tx)
+        .to.emit(manager, "ChallengeResolved")
+        .withArgs(200, false)
+
+      expect(await manager.pendingWithdrawals(await rejecting.getAddress())).to.equal(CHALLENGER_BOND)
     })
   })
 
@@ -411,6 +474,28 @@ describe("RollupStateManager", function () {
         manager,
         "ChallengeWindowNotElapsed",
       )
+    })
+
+    it("credits a rejecting proposer instead of blocking finalization", async function () {
+      const otherStateRoot = ethers.keccak256(ethers.toUtf8Bytes("state-root-2"))
+      const otherOutputRoot = ethers.keccak256(ethers.toUtf8Bytes("output-root-2"))
+      await rejecting.submitOutputRoot(200, otherOutputRoot, otherStateRoot, {
+        value: PROPOSER_BOND,
+      })
+
+      await ethers.provider.send("evm_increaseTime", [CHALLENGE_WINDOW + 1])
+      await ethers.provider.send("evm_mine", [])
+
+      const tx = await manager.finalizeOutput(200)
+      await expect(tx)
+        .to.emit(manager, "OutputFinalized")
+        .withArgs(200, otherOutputRoot)
+
+      const rejectingAddress = await rejecting.getAddress()
+      expect(await manager.isOutputFinalized(200)).to.equal(true)
+      expect(await manager.pendingWithdrawals(rejectingAddress)).to.equal(PROPOSER_BOND)
+      await expect(rejecting.withdrawPayments()).to.be.revertedWithCustomError(manager, "TransferFailed")
+      expect(await manager.pendingWithdrawals(rejectingAddress)).to.equal(PROPOSER_BOND)
     })
   })
 

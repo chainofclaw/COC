@@ -36,16 +36,35 @@ export async function collectWitnesses(
   challengeId: Hex32,
   nodeId: Hex32,
   responseBodyHash: Hex32,
+  requestFn: WitnessRequestFn = requestJson,
 ): Promise<CollectResult> {
   const requests = config.witnessNodes.map(async (w) => {
     try {
-      const response = await requestJson(`${w.url}/pose/witness`, "POST", {
+      const response = await requestFn(`${w.url}/pose/witness`, "POST", {
         challengeId,
         nodeId,
         responseBodyHash,
         witnessIndex: w.witnessIndex,
       })
-      return response.json as WitnessAttestation
+      const attest = response.json as WitnessAttestation | undefined
+      if (!attest) return null
+      // The witness index is assigned by the collector, not picked by the
+      // witness. Reject any response claiming a slot other than the one we
+      // sent — otherwise a malicious witness could echo an honest witness's
+      // index, collide their bits and silently drop the popcount below the
+      // quorum (#668). Mirrors the identical guard in
+      // collectBatchWitnessSignatures.
+      if (
+        attest.challengeId === challengeId &&
+        attest.nodeId === nodeId &&
+        attest.responseBodyHash === responseBodyHash &&
+        attest.witnessIndex === w.witnessIndex &&
+        w.witnessIndex >= 0 &&
+        w.witnessIndex < 32
+      ) {
+        return { assignedIndex: w.witnessIndex, attest }
+      }
+      return null
     } catch {
       return null
     }
@@ -54,22 +73,16 @@ export async function collectWitnesses(
   const results = await Promise.allSettled(requests)
 
   const attestations: WitnessAttestation[] = []
+  const seenIndices = new Set<number>()
   let bitmap = 0
 
   for (const r of results) {
-    if (r.status === "fulfilled" && r.value !== null) {
-      const attest = r.value
-      if (
-        attest.challengeId === challengeId &&
-        attest.nodeId === nodeId &&
-        attest.responseBodyHash === responseBodyHash &&
-        attest.witnessIndex >= 0 &&
-        attest.witnessIndex < 32
-      ) {
-        attestations.push(attest)
-        bitmap |= (1 << attest.witnessIndex)
-      }
-    }
+    if (r.status !== "fulfilled" || r.value === null) continue
+    const { assignedIndex, attest } = r.value
+    if (seenIndices.has(assignedIndex)) continue
+    seenIndices.add(assignedIndex)
+    attestations.push(attest)
+    bitmap |= (1 << assignedIndex)
   }
 
   const witnessCount = popcount(bitmap)

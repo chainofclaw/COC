@@ -8,8 +8,9 @@
  * proposals and cast the node's stake-weighted vote (a vote crossing the
  * threshold mutates the validator set via executeProposal).
  *
- * Fix: both methods now require `opts.callerAuthorized` (loopback OR a
- * validated global RPC auth token), checked before any other handling.
+ * Fix: both methods now require `opts.callerAuthorized` (validated global
+ * RPC auth token, or explicitly opted-in loopback), checked before any other
+ * handling.
  */
 import test from "node:test"
 import assert from "node:assert/strict"

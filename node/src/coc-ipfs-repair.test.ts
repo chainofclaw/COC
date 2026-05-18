@@ -281,7 +281,7 @@ describe("IpfsRepairLoop", () => {
 // ---------------------------------------------------------------------------
 // Phase Q.5 — erasure manifest repair tick
 // ---------------------------------------------------------------------------
-import { encodeFile, decodeFile } from "./ipfs-erasure.ts"
+import { encodeFile, decodeFile, encodeManifest, computeManifestCid, MAX_SHARD_SIZE } from "./ipfs-erasure.ts"
 import { randomBytes } from "node:crypto"
 
 function mkErasureBlockstore(blocks: BlockstoreMap, pins: Set<string>) {
@@ -340,6 +340,33 @@ describe("IpfsRepairLoop Phase Q.5 — erasure repair tick", () => {
     const back = await decodeFile(enc.manifest, async (c) => blocks.get(c) ?? null)
     assert.equal(back.byteLength, file.byteLength)
     assert.ok(Buffer.from(back).equals(Buffer.from(file)))
+  })
+
+  it("#670: skips a manifest whose shardSize exceeds MAX_SHARD_SIZE instead of Buffer.alloc-ing it", async () => {
+    // repairManifest does Buffer.alloc(n * shardSize) per stripe. decodeManifest
+    // deliberately defers the size caps to decodeFile, so without a guard a
+    // crafted manifest with a huge shardSize would reach that alloc and OOM /
+    // throw, aborting the repair tick. The tick must reject it (counted as a
+    // parse failure), never reach repairManifest, and stay healthy.
+    const file = randomBytes(4 * 256 * 1024 + 9)
+    const enc = await encodeFile(file, { n: 4, m: 2 })
+    const tampered = { ...enc.manifest, shardSize: MAX_SHARD_SIZE + 8 }
+    const tamperedBytes = encodeManifest(tampered)
+    const tamperedCid = await computeManifestCid(tampered)
+
+    const blocks: BlockstoreMap = new Map([[tamperedCid, tamperedBytes]])
+    const pins = new Set<string>([tamperedCid])
+
+    const loop = new IpfsRepairLoop({
+      blockstore: mkErasureBlockstore(blocks, pins),
+      dht: mkDht(new Map()),
+      pushToK: mkPushToK().pushToK,
+    })
+    const metrics = await loop.runOnce()
+
+    assert.equal(metrics.erasureManifestParseFailed, 1, "oversized manifest counted as a parse failure")
+    assert.equal(metrics.erasureManifestsScanned, 0, "oversized manifest must never reach repairManifest")
+    assert.equal(metrics.erasureStripesRepaired, 0)
   })
 
   it("regenerates a missing parity shard when all data is intact", async () => {

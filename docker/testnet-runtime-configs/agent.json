@@ -9,7 +9,7 @@
   },
   "challengerSet": ["0x0fc876c0b47575cfa81de526c1ac0e7b5b6b427a"],
   "aggregatorSet": ["0x0fc876c0b47575cfa81de526c1ac0e7b5b6b427a"],
-  "allowEmptyBatchWitnessSubmission": true,
+  "allowEmptyBatchWitnessSubmission": false,
   "nodeIds": [
     "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
     "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
