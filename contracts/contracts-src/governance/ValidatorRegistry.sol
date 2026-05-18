@@ -100,6 +100,7 @@ contract ValidatorRegistry {
     // burn truly leaves circulation; owner can override.
     address public insuranceFund;
     address public burnSink;
+    mapping(address => uint256) public pendingWithdrawals;
 
     // ── Events ───────────────────────────────────────────────────────────
 
@@ -127,6 +128,8 @@ contract ValidatorRegistry {
     event InsuranceFundUpdated(address indexed oldFund, address indexed newFund);
     event BurnSinkUpdated(address indexed oldSink, address indexed newSink);
     event OwnerUpdated(address indexed oldOwner, address indexed newOwner);
+    event WithdrawalCredited(address indexed payee, uint256 amount);
+    event WithdrawalClaimed(address indexed payee, uint256 amount);
 
     // ── Errors ───────────────────────────────────────────────────────────
 
@@ -144,6 +147,7 @@ contract ValidatorRegistry {
     error OnlyOwner();
     error TransferFailed();
     error ZeroAddress();
+    error NoPendingWithdrawal();
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert OnlyOwner();
@@ -288,28 +292,30 @@ contract ValidatorRegistry {
                 address effectiveBurnSink = burnSink == address(0)
                     ? address(0x000000000000000000000000000000000000dEaD)
                     : burnSink;
-                if (burnShare > 0) {
-                    (bool okB, ) = payable(effectiveBurnSink).call{ value: burnShare }("");
-                    if (!okB) revert TransferFailed();
-                }
-                if (reporterShare > 0) {
-                    (bool okR, ) = payable(slashRecipient).call{ value: reporterShare }("");
-                    if (!okR) revert TransferFailed();
-                }
-                if (insuranceShare > 0) {
-                    (bool okI, ) = payable(insuranceFund).call{ value: insuranceShare }("");
-                    if (!okI) revert TransferFailed();
-                }
+                _payOrCredit(effectiveBurnSink, burnShare);
+                _payOrCredit(slashRecipient, reporterShare);
+                _payOrCredit(insuranceFund, insuranceShare);
                 emit SlashDistributed(nodeId, burnShare, reporterShare, insuranceShare);
             } else {
                 // Legacy: 100% to slashRecipient. Deployments that haven't
                 // configured insuranceFund retain pre-I5 behaviour.
-                (bool ok, ) = payable(slashRecipient).call{ value: slashAmount }("");
-                if (!ok) revert TransferFailed();
+                _payOrCredit(slashRecipient, slashAmount);
             }
         }
 
         emit ValidatorSlashed(nodeId, slashAmount, reason);
+    }
+
+    /// @notice Claim ETH that could not be delivered during slash payouts.
+    function withdrawPayments() external {
+        uint256 amount = pendingWithdrawals[msg.sender];
+        if (amount == 0) revert NoPendingWithdrawal();
+
+        pendingWithdrawals[msg.sender] = 0;
+        (bool ok, ) = msg.sender.call{ value: amount }("");
+        if (!ok) revert TransferFailed();
+
+        emit WithdrawalClaimed(msg.sender, amount);
     }
 
     // ── Views ────────────────────────────────────────────────────────────
@@ -385,6 +391,16 @@ contract ValidatorRegistry {
         }
         _activeNodeIds.pop();
         delete _activeIndex[nodeId];
+    }
+
+    function _payOrCredit(address to, uint256 amount) internal {
+        if (amount == 0 || to == address(0)) return;
+
+        (bool ok, ) = to.call{ value: amount }("");
+        if (!ok) {
+            pendingWithdrawals[to] += amount;
+            emit WithdrawalCredited(to, amount);
+        }
     }
 
     receive() external payable {
