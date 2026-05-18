@@ -43,9 +43,25 @@ async function main() {
   console.log(`  GovernanceDAO:   ${daoAddr}`)
 
   // 3. Deploy Treasury
+  // Treasury constructor is (address[5] _signers, address _governance).
+  // Signers default to the five chainId-88780 validators; override with
+  // TREASURY_SIGNERS (comma-separated, exactly 5 addresses).
   console.log("Deploying Treasury...")
+  const DEFAULT_TREASURY_SIGNERS = [
+    "0xde4e7889aa9007318ff261b1ee675f1305153590",
+    "0xb939e5a68abd2e000e78876bd86edd1cbba49eb9",
+    "0xdefc8430388093fdfacb0a929fedc14d2e631d19",
+    "0xcc64096600c1759d7aaea91166837a5873175867",
+    "0x5e773c9359a6bb416bdfffe0c9aac9f568bd11ae",
+  ]
+  const treasurySigners = process.env.TREASURY_SIGNERS
+    ? process.env.TREASURY_SIGNERS.split(",").map((s) => s.trim())
+    : DEFAULT_TREASURY_SIGNERS
+  if (treasurySigners.length !== 5) {
+    throw new Error(`Treasury requires exactly 5 signers, got ${treasurySigners.length}`)
+  }
   const Treasury = await ethers.getContractFactory("Treasury")
-  const treasury = await Treasury.deploy(daoAddr)
+  const treasury = await Treasury.deploy(treasurySigners, daoAddr)
   await treasury.waitForDeployment()
   const treasuryAddr = await treasury.getAddress()
   console.log(`  Treasury:        ${treasuryAddr}`)
