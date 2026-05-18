@@ -131,6 +131,60 @@ async function openChallengeAndGetId(manager, commitHash, bond) {
   return manager.interface.parseLog(event).args[0]
 }
 
+async function installRejectingReceiverCode(address) {
+  const Rejecting = await ethers.getContractFactory("EthRejectingReceiver")
+  const rejecting = await Rejecting.deploy()
+  await rejecting.waitForDeployment()
+  const code = await ethers.provider.getCode(await rejecting.getAddress())
+  await ethers.provider.send("hardhat_setCode", [address, code])
+}
+
+async function openRevealedFaultChallenge(manager, challenger, targetNodeId, opts = {}) {
+  const bond = opts.bond ?? ethers.parseEther("0.01")
+  const faultType = opts.faultType ?? 2
+  const label = opts.label ?? "fault"
+  const latestBlock = await ethers.provider.getBlock("latest")
+  const epochId = Math.floor(Number(latestBlock.timestamp) / 3600)
+  const nonceByte = opts.nonceByte ?? "88"
+
+  const leaf = {
+    epoch: epochId,
+    nodeId: targetNodeId,
+    nonce: "0x" + nonceByte.repeat(16),
+    tipHash: ethers.keccak256(ethers.toUtf8Bytes(`tip-${label}`)),
+    tipHeight: opts.tipHeight ?? 900,
+    latencyMs: opts.latencyMs ?? 1200,
+    resultCode: 2,
+    witnessBitmap: 0,
+  }
+  const evidenceLeafHash = hashEvidenceLeafV2(leaf)
+  const batchId = await submitSingleLeafBatchV2(manager, epochId, evidenceLeafHash)
+  const evidenceData = encodeEvidenceData(batchId, [evidenceLeafHash], leaf)
+  const salt = ethers.keccak256(ethers.toUtf8Bytes(`salt-${label}`))
+  const commitHash = ethers.keccak256(
+    ethers.solidityPacked(
+      ["bytes32", "uint8", "bytes32", "bytes32"],
+      [targetNodeId, faultType, evidenceLeafHash, salt]
+    )
+  )
+
+  const challengerManager = manager.connect(challenger)
+  const challengeId = await openChallengeAndGetId(challengerManager, commitHash, bond)
+  const revealDigest = ethers.keccak256(
+    ethers.solidityPacked(
+      ["string", "bytes32", "bytes32", "uint8", "bytes32", "bytes32", "bytes32"],
+      ["coc-fault:", challengeId, targetNodeId, faultType, evidenceLeafHash, salt, ethers.keccak256(evidenceData)]
+    )
+  )
+  const challengerSig = await challenger.signMessage(ethers.getBytes(revealDigest))
+
+  await challengerManager.revealChallenge(
+    challengeId, targetNodeId, faultType, evidenceLeafHash, salt, evidenceData, challengerSig
+  )
+
+  return { challengeId, bond, epochId, evidenceLeafHash }
+}
+
 describe("PoSeManagerV2", function () {
   let manager
   let deployer
@@ -430,6 +484,48 @@ describe("PoSeManagerV2", function () {
       await manager.settleChallenge(challengeId)
       const settled = await manager.getChallenge(challengeId)
       expect(settled.settled).to.equal(true)
+    })
+
+    it("credits challenger payout when direct ETH transfer fails", async function () {
+      const { nodeId } = await registerNode(manager, deployer)
+      const bond = ethers.parseEther("0.01")
+      await manager.setChallengeBondMin(bond)
+
+      const challenger = ethers.Wallet.createRandom().connect(ethers.provider)
+      await deployer.sendTransaction({ to: challenger.address, value: ethers.parseEther("1") })
+
+      const nodeBefore = await manager.getNode(nodeId)
+      const { challengeId } = await openRevealedFaultChallenge(manager, challenger, nodeId, {
+        bond,
+        label: "reject-payout",
+      })
+      const slashAmount = (nodeBefore.bondAmount * 500n) / 10000n
+      const challengerReward = (slashAmount * 3000n) / 10000n
+      const expectedCredit = bond + challengerReward
+
+      await installRejectingReceiverCode(challenger.address)
+      await ethers.provider.send("evm_increaseTime", [5 * 3600])
+      await ethers.provider.send("evm_mine")
+
+      await expect(manager.settleChallenge(challengeId))
+        .to.emit(manager, "WithdrawalCredited")
+        .withArgs(challenger.address, expectedCredit)
+
+      const settled = await manager.getChallenge(challengeId)
+      expect(settled.settled).to.equal(true)
+      expect(await manager.pendingWithdrawals(challenger.address)).to.equal(expectedCredit)
+
+      await ethers.provider.send("hardhat_setBalance", [challenger.address, "0x1000000000000000000"])
+      await ethers.provider.send("hardhat_impersonateAccount", [challenger.address])
+      const rejectingSigner = await ethers.getSigner(challenger.address)
+      try {
+        await expect(
+          manager.connect(rejectingSigner).withdrawPayments()
+        ).to.be.revertedWithCustomError(manager, "TransferFailed")
+      } finally {
+        await ethers.provider.send("hardhat_stopImpersonatingAccount", [challenger.address])
+      }
+      expect(await manager.pendingWithdrawals(challenger.address)).to.equal(expectedCredit)
     })
 
     it("reverts when reusing the same fault evidence", async function () {
@@ -751,6 +847,33 @@ describe("PoSeManagerV2", function () {
     it("depositInsurance increases insurance balance", async function () {
       await manager.depositInsurance({ value: ethers.parseEther("2") })
       expect(await manager.insuranceBalance()).to.equal(ethers.parseEther("2"))
+    })
+
+    it("credits foundation payout when expired reward sweep receiver rejects ETH", async function () {
+      const foundation = ethers.Wallet.createRandom()
+      await manager.setFoundationAddress(foundation.address)
+      await installRejectingReceiverCode(foundation.address)
+
+      const reward = ethers.parseEther("1")
+      await manager.depositRewardPool({ value: ethers.parseEther("5") })
+
+      await ethers.provider.send("evm_increaseTime", [4 * 3600])
+      await ethers.provider.send("evm_mine")
+
+      const epochId = 1
+      const leaf = ethers.keccak256(ethers.toUtf8Bytes("expired-foundation-credit"))
+      await manager.finalizeEpochV2(epochId, pairHash(leaf, leaf), reward, 0, 0)
+
+      await ethers.provider.send("evm_increaseTime", [8 * 24 * 3600])
+      await ethers.provider.send("evm_mine")
+
+      const expectedCredit = (reward * 1000n) / 10000n
+      await expect(manager.sweepExpiredRewards(epochId))
+        .to.emit(manager, "WithdrawalCredited")
+        .withArgs(foundation.address, expectedCredit)
+
+      expect(await manager.epochSwept(epochId)).to.equal(true)
+      expect(await manager.pendingWithdrawals(foundation.address)).to.equal(expectedCredit)
     })
   })
 

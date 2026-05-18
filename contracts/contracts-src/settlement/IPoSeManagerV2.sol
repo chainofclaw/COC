@@ -18,6 +18,8 @@ interface IPoSeManagerV2 {
     event SlashDistributed(bytes32 indexed nodeId, uint256 burned, uint256 challenger, uint256 insurance);
     event EpochFinalizedV2(uint64 indexed epochId, bytes32 rewardRoot, uint256 totalReward);
     event InsuranceDeposited(address indexed depositor, uint256 amount);
+    event WithdrawalCredited(address indexed payee, uint256 amount);
+    event WithdrawalClaimed(address indexed payee, uint256 amount);
 
     // Errors
     error InvalidWitnessQuorum();
@@ -37,6 +39,7 @@ interface IPoSeManagerV2 {
     error InvalidFaultType();
     error RewardPoolInsufficient();
     error RewardBudgetExceeded();
+    error NoPendingWithdrawal();
 
     // Functions
     function initEpochNonce(uint64 epochId) external;
@@ -75,6 +78,8 @@ interface IPoSeManagerV2 {
     function claim(uint64 epochId, bytes32 nodeId, uint256 amount, bytes32[] calldata merkleProof) external;
 
     function depositRewardPool() external payable;
+
+    function withdrawPayments() external;
 
     function getWitnessSet(uint64 epochId) external view returns (bytes32[] memory);
 

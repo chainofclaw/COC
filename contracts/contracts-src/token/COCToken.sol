@@ -87,6 +87,7 @@ contract COCToken {
     // ── Minter Management ──────────────────────────────────────────
 
     function setMinter(address newMinter) external onlyOwner {
+        if (newMinter == address(0)) revert ZeroAddress();
         emit MinterUpdated(minter, newMinter);
         minter = newMinter;
     }
