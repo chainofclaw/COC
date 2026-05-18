@@ -3590,6 +3590,15 @@ async function resolveHistoricalExecutionContext(
     const height = await Promise.resolve(chain.getHeight())
     const block = await Promise.resolve(chain.getBlockByNumber(height))
     return {
+      // #642/#671: surface the latest committed block's stateRoot so callRaw
+      // resolves an *isolated* state manager (forkAtStateRoot) for eth_call /
+      // eth_estimateGas — exactly as the safe/finalized branch below already
+      // does. Without it, callRaw fell back to the shared this.vm.stateManager
+      // and runCall's checkpoint/revert raced applyBlock's checkpoint on the
+      // same PersistentStateTrie — a latent #642-class shared-trie race. The
+      // latest block's stateRoot is committed, so the fork's nodes are all
+      // DB-resident.
+      stateRoot: block?.stateRoot,
       blockNumber: height,
       ...buildExecutionContextFromBlock(block),
     }
