@@ -83,7 +83,7 @@ function pairHash(a, b) {
   return ethers.keccak256(ethers.solidityPacked(["bytes32", "bytes32"], [x, y]))
 }
 
-async function submitSingleLeafBatchV2(manager, epochId, leafHash) {
+async function submitSingleLeafBatchV2(manager, epochId, leafHash, submitter = manager) {
   const sampleProofs = [{ leaf: leafHash, merkleProof: [leafHash], leafIndex: 0 }]
   const sampleCommitment = ethers.keccak256(
     ethers.solidityPacked(["bytes32", "uint32", "bytes32"], [ethers.ZeroHash, 0, leafHash])
@@ -91,7 +91,7 @@ async function submitSingleLeafBatchV2(manager, epochId, leafHash) {
   const summaryHash = ethers.keccak256(
     ethers.solidityPacked(["uint64", "bytes32", "bytes32", "uint32"], [epochId, pairHash(leafHash, leafHash), sampleCommitment, 1])
   )
-  const tx = await manager.submitBatchV2(
+  const tx = await submitter.submitBatchV2(
     epochId,
     pairHash(leafHash, leafHash),
     summaryHash,
@@ -313,6 +313,36 @@ describe("PoSeManagerV2", function () {
       await expect(
         submitSingleLeafBatchV2(manager, epochId, leafHash)
       ).to.be.revertedWithCustomError(manager, "InvalidWitnessQuorum")
+    })
+  })
+
+  describe("submitBatchV2 duplicate root guard", function () {
+    it("rejects the same merkle root for an epoch from a different submitter", async function () {
+      const [, otherSubmitter] = await ethers.getSigners()
+      const latestBlock = await ethers.provider.getBlock("latest")
+      const epochId = Math.floor(Number(latestBlock.timestamp) / 3600)
+      const leafHash = ethers.keccak256(ethers.toUtf8Bytes("duplicate-root-same-epoch"))
+
+      await submitSingleLeafBatchV2(manager, epochId, leafHash)
+
+      await expect(
+        submitSingleLeafBatchV2(manager, epochId, leafHash, manager.connect(otherSubmitter))
+      ).to.be.revertedWithCustomError(manager, "BatchAlreadySubmitted")
+
+      expect(await manager.getEpochBatchIds(epochId)).to.have.lengthOf(1)
+    })
+
+    it("allows the same merkle root in a different epoch", async function () {
+      const latestBlock = await ethers.provider.getBlock("latest")
+      const epochId = Math.floor(Number(latestBlock.timestamp) / 3600)
+      const priorEpochId = epochId - 1
+      const leafHash = ethers.keccak256(ethers.toUtf8Bytes("duplicate-root-different-epoch"))
+
+      await submitSingleLeafBatchV2(manager, priorEpochId, leafHash)
+      await submitSingleLeafBatchV2(manager, epochId, leafHash)
+
+      expect(await manager.getEpochBatchIds(priorEpochId)).to.have.lengthOf(1)
+      expect(await manager.getEpochBatchIds(epochId)).to.have.lengthOf(1)
     })
   })
 

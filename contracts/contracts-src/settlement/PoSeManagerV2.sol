@@ -40,6 +40,12 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
     mapping(bytes32 => bool) public consumedFaultEvidence;
     mapping(bytes32 => uint64) public challengeFaultEpochPlusOne;
     mapping(address => uint256) public pendingWithdrawals;
+    // Per-epoch guard: a merkleRoot uniquely identifies batch contents, so it
+    // may be submitted at most once per epoch. Without this, witness sigs
+    // (bound only to the root, not to batchId/aggregator) replay across
+    // unlimited cloned batches and bloat epochBatches, causing finalizeEpochV2
+    // DoS (#680).
+    mapping(uint64 => mapping(bytes32 => bool)) public epochMerkleRootUsed;
 
     uint256 public challengeBondMin;
     uint256 public insuranceBalance;
@@ -200,6 +206,10 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
 
         batchId = _batchId(epochId, merkleRoot, summaryHash, msg.sender);
         if (batches[batchId].merkleRoot != bytes32(0)) revert BatchAlreadySubmitted();
+        // One merkleRoot per epoch: blocks duplicate-root clones whose replayed
+        // witness signatures would otherwise bloat epochBatches unboundedly (#680).
+        if (epochMerkleRootUsed[epochId][merkleRoot]) revert BatchAlreadySubmitted();
+        epochMerkleRootUsed[epochId][merkleRoot] = true;
 
         // Verify sample proofs (reuse v1 logic)
         bytes32 sampleCommitment = bytes32(0);
