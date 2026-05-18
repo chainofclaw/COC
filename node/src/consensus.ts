@@ -1448,8 +1448,16 @@ export class ConsensusEngine {
             }
           }
 
+          // #671: importStateSnapshot is passed trustedStateRoot as the
+          // expected root — it commits the imported state and verifies the
+          // resulting root equals it (throwing otherwise), then pins it. A
+          // separate setStateRoot() call here is redundant AND unsafe: the
+          // import now runs inside the engine's state-exclusive queue, so a
+          // queued applyBlock can run between this line and a separate
+          // setStateRoot() and would then be rolled back over. Pinning the
+          // root inside importStateSnapshot's own critical section keeps
+          // import + root-set atomic.
           const importResult = await this.snapSync.importStateSnapshot(stateSnap, trustedStateRoot)
-          await this.snapSync.setStateRoot(trustedStateRoot)
 
           // Restore governance (hash already validated above)
           if (importResult.validators && this.snapSync.restoreGovernance) {

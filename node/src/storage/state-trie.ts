@@ -769,7 +769,19 @@ export class PersistentStateTrie implements IStateTrie {
       // Verify cached trie root matches expected storage root to prevent stale reads
       const cachedRoot = bytesToHex(storageTrie.root())
       const emptyRoot = "0x" + "0".repeat(64)
-      if (storageRoot !== emptyRoot && cachedRoot !== storageRoot) {
+      // #671: a `cachedRoot !== storageRoot` mismatch is genuine staleness
+      // ONLY when the cached trie holds no uncommitted in-block state. If the
+      // address is dirty, or the trie still carries an open checkpoint frame,
+      // the cached trie IS the authoritative in-flight one — its root
+      // legitimately differs from the pre-SSTORE storageRoot a concurrent
+      // reader may pass after observing put()'s accountCache-refresh window
+      // (put() advances the storage trie before it updates accountCache).
+      // Evicting it here would discard the frame's uncommitted writes, so an
+      // in-flight applyBlock commits a storageRoot omitting this block's
+      // writes — a #642-class stateRoot divergence that deadlocks BFT on the
+      // next empty block. Only evict a genuinely stale *clean* cache entry.
+      const inFlight = this.dirtyAddresses.has(address) || storageTrie.hasCheckpoints()
+      if (storageRoot !== emptyRoot && cachedRoot !== storageRoot && !inFlight) {
         // Stale cache — discard and recreate
         this.storageTries.delete(address)
         storageTrie = undefined

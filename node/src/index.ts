@@ -681,11 +681,27 @@ if (bftEnabled) {
               try {
                 // With trie overlay protecting LevelDB, a full EVM reset +
                 // rebuild from persisted blocks is safe and guarantees clean state.
-                const pe = chain as any
-                if (pe.evm?.resetExecution && pe.rebuildFromPersisted) {
+                // #671: the reset + rebuild mutates the shared state trie
+                // (resetExecution recreates the VM; rebuildFromPersisted does
+                // setStateRoot / block replay). Unserialized, it raced a
+                // concurrent (gossiped) applyBlock and corrupted the trie —
+                // run it on the engine's state-exclusive queue. rebuildFrom
+                // Persisted already resets the EVM internally, so the explicit
+                // resetExecution() is only the height==0 edge.
+                const pe = chain as {
+                  evm?: { resetExecution?: () => Promise<void> }
+                  rebuildFromPersisted?: (h: bigint) => Promise<void>
+                  runStateExclusive?: <T>(fn: () => Promise<T>) => Promise<T>
+                }
+                if (pe.evm?.resetExecution && pe.rebuildFromPersisted && pe.runStateExclusive) {
                   const currentHeight = await Promise.resolve(chain.getHeight())
-                  await pe.evm.resetExecution()
-                  if (currentHeight > 0n) await pe.rebuildFromPersisted(currentHeight)
+                  await pe.runStateExclusive(async () => {
+                    if (currentHeight > 0n) {
+                      await pe.rebuildFromPersisted!(currentHeight)
+                    } else {
+                      await pe.evm!.resetExecution!()
+                    }
+                  })
                 }
                 await applyWithTimeout(true)
                 log.info("BFT onFinalized: EVM reset + retry succeeded", { height: block.number.toString() })
@@ -1200,12 +1216,33 @@ if (stateTrie && config.enableSnapSync) {
       }
     },
     async importStateSnapshot(snapshot: unknown, expectedStateRoot?: string) {
-      return await importStateSnapshot(trieRef, snapshot as StateSnapshot, expectedStateRoot)
+      // #671: importStateSnapshot does checkpoint / put / putStorageAt / commit
+      // on the shared PersistentStateTrie. forceSnapSync ran this completely
+      // unserialized against applyBlock, so an in-flight applyBlock interleaved
+      // with the import at an `await` boundary, corrupted the trie, and the
+      // node could never recover (forceSnapSync returned ok:false forever →
+      // chain deadlock). Run the import — AND pin the resulting root — inside
+      // the engine's state-exclusive queue so applyBlock cannot interleave.
+      // Pinning the root in the SAME critical section makes import+setStateRoot
+      // atomic: no applyBlock can slip between them and then be rolled back.
+      const runExclusive = (persistentEngine as { runStateExclusive?: <T>(fn: () => Promise<T>) => Promise<T> }).runStateExclusive
+      const doImport = async () => {
+        const result = await importStateSnapshot(trieRef, snapshot as StateSnapshot, expectedStateRoot)
+        if (expectedStateRoot && typeof trieRef.setStateRoot === "function") {
+          await trieRef.setStateRoot(expectedStateRoot)
+        }
+        return result
+      }
+      return runExclusive ? await runExclusive(doImport) : await doImport()
     },
     async setStateRoot(root: string) {
-      if (typeof trieRef.setStateRoot === "function") {
-        await trieRef.setStateRoot(root)
-      }
+      if (typeof trieRef.setStateRoot !== "function") return
+      // #671: serialize the root-set against applyBlock too. The forceSnapSync
+      // path no longer calls this separately (importStateSnapshot pins the
+      // root atomically above); kept for any other caller.
+      const runExclusive = (persistentEngine as { runStateExclusive?: <T>(fn: () => Promise<T>) => Promise<T> }).runStateExclusive
+      const setIt = () => trieRef.setStateRoot!(root)
+      if (runExclusive) { await runExclusive(setIt) } else { await setIt() }
     },
     restoreGovernance(validators: Array<{ id: string; address: string; stake: bigint; active: boolean }>) {
       if (hasGovernance(chain) && chain.governance && typeof (chain.governance as { initGenesis?: unknown }).initGenesis === "function") {

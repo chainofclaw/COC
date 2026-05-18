@@ -1098,11 +1098,19 @@ export class PersistentChainEngine {
    * accountCache/dirtyAddresses mid-iteration — so the node's committed
    * stateRoot drifts from its actual trie state (#642 deadlock).
    *
-   * The callback must be SHORT (a snapshot/flush), not a full block replay:
-   * it blocks applyBlock for its whole duration. Rejections stay with the
-   * caller's returned promise and do not poison the queue.
+   * Keep the callback as short as practical — it blocks applyBlock for its
+   * whole duration. A snapshot/flush is ideal; the snap-sync state import
+   * (#671) is necessarily longer, but blocking applyBlock during a full state
+   * reset is correct, not a hazard. Rejections stay with the caller's
+   * returned promise and do not poison the queue.
+   *
+   * Public so the snap-sync recovery path (the importStateSnapshot /
+   * setStateRoot adapters in index.ts) can serialize its shared-trie
+   * mutations against applyBlock too — #671: forceSnapSync ran the state
+   * import unsynchronized, so an in-flight applyBlock interleaved with it,
+   * corrupted the trie, and left the node permanently unable to recover.
    */
-  private runStateExclusive<T>(fn: () => Promise<T>): Promise<T> {
+  runStateExclusive<T>(fn: () => Promise<T>): Promise<T> {
     const prior = this.applyQueue
     const current = prior.then(fn, fn)
     this.applyQueue = current.then(() => {}, () => {})
