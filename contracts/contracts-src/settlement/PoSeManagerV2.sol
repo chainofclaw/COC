@@ -39,6 +39,7 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
     mapping(uint64 => uint256) public epochClaimedReward;
     mapping(bytes32 => bool) public consumedFaultEvidence;
     mapping(bytes32 => uint64) public challengeFaultEpochPlusOne;
+    mapping(address => uint256) public pendingWithdrawals;
 
     uint256 public challengeBondMin;
     uint256 public insuranceBalance;
@@ -399,9 +400,8 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
 
                 insuranceBalance += insuranceAmount;
 
-                // Transfer challenger reward + refund bond
-                (bool ok,) = payable(record.challenger).call{value: challengerAmount + record.bond}("");
-                if (!ok) revert TransferFailed();
+                // Pay challenger reward + refund bond, or credit for later withdrawal.
+                _payOrCredit(record.challenger, challengerAmount + record.bond);
 
                 if (node.bondAmount == 0) {
                     node.active = false;
@@ -411,9 +411,8 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
                 emit SlashDistributed(record.targetNodeId, burnAmount, challengerAmount, insuranceAmount);
                 emit ChallengeSettled(challengeId, true, slashAmount);
             } else {
-                // Slash cap reached, refund bond
-                (bool ok,) = payable(record.challenger).call{value: record.bond}("");
-                if (!ok) revert TransferFailed();
+                // Slash cap reached, refund bond.
+                _payOrCredit(record.challenger, record.bond);
                 emit ChallengeSettled(challengeId, false, 0);
             }
         } else {
@@ -546,10 +545,9 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
         uint256 toFoundation = (unclaimed * EXPIRED_FOUNDATION_BPS) / BPS_DENOMINATOR;
         uint256 toBurn = unclaimed - toFoundation;
 
-        // Transfer 10% to Foundation
+        // Transfer 10% to Foundation, or credit it when the address rejects ETH.
         if (toFoundation > 0 && foundationAddress != address(0)) {
-            (bool ok,) = payable(foundationAddress).call{value: toFoundation}("");
-            require(ok, "foundation transfer failed");
+            _payOrCredit(foundationAddress, toFoundation);
         }
 
         // Burn 90% via COCToken (if emission enabled and token set)
@@ -558,6 +556,18 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
         }
 
         emit ExpiredRewardsSwept(epochId, toFoundation, toBurn);
+    }
+
+    /// @notice Claim ETH that could not be delivered during protocol payouts.
+    function withdrawPayments() external override {
+        uint256 amount = pendingWithdrawals[msg.sender];
+        if (amount == 0) revert NoPendingWithdrawal();
+
+        pendingWithdrawals[msg.sender] = 0;
+        (bool ok,) = msg.sender.call{value: amount}("");
+        if (!ok) revert TransferFailed();
+
+        emit WithdrawalClaimed(msg.sender, amount);
     }
 
     // --- Witness set computation ---
@@ -771,6 +781,16 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
 
     function _requiredBond(uint8 existingNodeCount) internal pure returns (uint256) {
         return MIN_BOND << existingNodeCount;
+    }
+
+    function _payOrCredit(address to, uint256 amount) internal {
+        if (amount == 0 || to == address(0)) return;
+
+        (bool ok,) = to.call{value: amount}("");
+        if (!ok) {
+            pendingWithdrawals[to] += amount;
+            emit WithdrawalCredited(to, amount);
+        }
     }
 
     function _verifyOwnership(bytes32 nodeId, bytes calldata pubkeyNode, bytes calldata sig) internal view {
