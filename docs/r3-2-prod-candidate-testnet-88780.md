@@ -34,8 +34,11 @@ All 7 keys must be **distinct** (no shared anvil keys like in current 18780).
 - [ ] Update `scripts/gcloud/config.env` to add `COC_PROD_CANDIDATE_CHAIN_ID=88780`
 - [ ] Provision 5 GCP VMs reusing R1 fixture template
 - [ ] Bring up validators 6+7 on lab hardware
-- [ ] Deploy contracts via `contracts/deploy-all-registries-newchain.mjs`
-  (parameterized for chain 88780)
+- [x] Deploy contracts via `contracts/scripts/deploy-governance.js` then
+  `contracts/scripts/deploy-all-88780.js` (`COC_RPC_URL` / `COC_CHAIN_ID=88780`).
+  All 13 deployed addresses are recorded in `configs/deployed-contracts-88780.json`
+  — the canonical manifest. Last redeploy 2026-05-18 carried the #645–#670
+  security-audit contract fixes.
 - [ ] All 7 validators stake 32 ETH into ValidatorRegistry
 - [ ] All 7 register in PoSeManagerV2 with serviceFlags=7
 - [ ] enableEmission with COC token (real ERC20, not deployer-as-stub)

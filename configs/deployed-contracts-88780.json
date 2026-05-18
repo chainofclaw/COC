@@ -1,0 +1,21 @@
+{
+  "network": "coc",
+  "chainId": 88780,
+  "deployer": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+  "deployedAt": "2026-05-18T05:04:29.156Z",
+  "contracts": {
+    "FactionRegistry": "0xe6F314143AE46b5b0594Ae7C88e6A39D36964bb7",
+    "GovernanceDAO": "0x422f02546F2e5E3dE3A52962f0220498030e1669",
+    "Treasury": "0x8f9BE2DA37662Ad5CcfE233CDbBEF5F5C4480666",
+    "SoulRegistry": "0x0C2CbA6148A53F0Aa596a371314cc206B681d0E2",
+    "DIDRegistry": "0xF771D9111454D58D728d731752770B6Bf5Ad35Bf",
+    "CidRegistry": "0x6Ad76BD51eaa41a125945218aBD920a91Afc633E",
+    "PoSeManager": "0x0F9fFED1201De979dBe3A1562463B99bd5e7aB36",
+    "PoSeManagerV2": "0x42c0A0437106284c9aE4a3A3acb0199bF148B3eb",
+    "ValidatorRegistry": "0x112774740cD0D7a3cA68e8F6a7b3d15650821600",
+    "EquivocationDetector": "0x2EFBA7923E9A32A4C239BD2f7Da0c5b0e22a909E",
+    "InsuranceFund": "0x4Af81C96d19315212358f9E4a774bBcC0390B5f0",
+    "DelayedInbox": "0xe7D757FdeB78A806A72A652ac411738DEbC1670E",
+    "RollupStateManager": "0x1CD1a7E4158Eb444bC55AaE2b89bE7E03a4E6Ae5"
+  }
+}
