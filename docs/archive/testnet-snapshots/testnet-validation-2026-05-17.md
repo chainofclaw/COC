@@ -4,7 +4,7 @@
 - **目标链**：chainId 88780（0x15acc），R3.2 试验网，N=5 validator + 2 observer
 - **RPC 端点**：`http://159.198.36.3:28780`（节点 A）、`http://159.198.36.25:28780`（节点 B）
 - **执行视角**：外部客户端，仅经公开 HTTP JSON-RPC（端口 28780）
-- **背景**：本报告是 2026-05-17 测试覆盖深度扩展计划 WS7 的产出，承接 `docs/stress-test-2026-05-17.md`。WS5 把当时的临时探针固化为 `tests/stress/` 下可复用套件，本次将其指向 live 88780 执行。
+- **背景**：本报告是 2026-05-17 测试覆盖深度扩展计划 WS7 的产出，承接 `docs/archive/testnet-snapshots/stress-test-2026-05-17.md`。WS5 把当时的临时探针固化为 `tests/stress/` 下可复用套件，本次将其指向 live 88780 执行。
 
 ---
 
