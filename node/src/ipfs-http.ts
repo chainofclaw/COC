@@ -110,6 +110,22 @@ function allQueryValues(raw: string | string[] | undefined): string[] {
   return vs.map((v) => stripIpfsPathPrefix(v) ?? v)
 }
 
+function splitCidPath(arg: string): { cid: string; path: string[] } {
+  const slashIdx = arg.indexOf("/")
+  const cid = slashIdx < 0 ? arg : arg.slice(0, slashIdx)
+  const rest = slashIdx < 0 ? "" : arg.slice(slashIdx + 1)
+  const path = rest.split("/").filter((segment) => segment.length > 0)
+  return { cid, path }
+}
+
+interface ResolvedCidPath {
+  rootCid: string
+  cid: string
+  path: string[]
+  leafIndex?: number
+  leafSize?: number
+}
+
 function isNotFoundError(err: unknown): boolean {
   if (err && typeof err === "object" && "code" in err && (err as { code: unknown }).code === "ENOENT") return true
   const msg = String(err instanceof Error ? err.message : err)
@@ -418,31 +434,29 @@ export class IpfsHttpServer {
         // misleading error for a well-formed input).
         //
         // Fix: split the path; treat the first segment as the CID
-        // candidate. If a non-empty subpath follows AND we don't have a
-        // dag-pb subtree resolver wired up, surface 404 "no such file"
-        // explicitly so callers don't think their CID is malformed. This
-        // is a clean minimum — full subpath traversal within dag-pb dirs
-        // is out of scope for this PR (would need UnixFsBuilder dir-
-        // walking integration).
+        // candidate. Numeric UnixFS leaf paths are resolved locally; other
+        // subpaths surface 404 "no such file" explicitly so callers don't
+        // think their CID is malformed.
         const tail = url.pathname.slice(6) // strip "/ipfs/"
-        const slashIdx = tail.indexOf("/")
-        const cid = slashIdx < 0 ? tail : tail.slice(0, slashIdx)
-        const subpath = slashIdx < 0 ? "" : tail.slice(slashIdx)
+        const parsed = splitCidPath(tail)
+        const cid = parsed.cid
         if (!isValidCid(cid)) {
           res.writeHead(400, { "content-type": "application/json", "access-control-allow-origin": "*" })
           res.end(req.method === "HEAD" ? undefined : JSON.stringify({ error: "invalid CID" }))
           return
         }
-        if (subpath !== "" && subpath !== "/") {
-          // CID is valid; subpath traversal isn't supported on this
-          // gateway. Surface 404 with the kubo-style "no link named ..."
-          // message rather than a misleading 400 "invalid CID".
-          res.writeHead(404, { "content-type": "application/json", "access-control-allow-origin": "*" })
-          res.end(req.method === "HEAD" ? undefined : JSON.stringify({
-            error: "no such file",
-            message: `no link named '${subpath.replace(/^\//, "").split("/")[0]}' under ${cid}`,
-          }))
-          return
+        let resolvedCid = cid
+        if (parsed.path.length > 0) {
+          try {
+            resolvedCid = (await this.resolveCidPath(cid, parsed.path)).cid
+          } catch (err) {
+            if (err instanceof HttpError && err.status === 404) {
+              res.writeHead(404, { "content-type": "application/json", "access-control-allow-origin": "*" })
+              res.end(req.method === "HEAD" ? undefined : JSON.stringify({ error: err.code, message: err.message }))
+              return
+            }
+            throw err
+          }
         }
         // #168: pre-fix ENOENT for valid-shape-missing CIDs propagated
         // to the outer 500 handler, logging a stacktrace for every probe.
@@ -457,7 +471,7 @@ export class IpfsHttpServer {
         // outer catch's structured handler. Same family as #168/#232/
         // #268/#270/#543 — generic 500 leak for a well-defined case.
         try {
-          const data = await this.readByCid(cid)
+          const data = await this.readByCid(resolvedCid)
           // #324: HTTP Range support per RFC 7233. Pre-fix the gateway
           // returned the full body for every request, even when the
           // client sent `Range: bytes=N-M` — making resumable downloads,
@@ -1013,14 +1027,90 @@ export class IpfsHttpServer {
     }))
   }
 
-  private async handleLs(res: http.ServerResponse, cid?: string): Promise<void> {
-    if (!cid || !isValidCid(cid)) {
+  private parseCidPathArg(res: http.ServerResponse, arg?: string): { cid: string; path: string[] } | null {
+    if (!arg) {
       res.writeHead(400)
-      res.end(JSON.stringify({ error: !cid ? "missing cid" : "invalid cid" }))
+      res.end(JSON.stringify({ error: "missing cid" }))
+      return null
+    }
+    const parsed = splitCidPath(arg)
+    if (!isValidCid(parsed.cid)) {
+      res.writeHead(400)
+      res.end(JSON.stringify({ error: "invalid cid" }))
+      return null
+    }
+    if (parsed.path.some((segment) => segment === "." || segment === "..")) {
+      res.writeHead(400)
+      res.end(JSON.stringify({ error: "invalid path" }))
+      return null
+    }
+    return parsed
+  }
+
+  private async resolveCidPathArg(res: http.ServerResponse, arg?: string): Promise<ResolvedCidPath | null> {
+    const parsed = this.parseCidPathArg(res, arg)
+    if (!parsed) return null
+    try {
+      return await this.resolveCidPath(parsed.cid, parsed.path)
+    } catch (err) {
+      if (err instanceof HttpError && err.status === 404) {
+        res.writeHead(404, { "content-type": "application/json" })
+        res.end(JSON.stringify({ error: err.code, message: err.message }))
+        return null
+      }
+      throw err
+    }
+  }
+
+  private async resolveCidPath(rootCid: string, path: string[]): Promise<ResolvedCidPath> {
+    if (path.length === 0) {
+      return { rootCid, cid: rootCid, path: [] }
+    }
+
+    const head = path[0]
+    if (path.length !== 1 || !/^[0-9]+$/.test(head)) {
+      throw new HttpError(404, "no such file", `no link named '${head}' under ${rootCid}`)
+    }
+
+    const index = Number(head)
+    const meta = await this.readFileMeta()
+    const file = meta[rootCid]
+    if (!Number.isSafeInteger(index) || !file || index < 0 || index >= file.leaves.length) {
+      throw new HttpError(404, "no such file", `no link named '${head}' under ${rootCid}`)
+    }
+
+    const leafSize = index === file.leaves.length - 1
+      ? file.size - file.blockSize * (file.leaves.length - 1)
+      : file.blockSize
+
+    return {
+      rootCid,
+      cid: file.leaves[index],
+      path,
+      leafIndex: index,
+      leafSize,
+    }
+  }
+
+  private async handleLs(res: http.ServerResponse, cid?: string): Promise<void> {
+    const resolved = await this.resolveCidPathArg(res, cid)
+    if (!resolved) {
+      return
+    }
+    if (resolved.leafIndex !== undefined) {
+      res.writeHead(200, { "content-type": "application/json" })
+      res.end(JSON.stringify({
+        Objects: [
+          {
+            Hash: resolved.cid,
+            Links: [],
+          },
+        ],
+      }))
       return
     }
     const meta = await this.readFileMeta()
-    const file = meta[cid]
+    const file = meta[resolved.cid]
     if (!file) {
       res.writeHead(404)
       res.end(JSON.stringify({ error: "file not found" }))
@@ -1040,7 +1130,7 @@ export class IpfsHttpServer {
     res.end(JSON.stringify({
       Objects: [
         {
-          Hash: cid,
+          Hash: resolved.cid,
           Links: file.leaves.map((leaf, index) => ({
             Name: String(index),
             Hash: leaf,
@@ -1055,9 +1145,8 @@ export class IpfsHttpServer {
   }
 
   private async handleObjectStat(res: http.ServerResponse, cid?: string): Promise<void> {
-    if (!cid || !isValidCid(cid)) {
-      res.writeHead(400)
-      res.end(JSON.stringify({ error: !cid ? "missing cid" : "invalid cid" }))
+    const resolved = await this.resolveCidPathArg(res, cid)
+    if (!resolved) {
       return
     }
     // #230: pre-fix the bare `store.get(cid)` call let ENOENT bubble
@@ -1068,7 +1157,7 @@ export class IpfsHttpServer {
     // from a real server fault (500).
     let block: Awaited<ReturnType<typeof this.store.get>>
     try {
-      block = await this.store.get(cid)
+      block = await this.store.get(resolved.cid)
     } catch (err) {
       if (isNotFoundError(err)) {
         res.writeHead(404, { "content-type": "application/json" })
@@ -1078,17 +1167,17 @@ export class IpfsHttpServer {
       throw err
     }
     const meta = await this.readFileMeta()
-    const file = meta[cid]
+    const file = meta[resolved.cid]
     // #134: DataSize and LinksSize were hardcoded to 0. For UnixFS
     // files, DataSize is the user-data byte count exposed by `ls`;
     // LinksSize is a rough estimate of CID-reference bytes. The
     // important field for clients summing file sizes is DataSize.
-    const numLinks = file?.leaves.length ?? 0
+    const numLinks = resolved.leafSize !== undefined ? 0 : file?.leaves.length ?? 0
     const linksSize = numLinks > 0 ? Math.min(numLinks * 36, block.bytes.length) : 0
-    const dataSize = file?.size ?? Math.max(block.bytes.length - linksSize, 0)
+    const dataSize = resolved.leafSize ?? file?.size ?? Math.max(block.bytes.length - linksSize, 0)
     res.writeHead(200, { "content-type": "application/json" })
     res.end(JSON.stringify({
-      Hash: cid,
+      Hash: resolved.cid,
       NumLinks: numLinks,
       BlockSize: block.bytes.length,
       LinksSize: linksSize,
@@ -1103,9 +1192,8 @@ export class IpfsHttpServer {
     cid?: string,
     range?: { offset?: string; length?: string },
   ): Promise<void> {
-    if (!cid || !isValidCid(cid)) {
-      res.writeHead(400)
-      res.end(JSON.stringify({ error: !cid ? "missing cid" : "invalid cid" }))
+    const resolved = await this.resolveCidPathArg(res, cid)
+    if (!resolved) {
       return
     }
     // #174: pre-fix the offset/length/count query params were accepted
@@ -1140,7 +1228,7 @@ export class IpfsHttpServer {
       }
       length = n
     }
-    const data = await this.readByCid(cid)
+    const data = await this.readByCid(resolved.cid)
     const buf = Buffer.from(data)
     const slice = length !== undefined ? buf.subarray(offset, offset + length) : buf.subarray(offset)
     res.writeHead(200)
@@ -1148,13 +1236,12 @@ export class IpfsHttpServer {
   }
 
   private async handleGet(res: http.ServerResponse, cid?: string): Promise<void> {
-    if (!cid || !isValidCid(cid)) {
-      res.writeHead(400)
-      res.end(JSON.stringify({ error: !cid ? "missing cid" : "invalid cid" }))
+    const resolved = await this.resolveCidPathArg(res, cid)
+    if (!resolved) {
       return
     }
-    const data = await this.readByCid(cid)
-    const archive = createTarArchive([{ name: cid, data }])
+    const data = await this.readByCid(resolved.cid)
+    const archive = createTarArchive([{ name: resolved.cid, data }])
     res.writeHead(200, { "content-type": "application/x-tar" })
     res.end(archive)
   }
@@ -1244,15 +1331,14 @@ export class IpfsHttpServer {
   }
 
   private async handleBlockGet(_req: http.IncomingMessage, res: http.ServerResponse, cid?: string): Promise<void> {
-    if (!cid || !isValidCid(cid)) {
-      res.writeHead(400)
-      res.end(JSON.stringify({ error: !cid ? "missing cid" : "invalid cid" }))
+    const resolved = await this.resolveCidPathArg(res, cid)
+    if (!resolved) {
       return
     }
     // #168: pre-fix ENOENT for missing blocks propagated to the outer
     // 500 handler. Map to 404 so missing-block looks like missing-block.
     try {
-      const block = await loadRawBlock(this.store, cid)
+      const block = await loadRawBlock(this.store, resolved.cid)
       res.writeHead(200)
       res.end(block.bytes)
     } catch (err) {
@@ -1266,9 +1352,8 @@ export class IpfsHttpServer {
   }
 
   private async handleBlockStat(res: http.ServerResponse, cid?: string): Promise<void> {
-    if (!cid || !isValidCid(cid)) {
-      res.writeHead(400)
-      res.end(JSON.stringify({ error: !cid ? "missing cid" : "invalid cid" }))
+    const resolved = await this.resolveCidPathArg(res, cid)
+    if (!resolved) {
       return
     }
     // #310: kubo `block/stat` is a LOCAL metadata query. Pre-fix it routed
@@ -1285,14 +1370,14 @@ export class IpfsHttpServer {
     // has() and loadRawBlock, the ENOENT branch still maps to 404, so the
     // worst case is one fetchRemote attempt (acceptable, vs. one EVERY
     // unknown-cid stat pre-fix).
-    if (!(await this.store.has(cid))) {
+    if (!(await this.store.has(resolved.cid))) {
       res.writeHead(404, { "content-type": "application/json" })
       res.end(JSON.stringify({ error: "block not found" }))
       return
     }
     // #168: same ENOENT → 404 mapping as handleBlockGet.
     try {
-      const block = await loadRawBlock(this.store, cid)
+      const block = await loadRawBlock(this.store, resolved.cid)
       res.writeHead(200, { "content-type": "application/json" })
       res.end(JSON.stringify({ Key: block.cid, Size: block.bytes.length }))
     } catch (err) {
