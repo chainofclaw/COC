@@ -1,8 +1,15 @@
 /**
  * Solidity source code verification.
  * Compiles source with solc-js and compares bytecode against on-chain deployment.
+ *
+ * The solc compile step is CPU-bound and synchronous; running it on the
+ * Next.js request thread blocks the event loop for the whole process. It is
+ * therefore offloaded to a worker thread with a hard wall-clock deadline —
+ * `worker.terminate()` stops a runaway compile regardless of its internal
+ * state, which a post-hoc duration check could never do.
  */
 
+import { Worker } from 'node:worker_threads'
 import { rpcCall } from './rpc.ts'
 
 export interface VerifyParams {
@@ -30,8 +37,98 @@ const SOLC_REMOTE_VERSION_TAGS: Record<string, string> = {
   '0.8.20': 'v0.8.20+commit.a1b79de6',
 }
 const SOLC_ALLOWED_VERSION_TAGS = new Set(Object.values(SOLC_REMOTE_VERSION_TAGS))
-const COMPILE_WARN_THRESHOLD_MS = Number(process.env.COC_VERIFY_COMPILE_WARN_MS ?? 15000)
+const DEFAULT_COMPILER_VERSIONS = new Set(['0.8.28', 'v0.8.28+commit.7893614a'])
+const COMPILE_TIMEOUT_MS = Number(
+  process.env.COC_VERIFY_COMPILE_TIMEOUT_MS ?? process.env.COC_VERIFY_COMPILE_WARN_MS ?? 15000,
+)
 const MAX_SOLC_SOURCE_CHARS = Number(process.env.COC_VERIFY_MAX_SOURCE_CHARS ?? 100_000)
+
+/**
+ * Worker entry executed via `new Worker(src, { eval: true })`.
+ * Kept as an inline string so Next.js standalone output tracing does not
+ * need to discover and copy a separate worker file.
+ */
+const SOLC_COMPILE_WORKER = `
+const { parentPort, workerData } = require('node:worker_threads')
+;(async () => {
+  try {
+    const { solcEntry, versionTag, allowRemote, isDefault, inputJson } = workerData
+    let solcModule
+    try {
+      solcModule = require(solcEntry)
+    } catch (err) {
+      parentPort.postMessage({ ok: false, code: 'solc-unavailable' })
+      return
+    }
+    const baseSolc = solcModule.default || solcModule
+    let solc = baseSolc
+    const loadRemote = baseSolc.loadRemoteVersion
+    if (allowRemote && typeof loadRemote === 'function') {
+      const remote = await new Promise((resolve) => {
+        loadRemote.call(baseSolc, versionTag, (e, snapshot) => {
+          resolve(e || !snapshot ? null : snapshot)
+        })
+      })
+      if (remote) {
+        solc = remote
+      } else if (!isDefault) {
+        parentPort.postMessage({ ok: false, code: 'unavailable' })
+        return
+      }
+    } else if (!isDefault) {
+      parentPort.postMessage({ ok: false, code: allowRemote ? 'unavailable' : 'remote-disabled' })
+      return
+    }
+    const outputJson = solc.compile(inputJson)
+    parentPort.postMessage({ ok: true, outputJson })
+  } catch (err) {
+    parentPort.postMessage({ ok: false, code: 'compile-error' })
+  }
+})()
+`
+
+interface SolcWorkerInput {
+  solcEntry: string
+  versionTag: string
+  allowRemote: boolean
+  isDefault: boolean
+  inputJson: string
+}
+
+type SolcWorkerResult =
+  | { ok: true; outputJson: string }
+  | { ok: false; code: 'solc-unavailable' | 'unavailable' | 'remote-disabled' | 'compile-error' }
+  | { ok: false; code: 'timeout' }
+
+/**
+ * Run a solc compile in a worker thread with a hard deadline. The worker is
+ * always terminated afterwards, so a hung compile cannot leak a thread.
+ */
+export async function compileInWorker(
+  workerData: SolcWorkerInput,
+  timeoutMs: number,
+): Promise<SolcWorkerResult> {
+  const worker = new Worker(SOLC_COMPILE_WORKER, { eval: true, workerData })
+  let settled = false
+  try {
+    return await new Promise<SolcWorkerResult>((resolve) => {
+      const finish = (result: SolcWorkerResult): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        resolve(result)
+      }
+      const timer = setTimeout(() => finish({ ok: false, code: 'timeout' }), timeoutMs)
+      worker.on('message', (msg: SolcWorkerResult) => finish(msg))
+      worker.on('error', () => finish({ ok: false, code: 'compile-error' }))
+      worker.on('exit', (code) => {
+        if (code !== 0) finish({ ok: false, code: 'compile-error' })
+      })
+    })
+  } finally {
+    await worker.terminate().catch(() => {})
+  }
+}
 
 /**
  * Strip CBOR metadata suffix from bytecode for comparison.
@@ -94,44 +191,18 @@ export async function verifyContract(params: VerifyParams): Promise<VerifyResult
       return { verified: false, matchPct: 0, error: 'No bytecode at address' }
     }
 
-    // Load solc compiler — use loadRemoteVersion for specific versions, fallback to bundled
-    let solc: {
-      compile: (input: string) => string
+    const versionTag = resolveCompilerVersionTag(params.compilerVersion)
+    if (!versionTag || !SOLC_ALLOWED_VERSION_TAGS.has(versionTag)) {
+      return { verified: false, matchPct: 0, error: 'Unsupported compiler version' }
     }
+
+    // Resolve the solc package path on the main thread so the worker can
+    // require it by absolute path without any module-resolution ambiguity.
+    let solcEntry: string
     try {
       const { createRequire } = await import('node:module')
-      const require = createRequire(import.meta.url)
-      const solcModule = require('solc') as {
-        default?: { compile: (input: string) => string; loadRemoteVersion?: (version: string, callback: (err: Error | null, snapshot: { compile: (input: string) => string } | null) => void) => void }
-        compile?: (input: string) => string
-        loadRemoteVersion?: (version: string, callback: (err: Error | null, snapshot: { compile: (input: string) => string } | null) => void) => void
-      }
-      const baseSolc = solcModule.default ?? solcModule
-      const versionTag = resolveCompilerVersionTag(params.compilerVersion)
-      if (!versionTag || !SOLC_ALLOWED_VERSION_TAGS.has(versionTag)) {
-        return { verified: false, matchPct: 0, error: 'Unsupported compiler version' }
-      }
-
-      solc = baseSolc as { compile: (input: string) => string }
-      const loadRemote = baseSolc.loadRemoteVersion
-      if (allowRemoteCompilerLoad() && loadRemote) {
-        const remoteLoaded = await new Promise<{ compile: (input: string) => string } | null>((resolve) => {
-          loadRemote(versionTag, (err, snapshot) => {
-            if (err || !snapshot) {
-              resolve(null)
-            } else {
-              resolve(snapshot)
-            }
-          })
-        })
-        if (remoteLoaded) {
-          solc = remoteLoaded
-        } else if (params.compilerVersion !== '0.8.28' && params.compilerVersion !== 'v0.8.28+commit.7893614a') {
-          return { verified: false, matchPct: 0, error: 'Requested compiler version is unavailable' }
-        }
-      } else if (params.compilerVersion !== '0.8.28' && params.compilerVersion !== 'v0.8.28+commit.7893614a') {
-        return { verified: false, matchPct: 0, error: 'Remote compiler loading is disabled in this environment' }
-      }
+      const requireFn = createRequire(import.meta.url)
+      solcEntry = requireFn.resolve('solc')
     } catch {
       return { verified: false, matchPct: 0, error: 'solc compiler not available' }
     }
@@ -154,11 +225,37 @@ export async function verifyContract(params: VerifyParams): Promise<VerifyResult
       },
     }
 
-    const compileStartedAt = Date.now()
-    const output = JSON.parse(solc.compile(JSON.stringify(input)))
-    if (Date.now() - compileStartedAt > COMPILE_WARN_THRESHOLD_MS) {
-      return { verified: false, matchPct: 0, error: 'Compilation exceeded server execution budget' }
+    const compileResult = await compileInWorker(
+      {
+        solcEntry,
+        versionTag,
+        allowRemote: allowRemoteCompilerLoad(),
+        isDefault: DEFAULT_COMPILER_VERSIONS.has(params.compilerVersion),
+        inputJson: JSON.stringify(input),
+      },
+      COMPILE_TIMEOUT_MS,
+    )
+
+    if (!compileResult.ok) {
+      switch (compileResult.code) {
+        case 'timeout':
+          return { verified: false, matchPct: 0, error: 'Compilation exceeded server execution budget' }
+        case 'unavailable':
+          return { verified: false, matchPct: 0, error: 'Requested compiler version is unavailable' }
+        case 'remote-disabled':
+          return {
+            verified: false,
+            matchPct: 0,
+            error: 'Remote compiler loading is disabled in this environment',
+          }
+        case 'solc-unavailable':
+          return { verified: false, matchPct: 0, error: 'solc compiler not available' }
+        default:
+          return { verified: false, matchPct: 0, error: 'Internal verification error' }
+      }
     }
+
+    const output = JSON.parse(compileResult.outputJson)
 
     // Check for compilation errors
     if (output.errors?.some((e: { severity: string }) => e.severity === 'error')) {
