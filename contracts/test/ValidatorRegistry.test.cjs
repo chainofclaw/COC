@@ -57,6 +57,13 @@ async function deployRegistry() {
   return { registry, owner, signers }
 }
 
+async function deployRejectingReceiver() {
+  const Factory = await ethers.getContractFactory("EthRejectingReceiver")
+  const receiver = await Factory.deploy()
+  await receiver.waitForDeployment()
+  return receiver
+}
+
 async function increaseTime(seconds) {
   await ethers.provider.send("evm_increaseTime", [seconds])
   await ethers.provider.send("evm_mine", [])
@@ -326,6 +333,37 @@ describe("ValidatorRegistry: slashValidator()", () => {
     expect(v.stake).to.equal(expected)
   })
 
+  it("credits rejecting legacy slash recipient without blocking slash", async () => {
+    const { registry, nodeId } = await fixture()
+    const receiver = await deployRejectingReceiver()
+    const receiverAddress = await receiver.getAddress()
+    await registry.setSlashRecipient(receiverAddress)
+
+    const expectedSlash = (MIN_STAKE * SLASH_BPS) / BPS_DENOM
+
+    await expect(registry.slashValidator(nodeId, ethers.id("rejecting-recipient")))
+      .to.emit(registry, "WithdrawalCredited")
+      .withArgs(receiverAddress, expectedSlash)
+
+    const v = await registry.getValidator(nodeId)
+    expect(v.stake).to.equal(MIN_STAKE - expectedSlash)
+    expect(v.active).to.equal(false)
+    expect(await registry.activeValidatorCount()).to.equal(0n)
+    expect(await registry.pendingWithdrawals(receiverAddress)).to.equal(expectedSlash)
+
+    await ethers.provider.send("hardhat_setBalance", [receiverAddress, "0x1000000000000000000"])
+    await ethers.provider.send("hardhat_impersonateAccount", [receiverAddress])
+    const receiverSigner = await ethers.getSigner(receiverAddress)
+    try {
+      await expect(
+        registry.connect(receiverSigner).withdrawPayments(),
+      ).to.be.revertedWithCustomError(registry, "TransferFailed")
+    } finally {
+      await ethers.provider.send("hardhat_stopImpersonatingAccount", [receiverAddress])
+    }
+    expect(await registry.pendingWithdrawals(receiverAddress)).to.equal(expectedSlash)
+  })
+
   it("can slash an already-deactivated validator (during lockup)", async () => {
     const { registry, op, nodeId } = await fixture()
     await registry.connect(op).requestUnstake(nodeId)
@@ -468,6 +506,49 @@ describe("ValidatorRegistry: Phase I5 — slash split when insuranceFund set", (
     await registry.connect(owner).slashValidator(nodeId, ethers.id("evidence-i5"))
     const altAfter = await ethers.provider.getBalance(altBurn.address)
     expect(altAfter - altBefore).to.equal(expectedBurn)
+  })
+
+  it("credits rejecting split payout targets without blocking slash", async () => {
+    const { registry, owner, nodeId } = await fixtureWithSplit()
+    const burnReceiver = await deployRejectingReceiver()
+    const reporterReceiver = await deployRejectingReceiver()
+    const insuranceReceiver = await deployRejectingReceiver()
+    const burnAddress = await burnReceiver.getAddress()
+    const reporterAddress = await reporterReceiver.getAddress()
+    const insuranceAddress = await insuranceReceiver.getAddress()
+
+    await registry.connect(owner).setBurnSink(burnAddress)
+    await registry.connect(owner).setSlashRecipient(reporterAddress)
+    await registry.connect(owner).setInsuranceFund(insuranceAddress)
+
+    const expectedSlash = (MIN_STAKE * SLASH_BPS) / BPS_DENOM
+    const expectedBurn = (expectedSlash * SPLIT_BURN_BPS) / BPS_DENOM
+    const expectedReporter = (expectedSlash * SPLIT_REPORTER_BPS) / BPS_DENOM
+    const expectedInsurance = expectedSlash - expectedBurn - expectedReporter
+
+    const tx = await registry.connect(owner).slashValidator(nodeId, ethers.id("rejecting-split"))
+    const receipt = await tx.wait()
+
+    const creditedEvents = receipt.logs.filter((l) => l.fragment?.name === "WithdrawalCredited")
+    expect(creditedEvents.map((event) => event.args[0])).to.deep.equal([
+      burnAddress,
+      reporterAddress,
+      insuranceAddress,
+    ])
+    expect(creditedEvents.map((event) => event.args[1])).to.deep.equal([
+      expectedBurn,
+      expectedReporter,
+      expectedInsurance,
+    ])
+
+    expect(await registry.pendingWithdrawals(burnAddress)).to.equal(expectedBurn)
+    expect(await registry.pendingWithdrawals(reporterAddress)).to.equal(expectedReporter)
+    expect(await registry.pendingWithdrawals(insuranceAddress)).to.equal(expectedInsurance)
+
+    const v = await registry.getValidator(nodeId)
+    expect(v.stake).to.equal(MIN_STAKE - expectedSlash)
+    expect(v.active).to.equal(false)
+    expect(await registry.activeValidatorCount()).to.equal(0n)
   })
 
   it("clearing insuranceFund (setInsuranceFund=0) reverts to legacy 100% behaviour", async () => {

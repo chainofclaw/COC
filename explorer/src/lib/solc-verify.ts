@@ -69,6 +69,10 @@ export function resolveCompilerVersionTag(compilerVersion: string): string | nul
   return SOLC_REMOTE_VERSION_TAGS[compilerVersion] ?? null
 }
 
+export function safeVerifyInternalErrorMessage(_error: unknown): string {
+  return 'Internal verification error'
+}
+
 function allowRemoteCompilerLoad(): boolean {
   if (process.env.COC_SOLC_ALLOW_REMOTE === '1') return true
   if (process.env.COC_SOLC_ALLOW_REMOTE === '0') return false
@@ -210,7 +214,7 @@ export async function verifyContract(params: VerifyParams): Promise<VerifyResult
     return {
       verified: false,
       matchPct: 0,
-      error: err instanceof Error ? err.message : 'Unknown verification error',
+      error: safeVerifyInternalErrorMessage(err),
     }
   }
 }

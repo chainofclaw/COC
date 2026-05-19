@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createHash, timingSafeEqual } from 'node:crypto'
-import { verifyContract, type VerifyParams } from '@/lib/solc-verify'
+import { safeVerifyInternalErrorMessage, verifyContract, type VerifyParams } from '@/lib/solc-verify'
 import { getVerifyRateLimitClientIp } from '@/lib/verify-client-ip'
 import { getVerifyRateLimitKey } from '@/lib/verify-rate-limit'
 
@@ -169,7 +169,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json(result)
   } catch (err) {
     return NextResponse.json(
-      { verified: false, matchPct: 0, error: err instanceof Error ? err.message : 'Internal server error' },
+      { verified: false, matchPct: 0, error: safeVerifyInternalErrorMessage(err) },
       { status: 500 },
     )
   }
