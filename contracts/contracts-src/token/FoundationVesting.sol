@@ -23,15 +23,21 @@ contract FoundationVesting {
     uint256 public totalReleased;
     uint256 public quarterStart;
     uint256 public quarterReleased;
+    mapping(address => uint256) public pendingWithdrawals;
+    uint256 public pendingWithdrawalTotal;
 
     event Released(address indexed to, uint256 amount);
+    event WithdrawalCredited(address indexed payee, uint256 amount);
+    event WithdrawalClaimed(address indexed payee, uint256 amount);
     event BeneficiaryUpdated(address indexed oldBeneficiary, address indexed newBeneficiary);
 
     error NotOwner();
     error NotBeneficiary();
     error NothingToRelease();
     error QuarterlyCapExceeded();
+    error TransferFailed();
     error ZeroAddress();
+    error NoPendingWithdrawal();
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
@@ -76,10 +82,10 @@ contract FoundationVesting {
     function quarterlyRemaining() public view returns (uint256) {
         if (block.timestamp >= quarterStart + QUARTER) {
             // New quarter — full budget available
-            uint256 balance = address(this).balance;
-            return (balance * QUARTERLY_CAP_BPS) / 10000;
+            uint256 currentBalance = _availableBalance();
+            return (currentBalance * QUARTERLY_CAP_BPS) / 10000;
         }
-        uint256 balance = address(this).balance;
+        uint256 balance = _availableBalance();
         uint256 cap = (balance * QUARTERLY_CAP_BPS) / 10000;
         return cap > quarterReleased ? cap - quarterReleased : 0;
     }
@@ -100,23 +106,51 @@ contract FoundationVesting {
         }
 
         // Enforce quarterly cap
-        uint256 balance = address(this).balance;
+        uint256 balance = _availableBalance();
         uint256 cap = (balance * QUARTERLY_CAP_BPS) / 10000;
         if (quarterReleased + amount > cap) revert QuarterlyCapExceeded();
 
         totalReleased += amount;
         quarterReleased += amount;
 
-        (bool ok,) = payable(beneficiary).call{value: amount}("");
-        require(ok, "transfer failed");
-
+        _payOrCredit(payable(beneficiary), amount);
         emit Released(beneficiary, amount);
+    }
+
+    function withdrawPayments() external {
+        uint256 amount = pendingWithdrawals[msg.sender];
+        if (amount == 0) revert NoPendingWithdrawal();
+
+        pendingWithdrawals[msg.sender] = 0;
+        pendingWithdrawalTotal -= amount;
+        (bool ok,) = msg.sender.call{value: amount}("");
+        if (!ok) revert TransferFailed();
+
+        emit WithdrawalClaimed(msg.sender, amount);
+    }
+
+    function availableBalance() external view returns (uint256) {
+        return _availableBalance();
     }
 
     function updateBeneficiary(address newBeneficiary) external onlyOwner {
         if (newBeneficiary == address(0)) revert ZeroAddress();
         emit BeneficiaryUpdated(beneficiary, newBeneficiary);
         beneficiary = newBeneficiary;
+    }
+
+    function _availableBalance() internal view returns (uint256) {
+        uint256 balance = address(this).balance;
+        return balance > pendingWithdrawalTotal ? balance - pendingWithdrawalTotal : 0;
+    }
+
+    function _payOrCredit(address payable to, uint256 amount) internal {
+        (bool ok,) = to.call{value: amount}("");
+        if (!ok) {
+            pendingWithdrawals[to] += amount;
+            pendingWithdrawalTotal += amount;
+            emit WithdrawalCredited(to, amount);
+        }
     }
 
     // Accept ETH deposits (for initial funding)
