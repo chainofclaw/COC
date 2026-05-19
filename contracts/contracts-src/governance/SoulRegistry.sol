@@ -44,6 +44,7 @@ contract SoulRegistry {
         address newOwner;
         address initiator;
         uint64  initiatedAt;
+        uint64  recoveryEpoch;
         uint8   approvalCount;
         uint8   guardianSnapshot; // active guardian count at initiation
         bool    executed;
@@ -127,6 +128,7 @@ contract SoulRegistry {
     mapping(bytes32 => RecoveryGuardian[]) internal _guardians;
     mapping(bytes32 => RecoveryRequest) public recoveryRequests;
     mapping(bytes32 => mapping(address => bool)) public recoveryApprovals;
+    mapping(bytes32 => uint64) public recoveryEpoch;
     mapping(bytes32 => uint64) public nonces;
 
     // Resurrection storage
@@ -249,6 +251,7 @@ contract SoulRegistry {
         // owner's guardians and resurrection key, which could seize it.
         delete _guardians[agentId];
         delete resurrectionConfigs[agentId];
+        recoveryEpoch[agentId] += 1;
 
         souls[agentId] = SoulIdentity({
             agentId: agentId,
@@ -472,6 +475,7 @@ contract SoulRegistry {
             newOwner: newOwner,
             initiator: msg.sender,
             initiatedAt: uint64(block.timestamp),
+            recoveryEpoch: recoveryEpoch[agentId],
             approvalCount: 1,
             guardianSnapshot: uint8(activeCount),
             executed: false
@@ -508,6 +512,7 @@ contract SoulRegistry {
         // invalidates any recovery request aimed at a prior incarnation.
         if (!soul.active) revert SoulNotActive();
         if (req.initiatedAt < soul.registeredAt) revert RecoveryNotFound();
+        if (req.recoveryEpoch != recoveryEpoch[req.agentId]) revert RecoveryNotFound();
 
         uint256 snapshotCount = uint256(req.guardianSnapshot);
         uint256 threshold = (snapshotCount * 2 + 2) / 3; // ceil(2/3)
@@ -525,6 +530,7 @@ contract SoulRegistry {
         delete ownerToAgent[oldOwner];
         soul.owner = req.newOwner;
         ownerToAgent[req.newOwner] = req.agentId;
+        recoveryEpoch[req.agentId] += 1;
 
         emit RecoveryCompleted(requestId, req.agentId, req.newOwner);
     }
