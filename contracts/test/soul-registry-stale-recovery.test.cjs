@@ -34,7 +34,7 @@ function randomBytes32() {
 
 describe("Security: SoulRegistry stale recovery state", function () {
   let registry, domain
-  let alice, bob, guardian, attacker
+  let alice, bob, guardian, guardian2, attacker
 
   async function register(signer, agentId, identityCid, nonce) {
     const sig = await signer.signTypedData(domain, REGISTER_SOUL_TYPES, {
@@ -47,7 +47,7 @@ describe("Security: SoulRegistry stale recovery state", function () {
   }
 
   beforeEach(async function () {
-    ;[alice, bob, guardian, attacker] = await ethers.getSigners()
+    ;[alice, bob, guardian, guardian2, attacker] = await ethers.getSigners()
     const Factory = await ethers.getContractFactory("SoulRegistry")
     registry = await Factory.deploy()
     await registry.waitForDeployment()
@@ -106,5 +106,33 @@ describe("Security: SoulRegistry stale recovery state", function () {
     const soul = await registry.getSoul(agentId)
     expect(soul.owner).to.equal(alice.address)
     expect(soul.active).to.equal(true)
+  })
+
+  it("a pending recovery from a previous owner epoch cannot execute after ownership changes", async function () {
+    const agentId = randomBytes32()
+    await register(alice, agentId, randomBytes32(), 0)
+    await registry.connect(alice).addGuardian(agentId, guardian.address)
+    await registry.connect(alice).addGuardian(agentId, guardian2.address)
+
+    const staleTx = await registry.connect(guardian).initiateRecovery(agentId, attacker.address)
+    const staleReceipt = await staleTx.wait()
+    const staleRequestId = staleReceipt.logs.find((log) => log.fragment?.name === "RecoveryInitiated").args[0]
+    await registry.connect(guardian2).approveRecovery(staleRequestId)
+
+    const validTx = await registry.connect(guardian).initiateRecovery(agentId, bob.address)
+    const validReceipt = await validTx.wait()
+    const validRequestId = validReceipt.logs.find((log) => log.fragment?.name === "RecoveryInitiated").args[0]
+    await registry.connect(guardian2).approveRecovery(validRequestId)
+
+    await ethers.provider.send("evm_increaseTime", [86401])
+    await ethers.provider.send("evm_mine")
+
+    await registry.completeRecovery(validRequestId)
+    expect((await registry.getSoul(agentId)).owner).to.equal(bob.address)
+
+    await expect(
+      registry.completeRecovery(staleRequestId),
+    ).to.be.revertedWithCustomError(registry, "RecoveryNotFound")
+    expect((await registry.getSoul(agentId)).owner).to.equal(bob.address)
   })
 })
