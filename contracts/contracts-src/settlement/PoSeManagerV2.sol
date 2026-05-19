@@ -512,7 +512,7 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
         epochFinalized[epochId] = true;
         epochFinalizedAt[epochId] = block.timestamp;
 
-        // --- PoSe Mining Emission: mint new tokens into reward pool ---
+        // --- PoSe Mining Emission: native supply ledger only ---
         if (emissionEnabled && address(cocToken) != address(0)) {
             // Epoch offset from genesis determines the year for decay rate
             uint64 relativeEpoch = epochId >= genesisEpoch ? epochId - genesisEpoch : 0;
@@ -523,12 +523,12 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
             );
             if (emission > 0) {
                 cocToken.mint(address(this), emission);
-                rewardPoolBalance += emission;
                 emit EmissionMinted(epochId, emission);
             }
         }
 
-        // Deduct rewards from pool (now includes freshly minted tokens)
+        // Deduct rewards from the native reward pool. COCToken minting above is
+        // supply accounting only; it does not add spendable native balance here.
         epochTotalReward[epochId] = totalReward;
         if (totalReward > rewardPoolBalance) revert RewardPoolInsufficient();
         if (totalReward > 0) {
