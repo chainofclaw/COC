@@ -126,6 +126,48 @@ describe("Security: DIDRegistry delegation chain revocation", function () {
     expect(await did.isDelegationValid(bc)).to.equal(false)
   })
 
+  it("emergency revokeAllDelegations invalidates a delegation granted in the same block", async function () {
+    const exp = (await ethers.provider.getBlock("latest")).timestamp + 100_000
+    const nonce = await did.nonces(aId)
+    const scopeHash = rnd()
+    const sig = await ownerA.signTypedData(didDomain, GRANT_DELEGATION_TYPES, {
+      delegator: aId,
+      delegatee: bId,
+      parentDelegation: ethers.ZeroHash,
+      scopeHash,
+      expiresAt: exp,
+      depth: 0,
+      nonce,
+    })
+    const txNonce = await ethers.provider.getTransactionCount(ownerA.address)
+
+    await ethers.provider.send("evm_setAutomine", [false])
+    try {
+      const grantTx = await did.connect(ownerA).grantDelegation(
+        aId,
+        bId,
+        ethers.ZeroHash,
+        scopeHash,
+        exp,
+        0,
+        sig,
+        { nonce: txNonce },
+      )
+      const revokeTx = await did.connect(ownerA).revokeAllDelegations(aId, { nonce: txNonce + 1 })
+      await ethers.provider.send("evm_mine")
+
+      const grantRc = await grantTx.wait()
+      await revokeTx.wait()
+      const ev = grantRc.logs.find((l) => l.fragment && l.fragment.name === "DelegationGranted")
+      const delegationId = ev.args[0]
+
+      expect(await did.isDelegationValid(delegationId)).to.equal(false)
+    } finally {
+      await ethers.provider.send("evm_setAutomine", [true])
+      await ethers.provider.send("evm_mine")
+    }
+  })
+
   it("a chain cannot be extended off an emergency-revoked parent", async function () {
     const exp = (await ethers.provider.getBlock("latest")).timestamp + 100_000
     const ab = await grantId(ownerA, aId, bId, ethers.ZeroHash, exp, 0)

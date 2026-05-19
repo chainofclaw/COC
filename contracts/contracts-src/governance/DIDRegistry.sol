@@ -44,6 +44,7 @@ contract DIDRegistry {
         bytes32 scopeHash;      // keccak256 of canonical scope encoding
         uint64  issuedAt;
         uint64  expiresAt;
+        uint64  revocationEpoch;
         uint8   depth;          // chain depth (0 = direct from principal)
         bool    revoked;
     }
@@ -366,9 +367,10 @@ contract DIDRegistry {
             DelegationRecord storage parent = delegations[parentDelegation];
             if (parent.delegator == bytes32(0)) revert DelegationNotFound();
             if (parent.revoked) revert DelegationAlreadyRevoked();
-            // Emergency revocation must also block chain extension — it only
-            // bumps globalRevocationEpoch, never the per-record `revoked` flag.
-            if (parent.issuedAt < globalRevocationEpoch[parent.delegator]) revert DelegationAlreadyRevoked();
+            // Emergency revocation must also block chain extension. Use a
+            // monotonic epoch instead of timestamp ordering so same-block
+            // grants cannot survive a global revoke.
+            if (parent.revocationEpoch != globalRevocationEpoch[parent.delegator]) revert DelegationAlreadyRevoked();
             if (parent.expiresAt < uint64(block.timestamp)) revert DelegationExpired();
             // Delegatee of parent must be our delegator
             if (parent.delegatee != delegator) revert NotOwner();
@@ -396,6 +398,7 @@ contract DIDRegistry {
             scopeHash: scopeHash,
             issuedAt: uint64(block.timestamp),
             expiresAt: expiresAt,
+            revocationEpoch: globalRevocationEpoch[delegator],
             depth: depth,
             revoked: false
         });
@@ -432,8 +435,8 @@ contract DIDRegistry {
 
     /// @notice Revoke all delegations from an agent (emergency)
     function revokeAllDelegations(bytes32 agentId) external onlySoulOwner(agentId) {
-        globalRevocationEpoch[agentId] = uint64(block.timestamp);
-        emit GlobalRevocationSet(agentId, uint64(block.timestamp));
+        globalRevocationEpoch[agentId] += 1;
+        emit GlobalRevocationSet(agentId, globalRevocationEpoch[agentId]);
     }
 
     /// @notice Get delegations issued by an agent
@@ -452,7 +455,7 @@ contract DIDRegistry {
             if (d.delegator == bytes32(0)) return false;
             if (d.revoked) return false;
             if (d.expiresAt < uint64(block.timestamp)) return false;
-            if (d.issuedAt < globalRevocationEpoch[d.delegator]) return false;
+            if (d.revocationEpoch != globalRevocationEpoch[d.delegator]) return false;
             if (d.depth == 0) return true; // reached the root — chain is clean
             cur = d.parentDelegation;
         }
