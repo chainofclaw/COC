@@ -3,8 +3,11 @@ pragma solidity ^0.8.24;
 
 /**
  * @title MultiSigWallet
- * @dev N-of-M multisig wallet for EVM compatibility testing.
- *      Exercises multi-account interaction, complex storage, and ETH transfers.
+ * @dev N-of-M multisig wallet. Used as the owner of the COC governance and
+ *      settlement contracts so that no single key controls onlyOwner / admin
+ *      functions. Owners and the confirmation threshold are fixed at
+ *      construction; rotating signers requires deploying a fresh wallet and
+ *      transferring ownership to it.
  */
 contract MultiSigWallet {
     struct Transaction {

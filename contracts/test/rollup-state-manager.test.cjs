@@ -33,12 +33,16 @@ describe("RollupStateManager", function () {
       PROPOSER_BOND,
       CHALLENGER_BOND,
       insuranceFund.address,
+      proposer.address,
     )
     await manager.waitForDeployment()
 
     const Rejecting = await ethers.getContractFactory("RollupRejectingReceiver")
     rejecting = await Rejecting.deploy(await manager.getAddress())
     await rejecting.waitForDeployment()
+    // RollupRejectingReceiver submits output roots in the rejecting-proposer
+    // tests, so it must be an allowlisted proposer (#683).
+    await manager.addProposer(await rejecting.getAddress())
 
     // Sample data
     sampleStateRoot = ethers.keccak256(ethers.toUtf8Bytes("state-root-1"))
@@ -523,6 +527,106 @@ describe("RollupStateManager", function () {
 
     it("CHALLENGER_BOND returns configured value", async function () {
       expect(await manager.CHALLENGER_BOND()).to.equal(CHALLENGER_BOND)
+    })
+  })
+
+  describe("proposer allowlist (#683)", function () {
+    it("seeds the constructor initialProposer", async function () {
+      expect(await manager.allowedProposers(proposer.address)).to.equal(true)
+      expect(await manager.allowedProposers(challenger.address)).to.equal(false)
+    })
+
+    it("rejects submitOutputRoot from a non-allowlisted account", async function () {
+      await expect(
+        manager
+          .connect(challenger)
+          .submitOutputRoot(100, sampleOutputRoot, sampleStateRoot, {
+            value: PROPOSER_BOND,
+          }),
+      ).to.be.revertedWithCustomError(manager, "NotProposer")
+    })
+
+    it("blocks the max-uint64 jamming grief from an unauthorized account", async function () {
+      // #683: an attacker submitting type(uint64).max would pin lastSubmittedBlock
+      // and revert every future submission. The allowlist rejects them outright.
+      const MAX_U64 = (1n << 64n) - 1n
+      await expect(
+        manager
+          .connect(challenger)
+          .submitOutputRoot(MAX_U64, sampleOutputRoot, sampleStateRoot, {
+            value: PROPOSER_BOND,
+          }),
+      ).to.be.revertedWithCustomError(manager, "NotProposer")
+      expect(await manager.lastSubmittedBlock()).to.equal(0)
+    })
+
+    it("lets the owner add and remove proposers", async function () {
+      await expect(manager.connect(deployer).addProposer(challenger.address))
+        .to.emit(manager, "ProposerUpdated")
+        .withArgs(challenger.address, true)
+      expect(await manager.allowedProposers(challenger.address)).to.equal(true)
+
+      await manager
+        .connect(challenger)
+        .submitOutputRoot(100, sampleOutputRoot, sampleStateRoot, {
+          value: PROPOSER_BOND,
+        })
+
+      await expect(manager.connect(deployer).removeProposer(challenger.address))
+        .to.emit(manager, "ProposerUpdated")
+        .withArgs(challenger.address, false)
+      await expect(
+        manager
+          .connect(challenger)
+          .submitOutputRoot(200, sampleOutputRoot, sampleStateRoot, {
+            value: PROPOSER_BOND,
+          }),
+      ).to.be.revertedWithCustomError(manager, "NotProposer")
+    })
+
+    it("rejects addProposer / removeProposer from a non-owner", async function () {
+      await expect(
+        manager.connect(challenger).addProposer(challenger.address),
+      ).to.be.revertedWithCustomError(manager, "OnlyOwner")
+      await expect(
+        manager.connect(challenger).removeProposer(proposer.address),
+      ).to.be.revertedWithCustomError(manager, "OnlyOwner")
+    })
+
+    it("rejects addProposer with the zero address", async function () {
+      await expect(
+        manager.connect(deployer).addProposer(ethers.ZeroAddress),
+      ).to.be.revertedWithCustomError(manager, "ZeroAddress")
+    })
+  })
+
+  describe("transferOwnership", function () {
+    it("transfers ownership and emits OwnerUpdated", async function () {
+      await expect(manager.connect(deployer).transferOwnership(challenger.address))
+        .to.emit(manager, "OwnerUpdated")
+        .withArgs(deployer.address, challenger.address)
+      expect(await manager.owner()).to.equal(challenger.address)
+    })
+
+    it("rejects transferOwnership from a non-owner", async function () {
+      await expect(
+        manager.connect(challenger).transferOwnership(challenger.address),
+      ).to.be.revertedWithCustomError(manager, "OnlyOwner")
+    })
+
+    it("rejects transferOwnership to the zero address", async function () {
+      await expect(
+        manager.connect(deployer).transferOwnership(ethers.ZeroAddress),
+      ).to.be.revertedWithCustomError(manager, "ZeroAddress")
+    })
+
+    it("moves owner-only powers to the new owner", async function () {
+      await manager.connect(deployer).transferOwnership(challenger.address)
+      await expect(
+        manager.connect(deployer).addProposer(insuranceFund.address),
+      ).to.be.revertedWithCustomError(manager, "OnlyOwner")
+      await manager.connect(challenger).addProposer(insuranceFund.address)
+      expect(await manager.allowedProposers(insuranceFund.address)).to.equal(true)
     })
   })
 })

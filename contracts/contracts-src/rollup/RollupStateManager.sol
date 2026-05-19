@@ -29,6 +29,10 @@ contract RollupStateManager is IRollupStateManager {
     address public owner;
     address public challengeResolver;
     mapping(address => uint256) public pendingWithdrawals;
+    // #683: only allowlisted proposers may submit output roots. Without this
+    // gate any account can submit a max-uint64 block number, jamming
+    // lastSubmittedBlock and permanently bricking all future submissions.
+    mapping(address => bool) public allowedProposers;
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert OnlyOwner();
@@ -40,11 +44,17 @@ contract RollupStateManager is IRollupStateManager {
         _;
     }
 
+    modifier onlyProposer() {
+        if (!allowedProposers[msg.sender]) revert NotProposer();
+        _;
+    }
+
     constructor(
         uint256 challengeWindowSeconds,
         uint256 proposerBondWei,
         uint256 challengerBondWei,
-        address insuranceFundAddress
+        address insuranceFundAddress,
+        address initialProposer
     ) {
         require(challengeWindowSeconds > 0, "challenge window must be > 0");
         require(proposerBondWei > 0, "proposer bond must be > 0");
@@ -55,6 +65,10 @@ contract RollupStateManager is IRollupStateManager {
         insuranceFund = insuranceFundAddress;
         owner = msg.sender;
         challengeResolver = msg.sender;
+        if (initialProposer != address(0)) {
+            allowedProposers[initialProposer] = true;
+            emit ProposerUpdated(initialProposer, true);
+        }
     }
 
     // ── Submit Output Root ──────────────────────────────────────────────
@@ -67,7 +81,7 @@ contract RollupStateManager is IRollupStateManager {
         uint64 l2BlockNumber,
         bytes32 outputRoot,
         bytes32 l2StateRoot
-    ) external payable override {
+    ) external payable override onlyProposer {
         if (msg.value < PROPOSER_BOND) {
             revert InsufficientBond(PROPOSER_BOND, msg.value);
         }
@@ -205,6 +219,26 @@ contract RollupStateManager is IRollupStateManager {
         address oldResolver = challengeResolver;
         challengeResolver = newResolver;
         emit ChallengeResolverUpdated(oldResolver, newResolver);
+    }
+
+    /// @notice Allowlist an address permitted to submit output roots (#683).
+    function addProposer(address proposer) external onlyOwner {
+        if (proposer == address(0)) revert ZeroAddress();
+        allowedProposers[proposer] = true;
+        emit ProposerUpdated(proposer, true);
+    }
+
+    /// @notice Remove an address from the output-root proposer allowlist (#683).
+    function removeProposer(address proposer) external onlyOwner {
+        allowedProposers[proposer] = false;
+        emit ProposerUpdated(proposer, false);
+    }
+
+    /// @notice Transfer contract ownership (admin of the resolver + proposer set).
+    function transferOwnership(address newOwner) external onlyOwner {
+        if (newOwner == address(0)) revert ZeroAddress();
+        emit OwnerUpdated(owner, newOwner);
+        owner = newOwner;
     }
 
     // ── Finalize Output ─────────────────────────────────────────────────

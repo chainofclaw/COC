@@ -15,10 +15,16 @@
 const { ethers } = require("hardhat")
 const fs = require("fs")
 const path = require("path")
+const { assertSafeDeployer, transferOwnershipChecked } = require("./preflight.js")
 
 async function main() {
   const [deployer] = await ethers.getSigners()
   const network = await ethers.provider.getNetwork()
+
+  // #686: refuse to deploy from a public Hardhat test account.
+  assertSafeDeployer(deployer.address)
+  // #683: address seeded into the RollupStateManager proposer allowlist.
+  const outputProposer = process.env.OUTPUT_PROPOSER_ADDRESS || ethers.ZeroAddress
 
   console.log("=== COC R3.2 88780 Full Contract Deploy ===")
   console.log(`Network:  ${network.name} (chainId: ${network.chainId})`)
@@ -91,6 +97,19 @@ async function main() {
     await poseV2.waitForDeployment()
     deployed.contracts.PoSeManagerV2 = await poseV2.getAddress()
     console.log(`  PoSeManagerV2: ${deployed.contracts.PoSeManagerV2}`)
+    // #685: initialize so DOMAIN_SEPARATOR / challengeBondMin are non-zero.
+    // verifyingContract is the contract's own address — the off-chain witness
+    // signers (runtime/coc-node.ts) build the EIP-712 domain from it too.
+    const challengeBondMin = process.env.POSE_CHALLENGE_BOND_MIN
+      ? BigInt(process.env.POSE_CHALLENGE_BOND_MIN)
+      : ethers.parseEther("0.1")
+    const initTx = await poseV2.initialize(
+      network.chainId,
+      deployed.contracts.PoSeManagerV2,
+      challengeBondMin,
+    )
+    await initTx.wait()
+    console.log(`  PoSeManagerV2.initialize() done (challengeBondMin=${challengeBondMin})`)
   } catch (e) {
     console.log(`  SKIPPED (constructor args mismatch): ${e.message.slice(0, 100)}`)
     deployed.contracts.PoSeManagerV2 = null
@@ -159,6 +178,7 @@ async function main() {
       ethers.parseEther("1"),
       ethers.parseEther("1"),
       deployed.contracts.InsuranceFund || ethers.ZeroAddress,
+      outputProposer,
     )
     await rsm.waitForDeployment()
     deployed.contracts.RollupStateManager = await rsm.getAddress()
@@ -166,6 +186,41 @@ async function main() {
   } catch (e) {
     console.log(`  SKIPPED: ${e.message.slice(0, 100)}`)
     deployed.contracts.RollupStateManager = null
+  }
+
+  // --- #686: hand contract ownership to the multisig ---
+  const multisig = process.env.MULTISIG_ADDRESS
+  if (multisig) {
+    console.log("")
+    console.log(`Transferring ownership to multisig ${multisig}...`)
+    const OWNABLE = [
+      "FactionRegistry",
+      "GovernanceDAO",
+      "Treasury",
+      "PoSeManager",
+      "PoSeManagerV2",
+      "ValidatorRegistry",
+      "EquivocationDetector",
+      "DelayedInbox",
+      "RollupStateManager",
+    ]
+    for (const name of OWNABLE) {
+      const addr = deployed.contracts[name]
+      if (!addr) {
+        console.log(`  ${name}: SKIPPED (not deployed)`)
+        continue
+      }
+      const c = await ethers.getContractAt(name, addr)
+      await transferOwnershipChecked(c, name, multisig)
+    }
+    deployed.owner = multisig
+    console.log("Ownership handoff complete — all owners verified == multisig.")
+  } else {
+    deployed.owner = deployer.address
+    console.log("")
+    console.log("WARNING: MULTISIG_ADDRESS not set — contracts remain owned by the")
+    console.log("         deployer. #686 is NOT resolved until ownership is moved")
+    console.log("         to a multisig.")
   }
 
   // Write deployment manifest

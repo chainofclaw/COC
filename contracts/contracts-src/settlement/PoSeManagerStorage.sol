@@ -42,6 +42,8 @@ abstract contract PoSeManagerStorage {
     mapping(bytes32 => uint256) public pendingRewards;
     uint16 public constant MAX_REWARD_PER_NODE_BPS = 3000; // 30% cap per node
 
+    event OwnerUpdated(address indexed oldOwner, address indexed newOwner);
+
     modifier onlyOwner() {
         require(msg.sender == owner, "not owner");
         _;
@@ -55,6 +57,13 @@ abstract contract PoSeManagerStorage {
     constructor() {
         owner = msg.sender;
         roles[SLASHER_ROLE][msg.sender] = true;
+    }
+
+    /// @notice Transfer contract ownership (#686 — moves owner to a multisig).
+    function transferOwnership(address newOwner) external onlyOwner {
+        require(newOwner != address(0), "zero owner");
+        emit OwnerUpdated(owner, newOwner);
+        owner = newOwner;
     }
 
     function _currentEpoch() internal view returns (uint64) {

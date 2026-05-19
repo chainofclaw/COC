@@ -33,6 +33,7 @@ describe("Security: RollupStateManager resolveChallenge reentrancy", function ()
       PROPOSER_BOND,
       CHALLENGER_BOND,
       insuranceFund.address,
+      proposer.address,
     )
     await manager.waitForDeployment()
 

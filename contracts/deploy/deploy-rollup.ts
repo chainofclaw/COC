@@ -41,6 +41,7 @@ export async function deployRollupContracts(
   target: RollupDeployTarget,
   deployerKey?: string,
   sequencerAddress?: string,
+  initialProposerAddress?: string,
 ): Promise<DeployResult> {
   const config = resolveRollupConfig(target)
   const pk = deployerKey ?? process.env.DEPLOYER_PRIVATE_KEY
@@ -48,6 +49,8 @@ export async function deployRollupContracts(
 
   const seqAddr = sequencerAddress ?? process.env.SEQUENCER_ADDRESS
   if (!seqAddr) throw new Error("SEQUENCER_ADDRESS is required")
+
+  const proposerAddr = initialProposerAddress ?? config.initialProposerAddress
 
   const provider = new JsonRpcProvider(config.rpcUrl)
   const deployer = new Wallet(pk, provider)
@@ -58,6 +61,7 @@ export async function deployRollupContracts(
   console.log(`  Challenge window: ${config.challengeWindowSeconds}s`)
   console.log(`  Proposer bond: ${config.proposerBondWei} wei`)
   console.log(`  Inclusion delay: ${config.inclusionDelaySeconds}s`)
+  console.log(`  Initial proposer: ${proposerAddr}`)
 
   // Deploy RollupStateManager
   const rsmArtifact = loadArtifact("RollupStateManager")
@@ -67,6 +71,7 @@ export async function deployRollupContracts(
     config.proposerBondWei,
     config.challengerBondWei,
     config.insuranceFundAddress,
+    proposerAddr,
   )
   await rsm.waitForDeployment()
   const rsmAddress = await rsm.getAddress()

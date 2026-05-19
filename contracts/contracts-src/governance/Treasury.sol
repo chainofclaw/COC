@@ -42,6 +42,7 @@ contract Treasury {
     event WithdrawalClaimed(address indexed payee, uint256 amount);
     event GovernanceUpdated(address indexed newGovernance);
     event SignerUpdated(uint8 indexed index, address indexed oldSigner, address indexed newSigner);
+    event OwnerUpdated(address indexed oldOwner, address indexed newOwner);
 
     error NotSigner();
     error NotOwner();
@@ -155,6 +156,13 @@ contract Treasury {
         if (_governance == address(0)) revert ZeroAddress();
         governance = _governance;
         emit GovernanceUpdated(_governance);
+    }
+
+    /// @notice Transfer contract ownership (#686 — moves owner to a multisig).
+    function transferOwnership(address newOwner) external onlyOwner {
+        if (newOwner == address(0)) revert ZeroAddress();
+        emit OwnerUpdated(owner, newOwner);
+        owner = newOwner;
     }
 
     function replaceSigner(uint8 index, address newSigner) external onlyOwner {
