@@ -13,6 +13,8 @@ interface IRollupStateManager {
     event ChallengeResolverUpdated(address indexed oldResolver, address indexed newResolver);
     event WithdrawalCredited(address indexed recipient, uint256 amount);
     event WithdrawalClaimed(address indexed recipient, uint256 amount);
+    event ProposerUpdated(address indexed proposer, bool allowed);
+    event OwnerUpdated(address indexed oldOwner, address indexed newOwner);
 
     // ── Errors ──────────────────────────────────────────────────────────
     error OutputAlreadySubmitted(uint64 l2BlockNumber);
@@ -28,6 +30,7 @@ interface IRollupStateManager {
     error BlockNumberNotIncreasing(uint64 provided, uint64 lastSubmitted);
     error OnlyOwner();
     error OnlyChallengeResolver();
+    error NotProposer();
     error ZeroAddress();
     error NoPendingWithdrawal();
     error TransferFailed();

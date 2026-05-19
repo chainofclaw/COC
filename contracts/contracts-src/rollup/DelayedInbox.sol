@@ -16,6 +16,8 @@ contract DelayedInbox is IDelayedInbox {
     RollupTypes.ForcedTx[] private _queue;
     mapping(uint256 => bool) private _forceIncluded;
 
+    event OwnerUpdated(address indexed oldOwner, address indexed newOwner);
+
     modifier onlySequencer() {
         if (msg.sender != sequencer) revert NotSequencer(msg.sender);
         _;
@@ -98,5 +100,13 @@ contract DelayedInbox is IDelayedInbox {
         require(msg.sender == owner, "only owner");
         require(newSequencer != address(0), "zero address");
         sequencer = newSequencer;
+    }
+
+    /// @notice Transfer contract ownership (#686 — moves owner to a multisig).
+    function transferOwnership(address newOwner) external {
+        require(msg.sender == owner, "only owner");
+        require(newOwner != address(0), "zero address");
+        emit OwnerUpdated(owner, newOwner);
+        owner = newOwner;
     }
 }

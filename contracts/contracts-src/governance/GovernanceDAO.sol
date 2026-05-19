@@ -55,6 +55,7 @@ contract GovernanceDAO {
     event ProposalExecuted(uint256 indexed proposalId);
     event ProposalCancelled(uint256 indexed proposalId);
     event ParameterUpdated(string paramName, uint256 newValue);
+    event OwnerUpdated(address indexed oldOwner, address indexed newOwner);
 
     error NotRegistered();
     error AlreadyVoted();
@@ -223,6 +224,13 @@ contract GovernanceDAO {
 
     function setBicameralEnabled(bool _enabled) external onlyOwner {
         bicameralEnabled = _enabled;
+    }
+
+    /// @notice Transfer contract ownership (#686 — moves owner to a multisig).
+    function transferOwnership(address newOwner) external onlyOwner {
+        require(newOwner != address(0), "zero owner");
+        emit OwnerUpdated(owner, newOwner);
+        owner = newOwner;
     }
 
     // View helpers

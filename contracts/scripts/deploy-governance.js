@@ -15,10 +15,14 @@
  */
 
 const { ethers } = require("hardhat")
+const { assertSafeDeployer } = require("./preflight.js")
 
 async function main() {
   const [deployer] = await ethers.getSigners()
   const network = await ethers.provider.getNetwork()
+
+  // #686: refuse to deploy from a public Hardhat test account.
+  assertSafeDeployer(deployer.address)
 
   console.log("=== COC Governance Deployment ===")
   console.log(`Network:  ${network.name} (chainId: ${network.chainId})`)

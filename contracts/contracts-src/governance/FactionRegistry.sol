@@ -29,6 +29,7 @@ contract FactionRegistry {
     event ClawRegistered(address indexed account, bytes32 indexed agentId, uint64 registeredAt);
     event IdentityVerified(address indexed account, address indexed verifiedBy);
     event VerifierUpdated(address indexed newVerifier);
+    event OwnerUpdated(address indexed oldOwner, address indexed newOwner);
 
     error AlreadyRegistered();
     error NotRegistered();
@@ -114,6 +115,13 @@ contract FactionRegistry {
         if (newVerifier == address(0)) revert ZeroAddress();
         verifier = newVerifier;
         emit VerifierUpdated(newVerifier);
+    }
+
+    /// @notice Transfer contract ownership (#686 — moves owner to a multisig).
+    function transferOwnership(address newOwner) external onlyOwner {
+        if (newOwner == address(0)) revert ZeroAddress();
+        emit OwnerUpdated(owner, newOwner);
+        owner = newOwner;
     }
 
     function getFaction(address account) external view returns (Faction) {

@@ -13,6 +13,10 @@ export interface RollupDeployConfig {
   readonly inclusionDelaySeconds: number
   readonly outputIntervalBlocks: number
   readonly insuranceFundAddress: string
+  // #683: address seeded into the RollupStateManager proposer allowlist at
+  // deploy time. Zero address means no proposer is seeded — the owner must
+  // call addProposer() before any output root can be submitted.
+  readonly initialProposerAddress: string
   readonly confirmations: number
   readonly gasStrategy: "legacy" | "eip1559"
 }
@@ -28,6 +32,7 @@ export const ROLLUP_MAINNET: RollupDeployConfig = {
   inclusionDelaySeconds: 604800,                 // 7 days
   outputIntervalBlocks: 100,
   insuranceFundAddress: process.env.INSURANCE_FUND_ADDRESS ?? "0x0000000000000000000000000000000000000000",
+  initialProposerAddress: process.env.ROLLUP_INITIAL_PROPOSER ?? "0x0000000000000000000000000000000000000000",
   confirmations: 6,
   gasStrategy: "eip1559",
 }
@@ -43,6 +48,7 @@ export const ROLLUP_SEPOLIA: RollupDeployConfig = {
   inclusionDelaySeconds: 600,                    // 10 minutes
   outputIntervalBlocks: 10,
   insuranceFundAddress: process.env.INSURANCE_FUND_ADDRESS ?? "0x0000000000000000000000000000000000000000",
+  initialProposerAddress: process.env.ROLLUP_INITIAL_PROPOSER ?? "0x0000000000000000000000000000000000000000",
   confirmations: 2,
   gasStrategy: "eip1559",
 }
@@ -58,6 +64,7 @@ export const ROLLUP_LOCAL: RollupDeployConfig = {
   inclusionDelaySeconds: 120,                    // 2 minutes
   outputIntervalBlocks: 5,
   insuranceFundAddress: "0x0000000000000000000000000000000000000000",
+  initialProposerAddress: process.env.ROLLUP_INITIAL_PROPOSER ?? "0x0000000000000000000000000000000000000000",
   confirmations: 1,
   gasStrategy: "legacy",
 }
