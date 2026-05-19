@@ -434,6 +434,78 @@ describe("PoSeManagerV2", function () {
     })
   })
 
+  describe("finalizeEpochV2 pagination (#680)", function () {
+    it("paginates a large epoch: finalizeEpochV2 reverts BatchesNotProcessed until pre-ground", async function () {
+      const budget = Number(await manager.FINALIZE_BATCH_BUDGET())
+      const block = await ethers.provider.getBlock("latest")
+      const epochId = Math.floor(Number(block.timestamp) / 3600)
+      const count = budget + 1
+
+      for (let i = 0; i < count; i++) {
+        const leaf = ethers.keccak256(ethers.toUtf8Bytes(`pagination-batch-${i}`))
+        await submitSingleLeafBatchV2(manager, epochId, leaf)
+      }
+      expect(await manager.getEpochBatchCount(epochId)).to.equal(BigInt(count))
+
+      // dispute window must elapse before any batch can be finalized
+      await ethers.provider.send("evm_increaseTime", [8 * 3600])
+      await ethers.provider.send("evm_mine")
+
+      // a single finalize call cannot clear > FINALIZE_BATCH_BUDGET batches inline
+      await expect(manager.finalizeEpochV2(epochId, ethers.ZeroHash, 0, 0, 0))
+        .to.be.revertedWithCustomError(manager, "BatchesNotProcessed")
+
+      // pre-grind the surplus, then finalize walks the final page inline and completes
+      await manager.processEpochBatches(epochId, budget - 50)
+      expect(await manager.epochBatchCursor(epochId)).to.equal(BigInt(budget - 50))
+
+      await manager.finalizeEpochV2(epochId, ethers.ZeroHash, 0, 0, 0)
+      expect(await manager.epochFinalized(epochId)).to.equal(true)
+      expect(await manager.epochBatchCursor(epochId)).to.equal(BigInt(count))
+      expect(await manager.epochValidBatchCount(epochId)).to.equal(BigInt(count))
+    })
+
+    it("finalizes a <= budget epoch in a single call", async function () {
+      const block = await ethers.provider.getBlock("latest")
+      const epochId = Math.floor(Number(block.timestamp) / 3600)
+
+      for (let i = 0; i < 3; i++) {
+        const leaf = ethers.keccak256(ethers.toUtf8Bytes(`small-epoch-batch-${i}`))
+        await submitSingleLeafBatchV2(manager, epochId, leaf)
+      }
+
+      await ethers.provider.send("evm_increaseTime", [8 * 3600])
+      await ethers.provider.send("evm_mine")
+
+      await manager.finalizeEpochV2(epochId, ethers.ZeroHash, 0, 0, 0)
+      expect(await manager.epochFinalized(epochId)).to.equal(true)
+      expect(await manager.epochValidBatchCount(epochId)).to.equal(3n)
+      expect(await manager.epochBatchCursor(epochId)).to.equal(3n)
+    })
+
+    it("processEpochBatches reverts once the epoch is finalized", async function () {
+      const block = await ethers.provider.getBlock("latest")
+      const epochId = Math.floor(Number(block.timestamp) / 3600)
+      await submitSingleLeafBatchV2(manager, epochId, ethers.keccak256(ethers.toUtf8Bytes("done-epoch")))
+
+      await ethers.provider.send("evm_increaseTime", [8 * 3600])
+      await ethers.provider.send("evm_mine")
+      await manager.finalizeEpochV2(epochId, ethers.ZeroHash, 0, 0, 0)
+
+      await expect(manager.processEpochBatches(epochId, 100))
+        .to.be.revertedWithCustomError(manager, "EpochAlreadyFinalized")
+    })
+
+    it("processEpochBatches reverts before the dispute window elapses", async function () {
+      const block = await ethers.provider.getBlock("latest")
+      const epochId = Math.floor(Number(block.timestamp) / 3600)
+      await submitSingleLeafBatchV2(manager, epochId, ethers.keccak256(ethers.toUtf8Bytes("fresh-epoch")))
+
+      await expect(manager.processEpochBatches(epochId, 100))
+        .to.be.revertedWithCustomError(manager, "DisputeWindowNotElapsed")
+    })
+  })
+
   describe("Merkle reward claim", function () {
     it("claim with valid proof succeeds", async function () {
       const { operator, nodeId } = await registerNode(manager, deployer)
