@@ -56,6 +56,14 @@ async function advanceTime(seconds) {
   await ethers.provider.send("evm_mine")
 }
 
+async function installRejectingReceiverCode(address) {
+  const Rejecting = await ethers.getContractFactory("EthRejectingReceiver")
+  const rejecting = await Rejecting.deploy()
+  await rejecting.waitForDeployment()
+  const code = await ethers.provider.getCode(await rejecting.getAddress())
+  await ethers.provider.send("hardhat_setCode", [address, code])
+}
+
 // ── FactionRegistry Security ────────────────────────────────────────
 
 describe("Security: FactionRegistry", function () {
@@ -514,6 +522,37 @@ describe("Security: Treasury", function () {
     // Execute
     await treasury.executeWithdrawal(proposalId)
     expect(await treasury.getBalance()).to.be.lt(ethers.parseEther("2"))
+  })
+
+  it("credits a pending withdrawal when the proposal recipient rejects ETH", async function () {
+    const amount = ethers.parseEther("0.05")
+    await owner.sendTransaction({
+      to: await treasury.getAddress(),
+      value: ethers.parseEther("2"),
+    })
+    await installRejectingReceiverCode(signer5.address)
+
+    await treasury.proposeWithdrawal(signer5.address, amount)
+    await treasury.connect(user1).confirmWithdrawal(0)
+    await treasury.connect(signer2).confirmWithdrawal(0)
+
+    await expect(treasury.executeWithdrawal(0))
+      .to.emit(treasury, "WithdrawalCredited")
+      .withArgs(signer5.address, amount)
+    expect(await treasury.pendingWithdrawals(signer5.address)).to.equal(amount)
+    expect(await treasury.pendingWithdrawalTotal()).to.equal(amount)
+    expect(await treasury.availableBalance()).to.equal(ethers.parseEther("1.95"))
+
+    await expect(
+      treasury.proposeWithdrawal(user1.address, ethers.parseEther("2")),
+    ).to.be.revertedWithCustomError(treasury, "InsufficientBalance")
+
+    await ethers.provider.send("hardhat_setCode", [signer5.address, "0x"])
+    await treasury.connect(signer5).withdrawPayments()
+
+    expect(await treasury.pendingWithdrawals(signer5.address)).to.equal(0n)
+    expect(await treasury.pendingWithdrawalTotal()).to.equal(0n)
+    expect(await treasury.getBalance()).to.equal(ethers.parseEther("1.95"))
   })
 })
 

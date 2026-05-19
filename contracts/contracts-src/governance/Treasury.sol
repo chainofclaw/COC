@@ -31,11 +31,15 @@ contract Treasury {
 
     uint256 public proposalCount;
     mapping(uint256 => Proposal) public proposals;
+    mapping(address => uint256) public pendingWithdrawals;
+    uint256 public pendingWithdrawalTotal;
 
     event Deposit(address indexed from, uint256 amount);
     event ProposalCreated(uint256 indexed proposalId, address indexed to, uint256 amount);
     event ProposalConfirmed(uint256 indexed proposalId, address indexed signer);
     event ProposalExecuted(uint256 indexed proposalId, address indexed to, uint256 amount);
+    event WithdrawalCredited(address indexed payee, uint256 amount);
+    event WithdrawalClaimed(address indexed payee, uint256 amount);
     event GovernanceUpdated(address indexed newGovernance);
     event SignerUpdated(uint8 indexed index, address indexed oldSigner, address indexed newSigner);
 
@@ -52,6 +56,7 @@ contract Treasury {
     error ZeroAddress();
     error DuplicateSigner();
     error InvalidProposal();
+    error NoPendingWithdrawal();
 
     modifier onlySigner() {
         if (!isSigner[msg.sender]) revert NotSigner();
@@ -82,7 +87,7 @@ contract Treasury {
     function proposeWithdrawal(address to, uint256 amount) external onlySigner returns (uint256) {
         if (to == address(0)) revert ZeroAddress();
         if (amount == 0) revert ZeroAmount();
-        if (address(this).balance < amount) revert InsufficientBalance();
+        if (_availableBalance() < amount) revert InsufficientBalance();
 
         uint256 id = proposalCount++;
         Proposal storage p = proposals[id];
@@ -121,16 +126,16 @@ contract Treasury {
         Proposal storage p = proposals[proposalId];
         if (p.executed) revert AlreadyExecuted();
         if (p.confirmations < REQUIRED_CONFIRMATIONS) revert NotEnoughConfirmations();
-        if (address(this).balance < p.amount) revert InsufficientBalance();
+        uint256 available = _availableBalance();
+        if (available < p.amount) revert InsufficientBalance();
 
         // Enforce 5% spending cap — amounts exceeding require DAO governance approval
-        uint256 cap = (address(this).balance * SPENDING_CAP_BPS) / 10000;
+        uint256 cap = (available * SPENDING_CAP_BPS) / 10000;
         if (p.amount > cap && !p.governanceApproved) revert ExceedsSpendingCap();
 
         p.executed = true;
 
-        (bool ok,) = payable(p.to).call{value: p.amount}("");
-        if (!ok) revert TransferFailed();
+        _payOrCredit(p.to, p.amount);
 
         emit ProposalExecuted(proposalId, p.to, p.amount);
     }
@@ -163,8 +168,38 @@ contract Treasury {
         emit SignerUpdated(index, old, newSigner);
     }
 
+    function withdrawPayments() external {
+        uint256 amount = pendingWithdrawals[msg.sender];
+        if (amount == 0) revert NoPendingWithdrawal();
+
+        pendingWithdrawals[msg.sender] = 0;
+        pendingWithdrawalTotal -= amount;
+        (bool ok,) = msg.sender.call{value: amount}("");
+        if (!ok) revert TransferFailed();
+
+        emit WithdrawalClaimed(msg.sender, amount);
+    }
+
     function getBalance() external view returns (uint256) {
         return address(this).balance;
+    }
+
+    function availableBalance() external view returns (uint256) {
+        return _availableBalance();
+    }
+
+    function _availableBalance() internal view returns (uint256) {
+        uint256 balance = address(this).balance;
+        return balance > pendingWithdrawalTotal ? balance - pendingWithdrawalTotal : 0;
+    }
+
+    function _payOrCredit(address to, uint256 amount) internal {
+        (bool ok,) = payable(to).call{value: amount}("");
+        if (!ok) {
+            pendingWithdrawals[to] += amount;
+            pendingWithdrawalTotal += amount;
+            emit WithdrawalCredited(to, amount);
+        }
     }
 
     receive() external payable {
