@@ -15,6 +15,8 @@ contract GovernanceDAO {
         // judged against this snapshot so the denominator cannot be inflated
         // by permissionless registrations after voting closes.
         uint256 registeredSnapshot;
+        uint256 humanSnapshot;
+        uint256 clawSnapshot;
         ProposalType proposalType;
         address proposer;
         string title;
@@ -104,9 +106,14 @@ contract GovernanceDAO {
         uint256 proposalId = proposalCount;
         uint64 deadline = uint64(block.timestamp) + votingPeriod;
 
+        uint256 humanSnapshot = factionRegistry.humanCount();
+        uint256 clawSnapshot = factionRegistry.clawCount();
+
         proposals[proposalId] = Proposal({
             id: proposalId,
-            registeredSnapshot: factionRegistry.humanCount() + factionRegistry.clawCount(),
+            registeredSnapshot: humanSnapshot + clawSnapshot,
+            humanSnapshot: humanSnapshot,
+            clawSnapshot: clawSnapshot,
             proposalType: proposalType,
             proposer: msg.sender,
             title: title,
@@ -265,11 +272,14 @@ contract GovernanceDAO {
         }
 
         if (bicameralEnabled) {
-            // Both factions must independently reach approval threshold
+            // Both factions present at proposal creation must independently
+            // cast a non-abstain vote set and reach the approval threshold.
             uint256 humanTotal = p.forVotesHuman + p.againstVotesHuman;
             uint256 clawTotal = p.forVotesClaw + p.againstVotesClaw;
-            bool humanApproved = humanTotal == 0 || (p.forVotesHuman * 100) / humanTotal >= approvalPercent;
-            bool clawApproved = clawTotal == 0 || (p.forVotesClaw * 100) / clawTotal >= approvalPercent;
+            bool humanApproved = p.humanSnapshot == 0
+                || (humanTotal > 0 && (p.forVotesHuman * 100) / humanTotal >= approvalPercent);
+            bool clawApproved = p.clawSnapshot == 0
+                || (clawTotal > 0 && (p.forVotesClaw * 100) / clawTotal >= approvalPercent);
             return humanApproved && clawApproved;
         }
 

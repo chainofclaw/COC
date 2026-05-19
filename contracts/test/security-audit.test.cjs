@@ -375,6 +375,28 @@ describe("Security: GovernanceDAO", function () {
     expect(proposal.state).to.equal(2) // Rejected (claws rejected)
   })
 
+  it("bicameral: registered but silent faction does not auto-approve", async function () {
+    await dao.setBicameralEnabled(true)
+
+    const descHash = ethers.keccak256(ethers.toUtf8Bytes("silent-claws"))
+    await dao.connect(human1).createProposal(5, "Silent Claws", descHash, ethers.ZeroAddress, "0x", 0)
+
+    const created = await dao.getProposal(1)
+    expect(created.humanSnapshot).to.equal(2)
+    expect(created.clawSnapshot).to.equal(2)
+
+    // Humans reach approval and quorum, but the registered Claw chamber casts
+    // no non-abstain votes. Bicameral mode must not treat that as approval.
+    await dao.connect(human1).vote(1, 1)
+    await dao.connect(human2).vote(1, 1)
+
+    await advanceTime(7 * 86400 + 1)
+    await dao.queue(1)
+
+    const proposal = await dao.getProposal(1)
+    expect(proposal.state).to.equal(2) // Rejected (registered claw chamber was silent)
+  })
+
   it("bicameral: empty faction auto-approves (design note)", async function () {
     // Only register humans, no claws in this separate setup
     const FR2 = await ethers.getContractFactory("FactionRegistry")
@@ -394,6 +416,10 @@ describe("Security: GovernanceDAO", function () {
 
     await dao2.connect(human1).vote(1, 1)
     await dao2.connect(human2).vote(1, 1)
+
+    const created = await dao2.getProposal(1)
+    expect(created.humanSnapshot).to.equal(2)
+    expect(created.clawSnapshot).to.equal(0)
 
     await advanceTime(7 * 86400 + 1)
     await dao2.queue(1)
