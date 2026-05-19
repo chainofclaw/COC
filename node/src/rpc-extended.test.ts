@@ -2548,7 +2548,7 @@ test("RPC Extended Methods", async (t) => {
     assert.match(okId as string, /^0x[0-9a-f]+$/i, "valid filter must return id")
   })
 
-  await t.test("#146: coc_dhtFindProviders / coc_ipfsFetchBlockFromPeer surface errors via JSON-RPC error field", async () => {
+  await t.test("#146/#515: coc_dhtFindProviders / coc_ipfsFetchBlockFromPeer reject malformed CIDs via JSON-RPC error field", async () => {
     // Pre-fix these handlers returned `{result: {providers: [], error: "..."}}`
     // (or `{result: {bytes: null, error: "..."}}`), wrapping the error
     // inside the result body. Clients that check `response.error` per
@@ -2562,20 +2562,48 @@ test("RPC Extended Methods", async (t) => {
       return await r.json() as { result?: unknown; error?: { code: number; message: string } }
     }
     // (a) coc_dhtFindProviders with no/empty/bad CID → -32602
-    for (const params of [[], [""], ["not-a-cid\nwith-newline"], ["x".repeat(513)], ["../path"]]) {
+    const invalidCidParams = [
+      [],
+      [""],
+      ["not-a-cid\nwith-newline"],
+      ["x".repeat(513)],
+      ["../path"],
+      ["bad-cid"],
+      ["deadbeef"],
+      ["not-a-cid"],
+    ]
+    for (const params of invalidCidParams) {
       const j = await probeError("coc_dhtFindProviders", params)
       assert.ok(j.error, `coc_dhtFindProviders(${JSON.stringify(params)}) must error, got result=${JSON.stringify(j.result)}`)
       assert.equal(j.error!.code, -32602)
+      assert.match(j.error!.message, /invalid cid|cid must/i)
       assert.equal(j.result, undefined, "errors must be in error field, not result body")
     }
     // (b) coc_ipfsFetchBlockFromPeer same shape
-    for (const params of [[], [""], ["foo\0bar"]]) {
+    for (const params of [...invalidCidParams, ["foo\0bar"]]) {
       const j = await probeError("coc_ipfsFetchBlockFromPeer", params)
       assert.ok(j.error)
       assert.equal(j.error!.code, -32602)
+      assert.match(j.error!.message, /invalid cid|cid must/i)
       assert.equal(j.result, undefined)
     }
-    // (c) coc_resolveDid / coc_getDIDDocument on a node without DID config
+    // (c) Valid CIDv0/v1 shapes still reach the DHT/fetch hooks instead
+    // of being rejected as malformed. The fixture has no DHT/fetch hook
+    // installed, so the expected no-data result remains deterministic.
+    const validCids = [
+      "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
+      "bafkqaaa",
+      "bafybeibbaty5wl7jqgcwyouemb5jerxoisdoxwldqdue5dd6evw6lgalhy",
+    ]
+    for (const cid of validCids) {
+      const providers = await probeError("coc_dhtFindProviders", [cid])
+      assert.equal(providers.error, undefined, `valid cid ${cid} must not be -32602`)
+      assert.deepEqual(providers.result, { providers: [] })
+      const fetched = await probeError("coc_ipfsFetchBlockFromPeer", [cid])
+      assert.equal(fetched.error, undefined, `valid cid ${cid} must not be -32602`)
+      assert.deepEqual(fetched.result, { bytes: null })
+    }
+    // (d) coc_resolveDid / coc_getDIDDocument on a node without DID config
     // → -32601 method not available (not -32603 internal-error).
     // #432: shape-valid args still hit the -32601 path (DID resolver not
     // configured); garbage input (empty params) gets -32602 via the new
@@ -4183,7 +4211,7 @@ test("RPC Extended Methods", async (t) => {
       })
       return await r.json() as { error?: { code: number; message: string }; result?: unknown }
     }
-    const validCid = "bafy-some-real-cid"
+    const validCid = "bafybeibbaty5wl7jqgcwyouemb5jerxoisdoxwldqdue5dd6evw6lgalhy"
     // Non-string excludePeerId → -32602
     for (const bad of [123, true, false, 1.5, {}, [1, 2]]) {
       const r = await probe([validCid, bad])
@@ -4218,7 +4246,7 @@ test("RPC Extended Methods", async (t) => {
       })
       return await r.json() as { error?: { code: number; message: string }; result?: unknown }
     }
-    const validCid = "bafy-real-cid"
+    const validCid = "bafybeibbaty5wl7jqgcwyouemb5jerxoisdoxwldqdue5dd6evw6lgalhy"
     // Non-integer or negative maxK → -32602
     for (const bad of [true, false, "huge", {}, [1, 2], -1, -5, 0, 1.5, 1.7]) {
       const r = await probe([validCid, bad])
