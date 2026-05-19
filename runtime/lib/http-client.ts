@@ -3,10 +3,15 @@ import https from "node:https";
 
 const REQUEST_TIMEOUT_MS = 30_000;
 
-export async function requestJson(url: string, method: string, body?: unknown): Promise<{ status?: number; json?: any }> {
+export async function requestJson(
+  url: string,
+  method: string,
+  body?: unknown,
+  headers: Record<string, string> = {},
+): Promise<{ status?: number; json?: any }> {
   return new Promise((resolve, reject) => {
     const transport = url.startsWith("https") ? https : http;
-    const req = transport.request(url, { method, headers: { "content-type": "application/json" } }, (res) => {
+    const req = transport.request(url, { method, headers: { "content-type": "application/json", ...headers } }, (res) => {
       let data = "";
       res.on("data", (chunk) => (data += chunk));
       res.on("end", () => {

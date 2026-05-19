@@ -51,7 +51,8 @@ export interface CocRuntimeConfig {
   protocolVersion?: 1 | 2;
   chainId?: number;
   verifyingContract?: string;
-  witnessNodes?: { url: string; witnessIndex: number }[];
+  poseWitnessAuthToken?: string;
+  witnessNodes?: { url: string; witnessIndex: number; authToken?: string }[];
   requiredWitnesses?: number;
   allowEmptyBatchWitnessSubmission?: boolean;
   tipToleranceBlocks?: number;

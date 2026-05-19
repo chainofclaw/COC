@@ -5,6 +5,7 @@ import { loadConfig } from "./lib/config.ts";
 import { InMemoryStore } from "./lib/state.ts";
 import { recordChallengeBounded } from "./lib/bounded-challenge-store.ts";
 import { validatePoseWitnessPayload } from "./lib/pose-witness-validator.ts";
+import { isPoseWitnessRequestAuthorized, resolvePoseWitnessAuthToken } from "./lib/pose-witness-auth.ts";
 import { IpfsBlockstore } from "../node/src/ipfs-blockstore.ts";
 import { loadStorageProof, MerkleLeavesCache } from "./lib/storage-proof.ts";
 import { readBoundedBody } from "./lib/pose-body-reader.ts";
@@ -19,6 +20,7 @@ const config = await loadConfig();
 const bind = process.env.COC_NODE_BIND || config.nodeBind || "127.0.0.1";
 const port = Number(process.env.COC_NODE_PORT || config.nodePort || 18780);
 const storageDir = resolveStorageDir(config.dataDir, config.storageDir);
+const poseWitnessAuthToken = resolvePoseWitnessAuthToken(process.env.COC_POSE_WITNESS_AUTH_TOKEN, config.poseWitnessAuthToken);
 
 // Phase C2.1: when FF is on, the receipt handler reads real chunk bytes
 // from the IPFS blockstore rooted at `storageDir` (same path the main
@@ -362,6 +364,9 @@ const server = http.createServer((req, res) => {
   if (req.method === "POST" && req.url === "/pose/witness") {
     if (!nodeSignerV2) {
       return json(res, 501, { error: "v2 protocol not enabled" });
+    }
+    if (!isPoseWitnessRequestAuthorized(req, poseWitnessAuthToken)) {
+      return json(res, 401, { error: "unauthorized witness request" });
     }
     // #292: body bounded via readBody (1 MB cap). Same DoS class as
     // /pose/challenge — pre-fix used unbounded body accumulation.

@@ -573,6 +573,7 @@ The PoSe runtime service exposes these HTTP endpoints:
 ```bash
 COC_DATA_DIR=/data/coc \
 COC_NODE_KEY=0x... \
+COC_POSE_WITNESS_AUTH_TOKEN=... \
   node --experimental-strip-types runtime/coc-node.ts
 ```
 
@@ -582,6 +583,8 @@ COC_NODE_KEY=0x... \
 | `/pose/challenge` | POST | Submit challenge (v1 EIP-191 / v2 EIP-712) |
 | `/pose/receipt` | POST | Submit receipt |
 | `/pose/witness` | POST | Witness attestation (v2 only) |
+
+Security note: `/pose/witness` signs EIP-712 witness attestations. When `COC_POSE_WITNESS_AUTH_TOKEN` or `poseWitnessAuthToken` is configured, every caller must present `Authorization: Bearer <token>`. Without a token, only loopback callers are accepted. Configure matching `authToken` values on remote `witnessNodes`; keep public deployments behind TLS or a private network.
 
 Note: `runtime/coc-node.ts` returns a lightweight service-local health payload (`{"ok":true,"ts":...}`) on `/health`; chain height and peer status should still be checked through node RPC or the metrics server.
 
