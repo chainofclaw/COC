@@ -17,9 +17,13 @@ contract InsuranceFund {
     address public governance;
     uint256 public totalDeposited;
     uint256 public totalWithdrawn;
+    mapping(address => uint256) public pendingWithdrawals;
+    uint256 public pendingWithdrawalTotal;
 
     event Deposited(address indexed from, uint256 amount, uint256 totalDepositedAfter);
     event Withdrawn(address indexed to, uint256 amount, uint256 totalWithdrawnAfter);
+    event WithdrawalCredited(address indexed payee, uint256 amount);
+    event WithdrawalClaimed(address indexed payee, uint256 amount);
     event GovernanceUpdated(address indexed oldGovernance, address indexed newGovernance);
 
     error OnlyGovernance();
@@ -27,6 +31,7 @@ contract InsuranceFund {
     error TransferFailed();
     error InsufficientBalance(uint256 requested, uint256 available);
     error ZeroAddress();
+    error NoPendingWithdrawal();
 
     modifier onlyGovernance() {
         if (msg.sender != governance) revert OnlyGovernance();
@@ -52,13 +57,25 @@ contract InsuranceFund {
     function withdraw(address payable to, uint256 amount) external onlyGovernance {
         if (to == address(0)) revert ZeroAddress();
         if (amount == 0) revert ZeroAmount();
-        if (amount > address(this).balance) {
-            revert InsufficientBalance(amount, address(this).balance);
+        uint256 available = _availableBalance();
+        if (amount > available) {
+            revert InsufficientBalance(amount, available);
         }
         totalWithdrawn += amount;
-        (bool ok, ) = to.call{ value: amount }("");
-        if (!ok) revert TransferFailed();
+        _payOrCredit(to, amount);
         emit Withdrawn(to, amount, totalWithdrawn);
+    }
+
+    function withdrawPayments() external {
+        uint256 amount = pendingWithdrawals[msg.sender];
+        if (amount == 0) revert NoPendingWithdrawal();
+
+        pendingWithdrawals[msg.sender] = 0;
+        pendingWithdrawalTotal -= amount;
+        (bool ok, ) = msg.sender.call{ value: amount }("");
+        if (!ok) revert TransferFailed();
+
+        emit WithdrawalClaimed(msg.sender, amount);
     }
 
     /// @notice Transfer the governance role. Two-step transfers are not used
@@ -74,5 +91,23 @@ contract InsuranceFund {
     ///         + COINBASE before EIP-6780). Both are surfaced for auditing.
     function balance() external view returns (uint256) {
         return address(this).balance;
+    }
+
+    function availableBalance() external view returns (uint256) {
+        return _availableBalance();
+    }
+
+    function _availableBalance() internal view returns (uint256) {
+        uint256 currentBalance = address(this).balance;
+        return currentBalance > pendingWithdrawalTotal ? currentBalance - pendingWithdrawalTotal : 0;
+    }
+
+    function _payOrCredit(address payable to, uint256 amount) internal {
+        (bool ok, ) = to.call{ value: amount }("");
+        if (!ok) {
+            pendingWithdrawals[to] += amount;
+            pendingWithdrawalTotal += amount;
+            emit WithdrawalCredited(to, amount);
+        }
     }
 }

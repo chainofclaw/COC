@@ -18,6 +18,14 @@ async function deployFund(initialGovernance) {
   return fund
 }
 
+async function installRejectingReceiverCode(address) {
+  const Rejecting = await ethers.getContractFactory("EthRejectingReceiver")
+  const rejecting = await Rejecting.deploy()
+  await rejecting.waitForDeployment()
+  const code = await ethers.provider.getCode(await rejecting.getAddress())
+  await ethers.provider.send("hardhat_setCode", [address, code])
+}
+
 describe("InsuranceFund: deployment", () => {
   it("rejects zero-address governance", async () => {
     const Factory = await ethers.getContractFactory("InsuranceFund")
@@ -67,6 +75,34 @@ describe("InsuranceFund: withdraw", () => {
     expect(recipAfter - recipBefore).to.equal(amount)
     expect(await fund.totalWithdrawn()).to.equal(amount)
     expect(await fund.balance()).to.equal(0n)
+  })
+
+  it("credits a pending withdrawal when the recipient rejects ETH", async () => {
+    const [gov, sender, recipient] = await ethers.getSigners()
+    const fund = await deployFund(gov.address)
+    const amount = ethers.parseEther("1")
+    await sender.sendTransaction({ to: await fund.getAddress(), value: ethers.parseEther("2") })
+    await installRejectingReceiverCode(recipient.address)
+
+    await expect(fund.connect(gov).withdraw(recipient.address, amount))
+      .to.emit(fund, "WithdrawalCredited")
+      .withArgs(recipient.address, amount)
+    expect(await fund.pendingWithdrawals(recipient.address)).to.equal(amount)
+    expect(await fund.pendingWithdrawalTotal()).to.equal(amount)
+    expect(await fund.totalWithdrawn()).to.equal(amount)
+    expect(await fund.availableBalance()).to.equal(amount)
+
+    await expect(
+      fund.connect(gov).withdraw(gov.address, ethers.parseEther("1.5")),
+    ).to.be.revertedWithCustomError(fund, "InsufficientBalance")
+      .withArgs(ethers.parseEther("1.5"), amount)
+
+    await ethers.provider.send("hardhat_setCode", [recipient.address, "0x"])
+    await fund.connect(recipient).withdrawPayments()
+
+    expect(await fund.pendingWithdrawals(recipient.address)).to.equal(0n)
+    expect(await fund.pendingWithdrawalTotal()).to.equal(0n)
+    expect(await fund.balance()).to.equal(amount)
   })
 
   it("non-governance withdraw reverts OnlyGovernance", async () => {
