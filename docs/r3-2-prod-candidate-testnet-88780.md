@@ -34,11 +34,19 @@ All 7 keys must be **distinct** (no shared anvil keys like in current 18780).
 - [ ] Update `scripts/gcloud/config.env` to add `COC_PROD_CANDIDATE_CHAIN_ID=88780`
 - [ ] Provision 5 GCP VMs reusing R1 fixture template
 - [ ] Bring up validators 6+7 on lab hardware
-- [x] Deploy contracts via `contracts/scripts/deploy-governance.js` then
-  `contracts/scripts/deploy-all-88780.js` (`COC_RPC_URL` / `COC_CHAIN_ID=88780`).
+- [x] Deploy contracts via `contracts/scripts/deploy-multisig-88780.js`,
+  `deploy-governance.js`, then `deploy-all-88780.js` (`COC_RPC_URL` /
+  `COC_CHAIN_ID=88780`, `DEPLOYER_PRIVATE_KEY` must be **non-public** —
+  `preflight.js:assertSafeDeployer` rejects the 20 default Hardhat test keys).
   All 13 deployed addresses are recorded in `configs/deployed-contracts-88780.json`
-  — the canonical manifest. Last redeploy 2026-05-18 carried the #645–#670
-  security-audit contract fixes.
+  — the canonical manifest; the `@chainofclaw/soul` 88780 manifest is kept in
+  sync.
+  Current generation: gen-4 (2026-05-19) — full redeploy with ownership of all
+  13 contracts handed to a 3-of-5 MultiSigWallet
+  (`0x3c055D83a9aA12Bba4a2ed53F8970DF4081eBC7E`). Carries the #683 rollup
+  proposer allowlist, #685 PoSeManagerV2 initialize-on-deploy, #686 ownership
+  re-key, and the #687/#689/#691/#694 pull-payment / epoch-hardening batch.
+  Full per-redeploy log: `docs/88780-redeploy-2026-05-19.md`.
 - [ ] All 7 validators stake 32 ETH into ValidatorRegistry
 - [ ] All 7 register in PoSeManagerV2 with serviceFlags=7
 - [ ] enableEmission with COC token (real ERC20, not deployer-as-stub)
@@ -61,7 +69,7 @@ All 7 keys must be **distinct** (no shared anvil keys like in current 18780).
 |---|---|
 | Chain stalls due to validator outage | H15 fallback proposer (R1.4 verified) |
 | Equivocation by colluding validators | EquivocationDetector + slash automation (R3.1) |
-| Governance proposal exploitation | Treasury 3-of-5 multisig + DAO timelock |
+| Governance proposal exploitation | Treasury 3-of-5 multisig + DAO timelock; since gen-4 (2026-05-19) every contract `owner()` is the 3-of-5 MultiSigWallet (no single-key admin override) |
 | GCP resource exhaustion | Reserved capacity + lab fallback validators |
 
 ## Roll-out Plan

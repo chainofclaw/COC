@@ -114,6 +114,12 @@ COC_DATA_DIR=/tmp/coc-single \
 | Private Key | `0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80` |
 | Balance | 10 000 ETH |
 
+> **Warning (#686):** this is the public Hardhat test account #0 — its private key
+> is known to anyone with Hardhat installed. It may **only** be used to fund a
+> fresh non-public deployer; it must never own a contract on a shared testnet
+> or production network. `contracts/scripts/preflight.js`'s `assertSafeDeployer`
+> rejects this address and the other 19 public Hardhat keys as deployer.
+
 ### Verify
 
 ```bash
@@ -441,11 +447,37 @@ npm run deploy:governance:coc
 - `l2-arbitrum`
 - `l2-optimism`
 
-### Governance Contract
+### Governance Contracts
+
+On a shared testnet, ownership of every COC contract must sit with a
+multisig — not with the deployer EOA (#686). The recommended sequence is:
 
 ```bash
+# 0. Use a fresh, non-public deployer key. preflight.js rejects the 20
+#    default Hardhat test keys. Fund it from any pre-funded EOA.
+export DEPLOYER_PRIVATE_KEY=<fresh-non-public-key>
+export COC_RPC_URL=... COC_CHAIN_ID=...
+
+# 1. Deploy the MultiSigWallet that will own the contracts.
+export MULTISIG_OWNERS=<addr1,addr2,addr3,addr4,addr5>
+export MULTISIG_THRESHOLD=3
+npx hardhat run scripts/deploy-multisig-88780.js --network coc
+# -> MULTISIG_ADDRESS=0x...
+
+# 2. Deploy FactionRegistry / GovernanceDAO / Treasury — ownership goes
+#    straight to the multisig.
+export MULTISIG_ADDRESS=<from step 1>
 npx hardhat run scripts/deploy-governance.js --network coc
+
+# 3. Deploy the remaining 10 contracts; the script also calls
+#    PoSeManagerV2.initialize() (#685) and transferOwnership(multisig)
+#    on every contract (#686).
+export FACTION_REGISTRY=... GOVERNANCE_DAO=... TREASURY=...
+npx hardhat run scripts/deploy-all-88780.js --network coc
 ```
+
+On 88780 the canonical addresses live in `configs/deployed-contracts-88780.json`.
+The most recent deploy is logged in `docs/88780-redeploy-2026-05-19.md`.
 
 ### Verify PoSe Contract
 
