@@ -123,7 +123,9 @@ const poseV2Abi = [
   "function openChallenge(bytes32 commitHash) payable returns (bytes32 challengeId)",
   "function revealChallenge(bytes32 challengeId, bytes32 targetNodeId, uint8 faultType, bytes32 evidenceLeafHash, bytes32 salt, bytes evidenceData, bytes challengerSig)",
   "function settleChallenge(bytes32 challengeId)",
-  "function getEpochBatchIds(uint64 epochId) view returns (bytes32[])",
+  "function getEpochBatchCount(uint64 epochId) view returns (uint256)",
+  "function processEpochBatches(uint64 epochId, uint256 maxBatches)",
+  "function epochBatchCursor(uint64 epochId) view returns (uint256)",
   "function epochFinalized(uint64 epochId) view returns (bool)",
   "function epochRewardRoots(uint64 epochId) view returns (bytes32)",
   "function rewardPoolBalance() view returns (uint256)",
@@ -505,7 +507,7 @@ async function tryFinalizeV2(): Promise<void> {
   } catch { /* proceed to try finalize */ }
 
   try {
-    const batchIds: string[] = await poseV2Contract.getEpochBatchIds(BigInt(candidate));
+    const batchCount: bigint = await poseV2Contract.getEpochBatchCount(BigInt(candidate));
 
     let rewardRoot = "0x" + "0".repeat(64);
     let totalReward = 0n;
@@ -513,10 +515,10 @@ async function tryFinalizeV2(): Promise<void> {
     let treasuryDelta = 0n;
     let settledManifestToPersist: ReturnType<typeof createSettledRewardManifest> | null = null;
 
-    if (batchIds.length > 0) {
+    if (batchCount > 0n) {
       const validation = loadAndValidateManifest(rewardManifestDir, candidate, { allowEmpty: true });
       if (validation.status !== "ok") {
-        log.warn("finalizeV2 skipped", { epochId: candidate, reason: validation.status, batches: batchIds.length, missingNodeIds: validation.missingNodeIds });
+        log.warn("finalizeV2 skipped", { epochId: candidate, reason: validation.status, batches: Number(batchCount), missingNodeIds: validation.missingNodeIds });
         return;
       }
       const manifest = validation.manifest!;
@@ -575,6 +577,36 @@ async function tryFinalizeV2(): Promise<void> {
 
     }
 
+    // #680: finalizeEpochV2 walks at most FINALIZE_BATCH_BUDGET (200) batches
+    // inline. For larger epochs, pre-grind the surplus via processEpochBatches
+    // so the finalize tx can never exceed the block gas limit. A rare
+    // BatchesNotProcessed revert (a batch landing mid-grind) is left to the
+    // next relayer tick — lastFinalizeEpoch is not advanced on failure.
+    const FINALIZE_BATCH_BUDGET = 200n;
+    if (batchCount > FINALIZE_BATCH_BUDGET) {
+      const grindTarget = batchCount - FINALIZE_BATCH_BUDGET;
+      let cursor: bigint = await retryAsync(
+        () => poseV2Contract.epochBatchCursor(BigInt(candidate)) as Promise<bigint>,
+        txRetryOptions,
+      );
+      while (cursor < grindTarget) {
+        const grindTx = await retryAsync(
+          () => poseV2Contract.processEpochBatches(BigInt(candidate), 500n),
+          txRetryOptions,
+        );
+        await retryAsync(() => grindTx.wait(), txRetryOptions);
+        cursor = await retryAsync(
+          () => poseV2Contract.epochBatchCursor(BigInt(candidate)) as Promise<bigint>,
+          txRetryOptions,
+        );
+      }
+      log.info("finalizeV2 pre-ground large epoch", {
+        epochId: candidate,
+        batchCount: batchCount.toString(),
+        cursor: cursor.toString(),
+      });
+    }
+
     const tx = await retryAsync(
       () => poseV2Contract.finalizeEpochV2(
         BigInt(candidate),
@@ -592,7 +624,7 @@ async function tryFinalizeV2(): Promise<void> {
       epochId: candidate,
       txHash: tx.hash,
       status: receipt?.status,
-      batches: batchIds.length,
+      batches: Number(batchCount),
       totalReward: totalReward.toString(),
     });
     if (settledManifestToPersist) {

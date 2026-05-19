@@ -23,6 +23,9 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
     uint16 public constant SLASH_INSURANCE_BPS = 2000;      // 20% to insurance
     uint64 public constant REVEAL_WINDOW_EPOCHS = 2;
     uint64 public constant ADJUDICATION_WINDOW_EPOCHS = 2;
+    // #680: max epoch batches finalizeEpochV2 / processEpochBatches walk per
+    // call — sized to stay well under the block gas limit even at this many.
+    uint256 public constant FINALIZE_BATCH_BUDGET = 200;
     uint256 internal constant SECP256K1N_HALF =
         0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0;
 
@@ -46,6 +49,11 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
     // unlimited cloned batches and bloat epochBatches, causing finalizeEpochV2
     // DoS (#680).
     mapping(uint64 => mapping(bytes32 => bool)) public epochMerkleRootUsed;
+    // #680: cursor for paginated finalizeEpochV2 — count of epochBatches[epochId]
+    // already walked. finalizeEpochV2 cannot complete until the cursor reaches
+    // the array length, so an unbounded epochBatches array can no longer
+    // OOG-brick epoch finalization.
+    mapping(uint64 => uint256) public epochBatchCursor;
 
     uint256 public challengeBondMin;
     uint256 public insuranceBalance;
@@ -410,13 +418,16 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
 
                 insuranceBalance += insuranceAmount;
 
-                // Pay challenger reward + refund bond, or credit for later withdrawal.
-                _payOrCredit(record.challenger, challengerAmount + record.bond);
-
                 if (node.bondAmount == 0) {
                     node.active = false;
                     _removeActiveNode(record.targetNodeId);
                 }
+
+                // Pay challenger reward + refund bond, or credit for later
+                // withdrawal. Done last so every state effect — slash
+                // accounting, node deactivation — precedes this external call
+                // to the attacker-controlled challenger (#677, CEI ordering).
+                _payOrCredit(record.challenger, challengerAmount + record.bond);
 
                 emit SlashDistributed(record.targetNodeId, burnAmount, challengerAmount, insuranceAmount);
                 emit ChallengeSettled(challengeId, true, slashAmount);
@@ -432,6 +443,47 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
         }
     }
 
+    // --- #680: paginated batch processing for epoch finalization ---
+
+    /// @notice Number of batches recorded for an epoch (epochBatches is internal).
+    function getEpochBatchCount(uint64 epochId) external view override returns (uint256) {
+        return epochBatches[epochId].length;
+    }
+
+    /// @dev Walk up to `maxBatches` of epochBatches[epochId] from the cursor:
+    ///      mark dispute-elapsed, non-disputed batches finalized, accumulate the
+    ///      valid count, and advance epochBatchCursor. Behaviour per batch is
+    ///      identical to the old single-pass loop — only the iteration is split.
+    function _processBatches(uint64 epochId, uint256 maxBatches) internal {
+        bytes32[] storage batchIds = epochBatches[epochId];
+        uint256 cursor = epochBatchCursor[epochId];
+        uint256 end = cursor + maxBatches;
+        if (end > batchIds.length) end = batchIds.length;
+        if (end == cursor) return;
+
+        uint32 validCount = epochValidBatchCount[epochId];
+        for (uint256 i = cursor; i < end; i++) {
+            PoSeTypes.BatchRecord storage batch = batches[batchIds[i]];
+            if (batch.finalized || batch.disputed) continue;
+            if (_currentEpoch() <= batch.disputeDeadlineEpoch) continue;
+            batch.finalized = true;
+            validCount += 1;
+        }
+        epochValidBatchCount[epochId] = validCount;
+        epochBatchCursor[epochId] = end;
+    }
+
+    /// @notice #680: grind a page of an epoch's batches toward finalization.
+    ///         Permissionless — purely deterministic bookkeeping, so finalization
+    ///         cannot be blocked even if the owner key is unavailable. Lets a
+    ///         large epochBatches array be cleared across several txs instead of
+    ///         OOG-bricking finalizeEpochV2 in one unbounded loop.
+    function processEpochBatches(uint64 epochId, uint256 maxBatches) external override {
+        if (epochFinalized[epochId]) revert EpochAlreadyFinalized();
+        if (_currentEpoch() <= epochId + DISPUTE_WINDOW_EPOCHS) revert DisputeWindowNotElapsed();
+        _processBatches(epochId, maxBatches);
+    }
+
     // --- Epoch finalization (allows 0 batches) ---
     function finalizeEpochV2(
         uint64 epochId,
@@ -445,20 +497,15 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
         if (totalReward > 0 && rewardRoot == bytes32(0)) revert InvalidBatch();
         if (totalReward > rewardPoolBalance) revert RewardPoolInsufficient();
 
-        // Finalize all valid batches for this epoch
-        bytes32[] storage batchIds = epochBatches[epochId];
-        uint32 validCount = 0;
+        // #680: process a bounded page of batches inline, then require the whole
+        // array to have been walked. Epochs with <= FINALIZE_BATCH_BUDGET batches
+        // (the normal case — typically 1-5) finalize in this single call; larger
+        // epochs need processEpochBatches() pre-grinding, so this can never exceed
+        // the block gas limit and permanently brick finalization.
+        _processBatches(epochId, FINALIZE_BATCH_BUDGET);
+        if (epochBatchCursor[epochId] != epochBatches[epochId].length) revert BatchesNotProcessed();
 
-        for (uint256 i = 0; i < batchIds.length; i++) {
-            PoSeTypes.BatchRecord storage batch = batches[batchIds[i]];
-            if (batch.finalized || batch.disputed) continue;
-            if (_currentEpoch() <= batch.disputeDeadlineEpoch) continue;
-            batch.finalized = true;
-            validCount += 1;
-        }
-
-        // v2: empty epochs are allowed (validCount can be 0)
-        epochValidBatchCount[epochId] = validCount;
+        // v2: empty epochs are allowed (epochValidBatchCount can be 0)
         epochRewardRoots[epochId] = rewardRoot;
         epochSlashTotal[epochId] = slashTotal;
         epochTreasuryDelta[epochId] = treasuryDelta;

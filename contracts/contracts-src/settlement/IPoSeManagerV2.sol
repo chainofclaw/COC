@@ -40,6 +40,7 @@ interface IPoSeManagerV2 {
     error RewardPoolInsufficient();
     error RewardBudgetExceeded();
     error NoPendingWithdrawal();
+    error BatchesNotProcessed();
 
     // Functions
     function initEpochNonce(uint64 epochId) external;
@@ -66,6 +67,10 @@ interface IPoSeManagerV2 {
     ) external;
 
     function settleChallenge(bytes32 challengeId) external;
+
+    function processEpochBatches(uint64 epochId, uint256 maxBatches) external;
+
+    function getEpochBatchCount(uint64 epochId) external view returns (uint256);
 
     function finalizeEpochV2(
         uint64 epochId,
