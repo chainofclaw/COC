@@ -10,7 +10,7 @@
  * Fix: snapshot the registered count into the Proposal at createProposal().
  */
 const { expect } = require("chai")
-const { ethers } = require("hardhat")
+const { ethers, upgrades } = require("hardhat")
 
 async function advanceTime(seconds) {
   await ethers.provider.send("evm_increaseTime", [seconds])
@@ -27,12 +27,21 @@ describe("Security: GovernanceDAO quorum snapshot", function () {
     attacker = all[4]
     sybils = all.slice(5, 25) // 20 sybil accounts the attacker controls
 
+    const owner = all[0]
     const FR = await ethers.getContractFactory("FactionRegistry")
-    factionRegistry = await FR.deploy()
+    factionRegistry = await upgrades.deployProxy(
+      FR,
+      [owner.address, owner.address],
+      { initializer: "initialize", kind: "uups" },
+    )
     await factionRegistry.waitForDeployment()
 
     const DAO = await ethers.getContractFactory("GovernanceDAO")
-    dao = await DAO.deploy(await factionRegistry.getAddress())
+    dao = await upgrades.deployProxy(
+      DAO,
+      [await factionRegistry.getAddress(), owner.address],
+      { initializer: "initialize", kind: "uups" },
+    )
     await dao.waitForDeployment()
 
     for (const m of members) {

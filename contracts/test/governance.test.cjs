@@ -1,5 +1,5 @@
 const { expect } = require("chai")
-const { ethers } = require("hardhat")
+const { ethers, upgrades } = require("hardhat")
 
 describe("Governance Contracts", function () {
   let factionRegistry, governanceDAO, treasury
@@ -8,24 +8,32 @@ describe("Governance Contracts", function () {
   beforeEach(async function () {
     ;[owner, human1, human2, claw1, claw2] = await ethers.getSigners()
 
-    // Deploy FactionRegistry
     const FactionRegistry = await ethers.getContractFactory("FactionRegistry")
-    factionRegistry = await FactionRegistry.deploy()
+    factionRegistry = await upgrades.deployProxy(
+      FactionRegistry,
+      [owner.address, owner.address],
+      { initializer: "initialize", kind: "uups" },
+    )
     await factionRegistry.waitForDeployment()
 
-    // Deploy GovernanceDAO
     const GovernanceDAO = await ethers.getContractFactory("GovernanceDAO")
-    governanceDAO = await GovernanceDAO.deploy(await factionRegistry.getAddress())
+    governanceDAO = await upgrades.deployProxy(
+      GovernanceDAO,
+      [await factionRegistry.getAddress(), owner.address],
+      { initializer: "initialize", kind: "uups" },
+    )
     await governanceDAO.waitForDeployment()
 
-    // Deploy Treasury (3/5 multisig)
     const Treasury = await ethers.getContractFactory("Treasury")
     const signers5 = await ethers.getSigners()
     const signerAddrs = signers5.slice(0, 5).map(s => s.address)
-    treasury = await Treasury.deploy(signerAddrs, await governanceDAO.getAddress())
+    treasury = await upgrades.deployProxy(
+      Treasury,
+      [signerAddrs, await governanceDAO.getAddress(), owner.address],
+      { initializer: "initialize", kind: "uups" },
+    )
     await treasury.waitForDeployment()
 
-    // Set treasury in governance
     await governanceDAO.setTreasury(await treasury.getAddress())
   })
 

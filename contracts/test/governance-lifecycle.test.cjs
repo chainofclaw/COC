@@ -14,7 +14,7 @@
  */
 
 const { expect } = require("chai")
-const { ethers } = require("hardhat")
+const { ethers, upgrades } = require("hardhat")
 
 describe("Governance Lifecycle: Prowl Testnet Proposals", function () {
   let dao, registry, treasury
@@ -24,17 +24,29 @@ describe("Governance Lifecycle: Prowl Testnet Proposals", function () {
     ;[owner, human1, human2, human3, human4, human5] = await ethers.getSigners()
 
     const FactionRegistry = await ethers.getContractFactory("FactionRegistry")
-    registry = await FactionRegistry.deploy()
+    registry = await upgrades.deployProxy(
+      FactionRegistry,
+      [owner.address, owner.address],
+      { initializer: "initialize", kind: "uups" },
+    )
     await registry.waitForDeployment()
 
     const GovernanceDAO = await ethers.getContractFactory("GovernanceDAO")
-    dao = await GovernanceDAO.deploy(await registry.getAddress())
+    dao = await upgrades.deployProxy(
+      GovernanceDAO,
+      [await registry.getAddress(), owner.address],
+      { initializer: "initialize", kind: "uups" },
+    )
     await dao.waitForDeployment()
 
     const Treasury = await ethers.getContractFactory("Treasury")
     const signers5 = await ethers.getSigners()
     const signerAddrs = signers5.slice(0, 5).map(s => s.address)
-    treasury = await Treasury.deploy(signerAddrs, await dao.getAddress())
+    treasury = await upgrades.deployProxy(
+      Treasury,
+      [signerAddrs, await dao.getAddress(), owner.address],
+      { initializer: "initialize", kind: "uups" },
+    )
     await treasury.waitForDeployment()
     await dao.setTreasury(await treasury.getAddress())
 

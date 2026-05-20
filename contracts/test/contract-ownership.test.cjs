@@ -4,13 +4,26 @@
  * Every governance / settlement contract that has an onlyOwner-gated admin
  * surface must be able to hand ownership to a multisig — otherwise the owner
  * is permanently stuck on the deploy key (which on 88780 was a public Hardhat
- * test account). This verifies transferOwnership on each contract that had it
- * added: owner can transfer, non-owner is rejected, the zero address is
- * rejected, and admin power follows the new owner.
+ * test account). Verifies transferOwnership on each contract: owner can
+ * transfer, non-owner rejected, zero address rejected, admin power follows
+ * the new owner.
+ *
+ * Updated for gen-5 UUPS: every contract is deployed through
+ * upgrades.deployProxy with the new `initialize(...)` signature.
  */
 
 const { expect } = require("chai")
-const { ethers } = require("hardhat")
+const { ethers, upgrades } = require("hardhat")
+
+async function deploy(factoryName, args) {
+  const Factory = await ethers.getContractFactory(factoryName)
+  const proxy = await upgrades.deployProxy(Factory, args, {
+    initializer: "initialize",
+    kind: "uups",
+  })
+  await proxy.waitForDeployment()
+  return proxy
+}
 
 describe("Contract ownership transfer (#686)", function () {
   let deployer, newOwner, outsider
@@ -22,8 +35,7 @@ describe("Contract ownership transfer (#686)", function () {
   describe("FactionRegistry", function () {
     let c
     beforeEach(async function () {
-      c = await (await ethers.getContractFactory("FactionRegistry")).deploy()
-      await c.waitForDeployment()
+      c = await deploy("FactionRegistry", [deployer.address, deployer.address])
     })
 
     it("transfers ownership and emits OwnerUpdated", async function () {
@@ -56,12 +68,8 @@ describe("Contract ownership transfer (#686)", function () {
   describe("GovernanceDAO", function () {
     let c
     beforeEach(async function () {
-      const fr = await (await ethers.getContractFactory("FactionRegistry")).deploy()
-      await fr.waitForDeployment()
-      c = await (await ethers.getContractFactory("GovernanceDAO")).deploy(
-        await fr.getAddress(),
-      )
-      await c.waitForDeployment()
+      const fr = await deploy("FactionRegistry", [deployer.address, deployer.address])
+      c = await deploy("GovernanceDAO", [await fr.getAddress(), deployer.address])
     })
 
     it("transfers ownership and emits OwnerUpdated", async function () {
@@ -86,11 +94,7 @@ describe("Contract ownership transfer (#686)", function () {
     beforeEach(async function () {
       const accounts = await ethers.getSigners()
       const signers = accounts.slice(3, 8).map((s) => s.address)
-      c = await (await ethers.getContractFactory("Treasury")).deploy(
-        signers,
-        deployer.address,
-      )
-      await c.waitForDeployment()
+      c = await deploy("Treasury", [signers, deployer.address, deployer.address])
     })
 
     it("transfers ownership and emits OwnerUpdated", async function () {
@@ -113,11 +117,7 @@ describe("Contract ownership transfer (#686)", function () {
   describe("DelayedInbox", function () {
     let c
     beforeEach(async function () {
-      c = await (await ethers.getContractFactory("DelayedInbox")).deploy(
-        3600,
-        deployer.address,
-      )
-      await c.waitForDeployment()
+      c = await deploy("DelayedInbox", [3600, deployer.address, deployer.address])
     })
 
     it("transfers ownership and emits OwnerUpdated", async function () {
@@ -140,8 +140,7 @@ describe("Contract ownership transfer (#686)", function () {
   describe("PoSeManager (v1)", function () {
     let c
     beforeEach(async function () {
-      c = await (await ethers.getContractFactory("PoSeManager")).deploy()
-      await c.waitForDeployment()
+      c = await deploy("PoSeManager", [deployer.address])
     })
 
     it("transfers ownership and emits OwnerUpdated", async function () {
@@ -164,8 +163,7 @@ describe("Contract ownership transfer (#686)", function () {
   describe("PoSeManagerV2", function () {
     let c
     beforeEach(async function () {
-      c = await (await ethers.getContractFactory("PoSeManagerV2")).deploy()
-      await c.waitForDeployment()
+      c = await deploy("PoSeManagerV2", [ethers.parseEther("0.1"), deployer.address])
     })
 
     it("transfers ownership and emits OwnerUpdated", async function () {
