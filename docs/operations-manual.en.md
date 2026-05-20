@@ -492,6 +492,35 @@ Use the Explorer verification workflow instead:
 
 This is a local bytecode verification flow, not a public contract registry publication step.
 
+### UUPS storage discipline (since gen-5)
+
+Since 88780 gen-5 (2026-05-20), every COC production contract lives behind
+a UUPS upgradeable proxy. The proxy's storage slots are permanent; the
+implementation can be replaced by an `upgrades.upgradeProxy()` call from
+the multisig owner.
+
+**Storage-layout rules for any PR that touches a UUPS contract:**
+
+1. New storage fields must be appended **before** `uint256[50] private __gap;`
+   (the gap shrinks by the number of slots the new fields consume).
+2. **Never reorder, remove, or change the type** of an existing storage
+   field — including fields in inherited base contracts (e.g.
+   `PoSeManagerStorage`).
+3. Inheritance order cannot change for an already-deployed UUPS contract.
+4. `@openzeppelin/hardhat-upgrades` enforces these rules at
+   `upgrades.deployProxy` and `upgrades.upgradeProxy` time, against the
+   committed `contracts/.openzeppelin/unknown-88780.json`. **That file
+   must be committed in any PR that changes a UUPS contract's storage** —
+   without it the plugin's safety check is bypassed and an unsafe upgrade
+   could brick a proxy.
+5. The `MultiSigWallet` contract itself remains immutable (no proxy). It is
+   the upgrade authority, and making the upgrade authority upgradeable
+   would defeat the purpose.
+
+The `contracts/test/uups-upgrade-safety.test.cjs` regression suite exercises
+the upgrade path per contract; running `cd contracts && npm test` after a
+storage change will catch most violations locally.
+
 ### Hardhat Configuration
 
 ```
