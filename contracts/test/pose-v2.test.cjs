@@ -14,7 +14,7 @@
  */
 
 const { expect } = require("chai")
-const { ethers } = require("hardhat")
+const { ethers, upgrades } = require("hardhat")
 const { malleateSignature } = require("./signature-utils.cjs")
 
 // Register a node on PoSeManagerV2
@@ -217,12 +217,12 @@ describe("PoSeManagerV2", function () {
     deployer = signers[0]
 
     const Factory = await ethers.getContractFactory("PoSeManagerV2")
-    manager = await Factory.deploy()
+    manager = await upgrades.deployProxy(
+      Factory,
+      [ethers.parseEther("0.01"), deployer.address],
+      { initializer: "initialize", kind: "uups" },
+    )
     await manager.waitForDeployment()
-
-    // Initialize with EIP-712 domain
-    const chainId = (await ethers.provider.getNetwork()).chainId
-    await manager.initialize(chainId, await manager.getAddress(), ethers.parseEther("0.01"))
 
     // Enable empty witness for most tests (strict mode tested separately)
     await manager.setAllowEmptyWitnessSubmission(true)
@@ -230,33 +230,32 @@ describe("PoSeManagerV2", function () {
 
   describe("initialize", function () {
     it("rejects repeated initialization", async function () {
-      const chainId = (await ethers.provider.getNetwork()).chainId
-
+      // OZ Initializable surfaces re-init attempts as InvalidInitialization().
       await expect(
-        manager.initialize(chainId, await manager.getAddress(), ethers.parseEther("0.01"))
-      ).to.be.revertedWithCustomError(manager, "AlreadyInitialized")
+        manager.initialize(ethers.parseEther("0.01"), deployer.address)
+      ).to.be.revertedWithCustomError(manager, "InvalidInitialization")
     })
 
-    it("rejects a zero verifying contract", async function () {
+    it("rejects a zero initial owner", async function () {
       const Factory = await ethers.getContractFactory("PoSeManagerV2")
-      const fresh = await Factory.deploy()
-      await fresh.waitForDeployment()
-      const chainId = (await ethers.provider.getNetwork()).chainId
-
       await expect(
-        fresh.initialize(chainId, ethers.ZeroAddress, ethers.parseEther("0.01"))
-      ).to.be.revertedWithCustomError(fresh, "ZeroAddress")
+        upgrades.deployProxy(
+          Factory,
+          [ethers.parseEther("0.01"), ethers.ZeroAddress],
+          { initializer: "initialize", kind: "uups" },
+        ),
+      ).to.be.revertedWithCustomError(Factory, "ZeroAddress")
     })
 
     it("rejects a zero challenge bond minimum", async function () {
       const Factory = await ethers.getContractFactory("PoSeManagerV2")
-      const fresh = await Factory.deploy()
-      await fresh.waitForDeployment()
-      const chainId = (await ethers.provider.getNetwork()).chainId
-
       await expect(
-        fresh.initialize(chainId, await fresh.getAddress(), 0)
-      ).to.be.revertedWithCustomError(fresh, "BondTooLow")
+        upgrades.deployProxy(
+          Factory,
+          [0, deployer.address],
+          { initializer: "initialize", kind: "uups" },
+        ),
+      ).to.be.revertedWithCustomError(Factory, "BondTooLow")
     })
 
     it("rejects lowering challenge bond minimum to zero", async function () {
@@ -1042,7 +1041,11 @@ describe("PoSeManagerV2", function () {
       await registerNode(manager, deployer)
 
       const Token = await ethers.getContractFactory("COCToken")
-      const token = await Token.deploy([deployer.address], [ethers.parseEther("250000000")])
+      const token = await upgrades.deployProxy(
+        Token,
+        [[deployer.address], [ethers.parseEther("250000000")], deployer.address],
+        { initializer: "initialize", kind: "uups" },
+      )
       await token.waitForDeployment()
       await token.setMinter(await manager.getAddress())
       await manager.enableEmission(await token.getAddress(), 0)
