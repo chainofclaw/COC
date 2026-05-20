@@ -1,10 +1,14 @@
 /**
- * Deploy Governance Contracts
+ * Deploy Governance Contracts (UUPS proxies — gen-5)
  *
- * Deploys FactionRegistry, GovernanceDAO, and Treasury to the target network.
- * Wires contracts together and outputs deployed addresses.
+ * Deploys FactionRegistry, GovernanceDAO, and Treasury as OpenZeppelin UUPS
+ * proxies. Each implementation is locked via _disableInitializers and the
+ * proxy runs the contract's `initialize(...)` exactly once.
  *
  * Usage:
+ *   MULTISIG_ADDRESS=0x...   # optional; if set, ownership of every proxy is
+ *                              transferred to it as the final step of the
+ *                              cross-script flow (see deploy-all-88780.js).
  *   npx hardhat run scripts/deploy-governance.js --network <network>
  *
  * Environment:
@@ -12,9 +16,10 @@
  *   INITIAL_TIMELOCK_DELAY - Timelock delay in seconds (default: 86400 = 1 day)
  *   INITIAL_QUORUM_PERCENT - Quorum percentage (default: 40)
  *   INITIAL_APPROVAL_PERCENT - Approval threshold (default: 60)
+ *   TREASURY_SIGNERS       - Comma-separated; exactly 5 addresses (default: 88780 validators)
  */
 
-const { ethers } = require("hardhat")
+const { ethers, upgrades } = require("hardhat")
 const { assertSafeDeployer } = require("./preflight.js")
 
 async function main() {
@@ -24,33 +29,44 @@ async function main() {
   // #686: refuse to deploy from a public Hardhat test account.
   assertSafeDeployer(deployer.address)
 
-  console.log("=== COC Governance Deployment ===")
+  console.log("=== COC Governance Deployment (UUPS) ===")
   console.log(`Network:  ${network.name} (chainId: ${network.chainId})`)
   console.log(`Deployer: ${deployer.address}`)
   console.log(`Balance:  ${ethers.formatEther(await ethers.provider.getBalance(deployer.address))} ETH`)
   console.log("")
 
-  // 1. Deploy FactionRegistry
-  console.log("Deploying FactionRegistry...")
+  // 1. Deploy FactionRegistry behind a UUPS proxy.
+  //    initialize(initialOwner, initialVerifier) — owner stays deployer until
+  //    deploy-all-88780.js does the final transferOwnership(multisig).
+  console.log("Deploying FactionRegistry proxy...")
   const FactionRegistry = await ethers.getContractFactory("FactionRegistry")
-  const factionRegistry = await FactionRegistry.deploy()
+  const factionRegistry = await upgrades.deployProxy(
+    FactionRegistry,
+    [deployer.address, deployer.address],
+    { initializer: "initialize", kind: "uups" },
+  )
   await factionRegistry.waitForDeployment()
   const factionAddr = await factionRegistry.getAddress()
   console.log(`  FactionRegistry: ${factionAddr}`)
 
-  // 2. Deploy GovernanceDAO
-  console.log("Deploying GovernanceDAO...")
+  // 2. Deploy GovernanceDAO behind a UUPS proxy.
+  //    initialize(_factionRegistry, initialOwner). Default governance params
+  //    (votingPeriod=7d, timelockDelay=2d, quorum=40%, approval=60%) are set
+  //    inside the initializer; we override them below via owner setters.
+  console.log("Deploying GovernanceDAO proxy...")
   const GovernanceDAO = await ethers.getContractFactory("GovernanceDAO")
-  const governanceDAO = await GovernanceDAO.deploy(factionAddr)
+  const governanceDAO = await upgrades.deployProxy(
+    GovernanceDAO,
+    [factionAddr, deployer.address],
+    { initializer: "initialize", kind: "uups" },
+  )
   await governanceDAO.waitForDeployment()
   const daoAddr = await governanceDAO.getAddress()
   console.log(`  GovernanceDAO:   ${daoAddr}`)
 
-  // 3. Deploy Treasury
-  // Treasury constructor is (address[5] _signers, address _governance).
-  // Signers default to the five chainId-88780 validators; override with
-  // TREASURY_SIGNERS (comma-separated, exactly 5 addresses).
-  console.log("Deploying Treasury...")
+  // 3. Deploy Treasury behind a UUPS proxy.
+  //    initialize(address[5] _signers, address _governance, address initialOwner).
+  console.log("Deploying Treasury proxy...")
   const DEFAULT_TREASURY_SIGNERS = [
     "0xde4e7889aa9007318ff261b1ee675f1305153590",
     "0xb939e5a68abd2e000e78876bd86edd1cbba49eb9",
@@ -65,7 +81,11 @@ async function main() {
     throw new Error(`Treasury requires exactly 5 signers, got ${treasurySigners.length}`)
   }
   const Treasury = await ethers.getContractFactory("Treasury")
-  const treasury = await Treasury.deploy(treasurySigners, daoAddr)
+  const treasury = await upgrades.deployProxy(
+    Treasury,
+    [treasurySigners, daoAddr, deployer.address],
+    { initializer: "initialize", kind: "uups" },
+  )
   await treasury.waitForDeployment()
   const treasuryAddr = await treasury.getAddress()
   console.log(`  Treasury:        ${treasuryAddr}`)
@@ -77,7 +97,7 @@ async function main() {
   await tx.wait()
   console.log("  GovernanceDAO.setTreasury() done")
 
-  // 5. Set initial governance parameters
+  // 5. Set initial governance parameters (only the deployer can while still owner).
   const votingPeriod = parseInt(process.env.INITIAL_VOTING_PERIOD || "259200") // 3 days
   const timelockDelay = parseInt(process.env.INITIAL_TIMELOCK_DELAY || "86400") // 1 day
   const quorumPercent = parseInt(process.env.INITIAL_QUORUM_PERCENT || "40")

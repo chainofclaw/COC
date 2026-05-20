@@ -1,21 +1,37 @@
 /**
- * Deploy ALL COC contracts to 88780 R3.2 testnet
+ * Deploy ALL COC contracts to 88780 R3.2 testnet (UUPS proxies — gen-5)
  *
- * Run AFTER scripts/deploy-governance.js (which deploys FactionRegistry/DAO/Treasury).
- * Picks up existing governance addresses from env if provided.
+ * Run AFTER scripts/deploy-governance.js (which deploys FactionRegistry/DAO/
+ * Treasury proxies). Picks up existing governance addresses from env if
+ * provided.
+ *
+ * Every contract goes up behind a UUPS proxy via @openzeppelin/hardhat-upgrades.
+ * Implementations are constructor-locked; the proxy runs `initialize(...)`
+ * once at deploy.
  *
  * Usage:
- *   DEPLOYER_PRIVATE_KEY=0x... \
- *   COC_RPC_URL=http://209.74.64.88:38780 \
- *   COC_CHAIN_ID=88780 \
- *   FACTION_REGISTRY=0x... GOVERNANCE_DAO=0x... TREASURY=0x... \
+ *   DEPLOYER_PRIVATE_KEY=0x...  (non-public — preflight enforces)
+ *   COC_RPC_URL=http://209.74.64.88:38780
+ *   COC_CHAIN_ID=88780
+ *   MULTISIG_ADDRESS=0x...
+ *   FACTION_REGISTRY=0x... GOVERNANCE_DAO=0x... TREASURY=0x...
  *     npx hardhat run scripts/deploy-all-88780.js --network coc
  */
 
-const { ethers } = require("hardhat")
+const { ethers, upgrades } = require("hardhat")
 const fs = require("fs")
 const path = require("path")
 const { assertSafeDeployer, transferOwnershipChecked } = require("./preflight.js")
+
+async function deployProxy(factoryName, args) {
+  const Factory = await ethers.getContractFactory(factoryName)
+  const proxy = await upgrades.deployProxy(Factory, args, {
+    initializer: "initialize",
+    kind: "uups",
+  })
+  await proxy.waitForDeployment()
+  return proxy
+}
 
 async function main() {
   const [deployer] = await ethers.getSigners()
@@ -26,7 +42,7 @@ async function main() {
   // #683: address seeded into the RollupStateManager proposer allowlist.
   const outputProposer = process.env.OUTPUT_PROPOSER_ADDRESS || ethers.ZeroAddress
 
-  console.log("=== COC R3.2 88780 Full Contract Deploy ===")
+  console.log("=== COC R3.2 88780 Full Contract Deploy (UUPS gen-5) ===")
   console.log(`Network:  ${network.name} (chainId: ${network.chainId})`)
   console.log(`Deployer: ${deployer.address}`)
   const bal = await ethers.provider.getBalance(deployer.address)
@@ -41,152 +57,99 @@ async function main() {
     contracts: {},
   }
 
-  // Pre-existing governance from deploy-governance.js (if env set)
+  // Pre-existing governance proxies from deploy-governance.js (if env set)
   if (process.env.FACTION_REGISTRY) deployed.contracts.FactionRegistry = process.env.FACTION_REGISTRY
   if (process.env.GOVERNANCE_DAO) deployed.contracts.GovernanceDAO = process.env.GOVERNANCE_DAO
   if (process.env.TREASURY) deployed.contracts.Treasury = process.env.TREASURY
 
-  // Skip already-deployed contracts (if env addresses set, no need to redeploy)
-  const skipExisting = process.env.SKIP_EXISTING === "1"
-  if (skipExisting) {
-    console.log("(SKIP_EXISTING=1: only deploying contracts missing from env)")
-  }
-
-  // 1. SoulRegistry (no constructor args)
-  console.log("Deploying SoulRegistry...")
-  const SoulRegistry = await ethers.getContractFactory("SoulRegistry")
-  const soulRegistry = await SoulRegistry.deploy()
-  await soulRegistry.waitForDeployment()
+  // 1. SoulRegistry — initialize(initialOwner)
+  console.log("Deploying SoulRegistry proxy...")
+  const soulRegistry = await deployProxy("SoulRegistry", [deployer.address])
   deployed.contracts.SoulRegistry = await soulRegistry.getAddress()
   console.log(`  SoulRegistry: ${deployed.contracts.SoulRegistry}`)
 
-  // 2. DIDRegistry (depends on SoulRegistry)
-  console.log("Deploying DIDRegistry...")
-  const DIDRegistry = await ethers.getContractFactory("DIDRegistry")
-  const didRegistry = await DIDRegistry.deploy(deployed.contracts.SoulRegistry)
-  await didRegistry.waitForDeployment()
+  // 2. DIDRegistry — initialize(_soulRegistry, initialOwner)
+  console.log("Deploying DIDRegistry proxy...")
+  const didRegistry = await deployProxy("DIDRegistry", [
+    deployed.contracts.SoulRegistry,
+    deployer.address,
+  ])
   deployed.contracts.DIDRegistry = await didRegistry.getAddress()
   console.log(`  DIDRegistry:  ${deployed.contracts.DIDRegistry}`)
 
-  // 3. CidRegistry (no constructor args)
-  console.log("Deploying CidRegistry...")
-  const CidRegistry = await ethers.getContractFactory("CidRegistry")
-  const cidRegistry = await CidRegistry.deploy()
-  await cidRegistry.waitForDeployment()
+  // 3. CidRegistry — initialize(initialOwner)
+  console.log("Deploying CidRegistry proxy...")
+  const cidRegistry = await deployProxy("CidRegistry", [deployer.address])
   deployed.contracts.CidRegistry = await cidRegistry.getAddress()
   console.log(`  CidRegistry:  ${deployed.contracts.CidRegistry}`)
 
-  // 4. PoSeManager v1
-  console.log("Deploying PoSeManager (v1)...")
-  try {
-    const PoSeManager = await ethers.getContractFactory("PoSeManager")
-    const poseV1 = await PoSeManager.deploy()
-    await poseV1.waitForDeployment()
-    deployed.contracts.PoSeManager = await poseV1.getAddress()
-    console.log(`  PoSeManager:  ${deployed.contracts.PoSeManager}`)
-  } catch (e) {
-    console.log(`  SKIPPED (constructor args mismatch): ${e.message.slice(0, 100)}`)
-    deployed.contracts.PoSeManager = null
-  }
+  // 4. PoSeManager v1 — initialize(initialOwner)
+  console.log("Deploying PoSeManager (v1) proxy...")
+  const poseV1 = await deployProxy("PoSeManager", [deployer.address])
+  deployed.contracts.PoSeManager = await poseV1.getAddress()
+  console.log(`  PoSeManager:  ${deployed.contracts.PoSeManager}`)
 
-  // 5. PoSeManager v2
-  console.log("Deploying PoSeManagerV2...")
-  try {
-    const PoSeManagerV2 = await ethers.getContractFactory("PoSeManagerV2")
-    const poseV2 = await PoSeManagerV2.deploy()
-    await poseV2.waitForDeployment()
-    deployed.contracts.PoSeManagerV2 = await poseV2.getAddress()
-    console.log(`  PoSeManagerV2: ${deployed.contracts.PoSeManagerV2}`)
-    // #685: initialize so DOMAIN_SEPARATOR / challengeBondMin are non-zero.
-    // verifyingContract is the contract's own address — the off-chain witness
-    // signers (runtime/coc-node.ts) build the EIP-712 domain from it too.
-    const challengeBondMin = process.env.POSE_CHALLENGE_BOND_MIN
-      ? BigInt(process.env.POSE_CHALLENGE_BOND_MIN)
-      : ethers.parseEther("0.1")
-    const initTx = await poseV2.initialize(
-      network.chainId,
-      deployed.contracts.PoSeManagerV2,
-      challengeBondMin,
-    )
-    await initTx.wait()
-    console.log(`  PoSeManagerV2.initialize() done (challengeBondMin=${challengeBondMin})`)
-  } catch (e) {
-    console.log(`  SKIPPED (constructor args mismatch): ${e.message.slice(0, 100)}`)
-    deployed.contracts.PoSeManagerV2 = null
-  }
+  // 5. PoSeManagerV2 — initialize(challengeBondMin, initialOwner)
+  //    Proxy address auto-fills DOMAIN_SEPARATOR via address(this) inside
+  //    the initializer; no separate post-deploy initialize step needed (#685).
+  console.log("Deploying PoSeManagerV2 proxy...")
+  const challengeBondMin = process.env.POSE_CHALLENGE_BOND_MIN
+    ? BigInt(process.env.POSE_CHALLENGE_BOND_MIN)
+    : ethers.parseEther("0.1")
+  const poseV2 = await deployProxy("PoSeManagerV2", [challengeBondMin, deployer.address])
+  deployed.contracts.PoSeManagerV2 = await poseV2.getAddress()
+  console.log(`  PoSeManagerV2: ${deployed.contracts.PoSeManagerV2} (initialized; bondMin=${challengeBondMin})`)
 
-  // 6. ValidatorRegistry (no args expected, on-chain validator stake registry)
-  console.log("Deploying ValidatorRegistry...")
-  try {
-    const ValidatorRegistry = await ethers.getContractFactory("ValidatorRegistry")
-    const vr = await ValidatorRegistry.deploy()
-    await vr.waitForDeployment()
-    deployed.contracts.ValidatorRegistry = await vr.getAddress()
-    console.log(`  ValidatorRegistry: ${deployed.contracts.ValidatorRegistry}`)
-  } catch (e) {
-    console.log(`  SKIPPED: ${e.message.slice(0, 100)}`)
-    deployed.contracts.ValidatorRegistry = null
-  }
+  // 6. ValidatorRegistry — initialize(initialOwner, initialSlasher, initialSlashRecipient)
+  console.log("Deploying ValidatorRegistry proxy...")
+  const vr = await deployProxy("ValidatorRegistry", [
+    deployer.address,
+    deployer.address,
+    deployer.address,
+  ])
+  deployed.contracts.ValidatorRegistry = await vr.getAddress()
+  console.log(`  ValidatorRegistry: ${deployed.contracts.ValidatorRegistry}`)
 
-  // 7. EquivocationDetector (depends on ValidatorRegistry)
-  console.log("Deploying EquivocationDetector...")
-  try {
-    const ED = await ethers.getContractFactory("EquivocationDetector")
-    const ed = await ED.deploy(deployed.contracts.ValidatorRegistry)
-    await ed.waitForDeployment()
-    deployed.contracts.EquivocationDetector = await ed.getAddress()
-    console.log(`  EquivocationDetector: ${deployed.contracts.EquivocationDetector}`)
-  } catch (e) {
-    console.log(`  SKIPPED: ${e.message.slice(0, 100)}`)
-    deployed.contracts.EquivocationDetector = null
-  }
+  // 7. EquivocationDetector — initialize(validatorRegistry, initialOwner)
+  console.log("Deploying EquivocationDetector proxy...")
+  const ed = await deployProxy("EquivocationDetector", [
+    deployed.contracts.ValidatorRegistry,
+    deployer.address,
+  ])
+  deployed.contracts.EquivocationDetector = await ed.getAddress()
+  console.log(`  EquivocationDetector: ${deployed.contracts.EquivocationDetector}`)
 
-  // 8. InsuranceFund (initial governance = GovernanceDAO)
-  console.log("Deploying InsuranceFund...")
-  try {
-    const IF = await ethers.getContractFactory("InsuranceFund")
-    const insurance = await IF.deploy(deployed.contracts.GovernanceDAO)
-    await insurance.waitForDeployment()
-    deployed.contracts.InsuranceFund = await insurance.getAddress()
-    console.log(`  InsuranceFund: ${deployed.contracts.InsuranceFund}`)
-  } catch (e) {
-    console.log(`  SKIPPED: ${e.message.slice(0, 100)}`)
-    deployed.contracts.InsuranceFund = null
-  }
+  // 8. InsuranceFund — initialize(governance, initialOwner)
+  console.log("Deploying InsuranceFund proxy...")
+  const insurance = await deployProxy("InsuranceFund", [
+    deployed.contracts.GovernanceDAO,
+    deployer.address,
+  ])
+  deployed.contracts.InsuranceFund = await insurance.getAddress()
+  console.log(`  InsuranceFund: ${deployed.contracts.InsuranceFund}`)
 
-  // 9. DelayedInbox (rollup): (inclusionDelaySeconds, sequencerAddress)
-  console.log("Deploying DelayedInbox...")
-  try {
-    const DI = await ethers.getContractFactory("DelayedInbox")
-    // 24-hour inclusion delay, deployer as initial sequencer (testnet)
-    const di = await DI.deploy(86400, deployer.address)
-    await di.waitForDeployment()
-    deployed.contracts.DelayedInbox = await di.getAddress()
-    console.log(`  DelayedInbox: ${deployed.contracts.DelayedInbox}`)
-  } catch (e) {
-    console.log(`  SKIPPED: ${e.message.slice(0, 100)}`)
-    deployed.contracts.DelayedInbox = null
-  }
+  // 9. DelayedInbox — initialize(inclusionDelaySeconds, sequencer, initialOwner)
+  console.log("Deploying DelayedInbox proxy...")
+  const di = await deployProxy("DelayedInbox", [
+    86400, // 24h inclusion delay
+    deployer.address, // initial sequencer (testnet)
+    deployer.address,
+  ])
+  deployed.contracts.DelayedInbox = await di.getAddress()
+  console.log(`  DelayedInbox: ${deployed.contracts.DelayedInbox}`)
 
-  // 10. RollupStateManager: (challengeWindowSeconds, proposerBondWei, challengerBondWei, insuranceFundAddress)
-  console.log("Deploying RollupStateManager...")
-  try {
-    const RSM = await ethers.getContractFactory("RollupStateManager")
-    // 24h challenge window, 1 ETH bonds (testnet), InsuranceFund as recipient
-    const rsm = await RSM.deploy(
-      86400,
-      ethers.parseEther("1"),
-      ethers.parseEther("1"),
-      deployed.contracts.InsuranceFund || ethers.ZeroAddress,
-      outputProposer,
-    )
-    await rsm.waitForDeployment()
-    deployed.contracts.RollupStateManager = await rsm.getAddress()
-    console.log(`  RollupStateManager: ${deployed.contracts.RollupStateManager}`)
-  } catch (e) {
-    console.log(`  SKIPPED: ${e.message.slice(0, 100)}`)
-    deployed.contracts.RollupStateManager = null
-  }
+  // 10. RollupStateManager — initialize(challengeWindow, proposerBond, challengerBond, insuranceFund, initialProposer, initialOwner)
+  console.log("Deploying RollupStateManager proxy...")
+  const rsm = await deployProxy("RollupStateManager", [
+    86400, // 24h challenge window
+    ethers.parseEther("1"), // proposer bond
+    ethers.parseEther("1"), // challenger bond
+    deployed.contracts.InsuranceFund || ethers.ZeroAddress,
+    outputProposer,
+    deployer.address,
+  ])
+  deployed.contracts.RollupStateManager = await rsm.getAddress()
+  console.log(`  RollupStateManager: ${deployed.contracts.RollupStateManager}`)
 
   // --- #686: hand contract ownership to the multisig ---
   const multisig = process.env.MULTISIG_ADDRESS
@@ -197,10 +160,14 @@ async function main() {
       "FactionRegistry",
       "GovernanceDAO",
       "Treasury",
+      "SoulRegistry",
+      "DIDRegistry",
+      "CidRegistry",
       "PoSeManager",
       "PoSeManagerV2",
       "ValidatorRegistry",
       "EquivocationDetector",
+      "InsuranceFund",
       "DelayedInbox",
       "RollupStateManager",
     ]
@@ -214,22 +181,28 @@ async function main() {
       await transferOwnershipChecked(c, name, multisig)
     }
     deployed.owner = multisig
-    console.log("Ownership handoff complete — all owners verified == multisig.")
+    console.log("Ownership handoff complete — all 13 proxies' owner == multisig.")
+    console.log("Upgrade authority for every proxy is now the 3-of-5 multisig (#686 resolved).")
   } else {
     deployed.owner = deployer.address
     console.log("")
-    console.log("WARNING: MULTISIG_ADDRESS not set — contracts remain owned by the")
+    console.log("WARNING: MULTISIG_ADDRESS not set — proxies remain owned by the")
     console.log("         deployer. #686 is NOT resolved until ownership is moved")
     console.log("         to a multisig.")
   }
 
-  // Write deployment manifest
+  // Write deployment manifest (records proxy addresses; the OZ upgrades plugin
+  // stores implementation addresses + storage-layout hashes in
+  // contracts/.openzeppelin/<network>.json — commit that file too).
   const outPath = path.join(__dirname, "..", "..", "configs", "deployed-contracts-88780.json")
   fs.writeFileSync(outPath, JSON.stringify(deployed, null, 2))
   console.log("")
   console.log("=== Deployment Summary ===")
   console.log(JSON.stringify(deployed, null, 2))
   console.log(`\nManifest: ${outPath}`)
+  console.log("\nDon't forget to commit `contracts/.openzeppelin/coc-88780.json` —")
+  console.log("the OZ upgrades plugin needs it to validate storage layout on future")
+  console.log("upgradeProxy() calls. Losing it loses the safety check.")
 }
 
 main().catch((err) => {
