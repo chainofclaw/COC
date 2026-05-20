@@ -1,0 +1,4105 @@
+{
+  "manifestVersion": "3.2",
+  "proxies": [
+    {
+      "address": "0xc37d28297dB885d2B8d9966Cbb5df2e142671287",
+      "txHash": "0x729c70c5a710e367c3477790d932168064c0b3aa85c380fc6afff74c9f274539",
+      "kind": "uups"
+    },
+    {
+      "address": "0x4b9485670eA389Aeab7aC04d48bb2b42D0e8bdc7",
+      "txHash": "0x58047e37a98b1b4454864b19d94484624b316cadbbf007b707b20396f3a09373",
+      "kind": "uups"
+    },
+    {
+      "address": "0x512B012683c88103b1BEE3ad470108B47fBD7C7E",
+      "txHash": "0xfab2c3c98ad3435b3f5f256a68af36643addbb5cc40fa9de3b03741444f39426",
+      "kind": "uups"
+    },
+    {
+      "address": "0x3B6b5Fd45F8a6A2756e6D436d90b67faD0509244",
+      "txHash": "0xc1992e5b58979dc21c2b5165356f91a9903fb2ddca5e63d13daf52130020c1e6",
+      "kind": "uups"
+    },
+    {
+      "address": "0xe2D8165Cb9416bf92E4304446A5Dccd20Db45fbF",
+      "txHash": "0xb0cfb120c6b07cbc8053c649446c566fdfe29143a601028623147f100eaf2969",
+      "kind": "uups"
+    },
+    {
+      "address": "0x780603254D19A60ae35a1aEEBbB4dCd0c514371b",
+      "txHash": "0x8c5ca08427c04d3ce41e4ee80622551c05f3135f1a6504157c679f67738faf4c",
+      "kind": "uups"
+    },
+    {
+      "address": "0x91e1D4aBcb68476368E8Ec02d61456a08Ae43BD8",
+      "txHash": "0xf17310155f0253c2e4e9a5458d98b5c22213095c85ec9681d5c42f86ea3084e7",
+      "kind": "uups"
+    },
+    {
+      "address": "0x256eb949C50d5F2af8699191b1Bc043203263549",
+      "txHash": "0x1bbb78a111274deecc1fe9e1455e43d06c4b1c3094ee3b1bb9187c6248c8ae5b",
+      "kind": "uups"
+    },
+    {
+      "address": "0x4441299c118373fDC96bE1983d42C79e19CDb4F0",
+      "txHash": "0xaeb155f1dbd5818ab2e2993aa5a28f829396e14bf4d434555ba96c0c8d9b7c83",
+      "kind": "uups"
+    },
+    {
+      "address": "0xa5dcE830e917176c1091fd6112F41E47692C510e",
+      "txHash": "0x7eafdd08481cbf566e90920332b1a6bf93c91a12e4d2ec5047fd7f45d3ac60d3",
+      "kind": "uups"
+    },
+    {
+      "address": "0x0546E0D98A18e110D3dFCFA150Bcd1C0a589d688",
+      "txHash": "0x7770fd5d0a58822d82431756cdea449e63d96e4999b990b3b6034e1e63f434aa",
+      "kind": "uups"
+    },
+    {
+      "address": "0xac820809399D6740eB274D99827a5ee595881A00",
+      "txHash": "0xbc0e48278589bcaa260f05151a91454146210bf60a51911825245fb085b519d6",
+      "kind": "uups"
+    },
+    {
+      "address": "0xA2Bf9FA3382A0A8aFf406BE8A8e9a64E1d69dC4e",
+      "txHash": "0x528d54366ce7f8ec46ae4918a7b9b833a647b1f0c2a942dfd43dc16bdec0be17",
+      "kind": "uups"
+    }
+  ],
+  "impls": {
+    "65054b29cf0da16a5adc66a4df5ea99ab926f1703f8396faa25d793f08574b32": {
+      "address": "0x744b954e6efD28f88b4395e120aA498D29d5E41b",
+      "txHash": "0x1a909b2c462d0bca690db7c59ede2cb5b9e2f95592912a19b834191f56fd57aa",
+      "layout": {
+        "solcVersion": "0.8.24",
+        "storage": [
+          {
+            "label": "owner",
+            "offset": 0,
+            "slot": "0",
+            "type": "t_address",
+            "contract": "FactionRegistry",
+            "src": "contracts-src/governance/FactionRegistry.sol:23"
+          },
+          {
+            "label": "verifier",
+            "offset": 0,
+            "slot": "1",
+            "type": "t_address",
+            "contract": "FactionRegistry",
+            "src": "contracts-src/governance/FactionRegistry.sol:24"
+          },
+          {
+            "label": "identities",
+            "offset": 0,
+            "slot": "2",
+            "type": "t_mapping(t_address,t_struct(Identity)1499_storage)",
+            "contract": "FactionRegistry",
+            "src": "contracts-src/governance/FactionRegistry.sol:26"
+          },
+          {
+            "label": "agentIdToAddress",
+            "offset": 0,
+            "slot": "3",
+            "type": "t_mapping(t_bytes32,t_address)",
+            "contract": "FactionRegistry",
+            "src": "contracts-src/governance/FactionRegistry.sol:27"
+          },
+          {
+            "label": "humanCount",
+            "offset": 0,
+            "slot": "4",
+            "type": "t_uint256",
+            "contract": "FactionRegistry",
+            "src": "contracts-src/governance/FactionRegistry.sol:29"
+          },
+          {
+            "label": "clawCount",
+            "offset": 0,
+            "slot": "5",
+            "type": "t_uint256",
+            "contract": "FactionRegistry",
+            "src": "contracts-src/governance/FactionRegistry.sol:30"
+          },
+          {
+            "label": "__gap",
+            "offset": 0,
+            "slot": "6",
+            "type": "t_array(t_uint256)50_storage",
+            "contract": "FactionRegistry",
+            "src": "contracts-src/governance/FactionRegistry.sol:173"
+          }
+        ],
+        "types": {
+          "t_bool": {
+            "label": "bool",
+            "numberOfBytes": "1"
+          },
+          "t_struct(InitializableStorage)130_storage": {
+            "label": "struct Initializable.InitializableStorage",
+            "members": [
+              {
+                "label": "_initialized",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "_initializing",
+                "type": "t_bool",
+                "offset": 8,
+                "slot": "0"
+              }
+            ],
+            "numberOfBytes": "32"
+          },
+          "t_uint64": {
+            "label": "uint64",
+            "numberOfBytes": "8"
+          },
+          "t_address": {
+            "label": "address",
+            "numberOfBytes": "20"
+          },
+          "t_array(t_uint256)50_storage": {
+            "label": "uint256[50]",
+            "numberOfBytes": "1600"
+          },
+          "t_bytes32": {
+            "label": "bytes32",
+            "numberOfBytes": "32"
+          },
+          "t_enum(Faction)1489": {
+            "label": "enum FactionRegistry.Faction",
+            "members": [
+              "None",
+              "Human",
+              "Claw"
+            ],
+            "numberOfBytes": "1"
+          },
+          "t_mapping(t_address,t_struct(Identity)1499_storage)": {
+            "label": "mapping(address => struct FactionRegistry.Identity)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_address)": {
+            "label": "mapping(bytes32 => address)",
+            "numberOfBytes": "32"
+          },
+          "t_struct(Identity)1499_storage": {
+            "label": "struct FactionRegistry.Identity",
+            "members": [
+              {
+                "label": "faction",
+                "type": "t_enum(Faction)1489",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "registeredAt",
+                "type": "t_uint64",
+                "offset": 1,
+                "slot": "0"
+              },
+              {
+                "label": "attestationHash",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "1"
+              },
+              {
+                "label": "verified",
+                "type": "t_bool",
+                "offset": 0,
+                "slot": "2"
+              }
+            ],
+            "numberOfBytes": "96"
+          },
+          "t_uint256": {
+            "label": "uint256",
+            "numberOfBytes": "32"
+          }
+        },
+        "namespaces": {
+          "erc7201:openzeppelin.storage.Initializable": [
+            {
+              "contract": "Initializable",
+              "label": "_initialized",
+              "type": "t_uint64",
+              "src": "@openzeppelin/contracts/proxy/utils/Initializable.sol:69",
+              "offset": 0,
+              "slot": "0"
+            },
+            {
+              "contract": "Initializable",
+              "label": "_initializing",
+              "type": "t_bool",
+              "src": "@openzeppelin/contracts/proxy/utils/Initializable.sol:73",
+              "offset": 8,
+              "slot": "0"
+            }
+          ]
+        }
+      }
+    },
+    "b8e95b7454b5f3b5587333d1383e6e450341635a7bcfc0a27470d8433f6d523b": {
+      "address": "0xC0D08bceb1158cfa791C488E68633080c48C082A",
+      "txHash": "0xbb47b92b5ed306ed4563ac0df4ddbd1e206681cf904706197571838eae141ce9",
+      "layout": {
+        "solcVersion": "0.8.24",
+        "storage": [
+          {
+            "label": "factionRegistry",
+            "offset": 0,
+            "slot": "0",
+            "type": "t_contract(FactionRegistry)2062",
+            "contract": "GovernanceDAO",
+            "src": "contracts-src/governance/GovernanceDAO.sol:45"
+          },
+          {
+            "label": "proposalCount",
+            "offset": 0,
+            "slot": "1",
+            "type": "t_uint256",
+            "contract": "GovernanceDAO",
+            "src": "contracts-src/governance/GovernanceDAO.sol:47"
+          },
+          {
+            "label": "proposals",
+            "offset": 0,
+            "slot": "2",
+            "type": "t_mapping(t_uint256,t_struct(Proposal)2133_storage)",
+            "contract": "GovernanceDAO",
+            "src": "contracts-src/governance/GovernanceDAO.sol:48"
+          },
+          {
+            "label": "hasVoted",
+            "offset": 0,
+            "slot": "3",
+            "type": "t_mapping(t_uint256,t_mapping(t_address,t_bool))",
+            "contract": "GovernanceDAO",
+            "src": "contracts-src/governance/GovernanceDAO.sol:49"
+          },
+          {
+            "label": "votingPeriod",
+            "offset": 0,
+            "slot": "4",
+            "type": "t_uint64",
+            "contract": "GovernanceDAO",
+            "src": "contracts-src/governance/GovernanceDAO.sol:52"
+          },
+          {
+            "label": "timelockDelay",
+            "offset": 8,
+            "slot": "4",
+            "type": "t_uint64",
+            "contract": "GovernanceDAO",
+            "src": "contracts-src/governance/GovernanceDAO.sol:53"
+          },
+          {
+            "label": "quorumPercent",
+            "offset": 0,
+            "slot": "5",
+            "type": "t_uint256",
+            "contract": "GovernanceDAO",
+            "src": "contracts-src/governance/GovernanceDAO.sol:54"
+          },
+          {
+            "label": "approvalPercent",
+            "offset": 0,
+            "slot": "6",
+            "type": "t_uint256",
+            "contract": "GovernanceDAO",
+            "src": "contracts-src/governance/GovernanceDAO.sol:55"
+          },
+          {
+            "label": "bicameralEnabled",
+            "offset": 0,
+            "slot": "7",
+            "type": "t_bool",
+            "contract": "GovernanceDAO",
+            "src": "contracts-src/governance/GovernanceDAO.sol:56"
+          },
+          {
+            "label": "owner",
+            "offset": 1,
+            "slot": "7",
+            "type": "t_address",
+            "contract": "GovernanceDAO",
+            "src": "contracts-src/governance/GovernanceDAO.sol:58"
+          },
+          {
+            "label": "treasury",
+            "offset": 0,
+            "slot": "8",
+            "type": "t_address",
+            "contract": "GovernanceDAO",
+            "src": "contracts-src/governance/GovernanceDAO.sol:59"
+          },
+          {
+            "label": "__gap",
+            "offset": 0,
+            "slot": "9",
+            "type": "t_array(t_uint256)50_storage",
+            "contract": "GovernanceDAO",
+            "src": "contracts-src/governance/GovernanceDAO.sol:317"
+          }
+        ],
+        "types": {
+          "t_bool": {
+            "label": "bool",
+            "numberOfBytes": "1"
+          },
+          "t_struct(InitializableStorage)130_storage": {
+            "label": "struct Initializable.InitializableStorage",
+            "members": [
+              {
+                "label": "_initialized",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "_initializing",
+                "type": "t_bool",
+                "offset": 8,
+                "slot": "0"
+              }
+            ],
+            "numberOfBytes": "32"
+          },
+          "t_uint64": {
+            "label": "uint64",
+            "numberOfBytes": "8"
+          },
+          "t_address": {
+            "label": "address",
+            "numberOfBytes": "20"
+          },
+          "t_array(t_uint256)50_storage": {
+            "label": "uint256[50]",
+            "numberOfBytes": "1600"
+          },
+          "t_bytes32": {
+            "label": "bytes32",
+            "numberOfBytes": "32"
+          },
+          "t_bytes_storage": {
+            "label": "bytes",
+            "numberOfBytes": "32"
+          },
+          "t_contract(FactionRegistry)2062": {
+            "label": "contract FactionRegistry",
+            "numberOfBytes": "20"
+          },
+          "t_enum(ProposalState)2090": {
+            "label": "enum GovernanceDAO.ProposalState",
+            "members": [
+              "Pending",
+              "Approved",
+              "Rejected",
+              "Queued",
+              "Executed",
+              "Cancelled",
+              "Expired"
+            ],
+            "numberOfBytes": "1"
+          },
+          "t_enum(ProposalType)2082": {
+            "label": "enum GovernanceDAO.ProposalType",
+            "members": [
+              "ValidatorAdd",
+              "ValidatorRemove",
+              "ParameterChange",
+              "TreasurySpend",
+              "ContractUpgrade",
+              "FreeText"
+            ],
+            "numberOfBytes": "1"
+          },
+          "t_mapping(t_address,t_bool)": {
+            "label": "mapping(address => bool)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_uint256,t_mapping(t_address,t_bool))": {
+            "label": "mapping(uint256 => mapping(address => bool))",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_uint256,t_struct(Proposal)2133_storage)": {
+            "label": "mapping(uint256 => struct GovernanceDAO.Proposal)",
+            "numberOfBytes": "32"
+          },
+          "t_string_storage": {
+            "label": "string",
+            "numberOfBytes": "32"
+          },
+          "t_struct(Proposal)2133_storage": {
+            "label": "struct GovernanceDAO.Proposal",
+            "members": [
+              {
+                "label": "id",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "registeredSnapshot",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "1"
+              },
+              {
+                "label": "humanSnapshot",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "2"
+              },
+              {
+                "label": "clawSnapshot",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "3"
+              },
+              {
+                "label": "proposalType",
+                "type": "t_enum(ProposalType)2082",
+                "offset": 0,
+                "slot": "4"
+              },
+              {
+                "label": "proposer",
+                "type": "t_address",
+                "offset": 1,
+                "slot": "4"
+              },
+              {
+                "label": "title",
+                "type": "t_string_storage",
+                "offset": 0,
+                "slot": "5"
+              },
+              {
+                "label": "descriptionHash",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "6"
+              },
+              {
+                "label": "executionTarget",
+                "type": "t_address",
+                "offset": 0,
+                "slot": "7"
+              },
+              {
+                "label": "executionData",
+                "type": "t_bytes_storage",
+                "offset": 0,
+                "slot": "8"
+              },
+              {
+                "label": "value",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "9"
+              },
+              {
+                "label": "createdAt",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "10"
+              },
+              {
+                "label": "votingDeadline",
+                "type": "t_uint64",
+                "offset": 8,
+                "slot": "10"
+              },
+              {
+                "label": "executionDeadline",
+                "type": "t_uint64",
+                "offset": 16,
+                "slot": "10"
+              },
+              {
+                "label": "forVotesHuman",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "11"
+              },
+              {
+                "label": "againstVotesHuman",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "12"
+              },
+              {
+                "label": "forVotesClaw",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "13"
+              },
+              {
+                "label": "againstVotesClaw",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "14"
+              },
+              {
+                "label": "abstainVotes",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "15"
+              },
+              {
+                "label": "state",
+                "type": "t_enum(ProposalState)2090",
+                "offset": 0,
+                "slot": "16"
+              }
+            ],
+            "numberOfBytes": "544"
+          },
+          "t_uint256": {
+            "label": "uint256",
+            "numberOfBytes": "32"
+          }
+        },
+        "namespaces": {
+          "erc7201:openzeppelin.storage.Initializable": [
+            {
+              "contract": "Initializable",
+              "label": "_initialized",
+              "type": "t_uint64",
+              "src": "@openzeppelin/contracts/proxy/utils/Initializable.sol:69",
+              "offset": 0,
+              "slot": "0"
+            },
+            {
+              "contract": "Initializable",
+              "label": "_initializing",
+              "type": "t_bool",
+              "src": "@openzeppelin/contracts/proxy/utils/Initializable.sol:73",
+              "offset": 8,
+              "slot": "0"
+            }
+          ]
+        }
+      }
+    },
+    "f7fd64d073d92e76f364a5a208960cf3037dd3bd20f6afc6216f3445138a4fd3": {
+      "address": "0xC872f3ECC688A09Bf8389dD77438Ce3806D3ce5E",
+      "txHash": "0xf4be2d46eaba8ea84f413e2dec71d65ad51fc8e219363c2d6d727c4c516b45b4",
+      "layout": {
+        "solcVersion": "0.8.24",
+        "storage": [
+          {
+            "label": "governance",
+            "offset": 0,
+            "slot": "0",
+            "type": "t_address",
+            "contract": "Treasury",
+            "src": "contracts-src/governance/Treasury.sol:21"
+          },
+          {
+            "label": "owner",
+            "offset": 0,
+            "slot": "1",
+            "type": "t_address",
+            "contract": "Treasury",
+            "src": "contracts-src/governance/Treasury.sol:22"
+          },
+          {
+            "label": "signers",
+            "offset": 0,
+            "slot": "2",
+            "type": "t_array(t_address)5_storage",
+            "contract": "Treasury",
+            "src": "contracts-src/governance/Treasury.sol:23"
+          },
+          {
+            "label": "isSigner",
+            "offset": 0,
+            "slot": "7",
+            "type": "t_mapping(t_address,t_bool)",
+            "contract": "Treasury",
+            "src": "contracts-src/governance/Treasury.sol:24"
+          },
+          {
+            "label": "proposalCount",
+            "offset": 0,
+            "slot": "8",
+            "type": "t_uint256",
+            "contract": "Treasury",
+            "src": "contracts-src/governance/Treasury.sol:35"
+          },
+          {
+            "label": "proposals",
+            "offset": 0,
+            "slot": "9",
+            "type": "t_mapping(t_uint256,t_struct(Proposal)7342_storage)",
+            "contract": "Treasury",
+            "src": "contracts-src/governance/Treasury.sol:36"
+          },
+          {
+            "label": "pendingWithdrawals",
+            "offset": 0,
+            "slot": "10",
+            "type": "t_mapping(t_address,t_uint256)",
+            "contract": "Treasury",
+            "src": "contracts-src/governance/Treasury.sol:37"
+          },
+          {
+            "label": "pendingWithdrawalTotal",
+            "offset": 0,
+            "slot": "11",
+            "type": "t_uint256",
+            "contract": "Treasury",
+            "src": "contracts-src/governance/Treasury.sol:38"
+          },
+          {
+            "label": "__gap",
+            "offset": 0,
+            "slot": "12",
+            "type": "t_array(t_uint256)50_storage",
+            "contract": "Treasury",
+            "src": "contracts-src/governance/Treasury.sol:232"
+          }
+        ],
+        "types": {
+          "t_bool": {
+            "label": "bool",
+            "numberOfBytes": "1"
+          },
+          "t_struct(InitializableStorage)130_storage": {
+            "label": "struct Initializable.InitializableStorage",
+            "members": [
+              {
+                "label": "_initialized",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "_initializing",
+                "type": "t_bool",
+                "offset": 8,
+                "slot": "0"
+              }
+            ],
+            "numberOfBytes": "32"
+          },
+          "t_uint64": {
+            "label": "uint64",
+            "numberOfBytes": "8"
+          },
+          "t_address": {
+            "label": "address",
+            "numberOfBytes": "20"
+          },
+          "t_array(t_address)5_storage": {
+            "label": "address[5]",
+            "numberOfBytes": "160"
+          },
+          "t_array(t_uint256)50_storage": {
+            "label": "uint256[50]",
+            "numberOfBytes": "1600"
+          },
+          "t_mapping(t_address,t_bool)": {
+            "label": "mapping(address => bool)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_address,t_uint256)": {
+            "label": "mapping(address => uint256)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_uint256,t_struct(Proposal)7342_storage)": {
+            "label": "mapping(uint256 => struct Treasury.Proposal)",
+            "numberOfBytes": "32"
+          },
+          "t_struct(Proposal)7342_storage": {
+            "label": "struct Treasury.Proposal",
+            "members": [
+              {
+                "label": "to",
+                "type": "t_address",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "amount",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "1"
+              },
+              {
+                "label": "confirmations",
+                "type": "t_uint8",
+                "offset": 0,
+                "slot": "2"
+              },
+              {
+                "label": "executed",
+                "type": "t_bool",
+                "offset": 1,
+                "slot": "2"
+              },
+              {
+                "label": "governanceApproved",
+                "type": "t_bool",
+                "offset": 2,
+                "slot": "2"
+              },
+              {
+                "label": "confirmed",
+                "type": "t_mapping(t_address,t_bool)",
+                "offset": 0,
+                "slot": "3"
+              }
+            ],
+            "numberOfBytes": "128"
+          },
+          "t_uint256": {
+            "label": "uint256",
+            "numberOfBytes": "32"
+          },
+          "t_uint8": {
+            "label": "uint8",
+            "numberOfBytes": "1"
+          }
+        },
+        "namespaces": {
+          "erc7201:openzeppelin.storage.Initializable": [
+            {
+              "contract": "Initializable",
+              "label": "_initialized",
+              "type": "t_uint64",
+              "src": "@openzeppelin/contracts/proxy/utils/Initializable.sol:69",
+              "offset": 0,
+              "slot": "0"
+            },
+            {
+              "contract": "Initializable",
+              "label": "_initializing",
+              "type": "t_bool",
+              "src": "@openzeppelin/contracts/proxy/utils/Initializable.sol:73",
+              "offset": 8,
+              "slot": "0"
+            }
+          ]
+        }
+      }
+    },
+    "f2df509200def8ff6550f507cbf8dc39a47ba2554091f0185674896c67c43a03": {
+      "address": "0xcBCe014f48370b7a1c2E9e4694D2A52Ffd753C82",
+      "txHash": "0xd209d1b7820b0b6ff9a0a0d1da84ec0a077bf900c1ab9a6a6fc43d262fa3db93",
+      "layout": {
+        "solcVersion": "0.8.24",
+        "storage": [
+          {
+            "label": "DOMAIN_SEPARATOR",
+            "offset": 0,
+            "slot": "0",
+            "type": "t_bytes32",
+            "contract": "SoulRegistry",
+            "src": "contracts-src/governance/SoulRegistry.sol:122"
+          },
+          {
+            "label": "owner",
+            "offset": 0,
+            "slot": "1",
+            "type": "t_address",
+            "contract": "SoulRegistry",
+            "src": "contracts-src/governance/SoulRegistry.sol:124"
+          },
+          {
+            "label": "souls",
+            "offset": 0,
+            "slot": "2",
+            "type": "t_mapping(t_bytes32,t_struct(SoulIdentity)4195_storage)",
+            "contract": "SoulRegistry",
+            "src": "contracts-src/governance/SoulRegistry.sol:130"
+          },
+          {
+            "label": "ownerToAgent",
+            "offset": 0,
+            "slot": "3",
+            "type": "t_mapping(t_address,t_bytes32)",
+            "contract": "SoulRegistry",
+            "src": "contracts-src/governance/SoulRegistry.sol:131"
+          },
+          {
+            "label": "_backupHistory",
+            "offset": 0,
+            "slot": "4",
+            "type": "t_mapping(t_bytes32,t_array(t_struct(BackupAnchor)4210_storage)dyn_storage)",
+            "contract": "SoulRegistry",
+            "src": "contracts-src/governance/SoulRegistry.sol:132"
+          },
+          {
+            "label": "_guardians",
+            "offset": 0,
+            "slot": "5",
+            "type": "t_mapping(t_bytes32,t_array(t_struct(RecoveryGuardian)4217_storage)dyn_storage)",
+            "contract": "SoulRegistry",
+            "src": "contracts-src/governance/SoulRegistry.sol:133"
+          },
+          {
+            "label": "recoveryRequests",
+            "offset": 0,
+            "slot": "6",
+            "type": "t_mapping(t_bytes32,t_struct(RecoveryRequest)4234_storage)",
+            "contract": "SoulRegistry",
+            "src": "contracts-src/governance/SoulRegistry.sol:134"
+          },
+          {
+            "label": "recoveryApprovals",
+            "offset": 0,
+            "slot": "7",
+            "type": "t_mapping(t_bytes32,t_mapping(t_address,t_bool))",
+            "contract": "SoulRegistry",
+            "src": "contracts-src/governance/SoulRegistry.sol:135"
+          },
+          {
+            "label": "recoveryEpoch",
+            "offset": 0,
+            "slot": "8",
+            "type": "t_mapping(t_bytes32,t_uint64)",
+            "contract": "SoulRegistry",
+            "src": "contracts-src/governance/SoulRegistry.sol:136"
+          },
+          {
+            "label": "nonces",
+            "offset": 0,
+            "slot": "9",
+            "type": "t_mapping(t_bytes32,t_uint64)",
+            "contract": "SoulRegistry",
+            "src": "contracts-src/governance/SoulRegistry.sol:137"
+          },
+          {
+            "label": "resurrectionConfigs",
+            "offset": 0,
+            "slot": "10",
+            "type": "t_mapping(t_bytes32,t_struct(ResurrectionConfig)4246_storage)",
+            "contract": "SoulRegistry",
+            "src": "contracts-src/governance/SoulRegistry.sol:140"
+          },
+          {
+            "label": "carriers",
+            "offset": 0,
+            "slot": "11",
+            "type": "t_mapping(t_bytes32,t_struct(Carrier)4265_storage)",
+            "contract": "SoulRegistry",
+            "src": "contracts-src/governance/SoulRegistry.sol:141"
+          },
+          {
+            "label": "resurrectionRequests",
+            "offset": 0,
+            "slot": "12",
+            "type": "t_mapping(t_bytes32,t_struct(ResurrectionRequest)4285_storage)",
+            "contract": "SoulRegistry",
+            "src": "contracts-src/governance/SoulRegistry.sol:142"
+          },
+          {
+            "label": "resurrectionApprovals",
+            "offset": 0,
+            "slot": "13",
+            "type": "t_mapping(t_bytes32,t_mapping(t_address,t_bool))",
+            "contract": "SoulRegistry",
+            "src": "contracts-src/governance/SoulRegistry.sol:143"
+          },
+          {
+            "label": "soulCount",
+            "offset": 0,
+            "slot": "14",
+            "type": "t_uint256",
+            "contract": "SoulRegistry",
+            "src": "contracts-src/governance/SoulRegistry.sol:145"
+          },
+          {
+            "label": "__gap",
+            "offset": 0,
+            "slot": "15",
+            "type": "t_array(t_uint256)50_storage",
+            "contract": "SoulRegistry",
+            "src": "contracts-src/governance/SoulRegistry.sol:965"
+          }
+        ],
+        "types": {
+          "t_bool": {
+            "label": "bool",
+            "numberOfBytes": "1"
+          },
+          "t_struct(InitializableStorage)130_storage": {
+            "label": "struct Initializable.InitializableStorage",
+            "members": [
+              {
+                "label": "_initialized",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "_initializing",
+                "type": "t_bool",
+                "offset": 8,
+                "slot": "0"
+              }
+            ],
+            "numberOfBytes": "32"
+          },
+          "t_uint64": {
+            "label": "uint64",
+            "numberOfBytes": "8"
+          },
+          "t_address": {
+            "label": "address",
+            "numberOfBytes": "20"
+          },
+          "t_array(t_struct(BackupAnchor)4210_storage)dyn_storage": {
+            "label": "struct SoulRegistry.BackupAnchor[]",
+            "numberOfBytes": "32"
+          },
+          "t_array(t_struct(RecoveryGuardian)4217_storage)dyn_storage": {
+            "label": "struct SoulRegistry.RecoveryGuardian[]",
+            "numberOfBytes": "32"
+          },
+          "t_array(t_uint256)50_storage": {
+            "label": "uint256[50]",
+            "numberOfBytes": "1600"
+          },
+          "t_bytes32": {
+            "label": "bytes32",
+            "numberOfBytes": "32"
+          },
+          "t_enum(ResurrectionTrigger)4237": {
+            "label": "enum SoulRegistry.ResurrectionTrigger",
+            "members": [
+              "OwnerKey",
+              "GuardianVote"
+            ],
+            "numberOfBytes": "1"
+          },
+          "t_mapping(t_address,t_bool)": {
+            "label": "mapping(address => bool)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_address,t_bytes32)": {
+            "label": "mapping(address => bytes32)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_array(t_struct(BackupAnchor)4210_storage)dyn_storage)": {
+            "label": "mapping(bytes32 => struct SoulRegistry.BackupAnchor[])",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_array(t_struct(RecoveryGuardian)4217_storage)dyn_storage)": {
+            "label": "mapping(bytes32 => struct SoulRegistry.RecoveryGuardian[])",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_mapping(t_address,t_bool))": {
+            "label": "mapping(bytes32 => mapping(address => bool))",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_struct(Carrier)4265_storage)": {
+            "label": "mapping(bytes32 => struct SoulRegistry.Carrier)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_struct(RecoveryRequest)4234_storage)": {
+            "label": "mapping(bytes32 => struct SoulRegistry.RecoveryRequest)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_struct(ResurrectionConfig)4246_storage)": {
+            "label": "mapping(bytes32 => struct SoulRegistry.ResurrectionConfig)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_struct(ResurrectionRequest)4285_storage)": {
+            "label": "mapping(bytes32 => struct SoulRegistry.ResurrectionRequest)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_struct(SoulIdentity)4195_storage)": {
+            "label": "mapping(bytes32 => struct SoulRegistry.SoulIdentity)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_uint64)": {
+            "label": "mapping(bytes32 => uint64)",
+            "numberOfBytes": "32"
+          },
+          "t_string_storage": {
+            "label": "string",
+            "numberOfBytes": "32"
+          },
+          "t_struct(BackupAnchor)4210_storage": {
+            "label": "struct SoulRegistry.BackupAnchor",
+            "members": [
+              {
+                "label": "manifestCid",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "dataMerkleRoot",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "1"
+              },
+              {
+                "label": "anchoredAt",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "2"
+              },
+              {
+                "label": "fileCount",
+                "type": "t_uint32",
+                "offset": 8,
+                "slot": "2"
+              },
+              {
+                "label": "totalBytes",
+                "type": "t_uint64",
+                "offset": 12,
+                "slot": "2"
+              },
+              {
+                "label": "backupType",
+                "type": "t_uint8",
+                "offset": 20,
+                "slot": "2"
+              },
+              {
+                "label": "parentManifestCid",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "3"
+              }
+            ],
+            "numberOfBytes": "128"
+          },
+          "t_struct(Carrier)4265_storage": {
+            "label": "struct SoulRegistry.Carrier",
+            "members": [
+              {
+                "label": "carrierId",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "owner",
+                "type": "t_address",
+                "offset": 0,
+                "slot": "1"
+              },
+              {
+                "label": "endpoint",
+                "type": "t_string_storage",
+                "offset": 0,
+                "slot": "2"
+              },
+              {
+                "label": "registeredAt",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "3"
+              },
+              {
+                "label": "cpuMillicores",
+                "type": "t_uint64",
+                "offset": 8,
+                "slot": "3"
+              },
+              {
+                "label": "memoryMB",
+                "type": "t_uint64",
+                "offset": 16,
+                "slot": "3"
+              },
+              {
+                "label": "storageMB",
+                "type": "t_uint64",
+                "offset": 24,
+                "slot": "3"
+              },
+              {
+                "label": "available",
+                "type": "t_bool",
+                "offset": 0,
+                "slot": "4"
+              },
+              {
+                "label": "active",
+                "type": "t_bool",
+                "offset": 1,
+                "slot": "4"
+              }
+            ],
+            "numberOfBytes": "160"
+          },
+          "t_struct(RecoveryGuardian)4217_storage": {
+            "label": "struct SoulRegistry.RecoveryGuardian",
+            "members": [
+              {
+                "label": "guardian",
+                "type": "t_address",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "addedAt",
+                "type": "t_uint64",
+                "offset": 20,
+                "slot": "0"
+              },
+              {
+                "label": "active",
+                "type": "t_bool",
+                "offset": 28,
+                "slot": "0"
+              }
+            ],
+            "numberOfBytes": "32"
+          },
+          "t_struct(RecoveryRequest)4234_storage": {
+            "label": "struct SoulRegistry.RecoveryRequest",
+            "members": [
+              {
+                "label": "agentId",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "newOwner",
+                "type": "t_address",
+                "offset": 0,
+                "slot": "1"
+              },
+              {
+                "label": "initiator",
+                "type": "t_address",
+                "offset": 0,
+                "slot": "2"
+              },
+              {
+                "label": "initiatedAt",
+                "type": "t_uint64",
+                "offset": 20,
+                "slot": "2"
+              },
+              {
+                "label": "recoveryEpoch",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "3"
+              },
+              {
+                "label": "approvalCount",
+                "type": "t_uint8",
+                "offset": 8,
+                "slot": "3"
+              },
+              {
+                "label": "guardianSnapshot",
+                "type": "t_uint8",
+                "offset": 9,
+                "slot": "3"
+              },
+              {
+                "label": "executed",
+                "type": "t_bool",
+                "offset": 10,
+                "slot": "3"
+              }
+            ],
+            "numberOfBytes": "128"
+          },
+          "t_struct(ResurrectionConfig)4246_storage": {
+            "label": "struct SoulRegistry.ResurrectionConfig",
+            "members": [
+              {
+                "label": "resurrectionKeyHash",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "maxOfflineDuration",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "1"
+              },
+              {
+                "label": "lastHeartbeat",
+                "type": "t_uint64",
+                "offset": 8,
+                "slot": "1"
+              },
+              {
+                "label": "configured",
+                "type": "t_bool",
+                "offset": 16,
+                "slot": "1"
+              }
+            ],
+            "numberOfBytes": "64"
+          },
+          "t_struct(ResurrectionRequest)4285_storage": {
+            "label": "struct SoulRegistry.ResurrectionRequest",
+            "members": [
+              {
+                "label": "agentId",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "carrierId",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "1"
+              },
+              {
+                "label": "initiator",
+                "type": "t_address",
+                "offset": 0,
+                "slot": "2"
+              },
+              {
+                "label": "initiatedAt",
+                "type": "t_uint64",
+                "offset": 20,
+                "slot": "2"
+              },
+              {
+                "label": "approvalCount",
+                "type": "t_uint8",
+                "offset": 28,
+                "slot": "2"
+              },
+              {
+                "label": "guardianSnapshot",
+                "type": "t_uint8",
+                "offset": 29,
+                "slot": "2"
+              },
+              {
+                "label": "executed",
+                "type": "t_bool",
+                "offset": 30,
+                "slot": "2"
+              },
+              {
+                "label": "carrierConfirmed",
+                "type": "t_bool",
+                "offset": 31,
+                "slot": "2"
+              },
+              {
+                "label": "trigger",
+                "type": "t_enum(ResurrectionTrigger)4237",
+                "offset": 0,
+                "slot": "3"
+              }
+            ],
+            "numberOfBytes": "128"
+          },
+          "t_struct(SoulIdentity)4195_storage": {
+            "label": "struct SoulRegistry.SoulIdentity",
+            "members": [
+              {
+                "label": "agentId",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "owner",
+                "type": "t_address",
+                "offset": 0,
+                "slot": "1"
+              },
+              {
+                "label": "identityCid",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "2"
+              },
+              {
+                "label": "latestSnapshotCid",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "3"
+              },
+              {
+                "label": "registeredAt",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "4"
+              },
+              {
+                "label": "lastBackupAt",
+                "type": "t_uint64",
+                "offset": 8,
+                "slot": "4"
+              },
+              {
+                "label": "backupCount",
+                "type": "t_uint32",
+                "offset": 16,
+                "slot": "4"
+              },
+              {
+                "label": "version",
+                "type": "t_uint16",
+                "offset": 20,
+                "slot": "4"
+              },
+              {
+                "label": "active",
+                "type": "t_bool",
+                "offset": 22,
+                "slot": "4"
+              }
+            ],
+            "numberOfBytes": "160"
+          },
+          "t_uint16": {
+            "label": "uint16",
+            "numberOfBytes": "2"
+          },
+          "t_uint256": {
+            "label": "uint256",
+            "numberOfBytes": "32"
+          },
+          "t_uint32": {
+            "label": "uint32",
+            "numberOfBytes": "4"
+          },
+          "t_uint8": {
+            "label": "uint8",
+            "numberOfBytes": "1"
+          }
+        },
+        "namespaces": {
+          "erc7201:openzeppelin.storage.Initializable": [
+            {
+              "contract": "Initializable",
+              "label": "_initialized",
+              "type": "t_uint64",
+              "src": "@openzeppelin/contracts/proxy/utils/Initializable.sol:69",
+              "offset": 0,
+              "slot": "0"
+            },
+            {
+              "contract": "Initializable",
+              "label": "_initializing",
+              "type": "t_bool",
+              "src": "@openzeppelin/contracts/proxy/utils/Initializable.sol:73",
+              "offset": 8,
+              "slot": "0"
+            }
+          ]
+        }
+      }
+    },
+    "af24d215a380e6decaf453827a1259e89fa336490caa8d7ccf5592f1f7d65192": {
+      "address": "0x7f168A83b332dF962a253F42cFBbbDF5d8279C5f",
+      "txHash": "0x4659a9d9c0217fa2bdc8b5b01e288028f68dea90a15150f7b331fc543b111c91",
+      "layout": {
+        "solcVersion": "0.8.24",
+        "storage": [
+          {
+            "label": "DOMAIN_SEPARATOR",
+            "offset": 0,
+            "slot": "0",
+            "type": "t_bytes32",
+            "contract": "DIDRegistry",
+            "src": "contracts-src/governance/DIDRegistry.sol:124"
+          },
+          {
+            "label": "soulRegistry",
+            "offset": 0,
+            "slot": "1",
+            "type": "t_contract(ISoulRegistry)1529",
+            "contract": "DIDRegistry",
+            "src": "contracts-src/governance/DIDRegistry.sol:125"
+          },
+          {
+            "label": "owner",
+            "offset": 0,
+            "slot": "2",
+            "type": "t_address",
+            "contract": "DIDRegistry",
+            "src": "contracts-src/governance/DIDRegistry.sol:127"
+          },
+          {
+            "label": "didDocumentCid",
+            "offset": 0,
+            "slot": "3",
+            "type": "t_mapping(t_bytes32,t_bytes32)",
+            "contract": "DIDRegistry",
+            "src": "contracts-src/governance/DIDRegistry.sol:134"
+          },
+          {
+            "label": "didDocumentUpdatedAt",
+            "offset": 0,
+            "slot": "4",
+            "type": "t_mapping(t_bytes32,t_uint64)",
+            "contract": "DIDRegistry",
+            "src": "contracts-src/governance/DIDRegistry.sol:135"
+          },
+          {
+            "label": "_verificationMethods",
+            "offset": 0,
+            "slot": "5",
+            "type": "t_mapping(t_bytes32,t_array(t_struct(VerificationMethod)1546_storage)dyn_storage)",
+            "contract": "DIDRegistry",
+            "src": "contracts-src/governance/DIDRegistry.sol:138"
+          },
+          {
+            "label": "delegations",
+            "offset": 0,
+            "slot": "6",
+            "type": "t_mapping(t_bytes32,t_struct(DelegationRecord)1565_storage)",
+            "contract": "DIDRegistry",
+            "src": "contracts-src/governance/DIDRegistry.sol:141"
+          },
+          {
+            "label": "_agentDelegations",
+            "offset": 0,
+            "slot": "7",
+            "type": "t_mapping(t_bytes32,t_array(t_bytes32)dyn_storage)",
+            "contract": "DIDRegistry",
+            "src": "contracts-src/governance/DIDRegistry.sol:142"
+          },
+          {
+            "label": "lastDelegationTimestamp",
+            "offset": 0,
+            "slot": "8",
+            "type": "t_mapping(t_bytes32,t_uint64)",
+            "contract": "DIDRegistry",
+            "src": "contracts-src/governance/DIDRegistry.sol:143"
+          },
+          {
+            "label": "globalRevocationEpoch",
+            "offset": 0,
+            "slot": "9",
+            "type": "t_mapping(t_bytes32,t_uint64)",
+            "contract": "DIDRegistry",
+            "src": "contracts-src/governance/DIDRegistry.sol:144"
+          },
+          {
+            "label": "agentCapabilities",
+            "offset": 0,
+            "slot": "10",
+            "type": "t_mapping(t_bytes32,t_uint16)",
+            "contract": "DIDRegistry",
+            "src": "contracts-src/governance/DIDRegistry.sol:147"
+          },
+          {
+            "label": "ephemeralIdentities",
+            "offset": 0,
+            "slot": "11",
+            "type": "t_mapping(t_bytes32,t_struct(EphemeralIdentity)1578_storage)",
+            "contract": "DIDRegistry",
+            "src": "contracts-src/governance/DIDRegistry.sol:150"
+          },
+          {
+            "label": "agentLineage",
+            "offset": 0,
+            "slot": "12",
+            "type": "t_mapping(t_bytes32,t_struct(Lineage)1585_storage)",
+            "contract": "DIDRegistry",
+            "src": "contracts-src/governance/DIDRegistry.sol:153"
+          },
+          {
+            "label": "credentials",
+            "offset": 0,
+            "slot": "13",
+            "type": "t_mapping(t_bytes32,t_struct(CredentialAnchor)1600_storage)",
+            "contract": "DIDRegistry",
+            "src": "contracts-src/governance/DIDRegistry.sol:156"
+          },
+          {
+            "label": "nonces",
+            "offset": 0,
+            "slot": "14",
+            "type": "t_mapping(t_bytes32,t_uint64)",
+            "contract": "DIDRegistry",
+            "src": "contracts-src/governance/DIDRegistry.sol:159"
+          },
+          {
+            "label": "__gap",
+            "offset": 0,
+            "slot": "15",
+            "type": "t_array(t_uint256)50_storage",
+            "contract": "DIDRegistry",
+            "src": "contracts-src/governance/DIDRegistry.sol:661"
+          }
+        ],
+        "types": {
+          "t_bool": {
+            "label": "bool",
+            "numberOfBytes": "1"
+          },
+          "t_struct(InitializableStorage)130_storage": {
+            "label": "struct Initializable.InitializableStorage",
+            "members": [
+              {
+                "label": "_initialized",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "_initializing",
+                "type": "t_bool",
+                "offset": 8,
+                "slot": "0"
+              }
+            ],
+            "numberOfBytes": "32"
+          },
+          "t_uint64": {
+            "label": "uint64",
+            "numberOfBytes": "8"
+          },
+          "t_address": {
+            "label": "address",
+            "numberOfBytes": "20"
+          },
+          "t_array(t_bytes32)dyn_storage": {
+            "label": "bytes32[]",
+            "numberOfBytes": "32"
+          },
+          "t_array(t_struct(VerificationMethod)1546_storage)dyn_storage": {
+            "label": "struct DIDRegistry.VerificationMethod[]",
+            "numberOfBytes": "32"
+          },
+          "t_array(t_uint256)50_storage": {
+            "label": "uint256[50]",
+            "numberOfBytes": "1600"
+          },
+          "t_bytes32": {
+            "label": "bytes32",
+            "numberOfBytes": "32"
+          },
+          "t_contract(ISoulRegistry)1529": {
+            "label": "contract ISoulRegistry",
+            "numberOfBytes": "20"
+          },
+          "t_mapping(t_bytes32,t_array(t_bytes32)dyn_storage)": {
+            "label": "mapping(bytes32 => bytes32[])",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_array(t_struct(VerificationMethod)1546_storage)dyn_storage)": {
+            "label": "mapping(bytes32 => struct DIDRegistry.VerificationMethod[])",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_bytes32)": {
+            "label": "mapping(bytes32 => bytes32)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_struct(CredentialAnchor)1600_storage)": {
+            "label": "mapping(bytes32 => struct DIDRegistry.CredentialAnchor)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_struct(DelegationRecord)1565_storage)": {
+            "label": "mapping(bytes32 => struct DIDRegistry.DelegationRecord)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_struct(EphemeralIdentity)1578_storage)": {
+            "label": "mapping(bytes32 => struct DIDRegistry.EphemeralIdentity)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_struct(Lineage)1585_storage)": {
+            "label": "mapping(bytes32 => struct DIDRegistry.Lineage)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_uint16)": {
+            "label": "mapping(bytes32 => uint16)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_uint64)": {
+            "label": "mapping(bytes32 => uint64)",
+            "numberOfBytes": "32"
+          },
+          "t_struct(CredentialAnchor)1600_storage": {
+            "label": "struct DIDRegistry.CredentialAnchor",
+            "members": [
+              {
+                "label": "credentialHash",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "issuerAgentId",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "1"
+              },
+              {
+                "label": "subjectAgentId",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "2"
+              },
+              {
+                "label": "credentialCid",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "3"
+              },
+              {
+                "label": "issuedAt",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "4"
+              },
+              {
+                "label": "expiresAt",
+                "type": "t_uint64",
+                "offset": 8,
+                "slot": "4"
+              },
+              {
+                "label": "revoked",
+                "type": "t_bool",
+                "offset": 16,
+                "slot": "4"
+              }
+            ],
+            "numberOfBytes": "160"
+          },
+          "t_struct(DelegationRecord)1565_storage": {
+            "label": "struct DIDRegistry.DelegationRecord",
+            "members": [
+              {
+                "label": "delegator",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "delegatee",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "1"
+              },
+              {
+                "label": "parentDelegation",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "2"
+              },
+              {
+                "label": "scopeHash",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "3"
+              },
+              {
+                "label": "issuedAt",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "4"
+              },
+              {
+                "label": "expiresAt",
+                "type": "t_uint64",
+                "offset": 8,
+                "slot": "4"
+              },
+              {
+                "label": "revocationEpoch",
+                "type": "t_uint64",
+                "offset": 16,
+                "slot": "4"
+              },
+              {
+                "label": "depth",
+                "type": "t_uint8",
+                "offset": 24,
+                "slot": "4"
+              },
+              {
+                "label": "revoked",
+                "type": "t_bool",
+                "offset": 25,
+                "slot": "4"
+              }
+            ],
+            "numberOfBytes": "160"
+          },
+          "t_struct(EphemeralIdentity)1578_storage": {
+            "label": "struct DIDRegistry.EphemeralIdentity",
+            "members": [
+              {
+                "label": "parentAgentId",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "ephemeralAddress",
+                "type": "t_address",
+                "offset": 0,
+                "slot": "1"
+              },
+              {
+                "label": "scopeHash",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "2"
+              },
+              {
+                "label": "createdAt",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "3"
+              },
+              {
+                "label": "expiresAt",
+                "type": "t_uint64",
+                "offset": 8,
+                "slot": "3"
+              },
+              {
+                "label": "active",
+                "type": "t_bool",
+                "offset": 16,
+                "slot": "3"
+              }
+            ],
+            "numberOfBytes": "128"
+          },
+          "t_struct(Lineage)1585_storage": {
+            "label": "struct DIDRegistry.Lineage",
+            "members": [
+              {
+                "label": "parentAgentId",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "forkHeight",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "1"
+              },
+              {
+                "label": "generation",
+                "type": "t_uint8",
+                "offset": 8,
+                "slot": "1"
+              }
+            ],
+            "numberOfBytes": "64"
+          },
+          "t_struct(VerificationMethod)1546_storage": {
+            "label": "struct DIDRegistry.VerificationMethod",
+            "members": [
+              {
+                "label": "keyId",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "keyAddress",
+                "type": "t_address",
+                "offset": 0,
+                "slot": "1"
+              },
+              {
+                "label": "keyPurpose",
+                "type": "t_uint8",
+                "offset": 20,
+                "slot": "1"
+              },
+              {
+                "label": "addedAt",
+                "type": "t_uint64",
+                "offset": 21,
+                "slot": "1"
+              },
+              {
+                "label": "revokedAt",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "2"
+              },
+              {
+                "label": "active",
+                "type": "t_bool",
+                "offset": 8,
+                "slot": "2"
+              }
+            ],
+            "numberOfBytes": "96"
+          },
+          "t_uint16": {
+            "label": "uint16",
+            "numberOfBytes": "2"
+          },
+          "t_uint256": {
+            "label": "uint256",
+            "numberOfBytes": "32"
+          },
+          "t_uint8": {
+            "label": "uint8",
+            "numberOfBytes": "1"
+          }
+        },
+        "namespaces": {
+          "erc7201:openzeppelin.storage.Initializable": [
+            {
+              "contract": "Initializable",
+              "label": "_initialized",
+              "type": "t_uint64",
+              "src": "@openzeppelin/contracts/proxy/utils/Initializable.sol:69",
+              "offset": 0,
+              "slot": "0"
+            },
+            {
+              "contract": "Initializable",
+              "label": "_initializing",
+              "type": "t_bool",
+              "src": "@openzeppelin/contracts/proxy/utils/Initializable.sol:73",
+              "offset": 8,
+              "slot": "0"
+            }
+          ]
+        }
+      }
+    },
+    "cab8610520f2b487f5d41a37af21d6a496ebcf8a4f020573faf60908bc182253": {
+      "address": "0xB52F4c280DdadE42e8fE76AA962C0D4f043CEdE7",
+      "txHash": "0x032c910d562cd84bccc95c8a28b7523e9ad5984250e14d6f70a501d82501d697",
+      "layout": {
+        "solcVersion": "0.8.24",
+        "storage": [
+          {
+            "label": "_cidMap",
+            "offset": 0,
+            "slot": "0",
+            "type": "t_mapping(t_bytes32,t_string_storage)",
+            "contract": "CidRegistry",
+            "src": "contracts-src/governance/CidRegistry.sol:29"
+          },
+          {
+            "label": "owner",
+            "offset": 0,
+            "slot": "1",
+            "type": "t_address",
+            "contract": "CidRegistry",
+            "src": "contracts-src/governance/CidRegistry.sol:34"
+          },
+          {
+            "label": "__gap",
+            "offset": 0,
+            "slot": "2",
+            "type": "t_array(t_uint256)50_storage",
+            "contract": "CidRegistry",
+            "src": "contracts-src/governance/CidRegistry.sol:139"
+          }
+        ],
+        "types": {
+          "t_bool": {
+            "label": "bool",
+            "numberOfBytes": "1"
+          },
+          "t_struct(InitializableStorage)130_storage": {
+            "label": "struct Initializable.InitializableStorage",
+            "members": [
+              {
+                "label": "_initialized",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "_initializing",
+                "type": "t_bool",
+                "offset": 8,
+                "slot": "0"
+              }
+            ],
+            "numberOfBytes": "32"
+          },
+          "t_uint64": {
+            "label": "uint64",
+            "numberOfBytes": "8"
+          },
+          "t_address": {
+            "label": "address",
+            "numberOfBytes": "20"
+          },
+          "t_array(t_uint256)50_storage": {
+            "label": "uint256[50]",
+            "numberOfBytes": "1600"
+          },
+          "t_bytes32": {
+            "label": "bytes32",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_string_storage)": {
+            "label": "mapping(bytes32 => string)",
+            "numberOfBytes": "32"
+          },
+          "t_string_storage": {
+            "label": "string",
+            "numberOfBytes": "32"
+          },
+          "t_uint256": {
+            "label": "uint256",
+            "numberOfBytes": "32"
+          }
+        },
+        "namespaces": {
+          "erc7201:openzeppelin.storage.Initializable": [
+            {
+              "contract": "Initializable",
+              "label": "_initialized",
+              "type": "t_uint64",
+              "src": "@openzeppelin/contracts/proxy/utils/Initializable.sol:69",
+              "offset": 0,
+              "slot": "0"
+            },
+            {
+              "contract": "Initializable",
+              "label": "_initializing",
+              "type": "t_bool",
+              "src": "@openzeppelin/contracts/proxy/utils/Initializable.sol:73",
+              "offset": 8,
+              "slot": "0"
+            }
+          ]
+        }
+      }
+    },
+    "ed714bec19d620e838d59cb1c63d2f213fcccceee4e9bc6c5bc824a5d0749011": {
+      "address": "0x6a7Cb4f4E742F471c10a86F0813FbfF3dDC840ee",
+      "txHash": "0xbcf4970adc46f006c2c74fd92685b61ec2730df36575bddafa48025cf54f2c05",
+      "layout": {
+        "solcVersion": "0.8.24",
+        "storage": [
+          {
+            "label": "owner",
+            "offset": 0,
+            "slot": "0",
+            "type": "t_address",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:15"
+          },
+          {
+            "label": "roles",
+            "offset": 0,
+            "slot": "1",
+            "type": "t_mapping(t_bytes32,t_mapping(t_address,t_bool))",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:16"
+          },
+          {
+            "label": "nodes",
+            "offset": 0,
+            "slot": "2",
+            "type": "t_mapping(t_bytes32,t_struct(NodeRecord)16254_storage)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:18"
+          },
+          {
+            "label": "nodeOperator",
+            "offset": 0,
+            "slot": "3",
+            "type": "t_mapping(t_bytes32,t_address)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:19"
+          },
+          {
+            "label": "operatorNodeCount",
+            "offset": 0,
+            "slot": "4",
+            "type": "t_mapping(t_address,t_uint8)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:20"
+          },
+          {
+            "label": "epochBatches",
+            "offset": 0,
+            "slot": "5",
+            "type": "t_mapping(t_uint64,t_array(t_bytes32)dyn_storage)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:22"
+          },
+          {
+            "label": "batches",
+            "offset": 0,
+            "slot": "6",
+            "type": "t_mapping(t_bytes32,t_struct(BatchRecord)16271_storage)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:23"
+          },
+          {
+            "label": "batchSampleCount",
+            "offset": 0,
+            "slot": "7",
+            "type": "t_mapping(t_bytes32,t_uint32)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:24"
+          },
+          {
+            "label": "batchSampleCommitment",
+            "offset": 0,
+            "slot": "8",
+            "type": "t_mapping(t_bytes32,t_bytes32)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:25"
+          },
+          {
+            "label": "batchSampledLeaf",
+            "offset": 0,
+            "slot": "9",
+            "type": "t_mapping(t_bytes32,t_mapping(t_bytes32,t_bool))",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:26"
+          },
+          {
+            "label": "usedReplayKeys",
+            "offset": 0,
+            "slot": "10",
+            "type": "t_mapping(t_bytes32,t_bool)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:29"
+          },
+          {
+            "label": "epochFinalized",
+            "offset": 0,
+            "slot": "11",
+            "type": "t_mapping(t_uint64,t_bool)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:32"
+          },
+          {
+            "label": "epochSettlementRoot",
+            "offset": 0,
+            "slot": "12",
+            "type": "t_mapping(t_uint64,t_bytes32)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:33"
+          },
+          {
+            "label": "epochValidBatchCount",
+            "offset": 0,
+            "slot": "13",
+            "type": "t_mapping(t_uint64,t_uint32)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:34"
+          },
+          {
+            "label": "unbondRequested",
+            "offset": 0,
+            "slot": "14",
+            "type": "t_mapping(t_bytes32,t_bool)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:35"
+          },
+          {
+            "label": "endpointCommitmentUsed",
+            "offset": 0,
+            "slot": "15",
+            "type": "t_mapping(t_bytes32,t_bool)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:38"
+          },
+          {
+            "label": "rewardPoolBalance",
+            "offset": 0,
+            "slot": "16",
+            "type": "t_uint256",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:42"
+          },
+          {
+            "label": "epochRewardsDistributed",
+            "offset": 0,
+            "slot": "17",
+            "type": "t_mapping(t_uint64,t_bool)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:42"
+          },
+          {
+            "label": "pendingRewards",
+            "offset": 0,
+            "slot": "18",
+            "type": "t_mapping(t_bytes32,t_uint256)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:43"
+          },
+          {
+            "label": "__gap",
+            "offset": 0,
+            "slot": "19",
+            "type": "t_array(t_uint256)50_storage",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:93"
+          },
+          {
+            "label": "__gap",
+            "offset": 0,
+            "slot": "69",
+            "type": "t_array(t_uint256)50_storage",
+            "contract": "PoSeManager",
+            "src": "contracts-src/settlement/PoSeManager.sol:457"
+          }
+        ],
+        "types": {
+          "t_bool": {
+            "label": "bool",
+            "numberOfBytes": "1"
+          },
+          "t_struct(InitializableStorage)130_storage": {
+            "label": "struct Initializable.InitializableStorage",
+            "members": [
+              {
+                "label": "_initialized",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "_initializing",
+                "type": "t_bool",
+                "offset": 8,
+                "slot": "0"
+              }
+            ],
+            "numberOfBytes": "32"
+          },
+          "t_uint64": {
+            "label": "uint64",
+            "numberOfBytes": "8"
+          },
+          "t_address": {
+            "label": "address",
+            "numberOfBytes": "20"
+          },
+          "t_array(t_bytes32)dyn_storage": {
+            "label": "bytes32[]",
+            "numberOfBytes": "32"
+          },
+          "t_array(t_uint256)50_storage": {
+            "label": "uint256[50]",
+            "numberOfBytes": "1600"
+          },
+          "t_bytes32": {
+            "label": "bytes32",
+            "numberOfBytes": "32"
+          },
+          "t_bytes_storage": {
+            "label": "bytes",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_address,t_bool)": {
+            "label": "mapping(address => bool)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_address,t_uint8)": {
+            "label": "mapping(address => uint8)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_address)": {
+            "label": "mapping(bytes32 => address)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_bool)": {
+            "label": "mapping(bytes32 => bool)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_bytes32)": {
+            "label": "mapping(bytes32 => bytes32)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_mapping(t_address,t_bool))": {
+            "label": "mapping(bytes32 => mapping(address => bool))",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_mapping(t_bytes32,t_bool))": {
+            "label": "mapping(bytes32 => mapping(bytes32 => bool))",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_struct(BatchRecord)16271_storage)": {
+            "label": "mapping(bytes32 => struct PoSeTypes.BatchRecord)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_struct(NodeRecord)16254_storage)": {
+            "label": "mapping(bytes32 => struct PoSeTypes.NodeRecord)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_uint256)": {
+            "label": "mapping(bytes32 => uint256)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_uint32)": {
+            "label": "mapping(bytes32 => uint32)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_uint64,t_array(t_bytes32)dyn_storage)": {
+            "label": "mapping(uint64 => bytes32[])",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_uint64,t_bool)": {
+            "label": "mapping(uint64 => bool)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_uint64,t_bytes32)": {
+            "label": "mapping(uint64 => bytes32)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_uint64,t_uint32)": {
+            "label": "mapping(uint64 => uint32)",
+            "numberOfBytes": "32"
+          },
+          "t_struct(BatchRecord)16271_storage": {
+            "label": "struct PoSeTypes.BatchRecord",
+            "members": [
+              {
+                "label": "epochId",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "merkleRoot",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "1"
+              },
+              {
+                "label": "summaryHash",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "2"
+              },
+              {
+                "label": "aggregator",
+                "type": "t_address",
+                "offset": 0,
+                "slot": "3"
+              },
+              {
+                "label": "submittedAtEpoch",
+                "type": "t_uint64",
+                "offset": 20,
+                "slot": "3"
+              },
+              {
+                "label": "disputeDeadlineEpoch",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "4"
+              },
+              {
+                "label": "finalized",
+                "type": "t_bool",
+                "offset": 8,
+                "slot": "4"
+              },
+              {
+                "label": "disputed",
+                "type": "t_bool",
+                "offset": 9,
+                "slot": "4"
+              }
+            ],
+            "numberOfBytes": "160"
+          },
+          "t_struct(NodeRecord)16254_storage": {
+            "label": "struct PoSeTypes.NodeRecord",
+            "members": [
+              {
+                "label": "nodeId",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "pubkeyNode",
+                "type": "t_bytes_storage",
+                "offset": 0,
+                "slot": "1"
+              },
+              {
+                "label": "serviceFlags",
+                "type": "t_uint8",
+                "offset": 0,
+                "slot": "2"
+              },
+              {
+                "label": "serviceCommitment",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "3"
+              },
+              {
+                "label": "endpointCommitment",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "4"
+              },
+              {
+                "label": "bondAmount",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "5"
+              },
+              {
+                "label": "metadataHash",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "6"
+              },
+              {
+                "label": "registeredAtEpoch",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "7"
+              },
+              {
+                "label": "unlockEpoch",
+                "type": "t_uint64",
+                "offset": 8,
+                "slot": "7"
+              },
+              {
+                "label": "active",
+                "type": "t_bool",
+                "offset": 16,
+                "slot": "7"
+              }
+            ],
+            "numberOfBytes": "256"
+          },
+          "t_uint256": {
+            "label": "uint256",
+            "numberOfBytes": "32"
+          },
+          "t_uint32": {
+            "label": "uint32",
+            "numberOfBytes": "4"
+          },
+          "t_uint8": {
+            "label": "uint8",
+            "numberOfBytes": "1"
+          }
+        },
+        "namespaces": {
+          "erc7201:openzeppelin.storage.Initializable": [
+            {
+              "contract": "Initializable",
+              "label": "_initialized",
+              "type": "t_uint64",
+              "src": "@openzeppelin/contracts/proxy/utils/Initializable.sol:69",
+              "offset": 0,
+              "slot": "0"
+            },
+            {
+              "contract": "Initializable",
+              "label": "_initializing",
+              "type": "t_bool",
+              "src": "@openzeppelin/contracts/proxy/utils/Initializable.sol:73",
+              "offset": 8,
+              "slot": "0"
+            }
+          ]
+        }
+      }
+    },
+    "a87270048e61ca34859db0aadcb9e52328f4890249e5821df5aef3fc7d3f7ebe": {
+      "address": "0xcb9FFB3B1d3dEAAeFd6CD0c735F06AFA4450553e",
+      "txHash": "0x095de376610737a710ef8be0648df4ecdaba73f5d9332c10cc11f444e44acc6e",
+      "layout": {
+        "solcVersion": "0.8.24",
+        "storage": [
+          {
+            "label": "owner",
+            "offset": 0,
+            "slot": "0",
+            "type": "t_address",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:15"
+          },
+          {
+            "label": "roles",
+            "offset": 0,
+            "slot": "1",
+            "type": "t_mapping(t_bytes32,t_mapping(t_address,t_bool))",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:16"
+          },
+          {
+            "label": "nodes",
+            "offset": 0,
+            "slot": "2",
+            "type": "t_mapping(t_bytes32,t_struct(NodeRecord)16254_storage)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:18"
+          },
+          {
+            "label": "nodeOperator",
+            "offset": 0,
+            "slot": "3",
+            "type": "t_mapping(t_bytes32,t_address)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:19"
+          },
+          {
+            "label": "operatorNodeCount",
+            "offset": 0,
+            "slot": "4",
+            "type": "t_mapping(t_address,t_uint8)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:20"
+          },
+          {
+            "label": "epochBatches",
+            "offset": 0,
+            "slot": "5",
+            "type": "t_mapping(t_uint64,t_array(t_bytes32)dyn_storage)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:22"
+          },
+          {
+            "label": "batches",
+            "offset": 0,
+            "slot": "6",
+            "type": "t_mapping(t_bytes32,t_struct(BatchRecord)16271_storage)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:23"
+          },
+          {
+            "label": "batchSampleCount",
+            "offset": 0,
+            "slot": "7",
+            "type": "t_mapping(t_bytes32,t_uint32)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:24"
+          },
+          {
+            "label": "batchSampleCommitment",
+            "offset": 0,
+            "slot": "8",
+            "type": "t_mapping(t_bytes32,t_bytes32)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:25"
+          },
+          {
+            "label": "batchSampledLeaf",
+            "offset": 0,
+            "slot": "9",
+            "type": "t_mapping(t_bytes32,t_mapping(t_bytes32,t_bool))",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:26"
+          },
+          {
+            "label": "usedReplayKeys",
+            "offset": 0,
+            "slot": "10",
+            "type": "t_mapping(t_bytes32,t_bool)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:29"
+          },
+          {
+            "label": "epochFinalized",
+            "offset": 0,
+            "slot": "11",
+            "type": "t_mapping(t_uint64,t_bool)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:32"
+          },
+          {
+            "label": "epochSettlementRoot",
+            "offset": 0,
+            "slot": "12",
+            "type": "t_mapping(t_uint64,t_bytes32)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:33"
+          },
+          {
+            "label": "epochValidBatchCount",
+            "offset": 0,
+            "slot": "13",
+            "type": "t_mapping(t_uint64,t_uint32)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:34"
+          },
+          {
+            "label": "unbondRequested",
+            "offset": 0,
+            "slot": "14",
+            "type": "t_mapping(t_bytes32,t_bool)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:35"
+          },
+          {
+            "label": "endpointCommitmentUsed",
+            "offset": 0,
+            "slot": "15",
+            "type": "t_mapping(t_bytes32,t_bool)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:38"
+          },
+          {
+            "label": "rewardPoolBalance",
+            "offset": 0,
+            "slot": "16",
+            "type": "t_uint256",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:42"
+          },
+          {
+            "label": "epochRewardsDistributed",
+            "offset": 0,
+            "slot": "17",
+            "type": "t_mapping(t_uint64,t_bool)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:42"
+          },
+          {
+            "label": "pendingRewards",
+            "offset": 0,
+            "slot": "18",
+            "type": "t_mapping(t_bytes32,t_uint256)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:43"
+          },
+          {
+            "label": "__gap",
+            "offset": 0,
+            "slot": "19",
+            "type": "t_array(t_uint256)50_storage",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:93"
+          },
+          {
+            "label": "challengeNonces",
+            "offset": 0,
+            "slot": "69",
+            "type": "t_mapping(t_uint64,t_uint64)",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:34"
+          },
+          {
+            "label": "epochRewardRoots",
+            "offset": 0,
+            "slot": "70",
+            "type": "t_mapping(t_uint64,t_bytes32)",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:35"
+          },
+          {
+            "label": "rewardClaimed",
+            "offset": 0,
+            "slot": "71",
+            "type": "t_mapping(t_uint64,t_mapping(t_bytes32,t_bool))",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:36"
+          },
+          {
+            "label": "epochTotalReward",
+            "offset": 0,
+            "slot": "72",
+            "type": "t_mapping(t_uint64,t_uint256)",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:37"
+          },
+          {
+            "label": "epochSlashTotal",
+            "offset": 0,
+            "slot": "73",
+            "type": "t_mapping(t_uint64,t_uint256)",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:38"
+          },
+          {
+            "label": "epochTreasuryDelta",
+            "offset": 0,
+            "slot": "74",
+            "type": "t_mapping(t_uint64,t_uint256)",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:39"
+          },
+          {
+            "label": "challenges",
+            "offset": 0,
+            "slot": "75",
+            "type": "t_mapping(t_bytes32,t_struct(ChallengeRecord)16346_storage)",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:40"
+          },
+          {
+            "label": "epochNodeSlashed",
+            "offset": 0,
+            "slot": "76",
+            "type": "t_mapping(t_uint64,t_mapping(t_bytes32,t_uint256))",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:41"
+          },
+          {
+            "label": "challengeFaultConfirmed",
+            "offset": 0,
+            "slot": "77",
+            "type": "t_mapping(t_bytes32,t_bool)",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:42"
+          },
+          {
+            "label": "epochClaimedReward",
+            "offset": 0,
+            "slot": "78",
+            "type": "t_mapping(t_uint64,t_uint256)",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:43"
+          },
+          {
+            "label": "consumedFaultEvidence",
+            "offset": 0,
+            "slot": "79",
+            "type": "t_mapping(t_bytes32,t_bool)",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:44"
+          },
+          {
+            "label": "challengeFaultEpochPlusOne",
+            "offset": 0,
+            "slot": "80",
+            "type": "t_mapping(t_bytes32,t_uint64)",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:45"
+          },
+          {
+            "label": "pendingWithdrawals",
+            "offset": 0,
+            "slot": "81",
+            "type": "t_mapping(t_address,t_uint256)",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:46"
+          },
+          {
+            "label": "epochMerkleRootUsed",
+            "offset": 0,
+            "slot": "82",
+            "type": "t_mapping(t_uint64,t_mapping(t_bytes32,t_bool))",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:52"
+          },
+          {
+            "label": "epochBatchCursor",
+            "offset": 0,
+            "slot": "83",
+            "type": "t_mapping(t_uint64,t_uint256)",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:57"
+          },
+          {
+            "label": "challengeBondMin",
+            "offset": 0,
+            "slot": "84",
+            "type": "t_uint256",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:59"
+          },
+          {
+            "label": "insuranceBalance",
+            "offset": 0,
+            "slot": "85",
+            "type": "t_uint256",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:60"
+          },
+          {
+            "label": "DOMAIN_SEPARATOR",
+            "offset": 0,
+            "slot": "86",
+            "type": "t_bytes32",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:61"
+          },
+          {
+            "label": "allowEmptyWitnessSubmission",
+            "offset": 0,
+            "slot": "87",
+            "type": "t_bool",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:62"
+          },
+          {
+            "label": "initialized",
+            "offset": 1,
+            "slot": "87",
+            "type": "t_bool",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:65"
+          },
+          {
+            "label": "_challengeCounter",
+            "offset": 0,
+            "slot": "88",
+            "type": "t_uint256",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:66"
+          },
+          {
+            "label": "cocToken",
+            "offset": 0,
+            "slot": "89",
+            "type": "t_contract(ICOCToken)12646",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:69"
+          },
+          {
+            "label": "genesisEpoch",
+            "offset": 20,
+            "slot": "89",
+            "type": "t_uint64",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:70"
+          },
+          {
+            "label": "emissionEnabled",
+            "offset": 28,
+            "slot": "89",
+            "type": "t_bool",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:71"
+          },
+          {
+            "label": "foundationAddress",
+            "offset": 0,
+            "slot": "90",
+            "type": "t_address",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:72"
+          },
+          {
+            "label": "epochFinalizedAt",
+            "offset": 0,
+            "slot": "91",
+            "type": "t_mapping(t_uint64,t_uint256)",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:77"
+          },
+          {
+            "label": "epochSwept",
+            "offset": 0,
+            "slot": "92",
+            "type": "t_mapping(t_uint64,t_bool)",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:78"
+          },
+          {
+            "label": "_activeNodeIds",
+            "offset": 0,
+            "slot": "93",
+            "type": "t_array(t_bytes32)dyn_storage",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:85"
+          },
+          {
+            "label": "_activeNodeIndex",
+            "offset": 0,
+            "slot": "94",
+            "type": "t_mapping(t_bytes32,t_uint256)",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:86"
+          },
+          {
+            "label": "__gap",
+            "offset": 0,
+            "slot": "95",
+            "type": "t_array(t_uint256)50_storage",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:929"
+          }
+        ],
+        "types": {
+          "t_bool": {
+            "label": "bool",
+            "numberOfBytes": "1"
+          },
+          "t_struct(InitializableStorage)130_storage": {
+            "label": "struct Initializable.InitializableStorage",
+            "members": [
+              {
+                "label": "_initialized",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "_initializing",
+                "type": "t_bool",
+                "offset": 8,
+                "slot": "0"
+              }
+            ],
+            "numberOfBytes": "32"
+          },
+          "t_uint64": {
+            "label": "uint64",
+            "numberOfBytes": "8"
+          },
+          "t_address": {
+            "label": "address",
+            "numberOfBytes": "20"
+          },
+          "t_array(t_bytes32)dyn_storage": {
+            "label": "bytes32[]",
+            "numberOfBytes": "32"
+          },
+          "t_array(t_uint256)50_storage": {
+            "label": "uint256[50]",
+            "numberOfBytes": "1600"
+          },
+          "t_bytes32": {
+            "label": "bytes32",
+            "numberOfBytes": "32"
+          },
+          "t_bytes_storage": {
+            "label": "bytes",
+            "numberOfBytes": "32"
+          },
+          "t_contract(ICOCToken)12646": {
+            "label": "contract ICOCToken",
+            "numberOfBytes": "20"
+          },
+          "t_mapping(t_address,t_bool)": {
+            "label": "mapping(address => bool)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_address,t_uint256)": {
+            "label": "mapping(address => uint256)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_address,t_uint8)": {
+            "label": "mapping(address => uint8)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_address)": {
+            "label": "mapping(bytes32 => address)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_bool)": {
+            "label": "mapping(bytes32 => bool)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_bytes32)": {
+            "label": "mapping(bytes32 => bytes32)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_mapping(t_address,t_bool))": {
+            "label": "mapping(bytes32 => mapping(address => bool))",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_mapping(t_bytes32,t_bool))": {
+            "label": "mapping(bytes32 => mapping(bytes32 => bool))",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_struct(BatchRecord)16271_storage)": {
+            "label": "mapping(bytes32 => struct PoSeTypes.BatchRecord)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_struct(ChallengeRecord)16346_storage)": {
+            "label": "mapping(bytes32 => struct PoSeTypesV2.ChallengeRecord)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_struct(NodeRecord)16254_storage)": {
+            "label": "mapping(bytes32 => struct PoSeTypes.NodeRecord)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_uint256)": {
+            "label": "mapping(bytes32 => uint256)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_uint32)": {
+            "label": "mapping(bytes32 => uint32)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_uint64)": {
+            "label": "mapping(bytes32 => uint64)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_uint64,t_array(t_bytes32)dyn_storage)": {
+            "label": "mapping(uint64 => bytes32[])",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_uint64,t_bool)": {
+            "label": "mapping(uint64 => bool)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_uint64,t_bytes32)": {
+            "label": "mapping(uint64 => bytes32)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_uint64,t_mapping(t_bytes32,t_bool))": {
+            "label": "mapping(uint64 => mapping(bytes32 => bool))",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_uint64,t_mapping(t_bytes32,t_uint256))": {
+            "label": "mapping(uint64 => mapping(bytes32 => uint256))",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_uint64,t_uint256)": {
+            "label": "mapping(uint64 => uint256)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_uint64,t_uint32)": {
+            "label": "mapping(uint64 => uint32)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_uint64,t_uint64)": {
+            "label": "mapping(uint64 => uint64)",
+            "numberOfBytes": "32"
+          },
+          "t_struct(BatchRecord)16271_storage": {
+            "label": "struct PoSeTypes.BatchRecord",
+            "members": [
+              {
+                "label": "epochId",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "merkleRoot",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "1"
+              },
+              {
+                "label": "summaryHash",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "2"
+              },
+              {
+                "label": "aggregator",
+                "type": "t_address",
+                "offset": 0,
+                "slot": "3"
+              },
+              {
+                "label": "submittedAtEpoch",
+                "type": "t_uint64",
+                "offset": 20,
+                "slot": "3"
+              },
+              {
+                "label": "disputeDeadlineEpoch",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "4"
+              },
+              {
+                "label": "finalized",
+                "type": "t_bool",
+                "offset": 8,
+                "slot": "4"
+              },
+              {
+                "label": "disputed",
+                "type": "t_bool",
+                "offset": 9,
+                "slot": "4"
+              }
+            ],
+            "numberOfBytes": "160"
+          },
+          "t_struct(ChallengeRecord)16346_storage": {
+            "label": "struct PoSeTypesV2.ChallengeRecord",
+            "members": [
+              {
+                "label": "commitHash",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "challenger",
+                "type": "t_address",
+                "offset": 0,
+                "slot": "1"
+              },
+              {
+                "label": "bond",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "2"
+              },
+              {
+                "label": "commitEpoch",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "3"
+              },
+              {
+                "label": "revealDeadlineEpoch",
+                "type": "t_uint64",
+                "offset": 8,
+                "slot": "3"
+              },
+              {
+                "label": "revealed",
+                "type": "t_bool",
+                "offset": 16,
+                "slot": "3"
+              },
+              {
+                "label": "settled",
+                "type": "t_bool",
+                "offset": 17,
+                "slot": "3"
+              },
+              {
+                "label": "targetNodeId",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "4"
+              },
+              {
+                "label": "faultType",
+                "type": "t_uint8",
+                "offset": 0,
+                "slot": "5"
+              }
+            ],
+            "numberOfBytes": "192"
+          },
+          "t_struct(NodeRecord)16254_storage": {
+            "label": "struct PoSeTypes.NodeRecord",
+            "members": [
+              {
+                "label": "nodeId",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "pubkeyNode",
+                "type": "t_bytes_storage",
+                "offset": 0,
+                "slot": "1"
+              },
+              {
+                "label": "serviceFlags",
+                "type": "t_uint8",
+                "offset": 0,
+                "slot": "2"
+              },
+              {
+                "label": "serviceCommitment",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "3"
+              },
+              {
+                "label": "endpointCommitment",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "4"
+              },
+              {
+                "label": "bondAmount",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "5"
+              },
+              {
+                "label": "metadataHash",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "6"
+              },
+              {
+                "label": "registeredAtEpoch",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "7"
+              },
+              {
+                "label": "unlockEpoch",
+                "type": "t_uint64",
+                "offset": 8,
+                "slot": "7"
+              },
+              {
+                "label": "active",
+                "type": "t_bool",
+                "offset": 16,
+                "slot": "7"
+              }
+            ],
+            "numberOfBytes": "256"
+          },
+          "t_uint256": {
+            "label": "uint256",
+            "numberOfBytes": "32"
+          },
+          "t_uint32": {
+            "label": "uint32",
+            "numberOfBytes": "4"
+          },
+          "t_uint8": {
+            "label": "uint8",
+            "numberOfBytes": "1"
+          }
+        },
+        "namespaces": {
+          "erc7201:openzeppelin.storage.Initializable": [
+            {
+              "contract": "Initializable",
+              "label": "_initialized",
+              "type": "t_uint64",
+              "src": "@openzeppelin/contracts/proxy/utils/Initializable.sol:69",
+              "offset": 0,
+              "slot": "0"
+            },
+            {
+              "contract": "Initializable",
+              "label": "_initializing",
+              "type": "t_bool",
+              "src": "@openzeppelin/contracts/proxy/utils/Initializable.sol:73",
+              "offset": 8,
+              "slot": "0"
+            }
+          ]
+        }
+      }
+    },
+    "1373c3a4f6f84ba759893ad71ac6c02011093639418acf9f60d351ad9eb6583f": {
+      "address": "0x8217489ab5A1d43Da8bc031ABD4cbC2f5F7D5607",
+      "txHash": "0x044ebee88bf93c4dd2a36daa9ef8296b540a7b668640dfc2e7a2338097181533",
+      "layout": {
+        "solcVersion": "0.8.24",
+        "storage": [
+          {
+            "label": "_validators",
+            "offset": 0,
+            "slot": "0",
+            "type": "t_mapping(t_bytes32,t_struct(Validator)3572_storage)",
+            "contract": "ValidatorRegistry",
+            "src": "contracts-src/governance/ValidatorRegistry.sol:89"
+          },
+          {
+            "label": "_activeNodeIds",
+            "offset": 0,
+            "slot": "1",
+            "type": "t_array(t_bytes32)dyn_storage",
+            "contract": "ValidatorRegistry",
+            "src": "contracts-src/governance/ValidatorRegistry.sol:97"
+          },
+          {
+            "label": "_activeIndex",
+            "offset": 0,
+            "slot": "2",
+            "type": "t_mapping(t_bytes32,t_uint256)",
+            "contract": "ValidatorRegistry",
+            "src": "contracts-src/governance/ValidatorRegistry.sol:100"
+          },
+          {
+            "label": "owner",
+            "offset": 0,
+            "slot": "3",
+            "type": "t_address",
+            "contract": "ValidatorRegistry",
+            "src": "contracts-src/governance/ValidatorRegistry.sol:104"
+          },
+          {
+            "label": "slasher",
+            "offset": 0,
+            "slot": "4",
+            "type": "t_address",
+            "contract": "ValidatorRegistry",
+            "src": "contracts-src/governance/ValidatorRegistry.sol:104"
+          },
+          {
+            "label": "slashRecipient",
+            "offset": 0,
+            "slot": "5",
+            "type": "t_address",
+            "contract": "ValidatorRegistry",
+            "src": "contracts-src/governance/ValidatorRegistry.sol:105"
+          },
+          {
+            "label": "insuranceFund",
+            "offset": 0,
+            "slot": "6",
+            "type": "t_address",
+            "contract": "ValidatorRegistry",
+            "src": "contracts-src/governance/ValidatorRegistry.sol:116"
+          },
+          {
+            "label": "burnSink",
+            "offset": 0,
+            "slot": "7",
+            "type": "t_address",
+            "contract": "ValidatorRegistry",
+            "src": "contracts-src/governance/ValidatorRegistry.sol:117"
+          },
+          {
+            "label": "pendingWithdrawals",
+            "offset": 0,
+            "slot": "8",
+            "type": "t_mapping(t_address,t_uint256)",
+            "contract": "ValidatorRegistry",
+            "src": "contracts-src/governance/ValidatorRegistry.sol:117"
+          },
+          {
+            "label": "__gap",
+            "offset": 0,
+            "slot": "9",
+            "type": "t_array(t_uint256)50_storage",
+            "contract": "ValidatorRegistry",
+            "src": "contracts-src/governance/ValidatorRegistry.sol:434"
+          }
+        ],
+        "types": {
+          "t_bool": {
+            "label": "bool",
+            "numberOfBytes": "1"
+          },
+          "t_struct(InitializableStorage)130_storage": {
+            "label": "struct Initializable.InitializableStorage",
+            "members": [
+              {
+                "label": "_initialized",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "_initializing",
+                "type": "t_bool",
+                "offset": 8,
+                "slot": "0"
+              }
+            ],
+            "numberOfBytes": "32"
+          },
+          "t_uint64": {
+            "label": "uint64",
+            "numberOfBytes": "8"
+          },
+          "t_address": {
+            "label": "address",
+            "numberOfBytes": "20"
+          },
+          "t_array(t_bytes32)dyn_storage": {
+            "label": "bytes32[]",
+            "numberOfBytes": "32"
+          },
+          "t_array(t_uint256)50_storage": {
+            "label": "uint256[50]",
+            "numberOfBytes": "1600"
+          },
+          "t_bytes32": {
+            "label": "bytes32",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_address,t_uint256)": {
+            "label": "mapping(address => uint256)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_struct(Validator)3572_storage)": {
+            "label": "mapping(bytes32 => struct ValidatorRegistry.Validator)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_uint256)": {
+            "label": "mapping(bytes32 => uint256)",
+            "numberOfBytes": "32"
+          },
+          "t_struct(Validator)3572_storage": {
+            "label": "struct ValidatorRegistry.Validator",
+            "members": [
+              {
+                "label": "nodeId",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "operator",
+                "type": "t_address",
+                "offset": 0,
+                "slot": "1"
+              },
+              {
+                "label": "stake",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "2"
+              },
+              {
+                "label": "registeredAt",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "3"
+              },
+              {
+                "label": "unstakeRequestedAt",
+                "type": "t_uint64",
+                "offset": 8,
+                "slot": "3"
+              },
+              {
+                "label": "active",
+                "type": "t_bool",
+                "offset": 16,
+                "slot": "3"
+              }
+            ],
+            "numberOfBytes": "128"
+          },
+          "t_uint256": {
+            "label": "uint256",
+            "numberOfBytes": "32"
+          }
+        },
+        "namespaces": {
+          "erc7201:openzeppelin.storage.Initializable": [
+            {
+              "contract": "Initializable",
+              "label": "_initialized",
+              "type": "t_uint64",
+              "src": "@openzeppelin/contracts/proxy/utils/Initializable.sol:69",
+              "offset": 0,
+              "slot": "0"
+            },
+            {
+              "contract": "Initializable",
+              "label": "_initializing",
+              "type": "t_bool",
+              "src": "@openzeppelin/contracts/proxy/utils/Initializable.sol:73",
+              "offset": 8,
+              "slot": "0"
+            }
+          ]
+        }
+      }
+    },
+    "a771daacd4529eca73e10aa2d80a749b37ba296121d173ae6c34221775ef8b67": {
+      "address": "0x6f690EfBF92c5849750dC3620960cdFA8f2237Af",
+      "txHash": "0x27bb952514f146e6446446aa1133b5921ea9a7d6ab6f67b7280cdd517c54745f",
+      "layout": {
+        "solcVersion": "0.8.24",
+        "storage": [
+          {
+            "label": "validatorRegistry",
+            "offset": 0,
+            "slot": "0",
+            "type": "t_contract(IValidatorRegistry)3456",
+            "contract": "EquivocationDetector",
+            "src": "contracts-src/governance/EquivocationDetector.sol:64"
+          },
+          {
+            "label": "owner",
+            "offset": 0,
+            "slot": "1",
+            "type": "t_address",
+            "contract": "EquivocationDetector",
+            "src": "contracts-src/governance/EquivocationDetector.sol:64"
+          },
+          {
+            "label": "slashCooldownBlocks",
+            "offset": 0,
+            "slot": "2",
+            "type": "t_uint256",
+            "contract": "EquivocationDetector",
+            "src": "contracts-src/governance/EquivocationDetector.sol:65"
+          },
+          {
+            "label": "lastSlashedAtBlock",
+            "offset": 0,
+            "slot": "3",
+            "type": "t_mapping(t_bytes32,t_uint256)",
+            "contract": "EquivocationDetector",
+            "src": "contracts-src/governance/EquivocationDetector.sol:66"
+          },
+          {
+            "label": "consumedEvidence",
+            "offset": 0,
+            "slot": "4",
+            "type": "t_mapping(t_bytes32,t_bool)",
+            "contract": "EquivocationDetector",
+            "src": "contracts-src/governance/EquivocationDetector.sol:74"
+          },
+          {
+            "label": "__gap",
+            "offset": 0,
+            "slot": "5",
+            "type": "t_array(t_uint256)50_storage",
+            "contract": "EquivocationDetector",
+            "src": "contracts-src/governance/EquivocationDetector.sol:281"
+          }
+        ],
+        "types": {
+          "t_bool": {
+            "label": "bool",
+            "numberOfBytes": "1"
+          },
+          "t_struct(InitializableStorage)130_storage": {
+            "label": "struct Initializable.InitializableStorage",
+            "members": [
+              {
+                "label": "_initialized",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "_initializing",
+                "type": "t_bool",
+                "offset": 8,
+                "slot": "0"
+              }
+            ],
+            "numberOfBytes": "32"
+          },
+          "t_uint64": {
+            "label": "uint64",
+            "numberOfBytes": "8"
+          },
+          "t_address": {
+            "label": "address",
+            "numberOfBytes": "20"
+          },
+          "t_array(t_uint256)50_storage": {
+            "label": "uint256[50]",
+            "numberOfBytes": "1600"
+          },
+          "t_bytes32": {
+            "label": "bytes32",
+            "numberOfBytes": "32"
+          },
+          "t_contract(IValidatorRegistry)3456": {
+            "label": "contract IValidatorRegistry",
+            "numberOfBytes": "20"
+          },
+          "t_mapping(t_bytes32,t_bool)": {
+            "label": "mapping(bytes32 => bool)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_uint256)": {
+            "label": "mapping(bytes32 => uint256)",
+            "numberOfBytes": "32"
+          },
+          "t_uint256": {
+            "label": "uint256",
+            "numberOfBytes": "32"
+          }
+        },
+        "namespaces": {
+          "erc7201:openzeppelin.storage.Initializable": [
+            {
+              "contract": "Initializable",
+              "label": "_initialized",
+              "type": "t_uint64",
+              "src": "@openzeppelin/contracts/proxy/utils/Initializable.sol:69",
+              "offset": 0,
+              "slot": "0"
+            },
+            {
+              "contract": "Initializable",
+              "label": "_initializing",
+              "type": "t_bool",
+              "src": "@openzeppelin/contracts/proxy/utils/Initializable.sol:73",
+              "offset": 8,
+              "slot": "0"
+            }
+          ]
+        }
+      }
+    },
+    "9b05566691a2426a6582d9f51a59712c490a265f7d2853faed2f81dc2ac9bd0c": {
+      "address": "0x042D629c8f2f454Be78C9b387D20DE811167b488",
+      "txHash": "0x32d775e80f4f9ae1b3b3a69bd1f87eac2b8b43fe11189dec1185bf7f83fd2410",
+      "layout": {
+        "solcVersion": "0.8.24",
+        "storage": [
+          {
+            "label": "governance",
+            "offset": 0,
+            "slot": "0",
+            "type": "t_address",
+            "contract": "InsuranceFund",
+            "src": "contracts-src/governance/InsuranceFund.sol:24"
+          },
+          {
+            "label": "totalDeposited",
+            "offset": 0,
+            "slot": "1",
+            "type": "t_uint256",
+            "contract": "InsuranceFund",
+            "src": "contracts-src/governance/InsuranceFund.sol:25"
+          },
+          {
+            "label": "totalWithdrawn",
+            "offset": 0,
+            "slot": "2",
+            "type": "t_uint256",
+            "contract": "InsuranceFund",
+            "src": "contracts-src/governance/InsuranceFund.sol:26"
+          },
+          {
+            "label": "pendingWithdrawals",
+            "offset": 0,
+            "slot": "3",
+            "type": "t_mapping(t_address,t_uint256)",
+            "contract": "InsuranceFund",
+            "src": "contracts-src/governance/InsuranceFund.sol:27"
+          },
+          {
+            "label": "pendingWithdrawalTotal",
+            "offset": 0,
+            "slot": "4",
+            "type": "t_uint256",
+            "contract": "InsuranceFund",
+            "src": "contracts-src/governance/InsuranceFund.sol:28"
+          },
+          {
+            "label": "owner",
+            "offset": 0,
+            "slot": "5",
+            "type": "t_address",
+            "contract": "InsuranceFund",
+            "src": "contracts-src/governance/InsuranceFund.sol:30"
+          },
+          {
+            "label": "__gap",
+            "offset": 0,
+            "slot": "6",
+            "type": "t_array(t_uint256)50_storage",
+            "contract": "InsuranceFund",
+            "src": "contracts-src/governance/InsuranceFund.sol:145"
+          }
+        ],
+        "types": {
+          "t_bool": {
+            "label": "bool",
+            "numberOfBytes": "1"
+          },
+          "t_struct(InitializableStorage)130_storage": {
+            "label": "struct Initializable.InitializableStorage",
+            "members": [
+              {
+                "label": "_initialized",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "_initializing",
+                "type": "t_bool",
+                "offset": 8,
+                "slot": "0"
+              }
+            ],
+            "numberOfBytes": "32"
+          },
+          "t_uint64": {
+            "label": "uint64",
+            "numberOfBytes": "8"
+          },
+          "t_address": {
+            "label": "address",
+            "numberOfBytes": "20"
+          },
+          "t_array(t_uint256)50_storage": {
+            "label": "uint256[50]",
+            "numberOfBytes": "1600"
+          },
+          "t_mapping(t_address,t_uint256)": {
+            "label": "mapping(address => uint256)",
+            "numberOfBytes": "32"
+          },
+          "t_uint256": {
+            "label": "uint256",
+            "numberOfBytes": "32"
+          }
+        },
+        "namespaces": {
+          "erc7201:openzeppelin.storage.Initializable": [
+            {
+              "contract": "Initializable",
+              "label": "_initialized",
+              "type": "t_uint64",
+              "src": "@openzeppelin/contracts/proxy/utils/Initializable.sol:69",
+              "offset": 0,
+              "slot": "0"
+            },
+            {
+              "contract": "Initializable",
+              "label": "_initializing",
+              "type": "t_bool",
+              "src": "@openzeppelin/contracts/proxy/utils/Initializable.sol:73",
+              "offset": 8,
+              "slot": "0"
+            }
+          ]
+        }
+      }
+    },
+    "9d17ff9dc0d4166c1352f5e4252eb46ca4d7a87e0fc5b0698a74f3c2b43f8f27": {
+      "address": "0x0d648c005253a441d84F7803A83348BD66299d7d",
+      "txHash": "0x95faa2323663b19bf1413cb424c2aefe84f0ab257e381909a51b52ab165a7633",
+      "layout": {
+        "solcVersion": "0.8.24",
+        "storage": [
+          {
+            "label": "INCLUSION_DELAY",
+            "offset": 0,
+            "slot": "0",
+            "type": "t_uint256",
+            "contract": "DelayedInbox",
+            "src": "contracts-src/rollup/DelayedInbox.sol:15"
+          },
+          {
+            "label": "sequencer",
+            "offset": 0,
+            "slot": "1",
+            "type": "t_address",
+            "contract": "DelayedInbox",
+            "src": "contracts-src/rollup/DelayedInbox.sol:16"
+          },
+          {
+            "label": "owner",
+            "offset": 0,
+            "slot": "2",
+            "type": "t_address",
+            "contract": "DelayedInbox",
+            "src": "contracts-src/rollup/DelayedInbox.sol:17"
+          },
+          {
+            "label": "_queue",
+            "offset": 0,
+            "slot": "3",
+            "type": "t_array(t_struct(ForcedTx)9788_storage)dyn_storage",
+            "contract": "DelayedInbox",
+            "src": "contracts-src/rollup/DelayedInbox.sol:19"
+          },
+          {
+            "label": "_forceIncluded",
+            "offset": 0,
+            "slot": "4",
+            "type": "t_mapping(t_uint256,t_bool)",
+            "contract": "DelayedInbox",
+            "src": "contracts-src/rollup/DelayedInbox.sol:20"
+          },
+          {
+            "label": "__gap",
+            "offset": 0,
+            "slot": "5",
+            "type": "t_array(t_uint256)50_storage",
+            "contract": "DelayedInbox",
+            "src": "contracts-src/rollup/DelayedInbox.sol:131"
+          }
+        ],
+        "types": {
+          "t_bool": {
+            "label": "bool",
+            "numberOfBytes": "1"
+          },
+          "t_struct(InitializableStorage)130_storage": {
+            "label": "struct Initializable.InitializableStorage",
+            "members": [
+              {
+                "label": "_initialized",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "_initializing",
+                "type": "t_bool",
+                "offset": 8,
+                "slot": "0"
+              }
+            ],
+            "numberOfBytes": "32"
+          },
+          "t_uint64": {
+            "label": "uint64",
+            "numberOfBytes": "8"
+          },
+          "t_address": {
+            "label": "address",
+            "numberOfBytes": "20"
+          },
+          "t_array(t_struct(ForcedTx)9788_storage)dyn_storage": {
+            "label": "struct RollupTypes.ForcedTx[]",
+            "numberOfBytes": "32"
+          },
+          "t_array(t_uint256)50_storage": {
+            "label": "uint256[50]",
+            "numberOfBytes": "1600"
+          },
+          "t_bytes_storage": {
+            "label": "bytes",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_uint256,t_bool)": {
+            "label": "mapping(uint256 => bool)",
+            "numberOfBytes": "32"
+          },
+          "t_struct(ForcedTx)9788_storage": {
+            "label": "struct RollupTypes.ForcedTx",
+            "members": [
+              {
+                "label": "l2Tx",
+                "type": "t_bytes_storage",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "sender",
+                "type": "t_address",
+                "offset": 0,
+                "slot": "1"
+              },
+              {
+                "label": "enqueuedAt",
+                "type": "t_uint64",
+                "offset": 20,
+                "slot": "1"
+              },
+              {
+                "label": "included",
+                "type": "t_bool",
+                "offset": 28,
+                "slot": "1"
+              }
+            ],
+            "numberOfBytes": "64"
+          },
+          "t_uint256": {
+            "label": "uint256",
+            "numberOfBytes": "32"
+          }
+        },
+        "namespaces": {
+          "erc7201:openzeppelin.storage.Initializable": [
+            {
+              "contract": "Initializable",
+              "label": "_initialized",
+              "type": "t_uint64",
+              "src": "@openzeppelin/contracts/proxy/utils/Initializable.sol:69",
+              "offset": 0,
+              "slot": "0"
+            },
+            {
+              "contract": "Initializable",
+              "label": "_initializing",
+              "type": "t_bool",
+              "src": "@openzeppelin/contracts/proxy/utils/Initializable.sol:73",
+              "offset": 8,
+              "slot": "0"
+            }
+          ]
+        }
+      }
+    },
+    "54724851a227dd1f2523f74c8ce85e8b6ad0da01ece9b6d514cc4edae64f3d58": {
+      "address": "0xC8bC6491cb3a8d2871D8021Ff904C8F7270d8B7F",
+      "txHash": "0x3b4916f26c2589e0b39a57b22f5fbd611a86124a9f373dd5a56976240f7f7866",
+      "layout": {
+        "solcVersion": "0.8.24",
+        "storage": [
+          {
+            "label": "CHALLENGE_WINDOW",
+            "offset": 0,
+            "slot": "0",
+            "type": "t_uint256",
+            "contract": "RollupStateManager",
+            "src": "contracts-src/rollup/RollupStateManager.sol:17"
+          },
+          {
+            "label": "PROPOSER_BOND",
+            "offset": 0,
+            "slot": "1",
+            "type": "t_uint256",
+            "contract": "RollupStateManager",
+            "src": "contracts-src/rollup/RollupStateManager.sol:18"
+          },
+          {
+            "label": "CHALLENGER_BOND",
+            "offset": 0,
+            "slot": "2",
+            "type": "t_uint256",
+            "contract": "RollupStateManager",
+            "src": "contracts-src/rollup/RollupStateManager.sol:19"
+          },
+          {
+            "label": "_outputs",
+            "offset": 0,
+            "slot": "3",
+            "type": "t_mapping(t_uint64,t_struct(OutputProposal)9764_storage)",
+            "contract": "RollupStateManager",
+            "src": "contracts-src/rollup/RollupStateManager.sol:29"
+          },
+          {
+            "label": "_challenges",
+            "offset": 0,
+            "slot": "4",
+            "type": "t_mapping(t_uint64,t_struct(OutputChallenge)9779_storage)",
+            "contract": "RollupStateManager",
+            "src": "contracts-src/rollup/RollupStateManager.sol:31"
+          },
+          {
+            "label": "lastSubmittedBlock",
+            "offset": 0,
+            "slot": "5",
+            "type": "t_uint64",
+            "contract": "RollupStateManager",
+            "src": "contracts-src/rollup/RollupStateManager.sol:33"
+          },
+          {
+            "label": "_latestFinalizedBlock",
+            "offset": 8,
+            "slot": "5",
+            "type": "t_uint64",
+            "contract": "RollupStateManager",
+            "src": "contracts-src/rollup/RollupStateManager.sol:34"
+          },
+          {
+            "label": "insuranceFund",
+            "offset": 0,
+            "slot": "6",
+            "type": "t_address",
+            "contract": "RollupStateManager",
+            "src": "contracts-src/rollup/RollupStateManager.sol:35"
+          },
+          {
+            "label": "owner",
+            "offset": 0,
+            "slot": "7",
+            "type": "t_address",
+            "contract": "RollupStateManager",
+            "src": "contracts-src/rollup/RollupStateManager.sol:35"
+          },
+          {
+            "label": "challengeResolver",
+            "offset": 0,
+            "slot": "8",
+            "type": "t_address",
+            "contract": "RollupStateManager",
+            "src": "contracts-src/rollup/RollupStateManager.sol:35"
+          },
+          {
+            "label": "pendingWithdrawals",
+            "offset": 0,
+            "slot": "9",
+            "type": "t_mapping(t_address,t_uint256)",
+            "contract": "RollupStateManager",
+            "src": "contracts-src/rollup/RollupStateManager.sol:36"
+          },
+          {
+            "label": "allowedProposers",
+            "offset": 0,
+            "slot": "10",
+            "type": "t_mapping(t_address,t_bool)",
+            "contract": "RollupStateManager",
+            "src": "contracts-src/rollup/RollupStateManager.sol:45"
+          },
+          {
+            "label": "__gap",
+            "offset": 0,
+            "slot": "11",
+            "type": "t_array(t_uint256)50_storage",
+            "contract": "RollupStateManager",
+            "src": "contracts-src/rollup/RollupStateManager.sol:349"
+          }
+        ],
+        "types": {
+          "t_bool": {
+            "label": "bool",
+            "numberOfBytes": "1"
+          },
+          "t_struct(InitializableStorage)130_storage": {
+            "label": "struct Initializable.InitializableStorage",
+            "members": [
+              {
+                "label": "_initialized",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "_initializing",
+                "type": "t_bool",
+                "offset": 8,
+                "slot": "0"
+              }
+            ],
+            "numberOfBytes": "32"
+          },
+          "t_uint64": {
+            "label": "uint64",
+            "numberOfBytes": "8"
+          },
+          "t_address": {
+            "label": "address",
+            "numberOfBytes": "20"
+          },
+          "t_array(t_uint256)50_storage": {
+            "label": "uint256[50]",
+            "numberOfBytes": "1600"
+          },
+          "t_bytes32": {
+            "label": "bytes32",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_address,t_bool)": {
+            "label": "mapping(address => bool)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_address,t_uint256)": {
+            "label": "mapping(address => uint256)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_uint64,t_struct(OutputChallenge)9779_storage)": {
+            "label": "mapping(uint64 => struct RollupTypes.OutputChallenge)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_uint64,t_struct(OutputProposal)9764_storage)": {
+            "label": "mapping(uint64 => struct RollupTypes.OutputProposal)",
+            "numberOfBytes": "32"
+          },
+          "t_struct(OutputChallenge)9779_storage": {
+            "label": "struct RollupTypes.OutputChallenge",
+            "members": [
+              {
+                "label": "l2BlockNumber",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "challenger",
+                "type": "t_address",
+                "offset": 8,
+                "slot": "0"
+              },
+              {
+                "label": "bond",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "1"
+              },
+              {
+                "label": "createdAt",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "2"
+              },
+              {
+                "label": "resolveDeadline",
+                "type": "t_uint64",
+                "offset": 8,
+                "slot": "2"
+              },
+              {
+                "label": "resolved",
+                "type": "t_bool",
+                "offset": 16,
+                "slot": "2"
+              },
+              {
+                "label": "proposerFault",
+                "type": "t_bool",
+                "offset": 17,
+                "slot": "2"
+              }
+            ],
+            "numberOfBytes": "96"
+          },
+          "t_struct(OutputProposal)9764_storage": {
+            "label": "struct RollupTypes.OutputProposal",
+            "members": [
+              {
+                "label": "outputRoot",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "l2StateRoot",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "1"
+              },
+              {
+                "label": "l2BlockNumber",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "2"
+              },
+              {
+                "label": "l1Timestamp",
+                "type": "t_uint64",
+                "offset": 8,
+                "slot": "2"
+              },
+              {
+                "label": "proposer",
+                "type": "t_address",
+                "offset": 0,
+                "slot": "3"
+              },
+              {
+                "label": "challenged",
+                "type": "t_bool",
+                "offset": 20,
+                "slot": "3"
+              },
+              {
+                "label": "finalized",
+                "type": "t_bool",
+                "offset": 21,
+                "slot": "3"
+              }
+            ],
+            "numberOfBytes": "128"
+          },
+          "t_uint256": {
+            "label": "uint256",
+            "numberOfBytes": "32"
+          }
+        },
+        "namespaces": {
+          "erc7201:openzeppelin.storage.Initializable": [
+            {
+              "contract": "Initializable",
+              "label": "_initialized",
+              "type": "t_uint64",
+              "src": "@openzeppelin/contracts/proxy/utils/Initializable.sol:69",
+              "offset": 0,
+              "slot": "0"
+            },
+            {
+              "contract": "Initializable",
+              "label": "_initializing",
+              "type": "t_bool",
+              "src": "@openzeppelin/contracts/proxy/utils/Initializable.sol:73",
+              "offset": 8,
+              "slot": "0"
+            }
+          ]
+        }
+      }
+    }
+  }
+}
