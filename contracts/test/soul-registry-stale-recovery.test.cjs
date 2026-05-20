@@ -14,7 +14,7 @@
  * registration and refuses inactive souls.
  */
 const { expect } = require("chai")
-const { ethers } = require("hardhat")
+const { ethers, upgrades } = require("hardhat")
 
 const DOMAIN_NAME = "COCSoulRegistry"
 const DOMAIN_VERSION = "1"
@@ -49,7 +49,11 @@ describe("Security: SoulRegistry stale recovery state", function () {
   beforeEach(async function () {
     ;[alice, bob, guardian, guardian2, attacker] = await ethers.getSigners()
     const Factory = await ethers.getContractFactory("SoulRegistry")
-    registry = await Factory.deploy()
+    registry = await upgrades.deployProxy(
+      Factory,
+      [alice.address],
+      { initializer: "initialize", kind: "uups" },
+    )
     await registry.waitForDeployment()
     const net = await ethers.provider.getNetwork()
     domain = { name: DOMAIN_NAME, version: DOMAIN_VERSION, chainId: net.chainId, verifyingContract: await registry.getAddress() }

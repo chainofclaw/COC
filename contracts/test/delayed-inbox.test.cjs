@@ -9,7 +9,7 @@
  */
 
 const { expect } = require("chai")
-const { ethers } = require("hardhat")
+const { ethers, upgrades } = require("hardhat")
 
 // Short inclusion delay for testing (120 seconds)
 const INCLUSION_DELAY = 120
@@ -22,7 +22,11 @@ describe("DelayedInbox", function () {
     ;[deployer, sequencer, user1, user2] = await ethers.getSigners()
 
     const Factory = await ethers.getContractFactory("DelayedInbox")
-    inbox = await Factory.deploy(INCLUSION_DELAY, sequencer.address)
+    inbox = await upgrades.deployProxy(
+      Factory,
+      [INCLUSION_DELAY, sequencer.address, deployer.address],
+      { initializer: "initialize", kind: "uups" },
+    )
     await inbox.waitForDeployment()
   })
 

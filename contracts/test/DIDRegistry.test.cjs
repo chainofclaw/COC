@@ -6,7 +6,7 @@
  */
 
 const { expect } = require("chai")
-const { ethers } = require("hardhat")
+const { ethers, upgrades } = require("hardhat")
 const { malleateSignature } = require("./signature-utils.cjs")
 
 // ---------------------------------------------------------------------------
@@ -126,13 +126,22 @@ async function mineSeconds(seconds) {
 // ---------------------------------------------------------------------------
 
 async function deployContracts() {
+  const [deployer] = await ethers.getSigners()
   const SoulFactory = await ethers.getContractFactory("SoulRegistry")
-  const soulRegistry = await SoulFactory.deploy()
+  const soulRegistry = await upgrades.deployProxy(
+    SoulFactory,
+    [deployer.address],
+    { initializer: "initialize", kind: "uups" },
+  )
   await soulRegistry.waitForDeployment()
   const soulAddress = await soulRegistry.getAddress()
 
   const DIDFactory = await ethers.getContractFactory("DIDRegistry")
-  const didRegistry = await DIDFactory.deploy(soulAddress)
+  const didRegistry = await upgrades.deployProxy(
+    DIDFactory,
+    [soulAddress, deployer.address],
+    { initializer: "initialize", kind: "uups" },
+  )
   await didRegistry.waitForDeployment()
   const didAddress = await didRegistry.getAddress()
 
@@ -180,7 +189,11 @@ describe("DIDRegistry", function () {
     it("should reject zero SoulRegistry address", async function () {
       const DIDFactory = await ethers.getContractFactory("DIDRegistry")
       await expect(
-        DIDFactory.deploy(ethers.ZeroAddress)
+        upgrades.deployProxy(
+          DIDFactory,
+          [ethers.ZeroAddress, owner.address],
+          { initializer: "initialize", kind: "uups" },
+        ),
       ).to.be.revertedWithCustomError(didRegistry, "ZeroAddress")
     })
   })

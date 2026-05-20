@@ -17,7 +17,7 @@
  */
 
 const { expect } = require("chai")
-const { ethers } = require("hardhat")
+const { ethers, upgrades } = require("hardhat")
 
 const MIN_STAKE = ethers.parseEther("32")
 const SLASH_BPS = 1000n
@@ -41,11 +41,19 @@ async function deployStack() {
   const signers = await ethers.getSigners()
   const owner = signers[0]
   const RegistryFactory = await ethers.getContractFactory("ValidatorRegistry")
-  const registry = await RegistryFactory.deploy()
+  const registry = await upgrades.deployProxy(
+    RegistryFactory,
+    [owner.address, owner.address, owner.address],
+    { initializer: "initialize", kind: "uups" },
+  )
   await registry.waitForDeployment()
 
   const DetectorFactory = await ethers.getContractFactory("EquivocationDetector")
-  const detector = await DetectorFactory.deploy(await registry.getAddress())
+  const detector = await upgrades.deployProxy(
+    DetectorFactory,
+    [await registry.getAddress(), owner.address],
+    { initializer: "initialize", kind: "uups" },
+  )
   await detector.waitForDeployment()
 
   // Wire detector as the registry's slasher so it can call slashValidator.
@@ -67,12 +75,16 @@ describe("EquivocationDetector: deployment", () => {
     expect(await detector.slashCooldownBlocks()).to.equal(1000n)
   })
 
-  it("rejects zero-address registry in constructor", async () => {
+  it("rejects zero-address registry in initialize", async () => {
+    const [deployer] = await ethers.getSigners()
     const Factory = await ethers.getContractFactory("EquivocationDetector")
-    await expect(Factory.deploy(ethers.ZeroAddress)).to.be.revertedWithCustomError(
-      Factory,
-      "ZeroAddress",
-    )
+    await expect(
+      upgrades.deployProxy(
+        Factory,
+        [ethers.ZeroAddress, deployer.address],
+        { initializer: "initialize", kind: "uups" },
+      ),
+    ).to.be.revertedWithCustomError(Factory, "ZeroAddress")
   })
 })
 

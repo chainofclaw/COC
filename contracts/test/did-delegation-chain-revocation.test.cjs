@@ -12,7 +12,7 @@
  * MAX_DELEGATION_DEPTH); `grantDelegation()` rejects a globally-revoked parent.
  */
 const { expect } = require("chai")
-const { ethers } = require("hardhat")
+const { ethers, upgrades } = require("hardhat")
 
 const SOUL_DOMAIN = { name: "COCSoulRegistry", version: "1" }
 const DID_DOMAIN = { name: "COCDIDRegistry", version: "1" }
@@ -85,10 +85,18 @@ describe("Security: DIDRegistry delegation chain revocation", function () {
   beforeEach(async function () {
     ;[ownerA, ownerB] = await ethers.getSigners()
     const Soul = await ethers.getContractFactory("SoulRegistry")
-    soul = await Soul.deploy()
+    soul = await upgrades.deployProxy(
+      Soul,
+      [ownerA.address],
+      { initializer: "initialize", kind: "uups" },
+    )
     await soul.waitForDeployment()
     const Did = await ethers.getContractFactory("DIDRegistry")
-    did = await Did.deploy(await soul.getAddress())
+    did = await upgrades.deployProxy(
+      Did,
+      [await soul.getAddress(), ownerA.address],
+      { initializer: "initialize", kind: "uups" },
+    )
     await did.waitForDeployment()
     const net = await ethers.provider.getNetwork()
     soulDomain = { ...SOUL_DOMAIN, chainId: net.chainId, verifyingContract: await soul.getAddress() }

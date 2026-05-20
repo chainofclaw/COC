@@ -15,7 +15,7 @@
  */
 
 const { expect } = require("chai")
-const { ethers } = require("hardhat")
+const { ethers, upgrades } = require("hardhat")
 
 // ---------------------------------------------------------------------------
 //  Helpers
@@ -50,7 +50,11 @@ async function deployRegistry() {
   const signers = await ethers.getSigners()
   const owner = signers[0]
   const Factory = await ethers.getContractFactory("ValidatorRegistry")
-  const registry = await Factory.deploy()
+  const registry = await upgrades.deployProxy(
+    Factory,
+    [owner.address, owner.address, owner.address],
+    { initializer: "initialize", kind: "uups" },
+  )
   await registry.waitForDeployment()
   // `signers` doubles as funder pool; tests that need named extras (e.g.
   // a stranger to assert revert) take from the tail.
@@ -452,7 +456,11 @@ describe("ValidatorRegistry: Phase I5 — slash split when insuranceFund set", (
     const { registry, owner, signers } = await deployRegistry()
     const reporter = signers[1]
     const InsuranceFundFactory = await ethers.getContractFactory("InsuranceFund")
-    const insuranceFund = await InsuranceFundFactory.deploy(owner.address)
+    const insuranceFund = await upgrades.deployProxy(
+      InsuranceFundFactory,
+      [owner.address, owner.address],
+      { initializer: "initialize", kind: "uups" },
+    )
     await insuranceFund.waitForDeployment()
 
     // Wire: slashRecipient = reporter; insuranceFund = the new contract.

@@ -14,7 +14,7 @@
  * slash, forever.
  */
 const { expect } = require("chai")
-const { ethers } = require("hardhat")
+const { ethers, upgrades } = require("hardhat")
 
 const MIN_STAKE = ethers.parseEther("32")
 
@@ -30,10 +30,16 @@ async function makeOperator(funder) {
 
 async function deployStack() {
   const [owner] = await ethers.getSigners()
-  const registry = await (await ethers.getContractFactory("ValidatorRegistry")).deploy()
+  const registry = await upgrades.deployProxy(
+    await ethers.getContractFactory("ValidatorRegistry"),
+    [owner.address, owner.address, owner.address],
+    { initializer: "initialize", kind: "uups" },
+  )
   await registry.waitForDeployment()
-  const detector = await (await ethers.getContractFactory("EquivocationDetector")).deploy(
-    await registry.getAddress(),
+  const detector = await upgrades.deployProxy(
+    await ethers.getContractFactory("EquivocationDetector"),
+    [await registry.getAddress(), owner.address],
+    { initializer: "initialize", kind: "uups" },
   )
   await detector.waitForDeployment()
   await registry.connect(owner).setSlasher(await detector.getAddress())

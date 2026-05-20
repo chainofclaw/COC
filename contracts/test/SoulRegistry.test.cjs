@@ -6,7 +6,7 @@
  */
 
 const { expect } = require("chai")
-const { ethers } = require("hardhat")
+const { ethers, upgrades } = require("hardhat")
 
 // ---------------------------------------------------------------------------
 //  EIP-712 Helpers
@@ -73,8 +73,13 @@ function extractEventArg(receipt, eventName, index = 0) {
 }
 
 async function deploySoulRegistry() {
+  const [deployer] = await ethers.getSigners()
   const Factory = await ethers.getContractFactory("SoulRegistry")
-  const registry = await Factory.deploy()
+  const registry = await upgrades.deployProxy(
+    Factory,
+    [deployer.address],
+    { initializer: "initialize", kind: "uups" },
+  )
   await registry.waitForDeployment()
   const address = await registry.getAddress()
   const network = await ethers.provider.getNetwork()
