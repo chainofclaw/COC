@@ -41,12 +41,16 @@ All 7 keys must be **distinct** (no shared anvil keys like in current 18780).
   All 13 deployed addresses are recorded in `configs/deployed-contracts-88780.json`
   — the canonical manifest; the `@chainofclaw/soul` 88780 manifest is kept in
   sync.
-  Current generation: gen-4 (2026-05-19) — full redeploy with ownership of all
-  13 contracts handed to a 3-of-5 MultiSigWallet
-  (`0x3c055D83a9aA12Bba4a2ed53F8970DF4081eBC7E`). Carries the #683 rollup
-  proposer allowlist, #685 PoSeManagerV2 initialize-on-deploy, #686 ownership
-  re-key, and the #687/#689/#691/#694 pull-payment / epoch-hardening batch.
-  Full per-redeploy log: `docs/88780-redeploy-2026-05-19.md`.
+  Current generation: **gen-5 (2026-05-20)** — every contract is now a UUPS
+  upgradeable proxy (PR #707). The same 3-of-5 MultiSigWallet
+  (`0x3c055D83a9aA12Bba4a2ed53F8970DF4081eBC7E`) is the sole upgrade
+  authority (via `_authorizeUpgrade` on every proxy). Future bug fixes ship
+  as in-place `upgradeProxy()` calls signed by the multisig — no more
+  address churn for off-chain consumers. Storage layout is now load-bearing
+  across upgrades (see `contracts/.openzeppelin/unknown-88780.json`).
+  Carries #706/#705 (GovernanceDAO bicameral silent-faction). Full
+  per-redeploy log: `docs/88780-redeploy-gen5-uups-2026-05-20.md`. Previous
+  gen-4 log (immutable contracts era): `docs/88780-redeploy-2026-05-19.md`.
 - [ ] All 7 validators stake 32 ETH into ValidatorRegistry
 - [ ] All 7 register in PoSeManagerV2 with serviceFlags=7
 - [ ] enableEmission with COC token (real ERC20, not deployer-as-stub)
@@ -69,7 +73,7 @@ All 7 keys must be **distinct** (no shared anvil keys like in current 18780).
 |---|---|
 | Chain stalls due to validator outage | H15 fallback proposer (R1.4 verified) |
 | Equivocation by colluding validators | EquivocationDetector + slash automation (R3.1) |
-| Governance proposal exploitation | Treasury 3-of-5 multisig + DAO timelock; since gen-4 (2026-05-19) every contract `owner()` is the 3-of-5 MultiSigWallet (no single-key admin override) |
+| Governance proposal exploitation | Treasury 3-of-5 multisig + DAO timelock; since gen-4 every contract `owner()` is the 3-of-5 MultiSigWallet (no single-key admin override); since gen-5 (2026-05-20) the multisig is also the sole UUPS upgrade authority |
 | GCP resource exhaustion | Reserved capacity + lab fallback validators |
 
 ## Roll-out Plan
