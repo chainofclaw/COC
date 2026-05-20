@@ -1005,6 +1005,75 @@ describe("IpfsHttpServer", () => {
     }
   })
 
+  it("#468: /api/v0 and gateway resolve numeric UnixFS chunk subpaths", async () => {
+    const totalSize = 300 * 1024
+    const content = randomBytes(totalSize)
+    const boundary = "----SubpathBoundary468"
+    const head = Buffer.from(
+      `--${boundary}\r\n` +
+      `Content-Disposition: form-data; name="file"; filename="subpath.bin"\r\n` +
+      "Content-Type: application/octet-stream\r\n\r\n",
+    )
+    const tail = Buffer.from(`\r\n--${boundary}--\r\n`)
+    const addRes = await fetch("/api/v0/add", {
+      method: "POST",
+      headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+      body: Buffer.concat([head, content, tail]),
+    })
+    assert.equal(addRes.status, 200)
+    const addJson = await addRes.json() as Record<string, string>
+    const rootCid = addJson.Hash
+
+    const lsRoot = await fetch(`/api/v0/ls?arg=${rootCid}`)
+    assert.equal(lsRoot.status, 200)
+    const lsJson = await lsRoot.json() as { Objects: Array<{ Links: Array<{ Name: string; Hash: string; Size: number }> }> }
+    const first = lsJson.Objects[0].Links[0]
+    assert.equal(first.Name, "0")
+    assert.ok(first.Hash)
+    const firstChunk = content.subarray(0, first.Size)
+
+    const cat = await fetch(`/api/v0/cat?arg=${rootCid}/0`)
+    assert.equal(cat.status, 200, "cat root/0 must resolve the first UnixFS leaf")
+    assert.deepEqual(await cat.buffer(), firstChunk)
+
+    const gateway = await fetch(`/ipfs/${rootCid}/0`)
+    assert.equal(gateway.status, 200, "gateway root/0 must resolve the first UnixFS leaf")
+    assert.deepEqual(await gateway.buffer(), firstChunk)
+
+    const blockStat = await fetch(`/api/v0/block/stat?arg=${rootCid}/0`)
+    assert.equal(blockStat.status, 200)
+    const blockStatBody = await blockStat.json() as { Key: string; Size: number }
+    assert.equal(blockStatBody.Key, first.Hash)
+    assert.ok(blockStatBody.Size > first.Size, "block/stat reports encoded leaf block size")
+
+    const objectStat = await fetch(`/api/v0/object/stat?arg=${rootCid}/0`)
+    assert.equal(objectStat.status, 200)
+    const objectStatBody = await objectStat.json() as {
+      Hash: string
+      NumLinks: number
+      BlockSize: number
+      DataSize: number
+      CumulativeSize: number
+    }
+    assert.equal(objectStatBody.Hash, first.Hash)
+    assert.equal(objectStatBody.NumLinks, 0)
+    assert.equal(objectStatBody.DataSize, first.Size)
+    assert.equal(objectStatBody.CumulativeSize, objectStatBody.BlockSize)
+    assert.ok(objectStatBody.CumulativeSize > objectStatBody.DataSize)
+
+    const lsLeaf = await fetch(`/api/v0/ls?arg=${rootCid}/0`)
+    assert.equal(lsLeaf.status, 200)
+    const lsLeafBody = await lsLeaf.json() as { Objects: Array<{ Hash: string; Links: unknown[] }> }
+    assert.equal(lsLeafBody.Objects[0].Hash, first.Hash)
+    assert.deepEqual(lsLeafBody.Objects[0].Links, [])
+
+    const missing = await fetch(`/api/v0/cat?arg=${rootCid}/999`)
+    assert.equal(missing.status, 404)
+    const missingBody = await missing.json() as { error?: string; message?: string }
+    assert.notEqual(missingBody.error, "invalid cid")
+    assert.match(`${missingBody.error} ${missingBody.message ?? ""}`, /no such file|no link/i)
+  })
+
   it("#230: /api/v0/object/stat returns 404 for missing shape-valid CID (not 500)", async () => {
     // Pre-fix `handleObjectStat` called `store.get(cid)` directly and let
     // the ENOENT propagate as 500 "internal error" — the sibling
