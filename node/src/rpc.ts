@@ -136,6 +136,31 @@ export function isLoopbackAddress(ip: string): boolean {
   return false
 }
 
+function requireRpcCidParam(params: unknown[], index: number = 0): string {
+  const rawCid = params[index]
+  if (typeof rawCid !== "string" || rawCid.length === 0) {
+    invalidParams("cid must be a non-empty string")
+  }
+  if (!isValidRpcCidShape(rawCid)) {
+    invalidParams("invalid cid: expected CIDv0 base58btc or CIDv1 base32 string")
+  }
+  return rawCid
+}
+
+function isValidRpcCidShape(cid: string): boolean {
+  if (!cid || cid.length > 100) return false
+  if (cid.trim() !== cid) return false
+  if (/[\/\\]|\.\.|\0|\s/.test(cid)) return false
+
+  if (cid.startsWith("Qm")) {
+    return cid.length === 46 && /^Qm[1-9A-HJ-NP-Za-km-z]+$/.test(cid)
+  }
+  if (cid.startsWith("b") || cid.startsWith("B")) {
+    return cid.length >= 8 && /^[bB][a-z2-7]+$/.test(cid)
+  }
+  return false
+}
+
 /** JSON stringify that serializes bigint values as hex strings (EVM RPC convention). */
 export function jsonStringify(obj: unknown): string {
   return JSON.stringify(obj, (_key, value) =>
@@ -2449,16 +2474,11 @@ async function handleRpc(
       // #146: pre-fix this returned errors wrapped in `result.error`,
       // which clients that check `response.error` per JSON-RPC §5
       // never noticed. Switch to -32602 structured throws + sanitize
-      // CID shape against path traversal / control chars (same
-      // isValidCid policy as the IPFS HTTP layer).
-      const rawCid = (payload.params ?? [])[0]
-      if (typeof rawCid !== "string" || rawCid.length === 0) {
-        invalidParams("cid must be a non-empty string")
-      }
-      if (rawCid.length > 512 || /[\/\\]|\.\.|\0|\s/.test(rawCid)) {
-        invalidParams("invalid cid: contains illegal characters or exceeds 512 chars")
-      }
-      const cid = rawCid
+      // CID shape using the same base58-v0 / base32-v1 policy as the
+      // IPFS HTTP layer. Pre-fix this accepted "bad-cid" and returned an
+      // empty provider list indistinguishable from a valid CID with no
+      // providers (#515).
+      const cid = requireRpcCidParam(payload.params ?? [])
       // #251: pre-fix `Number(... ?? 3)` silently mapped any malformed
       // maxK (true → 1, "huge" → NaN→3, {} → NaN→3, -5 → fallback 3,
       // 1.7 → 1 via Math.floor) to a clamped default. Clients passing
@@ -2483,14 +2503,7 @@ async function handleRpc(
       // transport the blob.
       // #146: same fix as coc_dhtFindProviders — structured error in
       // the `error` field, not embedded in `result`.
-      const rawCid = (payload.params ?? [])[0]
-      if (typeof rawCid !== "string" || rawCid.length === 0) {
-        invalidParams("cid must be a non-empty string")
-      }
-      if (rawCid.length > 512 || /[\/\\]|\.\.|\0|\s/.test(rawCid)) {
-        invalidParams("invalid cid: contains illegal characters or exceeds 512 chars")
-      }
-      const cid = rawCid
+      const cid = requireRpcCidParam(payload.params ?? [])
       // #250: pre-fix `String((payload.params ?? [])[1] ?? "")` silently
       // coerced numbers/bools to ad-hoc peer IDs ("123", "true"), passing
       // bogus exclude-filters to fetchBlockFromPeer. Same anti-pattern as
