@@ -39,6 +39,14 @@
   "poseManagerV2Address": "0xYOUR_POSE_MANAGER_V2_ADDRESS",
   "verifyingContract": "0xYOUR_POSE_MANAGER_V2_ADDRESS",
   "chainId": 18780,
+  "poseWitnessAuthToken": "replace-with-random-witness-token",
+  "witnessNodes": [
+    {
+      "url": "http://127.0.0.1:18780",
+      "witnessIndex": 0,
+      "authToken": "replace-with-random-witness-token"
+    }
+  ],
   "requiredWitnesses": 0,
   "allowEmptyBatchWitnessSubmission": false,
   "tipToleranceBlocks": 10,

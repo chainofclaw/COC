@@ -4,9 +4,21 @@
 import type { Hex32 } from "../../services/common/pose-types.ts"
 import type { WitnessAttestation } from "../../services/common/pose-types-v2.ts"
 import { requestJson } from "./http-client.ts"
+import { buildWitnessAuthHeaders } from "./pose-witness-auth.ts"
+
+export interface WitnessNodeConfig {
+  url: string
+  witnessIndex: number
+  authToken?: string
+}
+
+export interface WitnessEndpointConfig {
+  url: string
+  authToken?: string
+}
 
 export interface WitnessCollectorConfig {
-  witnessNodes: { url: string; witnessIndex: number }[]
+  witnessNodes: WitnessNodeConfig[]
   requiredWitnesses: number
   timeoutMs: number
 }
@@ -29,6 +41,7 @@ type WitnessRequestFn = (
   url: string,
   method: string,
   body?: unknown,
+  headers?: Record<string, string>,
 ) => Promise<{ status?: number; json?: any }>
 
 export async function collectWitnesses(
@@ -40,12 +53,17 @@ export async function collectWitnesses(
 ): Promise<CollectResult> {
   const requests = config.witnessNodes.map(async (w) => {
     try {
-      const response = await requestFn(`${w.url}/pose/witness`, "POST", {
-        challengeId,
-        nodeId,
-        responseBodyHash,
-        witnessIndex: w.witnessIndex,
-      })
+      const response = await requestFn(
+        `${w.url}/pose/witness`,
+        "POST",
+        {
+          challengeId,
+          nodeId,
+          responseBodyHash,
+          witnessIndex: w.witnessIndex,
+        },
+        buildWitnessAuthHeaders(w.authToken),
+      )
       const attest = response.json as WitnessAttestation | undefined
       if (!attest) return null
       // The witness index is assigned by the collector, not picked by the
@@ -96,7 +114,7 @@ export async function collectWitnesses(
 export async function collectBatchWitnessSignatures(
   merkleRoot: Hex32,
   witnessSet: Hex32[],
-  resolveEndpoint: (nodeId: Hex32, witnessIndex: number) => string | null,
+  resolveEndpoint: (nodeId: Hex32, witnessIndex: number) => string | WitnessEndpointConfig | null,
   requestFn: WitnessRequestFn = requestJson,
 ): Promise<BatchWitnessCollectResult> {
   const normalizedRoot = merkleRoot.toLowerCase()
@@ -107,15 +125,20 @@ export async function collectBatchWitnessSignatures(
   }
 
   const requests = capped.map(async (nodeId, witnessIndex) => {
-    const url = resolveEndpoint(nodeId, witnessIndex)
-    if (!url) return null
+    const endpoint = normalizeWitnessEndpoint(resolveEndpoint(nodeId, witnessIndex))
+    if (!endpoint) return null
     try {
-      const response = await requestFn(`${url}/pose/witness`, "POST", {
-        challengeId: merkleRoot,
-        nodeId,
-        responseBodyHash: merkleRoot,
-        witnessIndex,
-      })
+      const response = await requestFn(
+        `${endpoint.url}/pose/witness`,
+        "POST",
+        {
+          challengeId: merkleRoot,
+          nodeId,
+          responseBodyHash: merkleRoot,
+          witnessIndex,
+        },
+        buildWitnessAuthHeaders(endpoint.authToken),
+      )
       const attest = response.json as Partial<WitnessAttestation> | undefined
       if (!attest) return null
       if (typeof attest.challengeId !== "string" || attest.challengeId.toLowerCase() !== normalizedRoot) return null
@@ -168,4 +191,10 @@ function popcount(n: number): number {
     v >>>= 1
   }
   return count
+}
+
+function normalizeWitnessEndpoint(raw: string | WitnessEndpointConfig | null): WitnessEndpointConfig | null {
+  if (!raw) return null
+  if (typeof raw === "string") return { url: raw }
+  return raw
 }

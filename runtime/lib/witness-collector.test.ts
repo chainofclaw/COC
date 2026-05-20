@@ -140,6 +140,36 @@ describe("witness-collector", () => {
     assert.equal(result.signatures[2], mkSig("3"))
   })
 
+  it("collectBatchWitnessSignatures sends endpoint bearer tokens when configured (#667)", async () => {
+    const merkleRoot = `0x${"ee".repeat(32)}` as Hex32
+    const witnessSet = [`0x${"04".repeat(32)}`] as Hex32[]
+    const validSig = `0x${"aa".repeat(65)}`
+
+    const result = await collectBatchWitnessSignatures(
+      merkleRoot,
+      witnessSet,
+      () => ({ url: "http://witness-token.local", authToken: "batch-secret" }),
+      async (_url, _method, body, headers) => {
+        assert.deepEqual(headers, { Authorization: "Bearer batch-secret" })
+        const payload = body as { witnessIndex: number; nodeId: string; challengeId: string; responseBodyHash: string }
+        return {
+          status: 200,
+          json: {
+            challengeId: payload.challengeId,
+            nodeId: payload.nodeId,
+            responseBodyHash: payload.responseBodyHash,
+            witnessIndex: payload.witnessIndex,
+            witnessSig: validSig,
+          },
+        }
+      },
+    )
+
+    assert.equal(result.bitmap, 0b1)
+    assert.equal(result.signedCount, 1)
+    assert.equal(result.quorumMet, true)
+  })
+
   it("collectBatchWitnessSignatures drops invalid responses and reports quorum miss", async () => {
     const merkleRoot = `0x${"cd".repeat(32)}` as Hex32
     const witnessSet = [
@@ -222,6 +252,43 @@ describe("witness-collector", () => {
 
     assert.equal(result.bitmap, 0b111)
     assert.equal(result.attestations.length, 3)
+    assert.equal(result.quorumMet, true)
+  })
+
+  it("collectWitnesses sends witness bearer tokens when configured (#667)", async () => {
+    const challengeId = `0x${"a1".repeat(32)}` as Hex32
+    const nodeId = `0x${"b2".repeat(32)}` as Hex32
+    const responseBodyHash = `0x${"c3".repeat(32)}` as Hex32
+    const sig = `0x${"dd".repeat(65)}`
+
+    const result = await collectWitnesses(
+      {
+        witnessNodes: [
+          { url: "http://w0.local", witnessIndex: 0, authToken: "witness-secret" },
+        ],
+        requiredWitnesses: 1,
+        timeoutMs: 1000,
+      },
+      challengeId,
+      nodeId,
+      responseBodyHash,
+      async (_url, _method, body, headers) => {
+        assert.deepEqual(headers, { Authorization: "Bearer witness-secret" })
+        const p = body as { witnessIndex: number }
+        return {
+          status: 200,
+          json: {
+            challengeId, nodeId, responseBodyHash,
+            witnessIndex: p.witnessIndex,
+            attestedAtMs: 1n,
+            witnessSig: sig,
+          },
+        }
+      },
+    )
+
+    assert.equal(result.bitmap, 0b1)
+    assert.equal(result.attestations.length, 1)
     assert.equal(result.quorumMet, true)
   })
 
