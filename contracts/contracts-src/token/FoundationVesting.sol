@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+
 /**
  * @title FoundationVesting
  * @notice Tiered release schedule for Foundation's 6% genesis allocation (60M COC).
@@ -8,8 +11,9 @@ pragma solidity ^0.8.24;
  * - Year 1: 1.5% (15M COC) available immediately for startup operations
  * - Remaining 4.5% (45M COC): 48-month linear vesting starting at deployment
  * - Quarterly spending cap: max 15% of current balance per quarter
+ * - UUPS upgradeable since 88780 gen-5; upgrade gated on `owner`.
  */
-contract FoundationVesting {
+contract FoundationVesting is Initializable, UUPSUpgradeable {
     address public beneficiary;        // Foundation multisig or EOA
     address public owner;              // Deployer (can update beneficiary)
 
@@ -30,6 +34,7 @@ contract FoundationVesting {
     event WithdrawalCredited(address indexed payee, uint256 amount);
     event WithdrawalClaimed(address indexed payee, uint256 amount);
     event BeneficiaryUpdated(address indexed oldBeneficiary, address indexed newBeneficiary);
+    event OwnerUpdated(address indexed oldOwner, address indexed newOwner);
 
     error NotOwner();
     error NotBeneficiary();
@@ -49,12 +54,25 @@ contract FoundationVesting {
         _;
     }
 
-    constructor(address _beneficiary) {
-        if (_beneficiary == address(0)) revert ZeroAddress();
-        owner = msg.sender;
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(address _beneficiary, address initialOwner) external initializer {
+        if (_beneficiary == address(0) || initialOwner == address(0)) revert ZeroAddress();
+        owner = initialOwner;
         beneficiary = _beneficiary;
         vestingStart = block.timestamp;
         quarterStart = block.timestamp;
+    }
+
+    function _authorizeUpgrade(address) internal override onlyOwner {}
+
+    function transferOwnership(address newOwner) external onlyOwner {
+        if (newOwner == address(0)) revert ZeroAddress();
+        emit OwnerUpdated(owner, newOwner);
+        owner = newOwner;
     }
 
     /**
@@ -155,4 +173,7 @@ contract FoundationVesting {
 
     // Accept ETH deposits (for initial funding)
     receive() external payable {}
+
+    // UUPS storage gap — append-only state from now on.
+    uint256[50] private __gap;
 }

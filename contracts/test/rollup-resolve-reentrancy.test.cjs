@@ -14,7 +14,7 @@
  * Fix: CEI — delete the output (and reset lastSubmittedBlock) before transfers.
  */
 const { expect } = require("chai")
-const { ethers } = require("hardhat")
+const { ethers, upgrades } = require("hardhat")
 
 const CHALLENGE_WINDOW = 1000
 const PROPOSER_BOND = ethers.parseEther("1")
@@ -28,12 +28,17 @@ describe("Security: RollupStateManager resolveChallenge reentrancy", function ()
   beforeEach(async function () {
     ;[deployer, proposer, insuranceFund] = await ethers.getSigners()
 
-    manager = await (await ethers.getContractFactory("RollupStateManager")).deploy(
-      CHALLENGE_WINDOW,
-      PROPOSER_BOND,
-      CHALLENGER_BOND,
-      insuranceFund.address,
-      proposer.address,
+    manager = await upgrades.deployProxy(
+      await ethers.getContractFactory("RollupStateManager"),
+      [
+        CHALLENGE_WINDOW,
+        PROPOSER_BOND,
+        CHALLENGER_BOND,
+        insuranceFund.address,
+        proposer.address,
+        deployer.address,
+      ],
+      { initializer: "initialize", kind: "uups" },
     )
     await manager.waitForDeployment()
 

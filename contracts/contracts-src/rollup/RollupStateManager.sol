@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {RollupTypes} from "./RollupTypes.sol";
 import {IRollupStateManager} from "./IRollupStateManager.sol";
 
@@ -9,11 +11,12 @@ import {IRollupStateManager} from "./IRollupStateManager.sol";
 ///         Proposers submit output roots for L2 block ranges; challengers can dispute
 ///         within the challenge window. After the window elapses without challenge (or
 ///         after challenge resolution in proposer's favor), outputs are finalized.
-contract RollupStateManager is IRollupStateManager {
-    // ── Configuration (immutable after deploy) ──────────────────────────
-    uint256 public immutable override CHALLENGE_WINDOW;
-    uint256 public immutable override PROPOSER_BOND;
-    uint256 public immutable override CHALLENGER_BOND;
+///         UUPS upgradeable since 88780 gen-5; upgrade gated on `owner` (the multisig).
+contract RollupStateManager is IRollupStateManager, Initializable, UUPSUpgradeable {
+    // ── Configuration (set in `initialize`; mutable across upgrades) ─────
+    uint256 public override CHALLENGE_WINDOW;
+    uint256 public override PROPOSER_BOND;
+    uint256 public override CHALLENGER_BOND;
 
     // ── Slash distribution (basis points, must sum to 10000) ────────────
     uint256 public constant SLASH_BURN_BPS       = 5000; // 50% burned
@@ -49,27 +52,36 @@ contract RollupStateManager is IRollupStateManager {
         _;
     }
 
-    constructor(
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(
         uint256 challengeWindowSeconds,
         uint256 proposerBondWei,
         uint256 challengerBondWei,
         address insuranceFundAddress,
-        address initialProposer
-    ) {
+        address initialProposer,
+        address initialOwner
+    ) external initializer {
         require(challengeWindowSeconds > 0, "challenge window must be > 0");
         require(proposerBondWei > 0, "proposer bond must be > 0");
         require(challengerBondWei > 0, "challenger bond must be > 0");
+        require(initialOwner != address(0), "owner cannot be zero");
         CHALLENGE_WINDOW = challengeWindowSeconds;
         PROPOSER_BOND = proposerBondWei;
         CHALLENGER_BOND = challengerBondWei;
         insuranceFund = insuranceFundAddress;
-        owner = msg.sender;
-        challengeResolver = msg.sender;
+        owner = initialOwner;
+        challengeResolver = initialOwner;
         if (initialProposer != address(0)) {
             allowedProposers[initialProposer] = true;
             emit ProposerUpdated(initialProposer, true);
         }
     }
+
+    function _authorizeUpgrade(address) internal override onlyOwner {}
 
     // ── Submit Output Root ──────────────────────────────────────────────
 
@@ -330,4 +342,7 @@ contract RollupStateManager is IRollupStateManager {
 
     /// @notice Accept ETH deposits (for bond top-ups)
     receive() external payable {}
+
+    // UUPS storage gap — append-only state from now on.
+    uint256[50] private __gap;
 }

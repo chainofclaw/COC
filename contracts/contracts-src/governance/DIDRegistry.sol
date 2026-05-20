@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+
 /// @title DIDRegistry - DID management for AI agents on COC blockchain
 /// @notice Extends SoulRegistry with key rotation, delegation, credentials,
 ///         ephemeral identities, and agent lineage tracking.
 ///         References SoulRegistry for identity verification (does not modify it).
+///         UUPS upgradeable since 88780 gen-5; upgrade gated on `owner` (multisig).
 interface ISoulRegistry {
     struct SoulIdentity {
         bytes32 agentId;
@@ -23,7 +27,7 @@ interface ISoulRegistry {
     function getSoul(bytes32 agentId) external view returns (SoulIdentity memory);
 }
 
-contract DIDRegistry {
+contract DIDRegistry is Initializable, UUPSUpgradeable {
     // -----------------------------------------------------------------------
     //  Types
     // -----------------------------------------------------------------------
@@ -117,8 +121,10 @@ contract DIDRegistry {
         "AnchorCredential(bytes32 credentialHash,bytes32 issuerAgentId,bytes32 subjectAgentId,bytes32 credentialCid,uint64 expiresAt,uint64 nonce)"
     );
 
-    bytes32 public immutable DOMAIN_SEPARATOR;
-    ISoulRegistry public immutable soulRegistry;
+    bytes32 public DOMAIN_SEPARATOR;
+    ISoulRegistry public soulRegistry;
+    /// @notice Upgrade authority (the 88780 multisig after gen-5 handoff).
+    address public owner;
 
     // -----------------------------------------------------------------------
     //  Storage
@@ -195,14 +201,28 @@ contract DIDRegistry {
     error CredentialAlreadyRevoked();
     error InvalidCredentialHash();
     error ZeroAddress();
+    error OnlyOwner();
+
+    event OwnerUpdated(address indexed oldOwner, address indexed newOwner);
+
+    modifier onlyOwner() {
+        if (msg.sender != owner) revert OnlyOwner();
+        _;
+    }
 
     // -----------------------------------------------------------------------
     //  Constructor
     // -----------------------------------------------------------------------
 
-    constructor(address _soulRegistry) {
-        if (_soulRegistry == address(0)) revert ZeroAddress();
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(address _soulRegistry, address initialOwner) external initializer {
+        if (_soulRegistry == address(0) || initialOwner == address(0)) revert ZeroAddress();
         soulRegistry = ISoulRegistry(_soulRegistry);
+        owner = initialOwner;
         DOMAIN_SEPARATOR = keccak256(
             abi.encode(
                 DOMAIN_TYPEHASH,
@@ -212,6 +232,14 @@ contract DIDRegistry {
                 address(this)
             )
         );
+    }
+
+    function _authorizeUpgrade(address) internal override onlyOwner {}
+
+    function transferOwnership(address newOwner) external onlyOwner {
+        if (newOwner == address(0)) revert ZeroAddress();
+        emit OwnerUpdated(owner, newOwner);
+        owner = newOwner;
     }
 
     // -----------------------------------------------------------------------
@@ -628,4 +656,7 @@ contract DIDRegistry {
         if (recovered == address(0)) revert InvalidSignature();
         return recovered;
     }
+
+    // UUPS storage gap — append-only state from now on.
+    uint256[50] private __gap;
 }

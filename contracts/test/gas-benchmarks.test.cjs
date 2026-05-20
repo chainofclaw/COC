@@ -6,14 +6,19 @@
  */
 
 const { expect } = require("chai")
-const { ethers } = require("hardhat")
+const { ethers, upgrades } = require("hardhat")
 
 describe("Gas Benchmarks: FactionRegistry", function () {
   let registry
 
   beforeEach(async function () {
+    const [owner] = await ethers.getSigners()
     const FactionRegistry = await ethers.getContractFactory("FactionRegistry")
-    registry = await FactionRegistry.deploy()
+    registry = await upgrades.deployProxy(
+      FactionRegistry,
+      [owner.address, owner.address],
+      { initializer: "initialize", kind: "uups" },
+    )
     await registry.waitForDeployment()
   })
 
@@ -49,19 +54,30 @@ describe("Gas Benchmarks: GovernanceDAO", function () {
   let dao, registry
 
   beforeEach(async function () {
+    const [owner] = await ethers.getSigners()
     const FactionRegistry = await ethers.getContractFactory("FactionRegistry")
-    registry = await FactionRegistry.deploy()
+    registry = await upgrades.deployProxy(
+      FactionRegistry,
+      [owner.address, owner.address],
+      { initializer: "initialize", kind: "uups" },
+    )
     await registry.waitForDeployment()
 
     const GovernanceDAO = await ethers.getContractFactory("GovernanceDAO")
-    dao = await GovernanceDAO.deploy(await registry.getAddress())
+    dao = await upgrades.deployProxy(
+      GovernanceDAO,
+      [await registry.getAddress(), owner.address],
+      { initializer: "initialize", kind: "uups" },
+    )
     await dao.waitForDeployment()
 
-    const [owner] = await ethers.getSigners()
     await registry.connect(owner).registerHuman()
   })
 
-  it("createProposal gas < 250k", async function () {
+  it("createProposal gas < 270k", async function () {
+    // Budget bumped from 250k → 270k in gen-5: GovernanceDAO.createProposal
+    // now writes humanSnapshot + clawSnapshot per proposal (#706 / #705) for
+    // the silent-faction bicameral check, adding ~2 SSTOREs per call.
     const tx = await dao.createProposal(
       0, // ValidatorAdd
       "Benchmark proposal",
@@ -71,7 +87,7 @@ describe("Gas Benchmarks: GovernanceDAO", function () {
       0
     )
     const receipt = await tx.wait()
-    expect(receipt.gasUsed).to.be.lessThan(250000n)
+    expect(receipt.gasUsed).to.be.lessThan(270000n)
   })
 
   it("vote gas < 120k", async function () {
@@ -93,12 +109,16 @@ describe("Gas Benchmarks: PoSeManager", function () {
   let manager, owner, operator
 
   beforeEach(async function () {
-    const PoSeManager = await ethers.getContractFactory("PoSeManager")
-    manager = await PoSeManager.deploy()
-    await manager.waitForDeployment()
-
     const [signer] = await ethers.getSigners()
     owner = signer
+    const PoSeManager = await ethers.getContractFactory("PoSeManager")
+    manager = await upgrades.deployProxy(
+      PoSeManager,
+      [owner.address],
+      { initializer: "initialize", kind: "uups" },
+    )
+    await manager.waitForDeployment()
+
     operator = ethers.Wallet.createRandom().connect(ethers.provider)
     await owner.sendTransaction({ to: operator.address, value: ethers.parseEther("5") })
   })
@@ -161,7 +181,11 @@ describe("Gas Benchmarks: Treasury", function () {
     const signers = await ethers.getSigners()
     const signerAddrs = signers.slice(0, 5).map(s => s.address)
     const Treasury = await ethers.getContractFactory("Treasury")
-    treasury = await Treasury.deploy(signerAddrs, signers[0].address)
+    treasury = await upgrades.deployProxy(
+      Treasury,
+      [signerAddrs, signers[0].address, signers[0].address],
+      { initializer: "initialize", kind: "uups" },
+    )
     await treasury.waitForDeployment()
   })
 

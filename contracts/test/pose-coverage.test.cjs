@@ -15,7 +15,7 @@
  */
 
 const { expect } = require("chai")
-const { ethers } = require("hardhat")
+const { ethers, upgrades } = require("hardhat")
 const { malleateSignature } = require("./signature-utils.cjs")
 
 // Helper: register a node from a random wallet with proper ownership sig
@@ -93,7 +93,11 @@ describe("PoSeManager: Extended Coverage", function () {
   beforeEach(async function () {
     ;[owner] = await ethers.getSigners()
     const PoSeManager = await ethers.getContractFactory("PoSeManager")
-    manager = await PoSeManager.deploy()
+    manager = await upgrades.deployProxy(
+      PoSeManager,
+      [owner.address],
+      { initializer: "initialize", kind: "uups" },
+    )
     await manager.waitForDeployment()
   })
 

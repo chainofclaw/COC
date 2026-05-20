@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+
 interface IValidatorRegistry {
     function slashValidator(bytes32 nodeId, bytes32 reason) external;
 }
@@ -44,14 +47,14 @@ interface IValidatorRegistry {
  *           3. Off-chain bridge (runtime/coc-relayer.ts) submits evidence
  *              when the BFT coordinator detects equivocation.
  */
-contract EquivocationDetector {
+contract EquivocationDetector is Initializable, UUPSUpgradeable {
     // ── Constants ────────────────────────────────────────────────────────
 
     uint256 public constant DEFAULT_SLASH_COOLDOWN_BLOCKS = 1000;
 
     // ── Storage ──────────────────────────────────────────────────────────
 
-    IValidatorRegistry public immutable validatorRegistry;
+    IValidatorRegistry public validatorRegistry;
     address public owner;
     uint256 public slashCooldownBlocks;
 
@@ -93,12 +96,19 @@ contract EquivocationDetector {
         _;
     }
 
-    constructor(address registry) {
-        if (registry == address(0)) revert ZeroAddress();
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(address registry, address initialOwner) external initializer {
+        if (registry == address(0) || initialOwner == address(0)) revert ZeroAddress();
         validatorRegistry = IValidatorRegistry(registry);
-        owner = msg.sender;
+        owner = initialOwner;
         slashCooldownBlocks = DEFAULT_SLASH_COOLDOWN_BLOCKS;
     }
+
+    function _authorizeUpgrade(address) internal override onlyOwner {}
 
     // ── Public ───────────────────────────────────────────────────────────
 
@@ -264,4 +274,7 @@ contract EquivocationDetector {
         }
         return string(buf);
     }
+
+    // UUPS storage gap — append-only state from now on.
+    uint256[50] private __gap;
 }

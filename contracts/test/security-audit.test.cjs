@@ -8,7 +8,7 @@
  */
 
 const { expect } = require("chai")
-const { ethers } = require("hardhat")
+const { ethers, upgrades } = require("hardhat")
 const { malleateSignature } = require("./signature-utils.cjs")
 
 // Helper: register a PoSe node for an operator wallet
@@ -72,7 +72,11 @@ describe("Security: FactionRegistry", function () {
   beforeEach(async function () {
     ;[owner, user1, user2] = await ethers.getSigners()
     const F = await ethers.getContractFactory("FactionRegistry")
-    registry = await F.deploy()
+    registry = await upgrades.deployProxy(
+      F,
+      [owner.address, owner.address],
+      { initializer: "initialize", kind: "uups" },
+    )
     await registry.waitForDeployment()
   })
 
@@ -176,17 +180,29 @@ describe("Security: GovernanceDAO", function () {
     ;[owner, human1, human2, claw1, claw2, outsider] = await ethers.getSigners()
 
     const FR = await ethers.getContractFactory("FactionRegistry")
-    factionRegistry = await FR.deploy()
+    factionRegistry = await upgrades.deployProxy(
+      FR,
+      [owner.address, owner.address],
+      { initializer: "initialize", kind: "uups" },
+    )
     await factionRegistry.waitForDeployment()
 
     const DAO = await ethers.getContractFactory("GovernanceDAO")
-    dao = await DAO.deploy(await factionRegistry.getAddress())
+    dao = await upgrades.deployProxy(
+      DAO,
+      [await factionRegistry.getAddress(), owner.address],
+      { initializer: "initialize", kind: "uups" },
+    )
     await dao.waitForDeployment()
 
     const T = await ethers.getContractFactory("Treasury")
     const signers5 = await ethers.getSigners()
     const signerAddrs = [signers5[0].address, signers5[1].address, signers5[2].address, signers5[3].address, signers5[4].address]
-    treasury = await T.deploy(signerAddrs, await dao.getAddress())
+    treasury = await upgrades.deployProxy(
+      T,
+      [signerAddrs, await dao.getAddress(), owner.address],
+      { initializer: "initialize", kind: "uups" },
+    )
     await treasury.waitForDeployment()
 
     await dao.setTreasury(await treasury.getAddress())
@@ -378,11 +394,19 @@ describe("Security: GovernanceDAO", function () {
   it("bicameral: empty faction auto-approves (design note)", async function () {
     // Only register humans, no claws in this separate setup
     const FR2 = await ethers.getContractFactory("FactionRegistry")
-    const reg2 = await FR2.deploy()
+    const reg2 = await upgrades.deployProxy(
+      FR2,
+      [owner.address, owner.address],
+      { initializer: "initialize", kind: "uups" },
+    )
     await reg2.waitForDeployment()
 
     const DAO2 = await ethers.getContractFactory("GovernanceDAO")
-    const dao2 = await DAO2.deploy(await reg2.getAddress())
+    const dao2 = await upgrades.deployProxy(
+      DAO2,
+      [await reg2.getAddress(), owner.address],
+      { initializer: "initialize", kind: "uups" },
+    )
     await dao2.waitForDeployment()
 
     await dao2.setBicameralEnabled(true)
@@ -439,21 +463,33 @@ describe("Security: Treasury", function () {
     ;[owner, user1, signer2, signer3, signer4, signer5] = await ethers.getSigners()
     T = await ethers.getContractFactory("Treasury")
     const signerAddrs = [owner.address, user1.address, signer2.address, signer3.address, signer4.address]
-    treasury = await T.deploy(signerAddrs, owner.address) // owner as governance
+    treasury = await upgrades.deployProxy(
+      T,
+      [signerAddrs, owner.address, owner.address], // owner as governance + initialOwner
+      { initializer: "initialize", kind: "uups" },
+    )
     await treasury.waitForDeployment()
   })
 
   it("rejects duplicate multisig signers at deployment", async function () {
     const signerAddrs = [owner.address, user1.address, signer2.address, signer3.address, owner.address]
     await expect(
-      T.deploy(signerAddrs, owner.address)
+      upgrades.deployProxy(
+        T,
+        [signerAddrs, owner.address, owner.address],
+        { initializer: "initialize", kind: "uups" },
+      ),
     ).to.be.revertedWithCustomError(treasury, "DuplicateSigner")
   })
 
   it("rejects zero governance at deployment and update time", async function () {
     const signerAddrs = [owner.address, user1.address, signer2.address, signer3.address, signer4.address]
     await expect(
-      T.deploy(signerAddrs, ethers.ZeroAddress)
+      upgrades.deployProxy(
+        T,
+        [signerAddrs, ethers.ZeroAddress, owner.address],
+        { initializer: "initialize", kind: "uups" },
+      ),
     ).to.be.revertedWithCustomError(treasury, "ZeroAddress")
 
     await expect(
@@ -565,7 +601,11 @@ describe("Security: PoSeManager", function () {
     ;[owner] = await ethers.getSigners()
 
     const PoSeManager = await ethers.getContractFactory("PoSeManager")
-    pose = await PoSeManager.deploy()
+    pose = await upgrades.deployProxy(
+      PoSeManager,
+      [owner.address],
+      { initializer: "initialize", kind: "uups" },
+    )
     await pose.waitForDeployment()
 
     operator1 = ethers.Wallet.createRandom().connect(ethers.provider)

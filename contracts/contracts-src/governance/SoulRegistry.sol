@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {MerkleProofLite} from "../settlement/MerkleProofLite.sol";
 
 /// @title SoulRegistry - On-chain soul identity and backup anchoring for OpenClaw agents
 /// @notice Enables AI agents to persist their identity, memory, and chat history to IPFS
 ///         with on-chain CID anchoring and social recovery via guardians.
-contract SoulRegistry {
+///         UUPS upgradeable since 88780 gen-5; upgrade gated on `owner` (the multisig).
+contract SoulRegistry is Initializable, UUPSUpgradeable {
     // -----------------------------------------------------------------------
     //  Types
     // -----------------------------------------------------------------------
@@ -116,7 +119,9 @@ contract SoulRegistry {
         "Heartbeat(bytes32 agentId,uint64 timestamp,uint64 nonce)"
     );
 
-    bytes32 public immutable DOMAIN_SEPARATOR;
+    bytes32 public DOMAIN_SEPARATOR;
+    /// @notice Upgrade authority (the 88780 multisig after gen-5 handoff).
+    address public owner;
 
     // -----------------------------------------------------------------------
     //  Storage
@@ -202,12 +207,28 @@ contract SoulRegistry {
     error ResurrectionNotReady();
     error CarrierNotConfirmed();
     error InvalidKeyHash();
+    error OnlyOwner();
+    error ZeroAddress();
+
+    event OwnerUpdated(address indexed oldOwner, address indexed newOwner);
+
+    modifier onlyOwner() {
+        if (msg.sender != owner) revert OnlyOwner();
+        _;
+    }
 
     // -----------------------------------------------------------------------
     //  Constructor
     // -----------------------------------------------------------------------
 
+    /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(address initialOwner) external initializer {
+        if (initialOwner == address(0)) revert ZeroAddress();
+        owner = initialOwner;
         DOMAIN_SEPARATOR = keccak256(
             abi.encode(
                 DOMAIN_TYPEHASH,
@@ -217,6 +238,14 @@ contract SoulRegistry {
                 address(this)
             )
         );
+    }
+
+    function _authorizeUpgrade(address) internal override onlyOwner {}
+
+    function transferOwnership(address newOwner) external onlyOwner {
+        if (newOwner == address(0)) revert ZeroAddress();
+        emit OwnerUpdated(owner, newOwner);
+        owner = newOwner;
     }
 
     // -----------------------------------------------------------------------
@@ -931,4 +960,7 @@ contract SoulRegistry {
         }
         return false;
     }
+
+    // UUPS storage gap — append-only state from now on.
+    uint256[50] private __gap;
 }

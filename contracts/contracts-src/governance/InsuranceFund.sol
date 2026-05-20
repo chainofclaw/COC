@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+
 /**
  * @title InsuranceFund
  * @notice Phase I5 — accumulates the 20% insurance share of each
@@ -12,21 +15,29 @@ pragma solidity ^0.8.24;
  *         Minimal by design: deposit via plain ETH transfer, withdraw
  *         only by governance, transferable governance role. Holds no
  *         off-chain state; auditable purely via events.
+ *
+ *         UUPS upgradeable since 88780 gen-5; upgrade is gated on `owner`
+ *         (separate from `governance` so day-to-day withdrawal authority
+ *         and upgrade authority can be split if needed).
  */
-contract InsuranceFund {
+contract InsuranceFund is Initializable, UUPSUpgradeable {
     address public governance;
     uint256 public totalDeposited;
     uint256 public totalWithdrawn;
     mapping(address => uint256) public pendingWithdrawals;
     uint256 public pendingWithdrawalTotal;
+    /// @notice Upgrade authority (the 88780 multisig after gen-5 handoff).
+    address public owner;
 
     event Deposited(address indexed from, uint256 amount, uint256 totalDepositedAfter);
     event Withdrawn(address indexed to, uint256 amount, uint256 totalWithdrawnAfter);
     event WithdrawalCredited(address indexed payee, uint256 amount);
     event WithdrawalClaimed(address indexed payee, uint256 amount);
     event GovernanceUpdated(address indexed oldGovernance, address indexed newGovernance);
+    event OwnerUpdated(address indexed oldOwner, address indexed newOwner);
 
     error OnlyGovernance();
+    error OnlyOwner();
     error ZeroAmount();
     error TransferFailed();
     error InsufficientBalance(uint256 requested, uint256 available);
@@ -38,10 +49,29 @@ contract InsuranceFund {
         _;
     }
 
-    constructor(address initialGovernance) {
-        if (initialGovernance == address(0)) revert ZeroAddress();
-        governance = initialGovernance;
+    modifier onlyOwner() {
+        if (msg.sender != owner) revert OnlyOwner();
+        _;
     }
+
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(address initialGovernance, address initialOwner) external initializer {
+        if (initialGovernance == address(0) || initialOwner == address(0)) revert ZeroAddress();
+        governance = initialGovernance;
+        owner = initialOwner;
+    }
+
+    function transferOwnership(address newOwner) external onlyOwner {
+        if (newOwner == address(0)) revert ZeroAddress();
+        emit OwnerUpdated(owner, newOwner);
+        owner = newOwner;
+    }
+
+    function _authorizeUpgrade(address) internal override onlyOwner {}
 
     /// @notice Anyone can deposit ETH; the slash router does this implicitly.
     receive() external payable {
@@ -110,4 +140,7 @@ contract InsuranceFund {
             emit WithdrawalCredited(to, amount);
         }
     }
+
+    // UUPS storage gap — append-only state from now on.
+    uint256[50] private __gap;
 }

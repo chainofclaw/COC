@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+
 /**
  * @title COCToken
  * @notice Supply tracking and emission control for the COC native token.
@@ -18,7 +21,7 @@ pragma solidity ^0.8.24;
  * Note: In Solidity, `ether` keyword means 10^18 (the smallest unit), NOT Ethereum.
  * On this chain, 1 ether = 1 COC = 10^18 wei (COC's smallest unit).
  */
-contract COCToken {
+contract COCToken is Initializable, UUPSUpgradeable {
     string public constant name = "ChainOfClaw";
     string public constant symbol = "COC";
     uint8 public constant decimals = 18;
@@ -42,6 +45,7 @@ contract COCToken {
     event Transfer(address indexed from, address indexed to, uint256 value);
     event Approval(address indexed owner, address indexed spender, uint256 value);
     event MinterUpdated(address indexed oldMinter, address indexed newMinter);
+    event OwnerUpdated(address indexed oldOwner, address indexed newOwner);
     event Mint(address indexed to, uint256 amount);
     event Burn(address indexed from, uint256 amount);
     event BaseFeeBurnRecorded(uint64 indexed blockNumber, uint256 amount);
@@ -69,9 +73,19 @@ contract COCToken {
      * @param genesisRecipients  Addresses receiving genesis allocation
      * @param genesisAmounts     Amounts for each recipient (must sum to GENESIS_SUPPLY)
      */
-    constructor(address[] memory genesisRecipients, uint256[] memory genesisAmounts) {
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(
+        address[] memory genesisRecipients,
+        uint256[] memory genesisAmounts,
+        address initialOwner
+    ) external initializer {
         require(genesisRecipients.length == genesisAmounts.length, "length mismatch");
-        owner = msg.sender;
+        if (initialOwner == address(0)) revert ZeroAddress();
+        owner = initialOwner;
 
         uint256 genesisTotal = 0;
         for (uint256 i = 0; i < genesisRecipients.length; i++) {
@@ -82,6 +96,14 @@ contract COCToken {
         }
         require(genesisTotal == GENESIS_SUPPLY, "genesis total must equal GENESIS_SUPPLY");
         totalSupply = GENESIS_SUPPLY;
+    }
+
+    function _authorizeUpgrade(address) internal override onlyOwner {}
+
+    function transferOwnership(address newOwner) external onlyOwner {
+        if (newOwner == address(0)) revert ZeroAddress();
+        emit OwnerUpdated(owner, newOwner);
+        owner = newOwner;
     }
 
     // ── Minter Management ──────────────────────────────────────────
@@ -220,4 +242,7 @@ contract COCToken {
             ? totalBurned - totalBurnedFromBaseFee - totalBurnedFromSlash
             : 0;
     }
+
+    // UUPS storage gap — append-only state from now on.
+    uint256[50] private __gap;
 }

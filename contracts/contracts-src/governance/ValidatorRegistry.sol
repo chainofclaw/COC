@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+
 /**
  * @title ValidatorRegistry
  * @notice On-chain BFT validator set with stake, lockup-protected unstake,
@@ -35,7 +38,7 @@ pragma solidity ^0.8.24;
  *           MAX_VALIDATORS    21
  *           SLASH_BPS         1000  (10% of remaining stake per slash)
  */
-contract ValidatorRegistry {
+contract ValidatorRegistry is Initializable, UUPSUpgradeable {
     // ── Constants ────────────────────────────────────────────────────────
 
     uint256 public constant MIN_STAKE = 32 ether;
@@ -154,11 +157,27 @@ contract ValidatorRegistry {
         _;
     }
 
+    /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
-        owner = msg.sender;
-        slasher = msg.sender;
-        slashRecipient = msg.sender;
+        _disableInitializers();
     }
+
+    function initialize(
+        address initialOwner,
+        address initialSlasher,
+        address initialSlashRecipient
+    ) external initializer {
+        if (
+            initialOwner == address(0) ||
+            initialSlasher == address(0) ||
+            initialSlashRecipient == address(0)
+        ) revert ZeroAddress();
+        owner = initialOwner;
+        slasher = initialSlasher;
+        slashRecipient = initialSlashRecipient;
+    }
+
+    function _authorizeUpgrade(address) internal override onlyOwner {}
 
     // ── Stake / activate ─────────────────────────────────────────────────
 
@@ -408,4 +427,7 @@ contract ValidatorRegistry {
         // Validator record gets created. Anything else is a misuse.
         revert();
     }
+
+    // UUPS storage gap — append-only state from now on.
+    uint256[50] private __gap;
 }

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {RollupTypes} from "./RollupTypes.sol";
 import {IDelayedInbox} from "./IDelayedInbox.sol";
 
@@ -8,8 +10,9 @@ import {IDelayedInbox} from "./IDelayedInbox.sol";
 /// @notice Users can enqueue transactions that the L2 sequencer must eventually include.
 ///         After INCLUSION_DELAY elapses, anyone can call forceInclude() to emit an event
 ///         that the sequencer is obligated to process.
-contract DelayedInbox is IDelayedInbox {
-    uint256 public immutable override INCLUSION_DELAY;
+///         UUPS upgradeable since 88780 gen-5; upgrade gated on `owner`.
+contract DelayedInbox is IDelayedInbox, Initializable, UUPSUpgradeable {
+    uint256 public override INCLUSION_DELAY;
     address public sequencer;
     address public owner;
 
@@ -23,12 +26,26 @@ contract DelayedInbox is IDelayedInbox {
         _;
     }
 
-    constructor(uint256 inclusionDelaySeconds, address sequencerAddress) {
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(
+        uint256 inclusionDelaySeconds,
+        address sequencerAddress,
+        address initialOwner
+    ) external initializer {
         require(inclusionDelaySeconds > 0, "inclusion delay must be > 0");
         require(sequencerAddress != address(0), "sequencer cannot be zero");
+        require(initialOwner != address(0), "owner cannot be zero");
         INCLUSION_DELAY = inclusionDelaySeconds;
         sequencer = sequencerAddress;
-        owner = msg.sender;
+        owner = initialOwner;
+    }
+
+    function _authorizeUpgrade(address) internal override {
+        require(msg.sender == owner, "only owner");
     }
 
     /// @notice Enqueue an L2 transaction for eventual forced inclusion
@@ -109,4 +126,7 @@ contract DelayedInbox is IDelayedInbox {
         emit OwnerUpdated(owner, newOwner);
         owner = newOwner;
     }
+
+    // UUPS storage gap — append-only state from now on.
+    uint256[50] private __gap;
 }

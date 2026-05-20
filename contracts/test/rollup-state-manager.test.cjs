@@ -11,7 +11,7 @@
  */
 
 const { expect } = require("chai")
-const { ethers } = require("hardhat")
+const { ethers, upgrades } = require("hardhat")
 
 // Short challenge window for testing (60 seconds)
 const CHALLENGE_WINDOW = 60
@@ -28,12 +28,17 @@ describe("RollupStateManager", function () {
     ;[deployer, proposer, challenger, insuranceFund] = await ethers.getSigners()
 
     const Factory = await ethers.getContractFactory("RollupStateManager")
-    manager = await Factory.deploy(
-      CHALLENGE_WINDOW,
-      PROPOSER_BOND,
-      CHALLENGER_BOND,
-      insuranceFund.address,
-      proposer.address,
+    manager = await upgrades.deployProxy(
+      Factory,
+      [
+        CHALLENGE_WINDOW,
+        PROPOSER_BOND,
+        CHALLENGER_BOND,
+        insuranceFund.address,
+        proposer.address,
+        deployer.address,
+      ],
+      { initializer: "initialize", kind: "uups" },
     )
     await manager.waitForDeployment()
 

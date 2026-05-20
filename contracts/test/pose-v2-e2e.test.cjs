@@ -10,7 +10,7 @@
  */
 
 const { expect } = require("chai")
-const { ethers } = require("hardhat")
+const { ethers, upgrades } = require("hardhat")
 
 // ---------------------------------------------------------------------------
 //  Helpers (mirror TypeScript off-chain libraries)
@@ -177,11 +177,12 @@ describe("PoSe v2 E2E: Full Protocol Lifecycle", function () {
     deployer = signers[0]
 
     const Factory = await ethers.getContractFactory("PoSeManagerV2")
-    manager = await Factory.deploy()
+    manager = await upgrades.deployProxy(
+      Factory,
+      [ethers.parseEther("0.01"), deployer.address],
+      { initializer: "initialize", kind: "uups" },
+    )
     await manager.waitForDeployment()
-
-    const chainId = (await ethers.provider.getNetwork()).chainId
-    await manager.initialize(chainId, await manager.getAddress(), ethers.parseEther("0.01"))
     await manager.setAllowEmptyWitnessSubmission(true)
   })
 

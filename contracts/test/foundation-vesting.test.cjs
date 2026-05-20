@@ -3,11 +3,16 @@
  */
 
 const { expect } = require("chai")
-const { ethers } = require("hardhat")
+const { ethers, upgrades } = require("hardhat")
 
 async function deployVesting(beneficiary) {
+  const [deployer] = await ethers.getSigners()
   const Factory = await ethers.getContractFactory("FoundationVesting")
-  const vesting = await Factory.deploy(beneficiary)
+  const vesting = await upgrades.deployProxy(
+    Factory,
+    [beneficiary, deployer.address],
+    { initializer: "initialize", kind: "uups" },
+  )
   await vesting.waitForDeployment()
   return vesting
 }

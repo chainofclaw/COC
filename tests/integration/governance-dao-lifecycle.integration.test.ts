@@ -27,7 +27,9 @@ import { dirname, join } from "node:path"
 import test from "node:test"
 import { fileURLToPath } from "node:url"
 import {
+  Contract,
   ContractFactory,
+  Interface,
   JsonRpcProvider,
   Wallet,
   ZeroAddress,
@@ -40,6 +42,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const repoRoot = join(__dirname, "..", "..")
 const contractsDir = join(repoRoot, "contracts")
 const artifactsDir = join(contractsDir, "artifacts", "contracts-src", "governance")
+const testArtifactsDir = join(contractsDir, "artifacts", "contracts-src", "test-contracts")
 
 const hardhatCliRoot = join(repoRoot, "node_modules", "hardhat", "internal", "cli", "bootstrap.js")
 const hardhatCliContracts = join(contractsDir, "node_modules", "hardhat", "internal", "cli", "bootstrap.js")
@@ -56,6 +59,35 @@ const HUMAN_KEYS = [
 function loadArtifact(name: string): { abi: unknown[]; bytecode: string } {
   const path = join(artifactsDir, `${name}.sol`, `${name}.json`)
   return JSON.parse(readFileSync(path, "utf8"))
+}
+
+function loadTestProxyArtifact(): { abi: unknown[]; bytecode: string } {
+  const path = join(testArtifactsDir, "TestERC1967Proxy.sol", "TestERC1967Proxy.json")
+  return JSON.parse(readFileSync(path, "utf8"))
+}
+
+// gen-5 helper: deploy implementation, then ERC1967Proxy initialized with
+// the contract's initialize(...) calldata. Returns a Contract bound to the
+// proxy address.
+async function deployUUPS(
+  contractName: string,
+  initArgs: unknown[],
+  deployer: Wallet,
+  txOpts: () => { nonce: number },
+): Promise<Contract> {
+  const artifact = loadArtifact(contractName)
+  const impl = await new ContractFactory(artifact.abi, artifact.bytecode, deployer).deploy(txOpts())
+  await impl.waitForDeployment()
+  const iface = new Interface(artifact.abi)
+  const initCalldata = iface.encodeFunctionData("initialize", initArgs)
+  const proxyArt = loadTestProxyArtifact()
+  const proxy = await new ContractFactory(proxyArt.abi, proxyArt.bytecode, deployer).deploy(
+    await impl.getAddress(),
+    initCalldata,
+    txOpts(),
+  )
+  await proxy.waitForDeployment()
+  return new Contract(await proxy.getAddress(), artifact.abi, deployer)
 }
 
 async function getFreePort(): Promise<number> {
@@ -144,10 +176,8 @@ test("R2.2 governance DAO lifecycle: propose → vote → queue → execute end-
     const txOpts = (): { nonce: number } => ({ nonce: nonce++ })
 
     // ── Step 1: Deploy FactionRegistry, GovernanceDAO, Treasury ─────────
-    const fr = await new ContractFactory(loadArtifact("FactionRegistry").abi, loadArtifact("FactionRegistry").bytecode, deployerWallet).deploy(txOpts())
-    await fr.waitForDeployment()
-    const dao = await new ContractFactory(loadArtifact("GovernanceDAO").abi, loadArtifact("GovernanceDAO").bytecode, deployerWallet).deploy(await fr.getAddress(), txOpts())
-    await dao.waitForDeployment()
+    const fr = await deployUUPS("FactionRegistry", [deployerWallet.address, deployerWallet.address], deployerWallet, txOpts)
+    const dao = await deployUUPS("GovernanceDAO", [await fr.getAddress(), deployerWallet.address], deployerWallet, txOpts)
 
     // Treasury needs 5 signers + governance address. Use deployer + 4 anvil
     // wallets for signers (the multisig path isn't exercised by this test —
@@ -161,12 +191,12 @@ test("R2.2 governance DAO lifecycle: propose → vote → queue → execute end-
       "0x0000000000000000000000000000000000000001",
       "0x0000000000000000000000000000000000000002",
     ].slice(0, 5) as [string, string, string, string, string]
-    const treasury = await new ContractFactory(
-      loadArtifact("Treasury").abi,
-      loadArtifact("Treasury").bytecode,
+    const treasury = await deployUUPS(
+      "Treasury",
+      [signerAddrs, await dao.getAddress(), deployerWallet.address],
       deployerWallet,
-    ).deploy(signerAddrs, await dao.getAddress(), txOpts())
-    await treasury.waitForDeployment()
+      txOpts,
+    )
     await (await dao.setTreasury(await treasury.getAddress(), txOpts()) as any).wait()
 
     // ── Step 2: Owner shrinks votingPeriod (1d minimum) + zero timelock ─

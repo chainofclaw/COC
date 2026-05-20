@@ -9,11 +9,16 @@
  */
 
 const { expect } = require("chai")
-const { ethers } = require("hardhat")
+const { ethers, upgrades } = require("hardhat")
 
 async function deployFund(initialGovernance) {
+  const [deployer] = await ethers.getSigners()
   const Factory = await ethers.getContractFactory("InsuranceFund")
-  const fund = await Factory.deploy(initialGovernance)
+  const fund = await upgrades.deployProxy(
+    Factory,
+    [initialGovernance, deployer.address],
+    { initializer: "initialize", kind: "uups" },
+  )
   await fund.waitForDeployment()
   return fund
 }
@@ -28,8 +33,15 @@ async function installRejectingReceiverCode(address) {
 
 describe("InsuranceFund: deployment", () => {
   it("rejects zero-address governance", async () => {
+    const [deployer] = await ethers.getSigners()
     const Factory = await ethers.getContractFactory("InsuranceFund")
-    await expect(Factory.deploy(ethers.ZeroAddress)).to.be.revertedWithCustomError(Factory, "ZeroAddress")
+    await expect(
+      upgrades.deployProxy(
+        Factory,
+        [ethers.ZeroAddress, deployer.address],
+        { initializer: "initialize", kind: "uups" },
+      ),
+    ).to.be.revertedWithCustomError(Factory, "ZeroAddress")
   })
 
   it("constructor sets governance", async () => {

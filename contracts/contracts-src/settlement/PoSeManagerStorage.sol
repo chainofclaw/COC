@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {PoSeTypes} from "./PoSeTypes.sol";
 
-abstract contract PoSeManagerStorage {
+abstract contract PoSeManagerStorage is Initializable {
     uint64 public constant EPOCH_SECONDS = 3600;
     uint64 public constant DISPUTE_WINDOW_EPOCHS = 2;
     uint64 public constant UNBOND_DELAY_EPOCHS = 7 * 24; // 7 days in hours
@@ -54,9 +55,13 @@ abstract contract PoSeManagerStorage {
         _;
     }
 
-    constructor() {
-        owner = msg.sender;
-        roles[SLASHER_ROLE][msg.sender] = true;
+    /// @dev Chained initializer for upgradeable derived contracts (PoSeManager
+    ///      v1 and PoSeManagerV2). Each derived contract calls this from its
+    ///      own `initialize(...)` function under the `initializer` modifier.
+    function __PoSeManagerStorage_init(address initialOwner) internal onlyInitializing {
+        require(initialOwner != address(0), "zero owner");
+        owner = initialOwner;
+        roles[SLASHER_ROLE][initialOwner] = true;
     }
 
     /// @notice Transfer contract ownership (#686 — moves owner to a multisig).
@@ -81,4 +86,7 @@ abstract contract PoSeManagerStorage {
     function _setRole(bytes32 role, address account, bool enabled) internal {
         roles[role][account] = enabled;
     }
+
+    // UUPS storage gap (base class) — append-only state from now on.
+    uint256[50] private __gap;
 }
