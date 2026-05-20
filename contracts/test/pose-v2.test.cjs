@@ -1037,6 +1037,31 @@ describe("PoSeManagerV2", function () {
       expect(await manager.epochSwept(epochId)).to.equal(true)
       expect(await manager.pendingWithdrawals(foundation.address)).to.equal(expectedCredit)
     })
+
+    it("does not credit bookkeeping emission as spendable native reward balance", async function () {
+      await registerNode(manager, deployer)
+
+      const Token = await ethers.getContractFactory("COCToken")
+      const token = await Token.deploy([deployer.address], [ethers.parseEther("250000000")])
+      await token.waitForDeployment()
+      await token.setMinter(await manager.getAddress())
+      await manager.enableEmission(await token.getAddress(), 0)
+
+      await ethers.provider.send("evm_increaseTime", [4 * 3600])
+      await ethers.provider.send("evm_mine")
+
+      await expect(manager.finalizeEpochV2(1, ethers.ZeroHash, 0, 0, 0))
+        .to.emit(manager, "EmissionMinted")
+
+      expect(await token.totalMinted()).to.be.greaterThan(0n)
+      expect(await manager.rewardPoolBalance()).to.equal(0n)
+
+      const amount = 1n
+      const leaf = ethers.keccak256(ethers.solidityPacked(["uint64", "bytes32", "uint256"], [2, ethers.ZeroHash, amount]))
+      await expect(
+        manager.finalizeEpochV2(2, pairHash(leaf, leaf), amount, 0, 0)
+      ).to.be.revertedWithCustomError(manager, "RewardPoolInsufficient")
+    })
   })
 
   describe("Read helpers", function () {
