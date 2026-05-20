@@ -34,7 +34,9 @@ import test from "node:test"
 import { fileURLToPath } from "node:url"
 import {
   AbiCoder,
+  Contract,
   ContractFactory,
+  Interface,
   JsonRpcProvider,
   Wallet,
   ZeroHash,
@@ -50,6 +52,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const repoRoot = join(__dirname, "..", "..")
 const contractsDir = join(repoRoot, "contracts")
 const artifactsDir = join(contractsDir, "artifacts", "contracts-src", "settlement")
+const testArtifactsDir = join(contractsDir, "artifacts", "contracts-src", "test-contracts")
 
 const hardhatCliRoot = join(repoRoot, "node_modules", "hardhat", "internal", "cli", "bootstrap.js")
 const hardhatCliContracts = join(contractsDir, "node_modules", "hardhat", "internal", "cli", "bootstrap.js")
@@ -333,14 +336,27 @@ async function currentEpoch(provider: JsonRpcProvider): Promise<number> {
   return Math.floor(Number(block!.timestamp) / EPOCH_SECONDS)
 }
 
+function loadTestProxyArtifact(): { abi: unknown[]; bytecode: string } {
+  const path = join(testArtifactsDir, "TestERC1967Proxy.sol", "TestERC1967Proxy.json")
+  return JSON.parse(readFileSync(path, "utf8"))
+}
+
 async function deployManager(ctx: Omit<Ctx, "manager">): Promise<any> {
+  // gen-5: PoSeManagerV2 lives behind a UUPS proxy. Deploy implementation,
+  // ABI-encode initialize(challengeBondMin, initialOwner), deploy
+  // ERC1967Proxy with the init calldata, return a Contract bound to the
+  // proxy address using the implementation's ABI.
   const art = loadArtifact("PoSeManagerV2")
-  const factory = new ContractFactory(art.abi, art.bytecode, ctx.deployer)
-  const manager = await factory.deploy(ctx.nextNonce())
-  await manager.waitForDeployment()
-  const chainId = (await ctx.provider.getNetwork()).chainId
-  await (await manager.initialize(chainId, await manager.getAddress(), parseEther("0.01"), ctx.nextNonce())).wait()
-  return manager
+  const implFactory = new ContractFactory(art.abi, art.bytecode, ctx.deployer)
+  const impl = await implFactory.deploy(ctx.nextNonce())
+  await impl.waitForDeployment()
+  const iface = new Interface(art.abi)
+  const initCalldata = iface.encodeFunctionData("initialize", [parseEther("0.01"), ctx.deployer.address])
+  const proxyArt = loadTestProxyArtifact()
+  const proxyFactory = new ContractFactory(proxyArt.abi, proxyArt.bytecode, ctx.deployer)
+  const proxy = await proxyFactory.deploy(await impl.getAddress(), initCalldata, ctx.nextNonce())
+  await proxy.waitForDeployment()
+  return new Contract(await proxy.getAddress(), art.abi, ctx.deployer)
 }
 
 async function extractArg(manager: any, receipt: any, eventName: string, argIndex: number): Promise<any> {

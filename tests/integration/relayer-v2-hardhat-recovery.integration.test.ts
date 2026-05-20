@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url"
 import {
   Contract,
   ContractFactory,
+  Interface,
   JsonRpcProvider,
   NonceManager,
   Wallet,
@@ -41,6 +42,23 @@ const poseArtifact = JSON.parse(
       "settlement",
       "PoSeManagerV2.sol",
       "PoSeManagerV2.json",
+    ),
+    "utf8",
+  ),
+) as { abi: unknown[]; bytecode: string }
+
+// gen-5: PoSeManagerV2 is UUPS-upgradeable. We need a concrete ERC1967Proxy
+// (vendored at contracts/contracts-src/test-contracts/TestERC1967Proxy.sol).
+const testProxyArtifact = JSON.parse(
+  readFileSync(
+    join(
+      repoRoot,
+      "contracts",
+      "artifacts",
+      "contracts-src",
+      "test-contracts",
+      "TestERC1967Proxy.sol",
+      "TestERC1967Proxy.json",
     ),
     "utf8",
   ),
@@ -291,12 +309,19 @@ test("relayer v2 recovery works against real Hardhat JSON-RPC + deployed PoSeMan
     provider = new JsonRpcProvider(node.url)
     const deployerWallet = new Wallet(DEPLOYER_KEY, provider)
     const txSigner = new NonceManager(deployerWallet)
-    const factory = new ContractFactory(poseArtifact.abi, poseArtifact.bytecode, txSigner)
-    const manager = await factory.deploy()
-    await manager.waitForDeployment()
-
-    const network = await provider.getNetwork()
-    await (await manager.initialize(network.chainId, await manager.getAddress(), parseEther("0.01"))).wait()
+    // gen-5: PoSeManagerV2 lives behind a UUPS proxy. Deploy the
+    // implementation, then ERC1967Proxy initialized with
+    // initialize(challengeBondMin, initialOwner). The resulting `manager`
+    // Contract is bound to the proxy address with the implementation ABI.
+    const implFactory = new ContractFactory(poseArtifact.abi, poseArtifact.bytecode, txSigner)
+    const impl = await implFactory.deploy()
+    await impl.waitForDeployment()
+    const iface = new Interface(poseArtifact.abi)
+    const initCalldata = iface.encodeFunctionData("initialize", [parseEther("0.01"), deployerWallet.address])
+    const proxyFactory = new ContractFactory(testProxyArtifact.abi, testProxyArtifact.bytecode, txSigner)
+    const proxy = await proxyFactory.deploy(await impl.getAddress(), initCalldata)
+    await proxy.waitForDeployment()
+    const manager = new Contract(await proxy.getAddress(), poseArtifact.abi, txSigner)
     await (await manager.setAllowEmptyWitnessSubmission(true)).wait()
 
     const registered = await registerNode(manager, txSigner, provider)
