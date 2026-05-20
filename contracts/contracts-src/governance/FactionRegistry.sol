@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+
 /// @title FactionRegistry - Maps addresses to Human or Claw factions
-/// @notice Faction is immutable once registered to prevent speculative switching
-contract FactionRegistry {
+/// @notice Faction is immutable once registered to prevent speculative switching.
+///         UUPS upgradeable since 88780 gen-5; upgrade is gated on `owner`.
+contract FactionRegistry is Initializable, UUPSUpgradeable {
     uint256 internal constant SECP256K1N_HALF =
         0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0;
 
@@ -51,10 +55,18 @@ contract FactionRegistry {
         _;
     }
 
+    /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
-        owner = msg.sender;
-        verifier = msg.sender;
+        _disableInitializers();
     }
+
+    function initialize(address initialOwner, address initialVerifier) external initializer {
+        if (initialOwner == address(0) || initialVerifier == address(0)) revert ZeroAddress();
+        owner = initialOwner;
+        verifier = initialVerifier;
+    }
+
+    function _authorizeUpgrade(address) internal override onlyOwner {}
 
     /// @notice Register as Human (called via MetaMask)
     function registerHuman() external {
@@ -156,4 +168,7 @@ contract FactionRegistry {
 
         return ecrecover(hash, v, r, s);
     }
+
+    // UUPS storage gap — append-only state from now on.
+    uint256[50] private __gap;
 }

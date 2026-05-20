@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {IPoSeManagerV2} from "./IPoSeManagerV2.sol";
 import {PoSeTypes} from "./PoSeTypes.sol";
 import {PoSeTypesV2} from "./PoSeTypesV2.sol";
@@ -14,7 +15,7 @@ interface ICOCToken {
     function burn(uint256 amount) external;
 }
 
-contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
+contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage, UUPSUpgradeable {
     using EmissionSchedule for uint64;
     uint16 internal constant BPS_DENOMINATOR = 10_000;
     uint16 public constant SLASH_EPOCH_CAP_BPS = 500;      // 5% per epoch
@@ -58,7 +59,9 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
     uint256 public challengeBondMin;
     uint256 public insuranceBalance;
     bytes32 public DOMAIN_SEPARATOR;
-    bool public allowEmptyWitnessSubmission = false;
+    bool public allowEmptyWitnessSubmission;
+    /// @dev Kept for storage-layout compatibility with the pre-UUPS deployment.
+    /// The OZ `initializer` modifier now provides the single-shot guard.
     bool public initialized;
     uint256 private _challengeCounter;
 
@@ -101,10 +104,20 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
     error AlreadyInitialized();
     error ZeroAddress();
 
-    function initialize(uint256 chainId, address verifyingContract, uint256 _challengeBondMin) external onlyOwner {
-        if (initialized) revert AlreadyInitialized();
-        if (verifyingContract == address(0)) revert ZeroAddress();
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    /// @notice Proxy initializer. `chainId` and `verifyingContract` are no
+    ///         longer parameters — they are taken from `block.chainid` and
+    ///         `address(this)` (the proxy address) so the EIP-712 domain
+    ///         always reflects the live deployment.
+    function initialize(uint256 _challengeBondMin, address initialOwner) external initializer {
         if (_challengeBondMin == 0) revert BondTooLow();
+        if (initialOwner == address(0)) revert ZeroAddress();
+
+        __PoSeManagerStorage_init(initialOwner);
 
         initialized = true;
         DOMAIN_SEPARATOR = keccak256(
@@ -112,12 +125,12 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
                 keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
                 keccak256("COCPoSe"),
                 keccak256("2"),
-                chainId,
-                verifyingContract
+                block.chainid,
+                address(this)
             )
         );
         challengeBondMin = _challengeBondMin;
-        emit Initialized(chainId, verifyingContract, _challengeBondMin);
+        emit Initialized(block.chainid, address(this), _challengeBondMin);
     }
 
     /**
@@ -909,4 +922,9 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage {
 
     // Allow receiving ETH for burns
     receive() external payable {}
+
+    function _authorizeUpgrade(address) internal override onlyOwner {}
+
+    // UUPS storage gap — append-only state from now on.
+    uint256[50] private __gap;
 }

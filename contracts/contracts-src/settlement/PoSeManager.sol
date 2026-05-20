@@ -1,16 +1,28 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {IPoSeManager} from "./IPoSeManager.sol";
 import {PoSeTypes} from "./PoSeTypes.sol";
 import {PoSeManagerStorage} from "./PoSeManagerStorage.sol";
 import {MerkleProofLite} from "./MerkleProofLite.sol";
 
-contract PoSeManager is IPoSeManager, PoSeManagerStorage {
+contract PoSeManager is IPoSeManager, PoSeManagerStorage, UUPSUpgradeable {
     uint256 internal constant SECP256K1N_HALF =
         0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0;
 
     uint16 internal constant BPS_DENOMINATOR = 10_000;
+
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(address initialOwner) external initializer {
+        __PoSeManagerStorage_init(initialOwner);
+    }
+
+    function _authorizeUpgrade(address) internal override onlyOwner {}
 
     error InvalidNodeId();
     error NodeAlreadyRegistered();
@@ -440,4 +452,7 @@ contract PoSeManager is IPoSeManager, PoSeManagerStorage {
         if (reasonCode >= 5) return 1000; // generic provable fault
         return 1000;
     }
+
+    // UUPS storage gap — append-only state from now on.
+    uint256[50] private __gap;
 }

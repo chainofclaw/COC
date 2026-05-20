@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+
 /**
  * @title Treasury
  * @notice DAO treasury with 3/5 multisig and governance-enforced spending limits.
@@ -10,7 +13,7 @@ pragma solidity ^0.8.24;
  * - Withdrawals exceeding 5% require DAO proposal (external governance contract)
  * - Receives slash proceeds (20% of PoSe penalties) and other deposits
  */
-contract Treasury {
+contract Treasury is Initializable, UUPSUpgradeable {
     uint8 public constant REQUIRED_CONFIRMATIONS = 3;
     uint8 public constant MAX_SIGNERS = 5;
     uint16 public constant SPENDING_CAP_BPS = 500; // 5% of balance
@@ -69,9 +72,18 @@ contract Treasury {
         _;
     }
 
-    constructor(address[5] memory _signers, address _governance) {
-        if (_governance == address(0)) revert ZeroAddress();
-        owner = msg.sender;
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(
+        address[5] memory _signers,
+        address _governance,
+        address initialOwner
+    ) external initializer {
+        if (_governance == address(0) || initialOwner == address(0)) revert ZeroAddress();
+        owner = initialOwner;
         governance = _governance;
         for (uint8 i = 0; i < MAX_SIGNERS; i++) {
             if (_signers[i] == address(0)) revert ZeroAddress();
@@ -80,6 +92,8 @@ contract Treasury {
             isSigner[_signers[i]] = true;
         }
     }
+
+    function _authorizeUpgrade(address) internal override onlyOwner {}
 
     /**
      * @notice Propose a withdrawal. Any signer can propose.
@@ -213,4 +227,7 @@ contract Treasury {
     receive() external payable {
         emit Deposit(msg.sender, msg.value);
     }
+
+    // UUPS storage gap — append-only state from now on.
+    uint256[50] private __gap;
 }

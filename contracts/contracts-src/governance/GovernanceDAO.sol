@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {FactionRegistry} from "./FactionRegistry.sol";
 
 /// @title GovernanceDAO - Multi-type proposals with stake-weighted voting
-/// @notice Supports bicameral mode where both factions must independently approve
-contract GovernanceDAO {
+/// @notice Supports bicameral mode where both factions must independently approve.
+///         UUPS upgradeable since 88780 gen-5; upgrade gated on `owner` (the
+///         88780 multisig). Bicameral check fixed for silent-faction (#705).
+contract GovernanceDAO is Initializable, UUPSUpgradeable {
     enum ProposalType { ValidatorAdd, ValidatorRemove, ParameterChange, TreasurySpend, ContractUpgrade, FreeText }
     enum ProposalState { Pending, Approved, Rejected, Queued, Executed, Cancelled, Expired }
 
@@ -15,6 +19,11 @@ contract GovernanceDAO {
         // judged against this snapshot so the denominator cannot be inflated
         // by permissionless registrations after voting closes.
         uint256 registeredSnapshot;
+        // #705: per-faction count snapshots at creation so the bicameral
+        // approval check can distinguish "faction did not exist at creation"
+        // (auto-pass) from "faction exists but stayed silent" (must NOT pass).
+        uint256 humanSnapshot;
+        uint256 clawSnapshot;
         ProposalType proposalType;
         address proposer;
         string title;
@@ -39,12 +48,12 @@ contract GovernanceDAO {
     mapping(uint256 => Proposal) public proposals;
     mapping(uint256 => mapping(address => bool)) public hasVoted;
 
-    // Governance parameters (can be changed via governance proposals)
-    uint64 public votingPeriod = 7 days;
-    uint64 public timelockDelay = 2 days;
-    uint256 public quorumPercent = 40;
-    uint256 public approvalPercent = 60;
-    bool public bicameralEnabled = false;
+    // Governance parameters (set in `initialize`; mutable via owner setters).
+    uint64 public votingPeriod;
+    uint64 public timelockDelay;
+    uint256 public quorumPercent;
+    uint256 public approvalPercent;
+    bool public bicameralEnabled;
 
     address public owner;
     address public treasury;
@@ -81,10 +90,23 @@ contract GovernanceDAO {
         _;
     }
 
-    constructor(address _factionRegistry) {
-        factionRegistry = FactionRegistry(_factionRegistry);
-        owner = msg.sender;
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
     }
+
+    function initialize(address _factionRegistry, address initialOwner) external initializer {
+        require(_factionRegistry != address(0) && initialOwner != address(0), "zero address");
+        factionRegistry = FactionRegistry(_factionRegistry);
+        owner = initialOwner;
+        votingPeriod = 7 days;
+        timelockDelay = 2 days;
+        quorumPercent = 40;
+        approvalPercent = 60;
+        bicameralEnabled = false;
+    }
+
+    function _authorizeUpgrade(address) internal override onlyOwner {}
 
     function setTreasury(address _treasury) external onlyOwner {
         treasury = _treasury;
@@ -104,9 +126,13 @@ contract GovernanceDAO {
         uint256 proposalId = proposalCount;
         uint64 deadline = uint64(block.timestamp) + votingPeriod;
 
+        uint256 humanSnap = factionRegistry.humanCount();
+        uint256 clawSnap = factionRegistry.clawCount();
         proposals[proposalId] = Proposal({
             id: proposalId,
-            registeredSnapshot: factionRegistry.humanCount() + factionRegistry.clawCount(),
+            registeredSnapshot: humanSnap + clawSnap,
+            humanSnapshot: humanSnap,
+            clawSnapshot: clawSnap,
             proposalType: proposalType,
             proposer: msg.sender,
             title: title,
@@ -265,11 +291,17 @@ contract GovernanceDAO {
         }
 
         if (bicameralEnabled) {
-            // Both factions must independently reach approval threshold
+            // #705: a faction that existed at proposal creation must cast at
+            // least one non-abstain vote AND meet the approval threshold;
+            // only a faction that did not exist at creation (snapshot==0) is
+            // treated as auto-approved (preserves the empty-chamber
+            // compatibility behaviour without auto-passing silent factions).
             uint256 humanTotal = p.forVotesHuman + p.againstVotesHuman;
             uint256 clawTotal = p.forVotesClaw + p.againstVotesClaw;
-            bool humanApproved = humanTotal == 0 || (p.forVotesHuman * 100) / humanTotal >= approvalPercent;
-            bool clawApproved = clawTotal == 0 || (p.forVotesClaw * 100) / clawTotal >= approvalPercent;
+            bool humanApproved = p.humanSnapshot == 0
+                || (humanTotal > 0 && (p.forVotesHuman * 100) / humanTotal >= approvalPercent);
+            bool clawApproved = p.clawSnapshot == 0
+                || (clawTotal > 0 && (p.forVotesClaw * 100) / clawTotal >= approvalPercent);
             return humanApproved && clawApproved;
         }
 
@@ -280,4 +312,7 @@ contract GovernanceDAO {
         if (totalCast == 0) return false;
         return (totalFor * 100) / totalCast >= approvalPercent;
     }
+
+    // UUPS storage gap — append-only state from now on.
+    uint256[50] private __gap;
 }

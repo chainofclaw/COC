@@ -1,5 +1,6 @@
 require("@nomicfoundation/hardhat-ethers")
 require("@nomicfoundation/hardhat-chai-matchers")
+require("@openzeppelin/hardhat-upgrades")
 require("hardhat-gas-reporter")
 require("solidity-coverage")
 

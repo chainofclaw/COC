@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.24;
+
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
 /**
  * @title CidRegistry
@@ -12,22 +15,59 @@ pragma solidity ^0.8.20;
  *         register the mapping (the hash preimage proves knowledge).
  *         Once written, entries are immutable — CIDs are content-addressed,
  *         so a given hash always maps to the same string.
+ *
+ *         UUPS upgradeable since 88780 gen-5; upgrade is gated on `owner`
+ *         (the 3-of-5 MultiSigWallet after the gen-5 ownership handoff).
  */
-contract CidRegistry {
+contract CidRegistry is Initializable, UUPSUpgradeable {
     // ── Storage ──────────────────────────────────────────────────────────
 
     /// @dev cidHash → original CID string (empty string means not registered)
     mapping(bytes32 => string) private _cidMap;
 
+    /// @notice Upgrade authority. Set to the deployer in `initialize`, then
+    /// `transferOwnership`'d to the 88780 multisig.
+    address public owner;
+
     // ── Events ───────────────────────────────────────────────────────────
 
     event CidRegistered(bytes32 indexed cidHash, string cid, address indexed registrant);
+    event OwnerUpdated(address indexed oldOwner, address indexed newOwner);
 
     // ── Errors ───────────────────────────────────────────────────────────
 
     error HashMismatch(bytes32 expected, bytes32 actual);
     error AlreadyRegistered(bytes32 cidHash);
     error EmptyCid();
+    error OnlyOwner();
+    error ZeroAddress();
+
+    // ── Initializer ──────────────────────────────────────────────────────
+
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(address initialOwner) external initializer {
+        if (initialOwner == address(0)) revert ZeroAddress();
+        owner = initialOwner;
+    }
+
+    // ── Ownership / upgrade auth ─────────────────────────────────────────
+
+    modifier onlyOwner() {
+        if (msg.sender != owner) revert OnlyOwner();
+        _;
+    }
+
+    function transferOwnership(address newOwner) external onlyOwner {
+        if (newOwner == address(0)) revert ZeroAddress();
+        emit OwnerUpdated(owner, newOwner);
+        owner = newOwner;
+    }
+
+    function _authorizeUpgrade(address) internal override onlyOwner {}
 
     // ── External functions ───────────────────────────────────────────────
 
@@ -89,4 +129,10 @@ contract CidRegistry {
     function isRegistered(bytes32 cidHash) external view returns (bool) {
         return bytes(_cidMap[cidHash]).length != 0;
     }
+
+    // ── Storage gap (UUPS) ───────────────────────────────────────────────
+    // Reserve space for future state. Every new storage field must shrink
+    // this gap and be appended before it — reordering / inserting before
+    // `_cidMap`/`owner` is forbidden across upgrades.
+    uint256[50] private __gap;
 }
