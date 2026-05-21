@@ -85,6 +85,14 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage, UUPSUpgradeable {
     bytes32[] internal _activeNodeIds;
     mapping(bytes32 => uint256) internal _activeNodeIndex; // nodeId => index+1 (0 = not present)
 
+    // #667: per-(epochId, witnessNodeId, signatureHash) anti-replay guard.
+    // Set when `submitBatchV2WithMetadata` consumes a witness signature; prevents
+    // the same signature being reused across batches inside the same epoch
+    // (or carried into a different epoch under the v1 typehash fallback that
+    // does not encode `epochId`). Versioned typehash v2 already encodes `epochId`
+    // so this also defends against any future regression that drops that field.
+    mapping(bytes32 => bool) internal _witnessSigUsed;
+
     error InvalidNodeId();
     error NodeAlreadyRegistered();
     error NodeNotFound();
@@ -267,6 +275,114 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage, UUPSUpgradeable {
         epochBatches[epochId].push(batchId);
 
         emit BatchSubmittedV2(epochId, batchId, merkleRoot, witnessBitmap);
+    }
+
+    /**
+     * @notice v2 batch submission with per-receipt metadata (#667). Closes the
+     *         "witness rubber-stamp" gap by:
+     *           1. Verifying each witness signature against the ORIGINAL
+     *              (challengeId, responseBodyHash) the witness attested to —
+     *              looked up via `metadata.witnessReceiptIndex`. The v1 path
+     *              re-used `merkleRoot` as both fields, which let aggregator +
+     *              any witness collude to attest to any root.
+     *           2. Requiring witness signers to be currently in `_activeNodeIds`
+     *              (`WitnessNotActive`).
+     *           3. Anti-replay: tracks (epochId, witnessNodeId, sigHash) so the
+     *              same signature cannot be re-used across batches in an epoch.
+     *           4. Independently rebuilding the batch Merkle root from
+     *              `metadata.leafHashes` and asserting `== merkleRoot`.
+     *           5. Versioned-typehash rollout — accepts both `WITNESS_TYPEHASH`
+     *              (v1, no epochId) and `WITNESS_TYPEHASH_V2` (with epochId)
+     *              during the migration window. v1 fallback path will be
+     *              removed in PR-E after the witness fleet upgrades.
+     */
+    function submitBatchV2WithMetadata(
+        uint64 epochId,
+        bytes32 merkleRoot,
+        bytes32 summaryHash,
+        PoSeTypes.SampleProof[] calldata sampleProofs,
+        uint32 witnessBitmap,
+        bytes[] calldata witnessSignatures,
+        PoSeTypesV2.ReceiptBatchMetadata calldata metadata
+    ) external override returns (bytes32 batchId) {
+        if (merkleRoot == bytes32(0) || summaryHash == bytes32(0)) revert InvalidBatch();
+        uint64 currentEpoch = _currentEpoch();
+        if (epochId > currentEpoch) revert InvalidBatch();
+        if (epochFinalized[epochId]) revert EpochAlreadyFinalized();
+        if (sampleProofs.length == 0 || sampleProofs.length > type(uint16).max) revert InvalidBatch();
+
+        // #667 (1) — metadata length sanity. All per-receipt arrays must align,
+        // and at least one leaf must be present (degenerate empty-batch would
+        // produce a zero Merkle root).
+        uint256 numReceipts = metadata.leafHashes.length;
+        if (numReceipts == 0) revert MetadataLengthMismatch();
+        if (metadata.challengeIds.length != numReceipts
+            || metadata.nodeIds.length != numReceipts
+            || metadata.responseBodyHashes.length != numReceipts) {
+            revert MetadataLengthMismatch();
+        }
+
+        // #667 (2) — independent witness quorum + per-receipt signature check.
+        // NOTE: this writes `_witnessSigUsed` so the function is NOT view.
+        _validateWitnessQuorumV2(epochId, witnessBitmap, witnessSignatures, metadata, merkleRoot);
+
+        // #667 (3) — independently rebuild the Merkle root from declared leaves.
+        // Even if every witness signature is forged-but-recoverable, the
+        // aggregator cannot smuggle a `merkleRoot` that doesn't correspond to
+        // the leaves it just declared.
+        bytes32 reconstructedRoot = _rebuildMerkleRoot(metadata.leafHashes);
+        if (reconstructedRoot != merkleRoot) revert MerkleRootMismatch();
+
+        batchId = _batchId(epochId, merkleRoot, summaryHash, msg.sender);
+        if (batches[batchId].merkleRoot != bytes32(0)) revert BatchAlreadySubmitted();
+        if (epochMerkleRootUsed[epochId][merkleRoot]) revert BatchAlreadySubmitted();
+        epochMerkleRootUsed[epochId][merkleRoot] = true;
+
+        // Reuse the existing sample-proof verification path (#680 hardening
+        // stays in place: leafIndex monotonic, no duplicate sampled leaves,
+        // expectedSummary binds epochId/merkleRoot/sampleCommitment/N).
+        bytes32 sampleCommitment = bytes32(0);
+        uint32 lastLeafIndex = 0;
+        bool hasLastIndex = false;
+        for (uint256 i = 0; i < sampleProofs.length; i++) {
+            PoSeTypes.SampleProof calldata proof = sampleProofs[i];
+            if (proof.leaf == bytes32(0) || proof.merkleProof.length == 0) revert InvalidBatch();
+            if (hasLastIndex && proof.leafIndex <= lastLeafIndex) revert InvalidBatch();
+            if (batchSampledLeaf[batchId][proof.leaf]) revert InvalidBatch();
+            if (!MerkleProofLite.verify(proof.merkleProof, merkleRoot, proof.leaf)) revert InvalidBatch();
+
+            batchSampledLeaf[batchId][proof.leaf] = true;
+            sampleCommitment = keccak256(abi.encodePacked(sampleCommitment, proof.leafIndex, proof.leaf));
+            lastLeafIndex = proof.leafIndex;
+            hasLastIndex = true;
+        }
+
+        bytes32 expectedSummary = keccak256(abi.encodePacked(epochId, merkleRoot, sampleCommitment, uint32(sampleProofs.length)));
+        if (summaryHash != expectedSummary) revert InvalidBatch();
+
+        batches[batchId] = PoSeTypes.BatchRecord({
+            epochId: epochId,
+            merkleRoot: merkleRoot,
+            summaryHash: summaryHash,
+            aggregator: msg.sender,
+            submittedAtEpoch: currentEpoch,
+            disputeDeadlineEpoch: currentEpoch + DISPUTE_WINDOW_EPOCHS,
+            finalized: false,
+            disputed: false
+        });
+        batchSampleCount[batchId] = uint32(sampleProofs.length);
+        batchSampleCommitment[batchId] = sampleCommitment;
+        epochBatches[epochId].push(batchId);
+
+        emit BatchSubmittedV2(epochId, batchId, merkleRoot, witnessBitmap);
+        emit ReceiptBatchMetadataSubmitted(
+            batchId,
+            metadata.challengeIds,
+            metadata.nodeIds,
+            metadata.responseBodyHashes,
+            metadata.leafHashes,
+            metadata.witnessReceiptIndex
+        );
     }
 
     // --- Commit-reveal fault proof ---
@@ -800,6 +916,185 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage, UUPSUpgradeable {
         }
     }
 
+    /// @notice #667 — independent witness quorum verification used by
+    ///         `submitBatchV2WithMetadata`. Verifies each set bit against the
+    ///         original (challengeId, responseBodyHash) the witness attested
+    ///         to (looked up via `metadata.witnessReceiptIndex`), and tracks
+    ///         per-signature replay state via `_witnessSigUsed`.
+    ///
+    /// `internal` (not `view`) because the replay guard writes storage.
+    function _validateWitnessQuorumV2(
+        uint64 epochId,
+        uint32 witnessBitmap,
+        bytes[] calldata witnessSignatures,
+        PoSeTypesV2.ReceiptBatchMetadata calldata metadata,
+        bytes32 /* merkleRoot — only used for v1 fallback signature recovery, not needed here */
+    ) internal {
+        bytes32[] memory witnessSet = getWitnessSet(epochId);
+        uint256 m = witnessSet.length;
+
+        if (m == 0) {
+            if (msg.sender != owner) revert InvalidWitnessQuorum();
+            if (witnessBitmap != 0 || witnessSignatures.length != 0) revert InvalidWitnessQuorum();
+            return;
+        }
+
+        if (witnessBitmap == 0 && witnessSignatures.length == 0) {
+            if (!allowEmptyWitnessSubmission || msg.sender != owner) {
+                revert InvalidWitnessQuorum();
+            }
+            return;
+        }
+
+        uint256 required = (2 * m + 2) / 3;
+        uint256 count = 0;
+        for (uint256 i = 0; i < m && i < 32; i++) {
+            if (witnessBitmap & (1 << i) != 0) {
+                count += 1;
+            }
+        }
+        if (count < required) revert InvalidWitnessQuorum();
+
+        uint256 numReceipts = metadata.leafHashes.length;
+        uint256 sigIdx = 0;
+        for (uint256 i = 0; i < m && i < 32; i++) {
+            if (witnessBitmap & (1 << i) != 0) {
+                if (sigIdx >= witnessSignatures.length) revert InvalidWitnessQuorum();
+
+                // (a) Witness must currently be in the active node set —
+                //     prevents a slashed/deactivated witness from being
+                //     retroactively counted toward quorum.
+                if (_activeNodeIndex[witnessSet[i]] == 0) revert WitnessNotActive();
+
+                // (b) Resolve which receipt this witness attested to.
+                uint16 receiptIdx = metadata.witnessReceiptIndex[i];
+                if (receiptIdx >= numReceipts) revert BadReceiptIndex();
+
+                // (c) Try v2 typehash first (binds epochId). Fall back to v1
+                //     during the rollout window. PR-E will drop the v1 path.
+                address operator = nodeOperator[witnessSet[i]];
+                bytes calldata sig = witnessSignatures[sigIdx];
+                bytes32 digestV2 = _buildWitnessDigestV2(
+                    metadata.challengeIds[receiptIdx],
+                    witnessSet[i],
+                    metadata.responseBodyHashes[receiptIdx],
+                    uint8(i),
+                    epochId
+                );
+                address recovered = _recoverSigner(digestV2, sig);
+                if (recovered != operator) {
+                    bytes32 digestV1 = _buildWitnessDigestV1(
+                        metadata.challengeIds[receiptIdx],
+                        witnessSet[i],
+                        metadata.responseBodyHashes[receiptIdx],
+                        uint8(i)
+                    );
+                    recovered = _recoverSigner(digestV1, sig);
+                }
+                if (recovered == address(0) || recovered != operator) {
+                    revert InvalidWitnessQuorum();
+                }
+
+                // (d) Anti-replay. (epochId, witnessNodeId, sigHash) uniquely
+                //     identifies a witness attestation usage; same sig cannot
+                //     be reused in two batches within an epoch nor (under v1
+                //     fallback) across epochs.
+                bytes32 replayKey = keccak256(abi.encodePacked(epochId, witnessSet[i], keccak256(sig)));
+                if (_witnessSigUsed[replayKey]) revert WitnessSigReplay();
+                _witnessSigUsed[replayKey] = true;
+
+                sigIdx += 1;
+            }
+        }
+    }
+
+    /// @notice EIP-712 digest builder — v1 typehash (legacy, no epochId).
+    ///         Retained during the versioned-typehash rollout for backwards
+    ///         compatibility with witnesses still signing the old shape.
+    function _buildWitnessDigestV1(
+        bytes32 challengeId,
+        bytes32 nodeId,
+        bytes32 responseBodyHash,
+        uint8 witnessIndex
+    ) internal view returns (bytes32) {
+        return keccak256(
+            abi.encodePacked(
+                "\x19\x01",
+                DOMAIN_SEPARATOR,
+                keccak256(abi.encode(
+                    PoSeTypesV2.WITNESS_TYPEHASH,
+                    challengeId,
+                    nodeId,
+                    responseBodyHash,
+                    witnessIndex
+                ))
+            )
+        );
+    }
+
+    /// @notice EIP-712 digest builder — v2 typehash. Adds `epochId` so a
+    ///         witness signature is permanently bound to the epoch in which
+    ///         it was collected (defence-in-depth against cross-epoch replay).
+    function _buildWitnessDigestV2(
+        bytes32 challengeId,
+        bytes32 nodeId,
+        bytes32 responseBodyHash,
+        uint8 witnessIndex,
+        uint64 epochId
+    ) internal view returns (bytes32) {
+        return keccak256(
+            abi.encodePacked(
+                "\x19\x01",
+                DOMAIN_SEPARATOR,
+                keccak256(abi.encode(
+                    PoSeTypesV2.WITNESS_TYPEHASH_V2,
+                    challengeId,
+                    nodeId,
+                    responseBodyHash,
+                    witnessIndex,
+                    epochId
+                ))
+            )
+        );
+    }
+
+    /// @notice Rebuild a Merkle root from declared leaves using the same
+    ///         construction as the off-chain aggregator. Standard pairwise
+    ///         keccak256 of sorted-concatenated children with last-node
+    ///         duplication for odd levels. Matches `MerkleProofLite.verify`
+    ///         which itself uses sorted-concat hashing.
+    ///
+    /// Allocates an in-memory buffer the size of `leaves`; for typical batches
+    /// (<= 500 receipts) this is well under the gas budget.
+    function _rebuildMerkleRoot(bytes32[] calldata leaves) internal pure returns (bytes32) {
+        uint256 n = leaves.length;
+        if (n == 0) return bytes32(0);
+
+        bytes32[] memory level = new bytes32[](n);
+        for (uint256 i = 0; i < n; i++) {
+            level[i] = leaves[i];
+        }
+
+        // Always run at least one round so a single-leaf batch hashes to
+        // `pairHash(leaf, leaf)` — matching the aggregator/sample-proof
+        // convention used by `submitSingleLeafBatchV2`. Subsequent rounds
+        // duplicate the last element on odd levels.
+        do {
+            uint256 nextN = (n + 1) / 2;
+            for (uint256 i = 0; i < nextN; i++) {
+                uint256 li = 2 * i;
+                uint256 ri = li + 1 < n ? li + 1 : li;
+                bytes32 l = level[li];
+                bytes32 r = level[ri];
+                level[i] = l < r
+                    ? keccak256(abi.encodePacked(l, r))
+                    : keccak256(abi.encodePacked(r, l));
+            }
+            n = nextN;
+        } while (n > 1);
+        return level[0];
+    }
+
     function _recoverSigner(bytes32 digest, bytes calldata sig) internal pure returns (address) {
         if (sig.length != 65) return address(0);
         uint8 v = uint8(sig[64]);
@@ -926,5 +1221,6 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage, UUPSUpgradeable {
     function _authorizeUpgrade(address) internal override onlyOwner {}
 
     // UUPS storage gap — append-only state from now on.
-    uint256[50] private __gap;
+    // Reduced from 50 → 49 when `_witnessSigUsed` was added in #667 fix.
+    uint256[49] private __gap;
 }
