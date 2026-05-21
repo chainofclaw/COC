@@ -80,7 +80,38 @@ export interface WitnessAttestation {
   witnessIndex: number
   attestedAtMs: bigint
   witnessSig: `0x${string}`
+  /**
+   * Optional v2 typehash signature (#667). Includes `epochId` so the
+   * signature is permanently bound to the epoch in which it was collected.
+   * Witnesses produce both v1 (`witnessSig`) and v2 (`witnessSigV2`) during
+   * the versioned-typehash rollout window; the contract accepts either.
+   */
+  witnessSigV2?: `0x${string}`
 }
+
+/**
+ * Per-receipt metadata sent alongside a v2 batch (#667). Lets the contract
+ * verify each witness signature against the ORIGINAL (challengeId, responseBodyHash)
+ * the witness actually attested to — not the batch merkleRoot. The contract
+ * independently rebuilds the Merkle root from `leafHashes` to assert it
+ * matches the submitted root.
+ *
+ * `witnessReceiptIndex[i]` is the index in {challengeIds, nodeIds,
+ * responseBodyHashes, leafHashes} that the witness at bit `i` (0..31) of
+ * the batch-level bitmap attested to. Unused bit positions hold the sentinel
+ * value `0xffff` (which the contract rejects when accessed via `BadReceiptIndex`).
+ */
+export interface ReceiptBatchMetadata {
+  challengeIds: Hex32[]
+  nodeIds: Hex32[]
+  responseBodyHashes: Hex32[]
+  leafHashes: Hex32[]
+  /** Fixed length 32 — matches Solidity `uint16[32]`. */
+  witnessReceiptIndex: number[]
+}
+
+/** Sentinel for `witnessReceiptIndex` slots that don't have an assigned receipt. */
+export const WITNESS_INDEX_UNUSED = 0xffff
 
 // Evidence leaf for Merkle batch (mirrors Solidity EvidenceLeafV2 struct)
 export interface EvidenceLeafV2 {

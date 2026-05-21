@@ -50,18 +50,24 @@ export async function collectWitnesses(
   nodeId: Hex32,
   responseBodyHash: Hex32,
   requestFn: WitnessRequestFn = requestJson,
+  epochId?: bigint,
 ): Promise<CollectResult> {
   const requests = config.witnessNodes.map(async (w) => {
     try {
+      const body: Record<string, unknown> = {
+        challengeId,
+        nodeId,
+        responseBodyHash,
+        witnessIndex: w.witnessIndex,
+      }
+      // #667 — when `epochId` is provided, opt in to the v2 typehash so
+      // the witness server returns a `witnessSigV2` alongside the v1
+      // signature. The aggregator prefers v2 when building the batch.
+      if (epochId !== undefined) body.epochId = epochId.toString()
       const response = await requestFn(
         `${w.url}/pose/witness`,
         "POST",
-        {
-          challengeId,
-          nodeId,
-          responseBodyHash,
-          witnessIndex: w.witnessIndex,
-        },
+        body,
         buildWitnessAuthHeaders(w.authToken),
       )
       const attest = response.json as WitnessAttestation | undefined
@@ -111,6 +117,16 @@ export async function collectWitnesses(
   }
 }
 
+/**
+ * @deprecated #667 — pairs with the legacy `submitBatchV2` path that has a
+ *             witness "rubber-stamp" hole (witnesses sign the batch root
+ *             rather than the receipts they actually attested to). Kept
+ *             only for backwards compatibility with the v1 typehash
+ *             rollout window; new code should rely on per-receipt
+ *             `collectWitnesses` + `BatchAggregatorV2.buildBatch` which
+ *             produces the `ReceiptBatchMetadata` for
+ *             `submitBatchV2WithMetadata`. PR-E removes this entry point.
+ */
 export async function collectBatchWitnessSignatures(
   merkleRoot: Hex32,
   witnessSet: Hex32[],

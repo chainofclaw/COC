@@ -237,6 +237,9 @@ const poseV2Abi = [
   "event NodeRegistered(bytes32 indexed nodeId, address indexed operator, uint8 serviceFlags, uint256 bondAmount)",
   "function initEpochNonce(uint64 epochId)",
   "function submitBatchV2(uint64 epochId, bytes32 merkleRoot, bytes32 summaryHash, tuple(bytes32 leaf, bytes32[] merkleProof, uint32 leafIndex)[] sampleProofs, uint32 witnessBitmap, bytes[] witnessSignatures) returns (bytes32 batchId)",
+  // #667 — `submitBatchV2WithMetadata`. ReceiptBatchMetadata struct fields:
+  //   challengeIds[]; nodeIds[]; responseBodyHashes[]; leafHashes[]; witnessReceiptIndex[32]
+  "function submitBatchV2WithMetadata(uint64 epochId, bytes32 merkleRoot, bytes32 summaryHash, tuple(bytes32 leaf, bytes32[] merkleProof, uint32 leafIndex)[] sampleProofs, uint32 witnessBitmap, bytes[] witnessSignatures, tuple(bytes32[] challengeIds, bytes32[] nodeIds, bytes32[] responseBodyHashes, bytes32[] leafHashes, uint16[32] witnessReceiptIndex) metadata) returns (bytes32 batchId)",
   "function getActiveNodeCount() view returns (uint256)",
   "function getActiveNodeIds(uint256 offset, uint256 limit) view returns (bytes32[])",
   "function getWitnessSet(uint64 epochId) view returns (bytes32[])",
@@ -1225,6 +1228,34 @@ function stableStringifyAgent(value: unknown): string {
   return `{${props.join(",")}}`;
 }
 
+function popcount(n: number): number {
+  let count = 0;
+  let v = n;
+  while (v) {
+    count += v & 1;
+    v >>>= 1;
+  }
+  return count;
+}
+
+/**
+ * #667 — read the on-chain witness quorum threshold for an epoch. Returns
+ * `ceil(2m/3)` where `m = getWitnessSet(epochId).length`. When no witness
+ * set exists (early-network, isolated single-node devnet) returns 0, which
+ * lets `flushBatchV2` skip the quorum-fallback path entirely.
+ */
+async function computeWitnessQuorumThreshold(epochId: number): Promise<number> {
+  if (!poseV2Contract) return 0;
+  try {
+    const witnessSet = (await poseV2Contract.getWitnessSet(BigInt(epochId))) as string[];
+    const m = witnessSet.length;
+    if (m === 0) return 0;
+    return Math.floor((2 * m + 2) / 3); // ceil(2m/3)
+  } catch {
+    return 0;
+  }
+}
+
 async function collectBatchWitnessQuorum(epochId: number, merkleRoot: `0x${string}`): Promise<{
   bitmap: number;
   signatures: string[];
@@ -1269,58 +1300,76 @@ async function flushBatchV2(epochId: number, receipts: VerifiedReceiptV2[]): Pro
       return false;
     }
 
-    let witnessBitmap = 0;
-    let witnessSignatures: string[] = [];
-    try {
-      const witnessResult = await collectBatchWitnessQuorum(epochId, batch.merkleRoot as `0x${string}`);
-      if (witnessResult.quorumMet) {
-        witnessBitmap = witnessResult.bitmap;
-        witnessSignatures = witnessResult.signatures;
-      } else if (!allowEmptyBatchWitnessSubmission && witnessResult.requiredCount > 0) {
-        log.error("batchV2 skipped: witness quorum not met and empty fallback disabled", {
-          epochId,
-          merkleRoot: batch.merkleRoot,
-          signed: witnessResult.signedCount,
-          required: witnessResult.requiredCount,
-        });
-        return false;
-      } else {
-        runtimeStats.witnessFallbackCount += 1;
-        log.warn("batchV2 witness quorum not met, fallback to empty witness submission", {
-          epochId,
-          merkleRoot: batch.merkleRoot,
-          signed: witnessResult.signedCount,
-          required: witnessResult.requiredCount,
-          totalFallbacks: runtimeStats.witnessFallbackCount,
-        });
-      }
-    } catch (witnessError) {
+    // #667 — witness signatures now come from the per-receipt path collected
+    // by verifier-v2 at the receipt level (each receipt carries the witness
+    // attestations it actually received). The aggregator-built `batch`
+    // exposes them as `witnessSignatures` aligned with `witnessBitmap` set
+    // bits, plus a `metadata` payload the contract uses to rebuild EIP-712
+    // digests from ORIGINAL (challengeId, nodeId, responseBodyHash) instead
+    // of the batch merkleRoot.
+    //
+    // Fallback: when the per-receipt witnesses don't meet the on-chain
+    // quorum threshold and `allowEmptyBatchWitnessSubmission` is set, the
+    // owner-only empty-witness path lets the batch still settle (matches
+    // pre-#667 behaviour). The legacy `collectBatchWitnessQuorum` is no
+    // longer called — its "witness signs batch root" model is the #667
+    // root cause and lives in deprecated form for backwards reads only.
+    let witnessBitmap = batch.witnessBitmap;
+    let witnessSignatures: string[] = batch.witnessSignatures;
+    let usingEmptyFallback = false;
+
+    const requiredCount = await computeWitnessQuorumThreshold(epochId);
+    const signedCount = popcount(witnessBitmap);
+    if (requiredCount > 0 && signedCount < requiredCount) {
       if (!allowEmptyBatchWitnessSubmission) {
-        log.error("batchV2 skipped: witness collection failed and empty fallback disabled", {
+        log.error("batchV2 skipped: per-receipt witness quorum not met and empty fallback disabled", {
           epochId,
           merkleRoot: batch.merkleRoot,
-          error: String(witnessError),
+          signed: signedCount,
+          required: requiredCount,
         });
         return false;
       }
       runtimeStats.witnessFallbackCount += 1;
-      log.warn("batchV2 witness collection failed, fallback to empty witness submission", {
+      log.warn("batchV2 witness quorum not met, fallback to empty witness submission", {
         epochId,
         merkleRoot: batch.merkleRoot,
-        error: String(witnessError),
+        signed: signedCount,
+        required: requiredCount,
         totalFallbacks: runtimeStats.witnessFallbackCount,
       });
+      witnessBitmap = 0;
+      witnessSignatures = [];
+      usingEmptyFallback = true;
     }
 
     const tx = await retryAsync(
-      () => poseV2Contract.submitBatchV2(
-        BigInt(epochId),
-        batch.merkleRoot,
-        batch.summaryHash,
-        batch.sampleProofs,
-        witnessBitmap,
-        witnessSignatures,
-      ),
+      () => usingEmptyFallback
+        // Empty-witness path stays on the legacy ABI — bypasses metadata
+        // verification altogether (owner-only on-chain guard handles it).
+        ? poseV2Contract.submitBatchV2(
+            BigInt(epochId),
+            batch.merkleRoot,
+            batch.summaryHash,
+            batch.sampleProofs,
+            witnessBitmap,
+            witnessSignatures,
+          )
+        : poseV2Contract.submitBatchV2WithMetadata(
+            BigInt(epochId),
+            batch.merkleRoot,
+            batch.summaryHash,
+            batch.sampleProofs,
+            witnessBitmap,
+            witnessSignatures,
+            {
+              challengeIds: batch.metadata.challengeIds,
+              nodeIds: batch.metadata.nodeIds,
+              responseBodyHashes: batch.metadata.responseBodyHashes,
+              leafHashes: batch.metadata.leafHashes,
+              witnessReceiptIndex: batch.metadata.witnessReceiptIndex,
+            },
+          ),
       txRetryOptions,
     );
     const txReceipt = await retryAsync(() => tx.wait(), txRetryOptions);

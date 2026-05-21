@@ -68,6 +68,23 @@ export const WITNESS_TYPES = {
   ],
 } as const
 
+/**
+ * #667 v2 witness attestation typehash — adds `epochId`. Bound to the
+ * epoch in which the signature was collected so it cannot be replayed
+ * across epochs. Witnesses produce both v1 (`WITNESS_TYPES`) and v2
+ * (`WITNESS_TYPES_V2`) signatures during the rollout window; the
+ * contract accepts either.
+ */
+export const WITNESS_TYPES_V2 = {
+  WitnessAttestationV2: [
+    { name: "challengeId", type: "bytes32" },
+    { name: "nodeId", type: "bytes32" },
+    { name: "responseBodyHash", type: "bytes32" },
+    { name: "witnessIndex", type: "uint8" },
+    { name: "epochId", type: "uint64" },
+  ],
+} as const
+
 export const EVIDENCE_LEAF_TYPES = {
   EvidenceLeaf: [
     { name: "epoch", type: "uint64" },
