@@ -23,10 +23,28 @@ import {
   readErasureFile,
   erasureStatus,
 } from "./ipfs-erasure-reader.ts"
+import { InterfaceBlockstoreAdapter } from "./ipfs-blockstore-adapter.ts"
+import { buildDirectoryDag, type DirEntryInput } from "./ipfs-unixfs-dir.ts"
+import {
+  resolveUnixfsPath,
+  listDirectory,
+  readEntryBytes,
+  PathResolveError,
+  MAX_BLOCK_READS,
+  type ResolvedEntry,
+  type DirectoryLink,
+} from "./ipfs-path-resolve.ts"
 
 const log = createLogger("ipfs")
 const ipfsRateLimiter = new RateLimiter(60_000, 100)
 setInterval(() => ipfsRateLimiter.cleanup(), 300_000).unref()
+
+/**
+ * #468: hard deadline for a single UnixFS DAG resolve / directory listing.
+ * A pathological (deep / wide / heavily-sharded) DAG cannot pin a request
+ * handler past this — the exporter's async iterators abort on the signal.
+ */
+const IPFS_RESOLVE_TIMEOUT_MS = 20_000
 
 class HttpError extends Error {
   readonly status: number
@@ -124,6 +142,14 @@ interface ResolvedCidPath {
   path: string[]
   leafIndex?: number
   leafSize?: number
+  /**
+   * Present when the CID/path resolved through the UnixFS DAG walker
+   * (issue #468 directory support). Carries the exporter entry so
+   * read handlers can stream file content or list directory children
+   * without a second blockstore round-trip. Absent for bare non-UnixFS
+   * CIDs and the #704 numeric chunk-link fallback.
+   */
+  entry?: ResolvedEntry
 }
 
 function isNotFoundError(err: unknown): boolean {
@@ -168,9 +194,12 @@ function validateAddParams(query: Record<string, string | string[] | undefined>)
 
   // Booleans we don't honor — accept "false" / absent, reject "true".
   // Case-insensitive to match kubo's go-flag parser.
+  //
+  // #468: `wrap-with-directory` left this list — it IS honored now (the
+  // directory-DAG write path). It is still validated as a boolean below
+  // so `wrap-with-directory=maybe` gets the same 400 kubo emits.
   const booleanRejectsTrue = [
     "raw-leaves",
-    "wrap-with-directory",
     "nocopy",
     "inline",
     "trickle",
@@ -188,6 +217,17 @@ function validateAddParams(query: Record<string, string | string[] | undefined>)
     if (norm !== "false" && norm !== "0") {
       throw new HttpError(400, "unsupported_param",
         `${key}: expected boolean (true/false/0/1), got '${raw}'`)
+    }
+  }
+
+  // #468: `wrap-with-directory` is a supported flag — only reject a
+  // non-boolean value, matching kubo's strconv.ParseBool behaviour.
+  const wrapRaw = firstQueryValue(query["wrap-with-directory"])
+  if (wrapRaw !== undefined) {
+    const norm = wrapRaw.toLowerCase()
+    if (norm !== "true" && norm !== "1" && norm !== "false" && norm !== "0") {
+      throw new HttpError(400, "unsupported_param",
+        `wrap-with-directory: expected boolean (true/false/0/1), got '${wrapRaw}'`)
     }
   }
 
@@ -445,18 +485,25 @@ export class IpfsHttpServer {
           res.end(req.method === "HEAD" ? undefined : JSON.stringify({ error: "invalid CID" }))
           return
         }
-        let resolvedCid = cid
-        if (parsed.path.length > 0) {
-          try {
-            resolvedCid = (await this.resolveCidPath(cid, parsed.path)).cid
-          } catch (err) {
-            if (err instanceof HttpError && err.status === 404) {
-              res.writeHead(404, { "content-type": "application/json", "access-control-allow-origin": "*" })
-              res.end(req.method === "HEAD" ? undefined : JSON.stringify({ error: err.code, message: err.message }))
-              return
-            }
-            throw err
+        // #468: resolve the full `<cid>/<subpath>` through the UnixFS DAG
+        // walker. Maps both 404 (missing component) and 400 (mid-path
+        // non-directory) to a structured JSON error with CORS preserved.
+        let resolved: ResolvedCidPath
+        try {
+          resolved = await this.resolveCidPath(cid, parsed.path)
+        } catch (err) {
+          if (err instanceof HttpError && (err.status === 404 || err.status === 400)) {
+            res.writeHead(err.status, { "content-type": "application/json", "access-control-allow-origin": "*" })
+            res.end(req.method === "HEAD" ? undefined : JSON.stringify({ error: err.code, message: err.message }))
+            return
           }
+          throw err
+        }
+        // #468: a directory CID — serve `index.html` if the directory has
+        // one (the canonical static-site pattern), else a JSON listing.
+        if (resolved.entry?.type === "directory") {
+          await this.serveGatewayDirectory(req, res, resolved.entry)
+          return
         }
         // #168: pre-fix ENOENT for valid-shape-missing CIDs propagated
         // to the outer 500 handler, logging a stacktrace for every probe.
@@ -471,7 +518,7 @@ export class IpfsHttpServer {
         // outer catch's structured handler. Same family as #168/#232/
         // #268/#270/#543 — generic 500 leak for a well-defined case.
         try {
-          const data = await this.readByCid(resolvedCid)
+          const data = await this.readResolved(resolved)
           // #324: HTTP Range support per RFC 7233. Pre-fix the gateway
           // returned the full body for every request, even when the
           // client sent `Range: bytes=N-M` — making resumable downloads,
@@ -588,7 +635,9 @@ export class IpfsHttpServer {
         // upload + a v1 CID they can't reconcile against their v0
         // expectation.
         validateAddParams(url.query as Record<string, string | string[] | undefined>)
-        await this.handleAdd(req, res, firstQueryValue(url.query.erasure))
+        const wrapRaw = firstQueryValue(url.query["wrap-with-directory"])?.toLowerCase()
+        const wrapWithDirectory = wrapRaw === "true" || wrapRaw === "1"
+        await this.handleAdd(req, res, firstQueryValue(url.query.erasure), wrapWithDirectory)
         return
       }
       if (url.pathname === "/api/v0/version") {
@@ -850,8 +899,25 @@ export class IpfsHttpServer {
     req: http.IncomingMessage,
     res: http.ServerResponse,
     erasureSpec?: string,
+    wrapWithDirectory = false,
   ): Promise<void> {
-    const { filename, bytes } = await readMultipartFile(req)
+    // #468: read every multipart part. A request is a directory upload
+    // when the client asked to wrap, OR sent more than one part, OR any
+    // part carries a nested relative path / explicit-directory marker.
+    const parts = await readMultipartFiles(req)
+    const nested = parts.some((p) => p.path !== undefined && p.path.includes("/"))
+    const isDirectory =
+      wrapWithDirectory || nested || parts.length > 1 || parts.some((p) => p.isDir)
+
+    if (isDirectory) {
+      await this.handleAddDirectory(res, parts, erasureSpec)
+      return
+    }
+
+    // Single-file upload — the original code path, unchanged. It keeps
+    // producing the PoSe `merkleRoot`/`merkleLeaves` side-tree.
+    const filename = parts[0].path
+    const bytes = parts[0].bytes
 
     // Phase Q.4: opt-in Reed-Solomon erasure coding via ?erasure=N+M.
     // The UnixFS DAG is still produced (for back-compat retrieval via
@@ -955,6 +1021,55 @@ export class IpfsHttpServer {
   }
 
   /**
+   * #468: directory-DAG upload. Builds a UnixFS directory tree from the
+   * multipart parts via `ipfs-unixfs-importer` (which auto-shards large
+   * directories into HAMT nodes), pins every emitted block, and streams a
+   * kubo-style NDJSON response — one `{Name,Hash,Size}` line per file and
+   * sub-directory, the wrapping root directory last.
+   */
+  private async handleAddDirectory(
+    res: http.ServerResponse,
+    parts: MultipartPart[],
+    erasureSpec?: string,
+  ): Promise<void> {
+    // Erasure coding operates on a single file's bytes — it has no
+    // meaning for a directory tree. Reject the combination explicitly.
+    if (erasureSpec) {
+      throw new HttpError(400, "unsupported_param",
+        "erasure coding and wrap-with-directory are mutually exclusive")
+    }
+
+    const entries: DirEntryInput[] = parts.map((p) =>
+      p.isDir
+        ? { path: p.path ?? "" }
+        : { path: p.path ?? "file", content: p.bytes },
+    )
+
+    const adapter = new InterfaceBlockstoreAdapter(this.store, { maxBlockReads: MAX_BLOCK_READS })
+    const imported = await buildDirectoryDag(entries, adapter)
+
+    // Recursively pin every node the importer emitted. COC's blockstore
+    // GC is flat (it does not walk a pinned root's children), so each
+    // directory + file-root CID must be pinned explicitly to survive
+    // `repo/gc`.
+    for (const node of imported.all) {
+      await this.store.pin(node.cid)
+    }
+
+    // kubo NDJSON: one JSON object per line, children first, root last.
+    res.writeHead(200, { "content-type": "application/json" })
+    for (const node of imported.all) {
+      const line: IpfsAddResult = {
+        Name: node.path,
+        Hash: node.cid,
+        Size: String(node.size),
+      }
+      res.write(`${JSON.stringify(line)}\n`)
+    }
+    res.end()
+  }
+
+  /**
    * Collect per-chunk replication status for the just-PUT DAG. Returns
    * null when the wiring isn't attached (replication gating is a no-op)
    * or when no push promises landed in the awaiter's tracking map
@@ -1047,14 +1162,18 @@ export class IpfsHttpServer {
     return parsed
   }
 
-  private async resolveCidPathArg(res: http.ServerResponse, arg?: string): Promise<ResolvedCidPath | null> {
+  private async resolveCidPathArg(
+    res: http.ServerResponse,
+    arg?: string,
+    opts?: { probeDirectory?: boolean },
+  ): Promise<ResolvedCidPath | null> {
     const parsed = this.parseCidPathArg(res, arg)
     if (!parsed) return null
     try {
-      return await this.resolveCidPath(parsed.cid, parsed.path)
+      return await this.resolveCidPath(parsed.cid, parsed.path, opts)
     } catch (err) {
-      if (err instanceof HttpError && err.status === 404) {
-        res.writeHead(404, { "content-type": "application/json" })
+      if (err instanceof HttpError && (err.status === 404 || err.status === 400)) {
+        res.writeHead(err.status, { "content-type": "application/json" })
         res.end(JSON.stringify({ error: err.code, message: err.message }))
         return null
       }
@@ -1062,34 +1181,98 @@ export class IpfsHttpServer {
     }
   }
 
-  private async resolveCidPath(rootCid: string, path: string[]): Promise<ResolvedCidPath> {
+  /**
+   * #468: resolve `<rootCid>` plus optional path segments to a single DAG
+   * node. Walks UnixFS directory DAGs (plain + HAMT) by Link name. For a
+   * bare CID that resolves to a directory the entry is attached so
+   * `ls`/`object/stat`/gateway can navigate it; bare file / non-UnixFS
+   * CIDs return without an entry so the existing file-meta / `readByCid`
+   * path handles them unchanged.
+   *
+   * Retains PR #704's numeric chunk-link fallback: `<file-cid>/<n>`
+   * addresses chunk leaf `n` via the file-meta leaf table.
+   */
+  private async resolveCidPath(
+    rootCid: string,
+    path: string[],
+    opts?: { probeDirectory?: boolean },
+  ): Promise<ResolvedCidPath> {
+    // `probeDirectory: false` keeps block-level endpoints (block/stat,
+    // block/get) off the UnixFS DAG walker entirely — block/stat must
+    // stay a local-only metadata query (#310: no fetchRemote on miss).
+    const probeDirectory = opts?.probeDirectory !== false
+    const adapter = new InterfaceBlockstoreAdapter(this.store, { maxBlockReads: MAX_BLOCK_READS })
+    const signal = AbortSignal.timeout(IPFS_RESOLVE_TIMEOUT_MS)
+
+    if (!probeDirectory) {
+      // Block endpoints: bare CID resolves to itself; a subpath only
+      // resolves via the fetch-free numeric chunk-link table (#704).
+      if (path.length === 0) return { rootCid, cid: rootCid, path: [] }
+      if (path.length === 1 && /^[0-9]+$/.test(path[0])) {
+        const numeric = await this.resolveNumericLeaf(rootCid, path)
+        if (numeric) return numeric
+      }
+      throw new HttpError(404, "no such file", `no link named '${path[0]}' under ${rootCid}`)
+    }
+
     if (path.length === 0) {
+      // Bare CID: probe for a UnixFS directory. Files / non-UnixFS CIDs
+      // (raw blocks, erasure manifests, missing blocks) fall through with
+      // no entry — the existing readByCid / file-meta path handles them.
+      try {
+        const entry = await resolveUnixfsPath(rootCid, [], adapter, signal)
+        if (entry.type === "directory") {
+          return { rootCid, cid: rootCid, path: [], entry }
+        }
+      } catch {
+        /* not navigable as UnixFS — fall through to the bare-CID path */
+      }
       return { rootCid, cid: rootCid, path: [] }
     }
 
-    const head = path[0]
-    if (path.length !== 1 || !/^[0-9]+$/.test(head)) {
-      throw new HttpError(404, "no such file", `no link named '${head}' under ${rootCid}`)
+    try {
+      const entry = await resolveUnixfsPath(rootCid, path, adapter, signal)
+      return { rootCid, cid: entry.cid, path, entry }
+    } catch (err) {
+      if (err instanceof PathResolveError) {
+        // A subpath directly under a file/raw root (depth 0): PR #704's
+        // numeric chunk-link fallback applies. A single numeric segment
+        // addresses chunk leaf `n`; anything else is a genuine miss.
+        if (err.kind === "not_a_directory" && err.depth === 0) {
+          if (path.length === 1 && /^[0-9]+$/.test(path[0])) {
+            const numeric = await this.resolveNumericLeaf(rootCid, path)
+            if (numeric) return numeric
+          }
+          throw new HttpError(404, "no such file", `no link named '${path[0]}' under ${rootCid}`)
+        }
+        // Mid-path non-directory → 400; missing component → 404.
+        if (err.kind === "not_a_directory") {
+          throw new HttpError(400, "not a directory", err.message)
+        }
+        throw new HttpError(404, "no such file", err.message)
+      }
+      throw err
     }
+  }
 
-    const index = Number(head)
+  /** PR #704 numeric chunk-link lookup — `<file-cid>/<n>` → leaf `n`. */
+  private async resolveNumericLeaf(rootCid: string, path: string[]): Promise<ResolvedCidPath | null> {
+    const index = Number(path[0])
     const meta = await this.readFileMeta()
     const file = meta[rootCid]
     if (!Number.isSafeInteger(index) || !file || index < 0 || index >= file.leaves.length) {
-      throw new HttpError(404, "no such file", `no link named '${head}' under ${rootCid}`)
+      return null
     }
-
     const leafSize = index === file.leaves.length - 1
       ? file.size - file.blockSize * (file.leaves.length - 1)
       : file.blockSize
+    return { rootCid, cid: file.leaves[index], path, leafIndex: index, leafSize }
+  }
 
-    return {
-      rootCid,
-      cid: file.leaves[index],
-      path,
-      leafIndex: index,
-      leafSize,
-    }
+  /** #468: enumerate a resolved directory entry's children, under a hard
+   * timeout so a maliciously huge / sharded directory can't hang. */
+  private async listResolvedDirectory(entry: ResolvedEntry): Promise<DirectoryLink[]> {
+    return listDirectory(entry, AbortSignal.timeout(IPFS_RESOLVE_TIMEOUT_MS))
   }
 
   private async handleLs(res: http.ServerResponse, cid?: string): Promise<void> {
@@ -1107,6 +1290,31 @@ export class IpfsHttpServer {
           },
         ],
       }))
+      return
+    }
+    // #468: a CID/path that resolved through the UnixFS DAG walker.
+    if (resolved.entry) {
+      if (resolved.entry.type === "directory") {
+        const links = await this.listResolvedDirectory(resolved.entry)
+        res.writeHead(200, { "content-type": "application/json" })
+        res.end(JSON.stringify({
+          Objects: [{
+            Hash: resolved.cid,
+            // kubo UnixFS ls Type enum: 1 = directory, 2 = file.
+            Links: links.map((l) => ({
+              Name: l.name,
+              Hash: l.cid,
+              Size: l.size,
+              Type: l.type === "directory" ? 1 : 2,
+            })),
+          }],
+        }))
+        return
+      }
+      // A file resolved via a directory subpath has no file-meta entry.
+      // kubo `ls` of a plain file CID returns it with no links.
+      res.writeHead(200, { "content-type": "application/json" })
+      res.end(JSON.stringify({ Objects: [{ Hash: resolved.cid, Links: [] }] }))
       return
     }
     const meta = await this.readFileMeta()
@@ -1147,6 +1355,22 @@ export class IpfsHttpServer {
   private async handleObjectStat(res: http.ServerResponse, cid?: string): Promise<void> {
     const resolved = await this.resolveCidPathArg(res, cid)
     if (!resolved) {
+      return
+    }
+    // #468: a resolved UnixFS directory — report NumLinks from the live
+    // child listing rather than the file-meta leaf table.
+    if (resolved.entry?.type === "directory") {
+      const links = await this.listResolvedDirectory(resolved.entry)
+      const block = await this.store.get(resolved.cid)
+      res.writeHead(200, { "content-type": "application/json" })
+      res.end(JSON.stringify({
+        Hash: resolved.cid,
+        NumLinks: links.length,
+        BlockSize: block.bytes.length,
+        LinksSize: Math.min(links.length * 36, block.bytes.length),
+        DataSize: resolved.entry.size,
+        CumulativeSize: links.reduce((sum, l) => sum + l.size, block.bytes.length),
+      }))
       return
     }
     // #230: pre-fix the bare `store.get(cid)` call let ENOENT bubble
@@ -1228,7 +1452,12 @@ export class IpfsHttpServer {
       }
       length = n
     }
-    const data = await this.readByCid(resolved.cid)
+    // #468: `cat` of a directory CID is an error in kubo too.
+    if (resolved.entry?.type === "directory") {
+      throw new HttpError(400, "this dag node is a directory",
+        `${resolved.cid} is a directory — use /api/v0/ls`)
+    }
+    const data = await this.readResolved(resolved)
     const buf = Buffer.from(data)
     const slice = length !== undefined ? buf.subarray(offset, offset + length) : buf.subarray(offset)
     res.writeHead(200)
@@ -1240,10 +1469,104 @@ export class IpfsHttpServer {
     if (!resolved) {
       return
     }
-    const data = await this.readByCid(resolved.cid)
+    // #468: `get` of a directory streams a tar of every file in the tree.
+    if (resolved.entry?.type === "directory") {
+      const files = await this.collectDirectoryFiles(resolved.entry)
+      const archive = createTarArchive(files)
+      res.writeHead(200, { "content-type": "application/x-tar" })
+      res.end(archive)
+      return
+    }
+    const data = await this.readResolved(resolved)
     const archive = createTarArchive([{ name: resolved.cid, data }])
     res.writeHead(200, { "content-type": "application/x-tar" })
     res.end(archive)
+  }
+
+  /**
+   * #468: read a resolved entry's bytes. A file resolved through the
+   * UnixFS DAG walker uses the exporter (handles arbitrary DAG depth);
+   * a bare CID / numeric chunk-link falls back to `readByCid` (codec
+   * dispatch: raw / erasure / single-level UnixFS).
+   */
+  private async readResolved(resolved: ResolvedCidPath): Promise<Uint8Array> {
+    if (resolved.entry && resolved.entry.type !== "directory") {
+      return readEntryBytes(resolved.entry, undefined, AbortSignal.timeout(IPFS_RESOLVE_TIMEOUT_MS))
+    }
+    return this.readByCid(resolved.cid)
+  }
+
+  /**
+   * #468: recursively collect every file in a resolved directory tree as
+   * `{ name, data }` tar entries, the name being the file's path relative
+   * to the directory root. Bounded by the path-resolve module's directory
+   * / read-size caps.
+   */
+  private async collectDirectoryFiles(
+    dir: ResolvedEntry,
+    prefix = "",
+  ): Promise<Array<{ name: string; data: Uint8Array }>> {
+    const out: Array<{ name: string; data: Uint8Array }> = []
+    const links = await this.listResolvedDirectory(dir)
+    for (const link of links) {
+      const childPath = prefix ? `${prefix}/${link.name}` : link.name
+      const adapter = new InterfaceBlockstoreAdapter(this.store, { maxBlockReads: MAX_BLOCK_READS })
+      const child = await resolveUnixfsPath(link.cid, [], adapter,
+        AbortSignal.timeout(IPFS_RESOLVE_TIMEOUT_MS))
+      if (child.type === "directory") {
+        out.push(...await this.collectDirectoryFiles(child, childPath))
+      } else {
+        out.push({
+          name: childPath,
+          data: await readEntryBytes(child, undefined, AbortSignal.timeout(IPFS_RESOLVE_TIMEOUT_MS)),
+        })
+      }
+    }
+    return out
+  }
+
+  /**
+   * #468: gateway response for a directory CID. Serves `index.html` when
+   * present (the canonical browser-dApp / static-site pattern), otherwise
+   * returns a JSON directory listing.
+   */
+  private async serveGatewayDirectory(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    dir: ResolvedEntry,
+  ): Promise<void> {
+    const links = await this.listResolvedDirectory(dir)
+    const index = links.find((l) => l.name === "index.html" && l.type === "file")
+    if (index) {
+      const adapter = new InterfaceBlockstoreAdapter(this.store, { maxBlockReads: MAX_BLOCK_READS })
+      const child = await resolveUnixfsPath(index.cid, [], adapter,
+        AbortSignal.timeout(IPFS_RESOLVE_TIMEOUT_MS))
+      const data = await readEntryBytes(child, undefined, AbortSignal.timeout(IPFS_RESOLVE_TIMEOUT_MS))
+      const headers: http.OutgoingHttpHeaders = {
+        "content-type": "text/html; charset=utf-8",
+        "content-length": String(data.length),
+        "access-control-allow-origin": "*",
+      }
+      res.writeHead(200, headers)
+      res.end(req.method === "HEAD" ? undefined : data)
+      return
+    }
+    const body = JSON.stringify({
+      Type: "directory",
+      Hash: dir.cid,
+      Links: links.map((l) => ({
+        Name: l.name,
+        Hash: l.cid,
+        Size: l.size,
+        Type: l.type === "directory" ? 1 : 2,
+      })),
+    })
+    res.writeHead(200, {
+      "content-type": "application/json",
+      "content-length": String(Buffer.byteLength(body)),
+      "access-control-allow-origin": "*",
+    })
+    res.end(req.method === "HEAD" ? undefined : body)
   }
 
   /**
@@ -1331,7 +1654,9 @@ export class IpfsHttpServer {
   }
 
   private async handleBlockGet(_req: http.IncomingMessage, res: http.ServerResponse, cid?: string): Promise<void> {
-    const resolved = await this.resolveCidPathArg(res, cid)
+    // #468: block endpoints operate on blocks, not the UnixFS DAG — keep
+    // them off the directory walker (block/stat must not fetchRemote).
+    const resolved = await this.resolveCidPathArg(res, cid, { probeDirectory: false })
     if (!resolved) {
       return
     }
@@ -1352,7 +1677,9 @@ export class IpfsHttpServer {
   }
 
   private async handleBlockStat(res: http.ServerResponse, cid?: string): Promise<void> {
-    const resolved = await this.resolveCidPathArg(res, cid)
+    // #310/#468: block/stat is a local-only metadata query — never walk
+    // the UnixFS DAG (would call store.get → fetchRemote on a miss).
+    const resolved = await this.resolveCidPathArg(res, cid, { probeDirectory: false })
     if (!resolved) {
       return
     }
@@ -2396,4 +2723,111 @@ async function readMultipartFile(req: http.IncomingMessage): Promise<{ filename?
       `multipart body has ${validParts.length} parts, but this endpoint accepts at most 1`)
   }
   return validParts[0]
+}
+
+// #468 — directory-upload multipart parsing.
+
+/** Max parts in one directory upload. */
+const MAX_MULTIPART_PARTS = 10_000
+/** Max path components in a single uploaded file's relative path. */
+const MAX_PATH_SEGMENTS = 64
+/** Max total length of a relative path. */
+const MAX_PATH_LENGTH = 1024
+/** Max length of a single path segment. */
+const MAX_SEGMENT_LENGTH = 255
+
+interface MultipartPart {
+  /** Relative POSIX path. Undefined for a raw (non-multipart) body. */
+  path?: string
+  bytes: Uint8Array
+  /** True for an explicit empty-directory part (kubo `application/x-directory`). */
+  isDir?: boolean
+}
+
+/**
+ * #468: validate and normalise a multipart `filename` into a safe relative
+ * POSIX path. Unlike `readMultipartFile` (which strips to a basename), this
+ * preserves directory components so nested-directory uploads work — but
+ * rejects traversal (`..`), absolute paths, backslashes, NUL bytes, and
+ * over-long paths/segments.
+ */
+function sanitizeRelPath(raw: string): string {
+  if (raw.includes("\0")) {
+    throw new HttpError(400, "invalid_path", "path contains a NUL byte")
+  }
+  if (raw.includes("\\")) {
+    throw new HttpError(400, "invalid_path", `path contains a backslash: '${raw}'`)
+  }
+  if (raw.startsWith("/")) {
+    throw new HttpError(400, "invalid_path", `absolute paths are not allowed: '${raw}'`)
+  }
+  if (raw.length > MAX_PATH_LENGTH) {
+    throw new HttpError(400, "invalid_path", `path too long (max ${MAX_PATH_LENGTH})`)
+  }
+  const segments = raw.split("/").filter((s) => s.length > 0)
+  if (segments.length > MAX_PATH_SEGMENTS) {
+    throw new HttpError(400, "invalid_path", `path too deep (max ${MAX_PATH_SEGMENTS} segments)`)
+  }
+  for (const seg of segments) {
+    if (seg === "." || seg === "..") {
+      throw new HttpError(400, "invalid_path", `path traversal segment '${seg}' is not allowed`)
+    }
+    if (seg.length > MAX_SEGMENT_LENGTH) {
+      throw new HttpError(400, "invalid_path", `path segment too long (max ${MAX_SEGMENT_LENGTH})`)
+    }
+  }
+  if (segments.length === 0) {
+    throw new HttpError(400, "invalid_path", "empty path")
+  }
+  return segments.join("/")
+}
+
+/**
+ * #468: parse a multipart body into N parts, preserving each part's
+ * relative path so directory trees can be reconstructed. Falls back to a
+ * single pathless part for raw (non-multipart) bodies — keeping the
+ * single-file `curl --data-binary` upload path working.
+ */
+async function readMultipartFiles(req: http.IncomingMessage): Promise<MultipartPart[]> {
+  const contentType = req.headers["content-type"] ?? ""
+  const boundaryMatch = /boundary=([^;\s]{1,256})/.exec(contentType)
+  if (!boundaryMatch) {
+    // Same #356 guard as readMultipartFile: multipart/* without a boundary
+    // is a client error; anything else is a raw-body upload.
+    if (/^multipart\//i.test(contentType.trim())) {
+      throw new HttpError(400, "invalid_multipart",
+        "multipart/* Content-Type requires boundary param")
+    }
+    const raw = await readBody(req)
+    return [{ bytes: raw }]
+  }
+
+  const boundary = boundaryMatch[1]
+  const raw = Buffer.from(await readBody(req))
+  const rawParts = findMultipartParts(raw, boundary)
+  const parts: MultipartPart[] = []
+  for (const { start, end } of rawParts) {
+    const part = raw.subarray(start, end)
+    const sepIdx = part.indexOf("\r\n\r\n")
+    if (sepIdx === -1) continue
+    const headerRaw = part.subarray(0, sepIdx).toString("binary")
+    const body = part.subarray(sepIdx + 4)
+    const filenameMatch = /filename="([^"]+)"/.exec(headerRaw)
+    const rawFilename = filenameMatch ? filenameMatch[1] : undefined
+    // kubo marks directory entries with an `application/x-directory`
+    // (or legacy `x-directory`) Content-Type and an empty body.
+    const isDir = /content-type:\s*application\/x-directory/i.test(headerRaw) ||
+      /content-type:\s*x-directory/i.test(headerRaw)
+    const path = rawFilename !== undefined ? sanitizeRelPath(rawFilename) : undefined
+    parts.push({ path, bytes: new Uint8Array(body), isDir })
+    if (parts.length > MAX_MULTIPART_PARTS) {
+      throw new HttpError(400, "unsupported_multipart",
+        `multipart body has more than ${MAX_MULTIPART_PARTS} parts`)
+    }
+  }
+
+  if (parts.length === 0) {
+    throw new HttpError(400, "invalid_multipart", "no part found in multipart body")
+  }
+  return parts
 }

@@ -293,11 +293,11 @@ describe("IpfsHttpServer", () => {
       `error message must mention "no part found", got: ${errBody.message}`)
   })
 
-  it("#356: /api/v0/add rejects multi-part body (2+ parts) with 400 unsupported_multipart (no silent drop)", async () => {
-    // Pre-fix: the readMultipartFile loop returned on the FIRST part. A
-    // 2-file multipart upload returned the CID for file #1 and silently
-    // dropped file #2 — the client saw 200 OK and believed BOTH files
-    // were stored. /api/v0/add is single-file; reject multi-part.
+  it("#468: /api/v0/add with a multi-part body builds a directory DAG (no silent drop)", async () => {
+    // #356 pre-fix the readMultipartFile loop dropped parts 2..N. #468:
+    // a multi-part upload is now a directory upload — every part is
+    // stored under a wrapping UnixFS directory and the response streams
+    // one NDJSON line per file plus the wrapping directory.
     const boundary = "----MultiMpBoundary356"
     const body = [
       `--${boundary}`,
@@ -316,13 +316,20 @@ describe("IpfsHttpServer", () => {
       headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
       body,
     })
-    assert.equal(res.status, 400,
-      `multi-part body must be 400, got ${res.status}`)
-    const errBody = await res.json() as Record<string, string>
-    assert.equal(errBody.error, "unsupported_multipart",
-      `error code must be unsupported_multipart, got ${JSON.stringify(errBody)}`)
-    assert.match(errBody.message ?? "", /has 2 parts/i,
-      `error must surface part count, got: ${errBody.message}`)
+    assert.equal(res.status, 200, `multi-part directory upload must be 200, got ${res.status}`)
+    const lines = (await res.text()).trim().split("\n").map((l) => JSON.parse(l) as Record<string, string>)
+    // 2 files + 1 wrapping directory.
+    assert.equal(lines.length, 3, `expected 3 NDJSON lines, got ${lines.length}`)
+    const names = lines.map((l) => l.Name)
+    assert.ok(names.includes("a") && names.includes("b"), `files must be listed, got ${names}`)
+    const root = lines[lines.length - 1] // wrapping directory yielded last
+    // Both files must be retrievable through the directory CID.
+    const catA = await fetch(`/api/v0/cat?arg=${root.Hash}/a`)
+    assert.equal(catA.status, 200)
+    assert.equal(await catA.text(), "alpha")
+    const catB = await fetch(`/api/v0/cat?arg=${root.Hash}/b`)
+    assert.equal(catB.status, 200)
+    assert.equal(await catB.text(), "beta")
   })
 
   it("#356: /api/v0/add rejects multipart/* Content-Type without boundary param", async () => {
@@ -733,8 +740,9 @@ describe("IpfsHttpServer", () => {
       assert.equal(body.error, "unsupported_param", qs)
     }
 
-    // Boolean opt-ins we don't honor.
-    for (const key of ["raw-leaves", "wrap-with-directory", "nocopy", "inline", "trickle"]) {
+    // Boolean opt-ins we don't honor. (#468: wrap-with-directory left
+    // this list — it IS honored now; covered separately below.)
+    for (const key of ["raw-leaves", "nocopy", "inline", "trickle"]) {
       const r = await post(`${key}=true`)
       assert.equal(r.status, 400, `${key}=true: expected 400 (got ${r.status})`)
       // Case-insensitive `1` form also rejects.
@@ -745,6 +753,12 @@ describe("IpfsHttpServer", () => {
     // Garbage boolean value must reject too (kubo flag parser does).
     const rg = await post("raw-leaves=maybe")
     assert.equal(rg.status, 400, "raw-leaves=maybe: expected 400")
+    // #468: wrap-with-directory is a supported flag — a valid boolean is
+    // accepted (200), only a non-boolean value 400s.
+    const rwd = await post("wrap-with-directory=true")
+    assert.equal(rwd.status, 200, "wrap-with-directory=true: expected 200 (supported)")
+    const rwdGarbage = await post("wrap-with-directory=maybe")
+    assert.equal(rwdGarbage.status, 400, "wrap-with-directory=maybe: expected 400")
 
     // Defaults must still work (no params + matching values).
     const ok = await post("cid-version=1&hash=sha2-256&chunker=size-262144&raw-leaves=false&trickle=false")
@@ -2782,5 +2796,175 @@ describe("#312 pubsub topic rejects control characters", () => {
     } finally {
       pubsub.stop()
     }
+  })
+})
+
+// #468 — UnixFS directory DAG support (write + read, incl. HAMT).
+describe("#468 UnixFS directory DAG", () => {
+  // Build a multipart/form-data body from a list of {filename, content}
+  // parts. A part with `content === undefined` is an explicit directory.
+  function multipart(
+    parts: Array<{ filename: string; content?: string; directory?: boolean }>,
+  ): { body: Buffer; contentType: string } {
+    const boundary = "----COC468Boundary"
+    const segments: Buffer[] = []
+    for (const p of parts) {
+      let head = `--${boundary}\r\n` +
+        `Content-Disposition: form-data; name="file"; filename="${p.filename}"\r\n`
+      head += p.directory
+        ? "Content-Type: application/x-directory\r\n\r\n"
+        : "Content-Type: application/octet-stream\r\n\r\n"
+      segments.push(Buffer.from(head, "utf-8"))
+      segments.push(Buffer.from(p.content ?? "", "utf-8"))
+      segments.push(Buffer.from("\r\n", "utf-8"))
+    }
+    segments.push(Buffer.from(`--${boundary}--\r\n`, "utf-8"))
+    return {
+      body: Buffer.concat(segments),
+      contentType: `multipart/form-data; boundary=${boundary}`,
+    }
+  }
+
+  async function addDir(
+    parts: Array<{ filename: string; content?: string; directory?: boolean }>,
+    query = "",
+  ): Promise<{ status: number; lines: Array<Record<string, string>>; raw: string }> {
+    const { body, contentType } = multipart(parts)
+    const res = await fetch(`/api/v0/add${query}`, {
+      method: "POST",
+      headers: { "content-type": contentType },
+      body,
+    })
+    const raw = await res.text()
+    const lines = res.status === 200
+      ? raw.trim().split("\n").filter(Boolean).map((l) => JSON.parse(l) as Record<string, string>)
+      : []
+    return { status: res.status, lines, raw }
+  }
+
+  it("wrap-with-directory wraps a single file in a directory", async () => {
+    const { status, lines } = await addDir(
+      [{ filename: "hello.txt", content: "hi there" }],
+      "?wrap-with-directory=true",
+    )
+    assert.equal(status, 200)
+    // file line + wrapping directory line
+    assert.equal(lines.length, 2)
+    const root = lines[lines.length - 1]
+    const cat = await fetch(`/api/v0/cat?arg=${root.Hash}/hello.txt`)
+    assert.equal(cat.status, 200)
+    assert.equal(await cat.text(), "hi there")
+  })
+
+  it("builds a nested directory tree and lists it", async () => {
+    const { status, lines } = await addDir([
+      { filename: "index.html", content: "<h1>home</h1>" },
+      { filename: "docs/a.txt", content: "alpha" },
+      { filename: "docs/img/b.bin", content: "BINARY" },
+    ])
+    assert.equal(status, 200)
+    const root = lines[lines.length - 1].Hash
+
+    const lsRoot = await fetch(`/api/v0/ls?arg=${root}`)
+    assert.equal(lsRoot.status, 200)
+    const rootObjs = (await lsRoot.json()) as { Objects: Array<{ Links: Array<{ Name: string; Type: number }> }> }
+    const rootNames = rootObjs.Objects[0].Links.map((l) => l.Name).sort()
+    assert.deepEqual(rootNames, ["docs", "index.html"])
+
+    const lsDocs = await fetch(`/api/v0/ls?arg=${root}/docs`)
+    const docsObjs = (await lsDocs.json()) as { Objects: Array<{ Links: Array<{ Name: string; Type: number }> }> }
+    const docsLinks = docsObjs.Objects[0].Links
+    assert.deepEqual(docsLinks.map((l) => l.Name).sort(), ["a.txt", "img"])
+    assert.equal(docsLinks.find((l) => l.Name === "img")?.Type, 1) // directory
+    assert.equal(docsLinks.find((l) => l.Name === "a.txt")?.Type, 2) // file
+
+    const catNested = await fetch(`/api/v0/cat?arg=${root}/docs/img/b.bin`)
+    assert.equal(catNested.status, 200)
+    assert.equal(await catNested.text(), "BINARY")
+  })
+
+  it("cat of a directory CID is a 400", async () => {
+    const { lines } = await addDir([{ filename: "x", content: "y" }], "?wrap-with-directory=true")
+    const root = lines[lines.length - 1].Hash
+    const res = await fetch(`/api/v0/cat?arg=${root}`)
+    assert.equal(res.status, 400)
+  })
+
+  it("object/stat of a directory reports its child count", async () => {
+    const { lines } = await addDir([
+      { filename: "a", content: "1" },
+      { filename: "b", content: "2" },
+    ])
+    const root = lines[lines.length - 1].Hash
+    const res = await fetch(`/api/v0/object/stat?arg=${root}`)
+    assert.equal(res.status, 200)
+    const stat = (await res.json()) as { NumLinks: number }
+    assert.equal(stat.NumLinks, 2)
+  })
+
+  it("gateway resolves <dir>/<subpath> (issue #468 repro)", async () => {
+    const { lines } = await addDir([{ filename: "docs/a.txt", content: "gateway-alpha" }])
+    const root = lines[lines.length - 1].Hash
+    const res = await fetch(`/ipfs/${root}/docs/a.txt`)
+    assert.equal(res.status, 200, "subpath under a directory CID must resolve, not 400")
+    assert.equal(await res.text(), "gateway-alpha")
+  })
+
+  it("gateway serves index.html for a directory CID", async () => {
+    const { lines } = await addDir([
+      { filename: "index.html", content: "<title>COC</title>" },
+      { filename: "other.txt", content: "x" },
+    ])
+    const root = lines[lines.length - 1].Hash
+    const res = await fetch(`/ipfs/${root}`)
+    assert.equal(res.status, 200)
+    assert.match(String(res.headers["content-type"]), /text\/html/)
+    assert.equal(await res.text(), "<title>COC</title>")
+  })
+
+  it("gateway returns 404 for a missing path component", async () => {
+    const { lines } = await addDir([{ filename: "docs/a.txt", content: "x" }])
+    const root = lines[lines.length - 1].Hash
+    const res = await fetch(`/ipfs/${root}/docs/missing.txt`)
+    assert.equal(res.status, 404)
+  })
+
+  it("returns 400 not-a-directory when descending into a file mid-path", async () => {
+    const { lines } = await addDir([{ filename: "docs/a.txt", content: "x" }])
+    const root = lines[lines.length - 1].Hash
+    const res = await fetch(`/api/v0/cat?arg=${root}/docs/a.txt/deeper`)
+    assert.equal(res.status, 400)
+  })
+
+  it("HAMT-sized directory still lists every logical entry", async () => {
+    const parts = Array.from({ length: 4000 }, (_, i) => ({
+      filename: `entry-with-a-long-name-${i}.dat`,
+      content: `v${i}`,
+    }))
+    const { status, lines } = await addDir(parts)
+    assert.equal(status, 200)
+    const root = lines[lines.length - 1].Hash
+    const ls = await fetch(`/api/v0/ls?arg=${root}`)
+    const objs = (await ls.json()) as { Objects: Array<{ Links: unknown[] }> }
+    assert.equal(objs.Objects[0].Links.length, 4000)
+    // A specific deep entry resolves through the HAMT shards.
+    const cat = await fetch(`/api/v0/cat?arg=${root}/entry-with-a-long-name-1234.dat`)
+    assert.equal(cat.status, 200)
+    assert.equal(await cat.text(), "v1234")
+  })
+
+  it("rejects erasure + wrap-with-directory as mutually exclusive", async () => {
+    const { status, raw } = await addDir(
+      [{ filename: "a", content: "1" }, { filename: "b", content: "2" }],
+      "?erasure=2%2B1",
+    )
+    assert.equal(status, 400)
+    assert.match(raw, /mutually exclusive/)
+  })
+
+  it("rejects a directory upload with a path traversal segment", async () => {
+    const { status, raw } = await addDir([{ filename: "../escape.txt", content: "x" }])
+    assert.equal(status, 400)
+    assert.match(raw, /traversal|invalid_path/)
   })
 })
