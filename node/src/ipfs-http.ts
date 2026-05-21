@@ -23,7 +23,7 @@ import {
   readErasureFile,
   erasureStatus,
 } from "./ipfs-erasure-reader.ts"
-import { InterfaceBlockstoreAdapter } from "./ipfs-blockstore-adapter.ts"
+import { InterfaceBlockstoreAdapter, BlockstoreReadBudgetError } from "./ipfs-blockstore-adapter.ts"
 import { buildDirectoryDag, type DirEntryInput } from "./ipfs-unixfs-dir.ts"
 import {
   resolveUnixfsPath,
@@ -167,6 +167,25 @@ function isNotFoundError(err: unknown): boolean {
   if (err && typeof err === "object" && "code" in err && (err as { code: unknown }).code === "ENOENT") return true
   const msg = String(err instanceof Error ? err.message : err)
   return /not\s*found|no such|ENOENT/i.test(msg)
+}
+
+/**
+ * #468: classify a UnixFS-resolve failure. Returns an `HttpError` when the
+ * failure is a *resource limit* — the per-request block-read budget was
+ * exhausted, or the resolve `AbortSignal` timed out — so callers surface a
+ * clean 504 instead of letting it fall through as a misleading 500 (or, in
+ * the bare-CID probe, get swallowed entirely). Returns `null` for ordinary
+ * "not a navigable UnixFS node" errors, which callers handle themselves.
+ */
+function resolveLimitError(err: unknown, signal: AbortSignal): HttpError | null {
+  if (signal.aborted) {
+    return new HttpError(504, "resolve timeout",
+      `UnixFS path resolution exceeded ${IPFS_RESOLVE_TIMEOUT_MS}ms`)
+  }
+  if (err instanceof BlockstoreReadBudgetError) {
+    return new HttpError(504, "resolve aborted", err.message)
+  }
+  return null
 }
 
 /**
@@ -1235,8 +1254,13 @@ export class IpfsHttpServer {
         if (entry.type === "directory") {
           return { rootCid, cid: rootCid, path: [], entry }
         }
-      } catch {
-        /* not navigable as UnixFS — fall through to the bare-CID path */
+      } catch (err) {
+        // A resource limit (read-budget exhausted / resolve timeout) is a
+        // real failure — surface it instead of swallowing it and letting
+        // the bare-CID path turn it into a misleading 500. Ordinary
+        // "not navigable as UnixFS" errors fall through as before.
+        const limit = resolveLimitError(err, signal)
+        if (limit) throw limit
       }
       return { rootCid, cid: rootCid, path: [] }
     }
@@ -1262,6 +1286,9 @@ export class IpfsHttpServer {
         }
         throw new HttpError(404, "no such file", err.message)
       }
+      // Read-budget / timeout → 504, not an opaque 500.
+      const limit = resolveLimitError(err, signal)
+      if (limit) throw limit
       throw err
     }
   }
@@ -1373,6 +1400,15 @@ export class IpfsHttpServer {
     if (resolved.entry?.type === "directory") {
       const links = await this.listResolvedDirectory(resolved.entry)
       const block = await this.store.get(resolved.cid)
+      // kubo's CumulativeSize is the *recursive* byte size of the whole
+      // subtree. Computing that exactly needs a full subtree walk — too
+      // costly for a stat call — so report a lower-bound approximation:
+      // the directory block plus the byte sizes of immediate *file*
+      // children. A directory child's `size` is an entry count, not a
+      // byte count, so it is deliberately excluded rather than summed
+      // with the wrong unit.
+      const immediateFileBytes = links.reduce(
+        (sum, l) => sum + (l.type === "file" ? l.size : 0), 0)
       res.writeHead(200, { "content-type": "application/json" })
       res.end(JSON.stringify({
         Hash: resolved.cid,
@@ -1380,7 +1416,7 @@ export class IpfsHttpServer {
         BlockSize: block.bytes.length,
         LinksSize: Math.min(links.length * 36, block.bytes.length),
         DataSize: resolved.entry.size,
-        CumulativeSize: links.reduce((sum, l) => sum + l.size, block.bytes.length),
+        CumulativeSize: block.bytes.length + immediateFileBytes,
       }))
       return
     }

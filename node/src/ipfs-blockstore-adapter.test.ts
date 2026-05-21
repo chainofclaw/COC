@@ -6,7 +6,7 @@ import { tmpdir } from "node:os"
 import { CID } from "multiformats/cid"
 import { sha256 } from "multiformats/hashes/sha2"
 import { IpfsBlockstore } from "./ipfs-blockstore.ts"
-import { InterfaceBlockstoreAdapter } from "./ipfs-blockstore-adapter.ts"
+import { InterfaceBlockstoreAdapter, BlockstoreReadBudgetError } from "./ipfs-blockstore-adapter.ts"
 
 let tmpDir: string
 let store: IpfsBlockstore
@@ -68,7 +68,12 @@ describe("InterfaceBlockstoreAdapter", () => {
 
     await adapter.get(cid)
     await adapter.get(cid)
-    await assert.rejects(() => adapter.get(cid), /read budget exceeded/)
+    // The budget overrun throws a distinct typed error so callers can tell
+    // a resource-limit abort apart from an ordinary block miss.
+    await assert.rejects(
+      () => adapter.get(cid),
+      (err: unknown) => err instanceof BlockstoreReadBudgetError && /read budget exceeded/.test(err.message),
+    )
     assert.equal(adapter.reads, 3)
   })
 

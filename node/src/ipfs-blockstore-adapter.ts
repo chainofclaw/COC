@@ -28,6 +28,19 @@ export interface BlockstoreAdapterLimits {
   maxBlockReads?: number
 }
 
+/**
+ * Thrown by {@link InterfaceBlockstoreAdapter.get} when the per-adapter
+ * `maxBlockReads` budget is exhausted. A distinct type so callers can tell
+ * a resource-limit abort apart from an ordinary "not a UnixFS node" miss
+ * and surface it as a real error instead of silently degrading.
+ */
+export class BlockstoreReadBudgetError extends Error {
+  constructor(budget: number) {
+    super(`blockstore read budget exceeded (${budget})`)
+    this.name = "BlockstoreReadBudgetError"
+  }
+}
+
 export class InterfaceBlockstoreAdapter implements Pick<Blockstore, "get" | "put" | "has"> {
   private readonly inner: IpfsBlockstore
   private readonly maxBlockReads: number
@@ -45,7 +58,7 @@ export class InterfaceBlockstoreAdapter implements Pick<Blockstore, "get" | "put
 
   async get(cid: CID): Promise<Uint8Array> {
     if (++this.blockReads > this.maxBlockReads) {
-      throw new Error(`blockstore read budget exceeded (${this.maxBlockReads})`)
+      throw new BlockstoreReadBudgetError(this.maxBlockReads)
     }
     const block = await this.inner.get(cid.toString())
     return block.bytes

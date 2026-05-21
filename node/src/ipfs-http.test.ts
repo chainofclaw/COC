@@ -2892,16 +2892,19 @@ describe("#468 UnixFS directory DAG", () => {
     assert.equal(res.status, 400)
   })
 
-  it("object/stat of a directory reports its child count", async () => {
+  it("object/stat of a directory reports child count and a byte-unit CumulativeSize", async () => {
     const { lines } = await addDir([
-      { filename: "a", content: "1" },
-      { filename: "b", content: "2" },
+      { filename: "a", content: "hello" }, // 5 bytes
+      { filename: "b", content: "world!" }, // 6 bytes
     ])
     const root = lines[lines.length - 1].Hash
     const res = await fetch(`/api/v0/object/stat?arg=${root}`)
     assert.equal(res.status, 200)
-    const stat = (await res.json()) as { NumLinks: number }
+    const stat = (await res.json()) as { NumLinks: number; BlockSize: number; CumulativeSize: number }
     assert.equal(stat.NumLinks, 2)
+    // CumulativeSize must be in bytes — directory block + immediate file
+    // byte sizes (5 + 6) — not a mix of bytes and directory entry counts.
+    assert.equal(stat.CumulativeSize, stat.BlockSize + 11)
   })
 
   it("gateway resolves <dir>/<subpath> (issue #468 repro)", async () => {
