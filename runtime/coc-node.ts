@@ -12,7 +12,7 @@ import { readBoundedBody } from "./lib/pose-body-reader.ts";
 import { createNodeSigner, createNodeSignerV2, buildReceiptSignMessage } from "../node/src/crypto/signer.ts";
 import { keccak256Hex } from "../services/relayer/keccak256.ts";
 import { createLogger } from "../node/src/logger.ts";
-import { buildDomain, RECEIPT_TYPES, WITNESS_TYPES } from "../node/src/crypto/eip712-types.ts";
+import { buildDomain, RECEIPT_TYPES, WITNESS_TYPES, WITNESS_TYPES_V2 } from "../node/src/crypto/eip712-types.ts";
 
 const log = createLogger("coc-node");
 
@@ -97,6 +97,29 @@ async function signWitnessAttestation(
     nodeId,
     responseBodyHash,
     witnessIndex,
+  });
+}
+
+/**
+ * #667 — sign the v2 (`WitnessAttestationV2`) typehash that binds the
+ * attestation to `epochId`. Returned alongside the v1 signature so the
+ * on-chain `_validateWitnessQuorumV2` can pick either during the
+ * versioned-typehash rollout window.
+ */
+async function signWitnessAttestationV2(
+  challengeId: string,
+  nodeId: string,
+  responseBodyHash: string,
+  witnessIndex: number,
+  epochId: bigint,
+): Promise<string> {
+  if (!nodeSignerV2) throw new Error("v2 signer not available");
+  return nodeSignerV2.eip712.signTypedData(WITNESS_TYPES_V2, {
+    challengeId,
+    nodeId,
+    responseBodyHash,
+    witnessIndex,
+    epochId,
   });
 }
 
@@ -392,13 +415,28 @@ const server = http.createServer((req, res) => {
         return json(res, result.status, { error: result.error });
       }
       const fields = result.fields;
-      signWitnessAttestation(
+      const signV1 = signWitnessAttestation(
         fields.challengeId,
         fields.nodeId,
         fields.responseBodyHash,
         fields.witnessIndex,
-      )
-        .then((witnessSig) => {
+      );
+      // #667 — produce v2 signature too when caller passed `epochId`. The
+      // contract's `_validateWitnessQuorumV2` prefers v2 (which binds the
+      // signature to `epochId`) and falls back to v1 during rollout. We
+      // sign both so a single witness endpoint can serve mixed-version
+      // clients during the migration window.
+      const signV2 = fields.epochId !== undefined
+        ? signWitnessAttestationV2(
+            fields.challengeId,
+            fields.nodeId,
+            fields.responseBodyHash,
+            fields.witnessIndex,
+            fields.epochId,
+          )
+        : Promise.resolve<string | null>(null);
+      Promise.all([signV1, signV2])
+        .then(([witnessSig, witnessSigV2]) => {
           return json(res, 200, {
             challengeId: fields.challengeId,
             nodeId: fields.nodeId,
@@ -406,6 +444,7 @@ const server = http.createServer((req, res) => {
             witnessIndex: fields.witnessIndex,
             attestedAtMs: BigInt(Date.now()).toString(),
             witnessSig,
+            ...(witnessSigV2 ? { witnessSigV2 } : {}),
           });
         })
         .catch((error) => {

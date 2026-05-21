@@ -5,7 +5,12 @@
 import { keccak256Hex } from "../relayer/keccak256.ts"
 import { buildMerkleRoot, buildMerkleProof } from "../common/merkle.ts"
 import type { Hex32 } from "../common/pose-types.ts"
-import type { VerifiedReceiptV2, EvidenceLeafV2 } from "../common/pose-types-v2.ts"
+import type {
+  VerifiedReceiptV2,
+  EvidenceLeafV2,
+  ReceiptBatchMetadata,
+} from "../common/pose-types-v2.ts"
+import { WITNESS_INDEX_UNUSED } from "../common/pose-types-v2.ts"
 import type { SampleProof } from "./batch-aggregator.ts"
 
 export interface ReceiptBatchV2 {
@@ -15,6 +20,21 @@ export interface ReceiptBatchV2 {
   leafHashes: Hex32[]
   sampleProofs: SampleProof[]
   witnessBitmap: number
+  /**
+   * Per-receipt metadata for the on-chain independent witness verification
+   * path (#667). Pass to `submitBatchV2WithMetadata` together with
+   * `witnessSignatures`.
+   */
+  metadata: ReceiptBatchMetadata
+  /**
+   * Witness signatures aligned with `witnessBitmap` set bits in ascending
+   * order. Each entry is the signature from the witness whose
+   * `metadata.witnessReceiptIndex[i]` points at the receipt this signature
+   * actually attests to. Prefers v2-typehash signatures (`witnessSigV2`)
+   * when available; falls back to the v1 `witnessSig` during the rollout
+   * window.
+   */
+  witnessSignatures: `0x${string}`[]
 }
 
 export interface BatchAggregatorV2Config {
@@ -72,11 +92,15 @@ export class BatchAggregatorV2 {
 
     const summaryHash = this.buildSummaryHash(epochId, merkleRoot, sampleProofs)
 
-    // OR-combine all witness bitmaps
+    // OR-combine all witness bitmaps (batch-level bitmap).
     let combinedBitmap = 0
     for (const r of receipts) {
       combinedBitmap |= r.witnessBitmap
     }
+
+    // #667 — build per-receipt metadata + per-bit witness signature array.
+    const metadata = this.buildMetadata(receipts, leafHashes, combinedBitmap)
+    const witnessSignatures = this.collectWitnessSignatures(receipts, combinedBitmap, metadata)
 
     return {
       epochId,
@@ -85,7 +109,74 @@ export class BatchAggregatorV2 {
       leafHashes,
       sampleProofs,
       witnessBitmap: combinedBitmap,
+      metadata,
+      witnessSignatures,
     }
+  }
+
+  /**
+   * Build the per-receipt metadata payload that `submitBatchV2WithMetadata`
+   * consumes. `witnessReceiptIndex[i]` (i in 0..31) maps bit `i` of the
+   * batch-level bitmap to the index of the "primary" receipt for that bit —
+   * i.e. the first receipt in `receipts` whose per-receipt `witnessBitmap`
+   * also has bit `i` set. Unused bits hold `WITNESS_INDEX_UNUSED`.
+   */
+  private buildMetadata(
+    receipts: VerifiedReceiptV2[],
+    leafHashes: Hex32[],
+    combinedBitmap: number,
+  ): ReceiptBatchMetadata {
+    const witnessReceiptIndex: number[] = new Array(32).fill(WITNESS_INDEX_UNUSED)
+    for (let bit = 0; bit < 32; bit++) {
+      if ((combinedBitmap & (1 << bit)) === 0) continue
+      // Find the first receipt whose per-receipt bitmap also has this bit.
+      for (let i = 0; i < receipts.length; i++) {
+        if ((receipts[i].witnessBitmap & (1 << bit)) !== 0) {
+          witnessReceiptIndex[bit] = i
+          break
+        }
+      }
+    }
+
+    return {
+      challengeIds: receipts.map((r) => r.challenge.challengeId),
+      nodeIds: receipts.map((r) => r.receipt.nodeId),
+      responseBodyHashes: receipts.map((r) => r.receipt.responseBodyHash),
+      leafHashes,
+      witnessReceiptIndex,
+    }
+  }
+
+  /**
+   * Collect witness signatures aligned with set bits in `combinedBitmap`
+   * (ascending bit order). Prefers v2-typehash signatures (`witnessSigV2`)
+   * when present; falls back to v1 (`witnessSig`) for backwards compatibility
+   * during the rollout window. Throws if a required signature is missing —
+   * the contract would `revert InvalidWitnessQuorum` and the relayer would
+   * waste gas, so fail loudly here instead.
+   */
+  private collectWitnessSignatures(
+    receipts: VerifiedReceiptV2[],
+    combinedBitmap: number,
+    metadata: ReceiptBatchMetadata,
+  ): `0x${string}`[] {
+    const signatures: `0x${string}`[] = []
+    for (let bit = 0; bit < 32; bit++) {
+      if ((combinedBitmap & (1 << bit)) === 0) continue
+      const receiptIdx = metadata.witnessReceiptIndex[bit]
+      if (receiptIdx === WITNESS_INDEX_UNUSED) {
+        throw new Error(`witnessReceiptIndex[${bit}] missing despite bit set`)
+      }
+      const receipt = receipts[receiptIdx]
+      const attestation = receipt.witnesses.find((w) => w.witnessIndex === bit)
+      if (!attestation) {
+        throw new Error(
+          `witness attestation missing for bit ${bit} on receipt ${receiptIdx} (challengeId=${receipt.challenge.challengeId})`,
+        )
+      }
+      signatures.push(attestation.witnessSigV2 ?? attestation.witnessSig)
+    }
+    return signatures
   }
 
   private buildSummaryHash(epochId: bigint, merkleRoot: Hex32, sampleProofs: SampleProof[]): Hex32 {
