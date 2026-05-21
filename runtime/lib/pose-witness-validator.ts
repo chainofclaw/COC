@@ -20,10 +20,17 @@ export interface PoseWitnessFields {
   nodeId: string;
   responseBodyHash: string;
   witnessIndex: number;
+  /**
+   * #667 — optional epochId for v2 typehash binding. When provided the
+   * server returns both v1 and v2 signatures; when absent only v1 is
+   * produced (backwards-compatible with pre-#667 callers).
+   */
+  epochId?: bigint;
 }
 
 const HEX32_RE = /^0[xX][0-9a-fA-F]{64}$/;
 const HEX_ADDR_RE = /^0[xX][0-9a-fA-F]{40}$/;
+const MAX_UINT64 = (1n << 64n) - 1n;
 
 export type ValidateResult =
   | { ok: true; fields: PoseWitnessFields }
@@ -49,6 +56,29 @@ export function validatePoseWitnessPayload(payload: unknown): ValidateResult {
     return { ok: false, status: 400, error: "witnessIndex must be a non-negative integer" };
   }
 
+  // #667: epochId is optional during the rollout window. Accept number or
+  // decimal-string (JSON has no bigint native form); reject anything else.
+  let epochId: bigint | undefined;
+  if (p.epochId !== undefined && p.epochId !== null) {
+    let parsed: bigint;
+    if (typeof p.epochId === "number") {
+      if (!Number.isFinite(p.epochId) || !Number.isInteger(p.epochId) || p.epochId < 0) {
+        return { ok: false, status: 400, error: "epochId must be a non-negative integer" };
+      }
+      parsed = BigInt(p.epochId);
+    } else if (typeof p.epochId === "string" && /^[0-9]+$/.test(p.epochId)) {
+      parsed = BigInt(p.epochId);
+    } else if (typeof p.epochId === "bigint") {
+      parsed = p.epochId;
+    } else {
+      return { ok: false, status: 400, error: "epochId must be a non-negative integer" };
+    }
+    if (parsed < 0n || parsed > MAX_UINT64) {
+      return { ok: false, status: 400, error: "epochId out of uint64 range" };
+    }
+    epochId = parsed;
+  }
+
   return {
     ok: true,
     fields: {
@@ -56,6 +86,7 @@ export function validatePoseWitnessPayload(payload: unknown): ValidateResult {
       nodeId: p.nodeId.toLowerCase(),
       responseBodyHash: p.responseBodyHash.toLowerCase(),
       witnessIndex: p.witnessIndex,
+      epochId,
     },
   };
 }
