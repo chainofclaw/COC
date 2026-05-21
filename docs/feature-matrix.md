@@ -86,6 +86,7 @@ Status legend:
 - **IPFS MFS** — Implemented (Phase 26) — `COC/node/src/ipfs-mfs.ts`
 - **IPFS Pubsub** — Implemented (Phase 26) — `COC/node/src/ipfs-pubsub.ts`
 - **IPFS tar archive** — Implemented (Phase 28) — `COC/node/src/ipfs-tar.ts`
+- **IPFS UnixFS directory DAG (write + read, incl. HAMT)** — Implemented (#468) — `COC/node/src/ipfs-unixfs-dir.ts`, `ipfs-path-resolve.ts`, `ipfs-blockstore-adapter.ts` (directory uploads via `wrap-with-directory`, `<cid>/<path>` navigation on cat/ls/object-stat/gateway)
 - **EVM state snapshot** — Implemented (Phase 28 + Audit: full trie traversal) — `COC/node/src/state-snapshot.ts`
 - **Snap sync provider** — Implemented (Phase 29) — `COC/node/src/consensus.ts`
 - **Log indexing** — Implemented (Phase 13.2) — `COC/node/src/storage/block-index.ts`

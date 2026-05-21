@@ -197,6 +197,13 @@ Implemented:
 - **Phase 26**: Pubsub HTTP routes (`/api/v0/pubsub/*`) with ndjson streaming
 - **Phase 28**: IPFS tar archive for `/api/v0/get` (POSIX USTAR format)
 - **Phase 28**: EVM state snapshot export/import for fast sync
+- **#468**: IPFS UnixFS directory DAG — write path (`/api/v0/add?wrap-with-directory=true`,
+  multi-file / nested-directory uploads, automatic HAMT sharding) and read path
+  (`<cid>/<path>` navigation by Link name across `cat` / `ls` / `object/stat` / gateway,
+  transparent HAMT shard descent). Built on `ipfs-unixfs-importer` / `ipfs-unixfs-exporter`.
+  Note: files uploaded *inside* a directory are chunked by the importer and do not carry
+  the COC PoSe `merkleRoot`/`merkleLeaves` side-tree, so they are not currently subjects of
+  PoSe storage challenges (single-file `/api/v0/add` uploads are unaffected) — follow-up.
 
 - **M7**: Tx-level pruning by age (`StoragePruner.pruneTxByAge()` with configurable `txRetentionMs`)
 
@@ -214,6 +221,9 @@ Code:
 - `COC/node/src/ipfs-mfs.ts` (NEW - Phase 26)
 - `COC/node/src/ipfs-pubsub.ts` (NEW - Phase 26)
 - `COC/node/src/ipfs-tar.ts` (NEW - Phase 28)
+- `COC/node/src/ipfs-blockstore-adapter.ts` (NEW - #468)
+- `COC/node/src/ipfs-unixfs-dir.ts` (NEW - #468)
+- `COC/node/src/ipfs-path-resolve.ts` (NEW - #468)
 - `COC/node/src/state-snapshot.ts` (NEW - Phase 28)
 
 ## 5) Mempool & Fee Market
