@@ -46,6 +46,17 @@ setInterval(() => ipfsRateLimiter.cleanup(), 300_000).unref()
  */
 const IPFS_RESOLVE_TIMEOUT_MS = 20_000
 
+/**
+ * #468: aggregate caps for `/api/v0/get` of a directory tree. The tar is
+ * assembled fully in memory, so the per-file `MAX_READ_SIZE` cap is not
+ * enough — the cumulative byte count, file count, and nesting depth must
+ * all be bounded so a malicious wide/deep directory CID cannot exhaust
+ * node memory (the endpoint is not auth-gated).
+ */
+const MAX_DIRECTORY_GET_BYTES = 64 * 1024 * 1024
+const MAX_DIRECTORY_GET_FILES = 10_000
+const MAX_DIRECTORY_GET_DEPTH = 64
+
 class HttpError extends Error {
   readonly status: number
   readonly code: string
@@ -1471,7 +1482,7 @@ export class IpfsHttpServer {
     }
     // #468: `get` of a directory streams a tar of every file in the tree.
     if (resolved.entry?.type === "directory") {
-      const files = await this.collectDirectoryFiles(resolved.entry)
+      const files = await this.collectDirectoryFiles(resolved.entry, "", { bytes: 0, files: 0 }, 0)
       const archive = createTarArchive(files)
       res.writeHead(200, { "content-type": "application/x-tar" })
       res.end(archive)
@@ -1499,13 +1510,25 @@ export class IpfsHttpServer {
   /**
    * #468: recursively collect every file in a resolved directory tree as
    * `{ name, data }` tar entries, the name being the file's path relative
-   * to the directory root. Bounded by the path-resolve module's directory
-   * / read-size caps.
+   * to the directory root.
+   *
+   * `acc` is a single object shared across the whole recursion so the
+   * cumulative byte count and file count are bounded globally (not just
+   * per-file); `depth` is per-branch. Exceeding any of
+   * {@link MAX_DIRECTORY_GET_BYTES} / {@link MAX_DIRECTORY_GET_FILES} /
+   * {@link MAX_DIRECTORY_GET_DEPTH} aborts the request — without this a
+   * malicious wide/deep directory CID could exhaust node memory.
    */
   private async collectDirectoryFiles(
     dir: ResolvedEntry,
-    prefix = "",
+    prefix: string,
+    acc: { bytes: number; files: number },
+    depth: number,
   ): Promise<Array<{ name: string; data: Uint8Array }>> {
+    if (depth > MAX_DIRECTORY_GET_DEPTH) {
+      throw new HttpError(400, "directory too deep",
+        `directory nesting exceeds ${MAX_DIRECTORY_GET_DEPTH} levels`)
+    }
     const out: Array<{ name: string; data: Uint8Array }> = []
     const links = await this.listResolvedDirectory(dir)
     for (const link of links) {
@@ -1514,12 +1537,20 @@ export class IpfsHttpServer {
       const child = await resolveUnixfsPath(link.cid, [], adapter,
         AbortSignal.timeout(IPFS_RESOLVE_TIMEOUT_MS))
       if (child.type === "directory") {
-        out.push(...await this.collectDirectoryFiles(child, childPath))
+        out.push(...await this.collectDirectoryFiles(child, childPath, acc, depth + 1))
       } else {
-        out.push({
-          name: childPath,
-          data: await readEntryBytes(child, undefined, AbortSignal.timeout(IPFS_RESOLVE_TIMEOUT_MS)),
-        })
+        const data = await readEntryBytes(child, undefined, AbortSignal.timeout(IPFS_RESOLVE_TIMEOUT_MS))
+        acc.files += 1
+        acc.bytes += data.length
+        if (acc.files > MAX_DIRECTORY_GET_FILES) {
+          throw new HttpError(413, "directory too large",
+            `directory tar exceeds ${MAX_DIRECTORY_GET_FILES} files`)
+        }
+        if (acc.bytes > MAX_DIRECTORY_GET_BYTES) {
+          throw new HttpError(413, "directory too large",
+            `directory tar exceeds ${MAX_DIRECTORY_GET_BYTES} bytes`)
+        }
+        out.push({ name: childPath, data })
       }
     }
     return out

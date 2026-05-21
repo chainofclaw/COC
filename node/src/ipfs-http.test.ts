@@ -8,6 +8,8 @@ import http from "node:http"
 import { IpfsBlockstore } from "./ipfs-blockstore.ts"
 import { UnixFsBuilder } from "./ipfs-unixfs.ts"
 import { IpfsHttpServer, isIpfsAdminAuthorized } from "./ipfs-http.ts"
+import { InterfaceBlockstoreAdapter } from "./ipfs-blockstore-adapter.ts"
+import { buildDirectoryDag } from "./ipfs-unixfs-dir.ts"
 import type { CidString } from "./ipfs-types.ts"
 
 // The IPFS HTTP server uses a module-level rate limiter (100 req/min/IP).
@@ -2966,5 +2968,40 @@ describe("#468 UnixFS directory DAG", () => {
     const { status, raw } = await addDir([{ filename: "../escape.txt", content: "x" }])
     assert.equal(status, 400)
     assert.match(raw, /traversal|invalid_path/)
+  })
+
+  it("get of a directory CID returns a tar of the whole tree", async () => {
+    const { lines } = await addDir([
+      { filename: "readme.txt", content: "top-level" },
+      { filename: "docs/a.txt", content: "alpha-content" },
+    ])
+    const root = lines[lines.length - 1].Hash
+    const res = await fetch(`/api/v0/get?arg=${root}`)
+    assert.equal(res.status, 200)
+    assert.match(String(res.headers["content-type"]), /application\/x-tar/)
+    // tar stores file names + (small) contents verbatim — smoke-check both.
+    const tar = (await res.buffer()).toString("binary")
+    assert.match(tar, /readme\.txt/)
+    assert.match(tar, /top-level/)
+    assert.match(tar, /a\.txt/)
+    assert.match(tar, /alpha-content/)
+  })
+
+  it("get of a pathologically deep directory tree is rejected (DoS guard)", async () => {
+    // Build a directory nested deeper than MAX_DIRECTORY_GET_DEPTH (64)
+    // straight into the blockstore — the HTTP upload path caps relative
+    // paths at 64 segments, so this depth is only reachable for a CID
+    // whose blocks were fetched from a peer.
+    const deepPath = Array.from({ length: 70 }, (_, i) => `d${i}`).join("/") + "/f.txt"
+    const adapter = new InterfaceBlockstoreAdapter(store)
+    const built = await buildDirectoryDag(
+      [{ path: deepPath, content: new TextEncoder().encode("deep") }],
+      adapter,
+    )
+    for (const node of built.all) await store.pin(node.cid)
+
+    const res = await fetch(`/api/v0/get?arg=${built.root.cid}`)
+    assert.equal(res.status, 400, `deep directory get must be rejected, got ${res.status}`)
+    assert.match(await res.text(), /too deep/)
   })
 })
