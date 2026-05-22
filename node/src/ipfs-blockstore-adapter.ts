@@ -1,0 +1,109 @@
+import { CID } from "multiformats/cid"
+import type { Blockstore } from "interface-blockstore"
+import type { IpfsBlockstore } from "./ipfs-blockstore.ts"
+
+/**
+ * Bridges COC's string-keyed {@link IpfsBlockstore} to the
+ * `interface-blockstore` `Blockstore` that `ipfs-unixfs-importer` and
+ * `ipfs-unixfs-exporter` expect.
+ *
+ * Only `get` / `put` / `has` are used by the importer/exporter path
+ * (`ReadableStorage = Pick<Blockstore,'get'>`, `WritableStorage =
+ * Pick<Blockstore,'put'>`); the remaining `Store` members are provided as
+ * thin shims so the adapter is a structural superset and can be passed
+ * wherever a `Blockstore` is wanted.
+ *
+ * The CID <-> string conversion is the only translation — block bytes pass
+ * through verbatim. `get` routes through COC's `store.get`, which
+ * transparently peer-fetches absent blocks (C1.3) and content-verifies
+ * them, so directory-DAG navigation works even over a partially-local DAG.
+ *
+ * DoS guard: a per-adapter `get` budget. A single HTTP request constructs
+ * one adapter, so capping `get` calls bounds the block fan-out a malicious
+ * (deep / wide / diamond) DAG can trigger. Construct a fresh adapter per
+ * request to reset the budget.
+ */
+export interface BlockstoreAdapterLimits {
+  /** Max number of `get` calls over this adapter's lifetime. */
+  maxBlockReads?: number
+}
+
+/**
+ * Thrown by {@link InterfaceBlockstoreAdapter.get} when the per-adapter
+ * `maxBlockReads` budget is exhausted. A distinct type so callers can tell
+ * a resource-limit abort apart from an ordinary "not a UnixFS node" miss
+ * and surface it as a real error instead of silently degrading.
+ */
+export class BlockstoreReadBudgetError extends Error {
+  constructor(budget: number) {
+    super(`blockstore read budget exceeded (${budget})`)
+    this.name = "BlockstoreReadBudgetError"
+  }
+}
+
+export class InterfaceBlockstoreAdapter implements Pick<Blockstore, "get" | "put" | "has"> {
+  private readonly inner: IpfsBlockstore
+  private readonly maxBlockReads: number
+  private blockReads = 0
+
+  constructor(inner: IpfsBlockstore, limits?: BlockstoreAdapterLimits) {
+    this.inner = inner
+    this.maxBlockReads = limits?.maxBlockReads ?? Number.POSITIVE_INFINITY
+  }
+
+  /** Number of `get` calls served so far — exposed for tests / metrics. */
+  get reads(): number {
+    return this.blockReads
+  }
+
+  async get(cid: CID): Promise<Uint8Array> {
+    if (++this.blockReads > this.maxBlockReads) {
+      throw new BlockstoreReadBudgetError(this.maxBlockReads)
+    }
+    const block = await this.inner.get(cid.toString())
+    return block.bytes
+  }
+
+  async put(cid: CID, bytes: Uint8Array): Promise<CID> {
+    await this.inner.put({ cid: cid.toString(), bytes })
+    return cid
+  }
+
+  async has(cid: CID): Promise<boolean> {
+    return this.inner.has(cid.toString())
+  }
+
+  async *putMany(
+    source: AsyncIterable<{ cid: CID; block: Uint8Array }> | Iterable<{ cid: CID; block: Uint8Array }>,
+  ): AsyncGenerator<CID> {
+    for await (const { cid, block } of source) {
+      yield await this.put(cid, block)
+    }
+  }
+
+  async *getMany(
+    source: AsyncIterable<CID> | Iterable<CID>,
+  ): AsyncGenerator<{ cid: CID; block: Uint8Array }> {
+    for await (const cid of source) {
+      yield { cid, block: await this.get(cid) }
+    }
+  }
+
+  // GC is owned by COC's IpfsBlockstore (pins.json + gc()); deletion through
+  // the adapter is a no-op so the importer/exporter can never drop blocks.
+  async delete(_cid: CID): Promise<void> {
+    /* no-op — COC GC owns deletion */
+  }
+
+  async *deleteMany(source: AsyncIterable<CID> | Iterable<CID>): AsyncGenerator<CID> {
+    for await (const cid of source) {
+      yield cid
+    }
+  }
+
+  // The exporter never enumerates the whole store during a path walk; only
+  // implemented so the adapter satisfies the full Blockstore shape.
+  async *getAll(): AsyncGenerator<{ cid: CID; block: Uint8Array }> {
+    throw new Error("getAll is not supported by InterfaceBlockstoreAdapter")
+  }
+}
