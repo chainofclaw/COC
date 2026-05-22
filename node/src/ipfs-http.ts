@@ -56,6 +56,13 @@ const IPFS_RESOLVE_TIMEOUT_MS = 20_000
 const MAX_DIRECTORY_GET_BYTES = 64 * 1024 * 1024
 const MAX_DIRECTORY_GET_FILES = 10_000
 const MAX_DIRECTORY_GET_DEPTH = 64
+/**
+ * Cap on the total number of DAG nodes (files AND directories) visited
+ * while assembling a directory tar. The byte / file caps do not bound a
+ * tree built entirely of empty sub-directories — depth alone would still
+ * allow an enormous traversal — so every visited entry is counted here.
+ */
+const MAX_DIRECTORY_GET_NODES = 50_000
 
 class HttpError extends Error {
   readonly status: number
@@ -1518,7 +1525,7 @@ export class IpfsHttpServer {
     }
     // #468: `get` of a directory streams a tar of every file in the tree.
     if (resolved.entry?.type === "directory") {
-      const files = await this.collectDirectoryFiles(resolved.entry, "", { bytes: 0, files: 0 }, 0)
+      const files = await this.collectDirectoryFiles(resolved.entry, "", { bytes: 0, files: 0, nodes: 0 }, 0)
       const archive = createTarArchive(files)
       res.writeHead(200, { "content-type": "application/x-tar" })
       res.end(archive)
@@ -1549,16 +1556,17 @@ export class IpfsHttpServer {
    * to the directory root.
    *
    * `acc` is a single object shared across the whole recursion so the
-   * cumulative byte count and file count are bounded globally (not just
-   * per-file); `depth` is per-branch. Exceeding any of
+   * cumulative byte count, file count, and node count are bounded
+   * globally (not just per-file); `depth` is per-branch. Exceeding any of
    * {@link MAX_DIRECTORY_GET_BYTES} / {@link MAX_DIRECTORY_GET_FILES} /
-   * {@link MAX_DIRECTORY_GET_DEPTH} aborts the request — without this a
-   * malicious wide/deep directory CID could exhaust node memory.
+   * {@link MAX_DIRECTORY_GET_NODES} / {@link MAX_DIRECTORY_GET_DEPTH}
+   * aborts the request — without this a malicious wide/deep directory CID
+   * could exhaust node memory or pin the handler on an enormous traversal.
    */
   private async collectDirectoryFiles(
     dir: ResolvedEntry,
     prefix: string,
-    acc: { bytes: number; files: number },
+    acc: { bytes: number; files: number; nodes: number },
     depth: number,
   ): Promise<Array<{ name: string; data: Uint8Array }>> {
     if (depth > MAX_DIRECTORY_GET_DEPTH) {
@@ -1568,6 +1576,15 @@ export class IpfsHttpServer {
     const out: Array<{ name: string; data: Uint8Array }> = []
     const links = await this.listResolvedDirectory(dir)
     for (const link of links) {
+      // Count every entry — file or directory — so a tree made purely of
+      // empty sub-directories (which never touches the byte/file caps) is
+      // still bounded. Checked before the resolve so the (n+1)-th node's
+      // blocks are never fetched.
+      acc.nodes += 1
+      if (acc.nodes > MAX_DIRECTORY_GET_NODES) {
+        throw new HttpError(413, "directory too large",
+          `directory tree exceeds ${MAX_DIRECTORY_GET_NODES} nodes`)
+      }
       const childPath = prefix ? `${prefix}/${link.name}` : link.name
       const adapter = new InterfaceBlockstoreAdapter(this.store, { maxBlockReads: MAX_BLOCK_READS })
       const child = await resolveUnixfsPath(link.cid, [], adapter,
