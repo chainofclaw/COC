@@ -1,0 +1,3 @@
+# OZ upgrade prepareUpgrade output — pinned per-run, consumed by
+# scripts/safe-propose-pose-upgrade.ts.
+tmp/
