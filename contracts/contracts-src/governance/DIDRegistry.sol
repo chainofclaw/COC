@@ -476,6 +476,14 @@ contract DIDRegistry is Initializable, UUPSUpgradeable {
     /// @dev Revocation is transitive: the whole ancestor chain is walked, so a
     ///      child is invalid the moment any ancestor is revoked, expired, or
     ///      globally revoked. The walk is bounded by MAX_DELEGATION_DEPTH.
+    ///
+    ///      Each hop also re-anchors to SoulRegistry: the delegator's soul
+    ///      must still be active, and the delegation must postdate the soul's
+    ///      current `registeredAt` (#721). This way `deactivateSoul` +
+    ///      `registerSoul` cleanly invalidates every delegation issued by the
+    ///      previous owner — DIDRegistry has no callback into SoulRegistry,
+    ///      so the validity check must perform this re-anchoring itself
+    ///      rather than trusting state that was correct at issuance.
     function isDelegationValid(bytes32 delegationId) public view returns (bool) {
         bytes32 cur = delegationId;
         for (uint256 hops = 0; hops <= uint256(MAX_DELEGATION_DEPTH); hops++) {
@@ -484,6 +492,9 @@ contract DIDRegistry is Initializable, UUPSUpgradeable {
             if (d.revoked) return false;
             if (d.expiresAt < uint64(block.timestamp)) return false;
             if (d.revocationEpoch != globalRevocationEpoch[d.delegator]) return false;
+            ISoulRegistry.SoulIdentity memory soul = soulRegistry.getSoul(d.delegator);
+            if (!soul.active) return false;
+            if (d.issuedAt < soul.registeredAt) return false;
             if (d.depth == 0) return true; // reached the root — chain is clean
             cur = d.parentDelegation;
         }
