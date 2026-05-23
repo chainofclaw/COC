@@ -69,4 +69,38 @@ describe("BFT -> PoSe slash bridge", () => {
 
     assert.equal(evidence, null)
   })
+
+  it("threads BFT signatures from the RPC response into the normalized evidence (#725)", () => {
+    const sig1 = "0x" + "ee".repeat(65)
+    const sig2 = "0x" + "ff".repeat(65)
+    const evidence = normalizeEquivocationRpcEntry({
+      validatorId: "node-signed",
+      height: "500",
+      phase: "commit",
+      vote1Hash: "0x" + "33".repeat(32),
+      vote2Hash: "0x" + "44".repeat(32),
+      timestamp: 1700000003000,
+      signature1: sig1,
+      signature2: sig2,
+    })
+
+    assert.ok(evidence)
+    assert.equal(evidence?.signature1, sig1)
+    assert.equal(evidence?.signature2, sig2)
+  })
+
+  it("omits signature fields entirely when the RPC response lacks them (legacy compatibility)", () => {
+    const evidence = normalizeEquivocationRpcEntry({
+      validatorId: "node-nosig",
+      height: "600",
+      phase: "prepare",
+      vote1Hash: "0x" + "55".repeat(32),
+      vote2Hash: "0x" + "66".repeat(32),
+      timestamp: 1700000004000,
+    })
+
+    assert.ok(evidence)
+    assert.equal(evidence?.signature1, undefined)
+    assert.equal(evidence?.signature2, undefined)
+  })
 })

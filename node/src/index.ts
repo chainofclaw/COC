@@ -533,6 +533,13 @@ if (bftEnabled) {
       blockHash1: evidence.blockHash1,
       blockHash2: evidence.blockHash2,
       detectedAtMs: evidence.detectedAtMs,
+      // #725: carry the two BFT signatures through to the evidence store /
+      // coc_getEquivocations RPC / relayer. Without them the relayer's
+      // on-chain EquivocationDetector submission path always trips its
+      // missing-signatures guard and the permissionless slashing layer
+      // never runs.
+      ...(evidence.signature1 ? { signature1: evidence.signature1 } : {}),
+      ...(evidence.signature2 ? { signature2: evidence.signature2 } : {}),
     }
     bftEvidenceStore.push({
       nodeId: nodeIdHex as `0x${string}`,

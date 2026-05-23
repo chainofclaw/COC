@@ -734,8 +734,32 @@ export function bridgeBftSlash(evidence: EquivocationEvidence): void {
       });
       return;
     }
+    if (evidence.phase !== "prepare" && evidence.phase !== "commit") {
+      log.warn("skipping EquivocationDetector submission — unsupported BFT phase", {
+        validator: evidence.validatorId,
+        height: evidence.height.toString(),
+        phase: evidence.phase,
+      });
+      return;
+    }
+    // #725: translate the runtime-side shape (vote*Hash / timestamp) into
+    // the node-side `EquivocationEvidence` shape (blockHash* / detectedAtMs
+    // / phase: "prepare"|"commit") that `EquivocationDetectorClient` and
+    // `buildSubmitEvidenceCall` consume. Two same-named interfaces live in
+    // `node/src/bft.ts` and `runtime/lib/bft-equivocation.ts`; this
+    // translation avoids a wider rename across both call graphs.
+    const onChainEvidence = {
+      validatorId: evidence.validatorId,
+      height: evidence.height,
+      phase: evidence.phase,
+      blockHash1: evidence.vote1Hash as `0x${string}`,
+      blockHash2: evidence.vote2Hash as `0x${string}`,
+      detectedAtMs: evidence.timestamp,
+      signature1: evidence.signature1 as `0x${string}`,
+      signature2: evidence.signature2 as `0x${string}`,
+    };
     void equivocationDetectorClient
-      .submitEvidence(evidence)
+      .submitEvidence(onChainEvidence)
       .then((result) => {
         log.info("EquivocationDetector submitEvidence succeeded", {
           validator: evidence.validatorId,

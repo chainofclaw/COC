@@ -3253,6 +3253,13 @@ async function handleRpc(
       return evidence.map((e) => {
         const raw = (e.rawEvidence ?? {}) as Record<string, unknown>
         const round = raw.round
+        // #725: surface the two BFT signatures alongside the hashes so the
+        // relayer's on-chain EquivocationDetector submission path actually
+        // has signatures to submit. Pre-fix this method stripped them and
+        // the relayer's pre-submit guard always tripped, leaving on-chain
+        // permissionless slashing as silent dead code.
+        const sig1 = typeof raw.signature1 === "string" ? raw.signature1 : undefined
+        const sig2 = typeof raw.signature2 === "string" ? raw.signature2 : undefined
         return {
           validatorId: raw.validatorId ?? raw.nodeId ?? "",
           height: raw.height ?? "0",
@@ -3262,6 +3269,8 @@ async function handleRpc(
           timestamp: raw.detectedAtMs ?? 0,
           phase: raw.phase ?? "",
           type: raw.type ?? "bft-equivocation",
+          ...(sig1 ? { signature1: sig1 } : {}),
+          ...(sig2 ? { signature2: sig2 } : {}),
         }
       })
     }
