@@ -118,6 +118,41 @@ export class RoutingTable {
       // Move to tail (most recently seen); update global IP count if address changed
       const oldPeer = bucket.peers[existing]
       const oldHost = normalizeHostForBucket(extractHost(oldPeer.address))
+      // #729: when the address normalises to a different host, re-validate
+      // the per-IP Sybil caps against the new host BEFORE swapping. Without
+      // this gate, an attacker who established N peers across N distinct
+      // IPs could reconnect each from a single funnel address, every
+      // update succeeding and globalIpCount[target] piling up past the
+      // MAX_PEERS_PER_IP_GLOBAL cap (and same for the per-bucket cap) —
+      // a standard precursor to eclipse attacks.
+      if (oldHost !== peerHost && !isLoopbackHost(peerHost)) {
+        let sameHostInBucket = 0
+        for (let i = 0; i < bucket.peers.length; i++) {
+          if (i === existing) continue // exclude the entry we'd be updating
+          const h = normalizeHostForBucket(extractHost(bucket.peers[i].address))
+          if (h === peerHost) sameHostInBucket++
+        }
+        if (sameHostInBucket >= MAX_PEERS_PER_IP_PER_BUCKET) {
+          log.debug("update rejected: per-IP bucket limit at target host", {
+            ip: peerHost, bucket: idx, peerId: peer.id,
+          })
+          // Still bump lastSeenMs for the existing entry — only the address
+          // swap is denied. Move to tail with the OLD address so refresh
+          // ordering remains accurate.
+          bucket.peers.splice(existing, 1)
+          bucket.peers.push({ ...oldPeer, lastSeenMs: Date.now() })
+          return false
+        }
+        const targetGlobalCount = this.globalIpCount.get(peerHost) ?? 0
+        if (targetGlobalCount >= MAX_PEERS_PER_IP_GLOBAL) {
+          log.debug("update rejected: global per-IP limit at target host", {
+            ip: peerHost, peerId: peer.id,
+          })
+          bucket.peers.splice(existing, 1)
+          bucket.peers.push({ ...oldPeer, lastSeenMs: Date.now() })
+          return false
+        }
+      }
       bucket.peers.splice(existing, 1)
       bucket.peers.push({ ...peer, lastSeenMs: Date.now() })
       if (oldHost !== peerHost) {
