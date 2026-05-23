@@ -8,6 +8,14 @@ export interface EquivocationEvidence {
   vote1Hash: string
   vote2Hash: string
   timestamp: number
+  /**
+   * #725: the two BFT signatures over the conflicting vote hashes.
+   * When present, the relayer can submit them to the on-chain
+   * EquivocationDetector for permissionless slashing. Optional
+   * because legacy / round-only evidence may omit them.
+   */
+  signature1?: string
+  signature2?: string
 }
 
 export function normalizeEquivocationRpcEntry(entry: Record<string, unknown>): EquivocationEvidence | null {
@@ -42,6 +50,13 @@ export function normalizeEquivocationRpcEntry(entry: Record<string, unknown>): E
         ? Number(timestampValue)
       : Date.now()
 
+  // #725: extract the BFT signatures so downstream callers can submit the
+  // evidence to the on-chain EquivocationDetector.
+  const sig1 = typeof entry.signature1 === "string" && entry.signature1.length > 0
+    ? entry.signature1 : undefined
+  const sig2 = typeof entry.signature2 === "string" && entry.signature2.length > 0
+    ? entry.signature2 : undefined
+
   return {
     validatorId,
     height,
@@ -50,6 +65,8 @@ export function normalizeEquivocationRpcEntry(entry: Record<string, unknown>): E
     vote1Hash,
     vote2Hash,
     timestamp,
+    ...(sig1 ? { signature1: sig1 } : {}),
+    ...(sig2 ? { signature2: sig2 } : {}),
   }
 }
 
