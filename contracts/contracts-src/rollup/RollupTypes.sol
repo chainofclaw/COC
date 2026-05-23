@@ -11,6 +11,7 @@ library RollupTypes {
         address proposer;         // who submitted the output
         bool    challenged;       // currently under active challenge
         bool    finalized;        // past challenge window, immutable
+        uint256 bond;             // proposer bond actually escrowed at submission
     }
 
     struct OutputChallenge {

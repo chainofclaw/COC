@@ -114,7 +114,10 @@ contract RollupStateManager is IRollupStateManager, Initializable, UUPSUpgradeab
             l1Timestamp: uint64(block.timestamp),
             proposer: msg.sender,
             challenged: false,
-            finalized: false
+            finalized: false,
+            // Snapshot the escrowed bond so refund/slash use the amount
+            // actually posted, not the (now mutable) live PROPOSER_BOND (#717).
+            bond: msg.value
         });
 
         lastSubmittedBlock = l2BlockNumber;
@@ -190,8 +193,10 @@ contract RollupStateManager is IRollupStateManager, Initializable, UUPSUpgradeab
         challenge.proposerFault = proposerAtFault;
 
         if (proposerAtFault) {
-            // Slash proposer bond: 50% burn, 30% challenger, 20% insurance
-            uint256 totalSlash = PROPOSER_BOND;
+            // Slash proposer bond: 50% burn, 30% challenger, 20% insurance.
+            // Use the bond escrowed by this proposal (#717), not the live
+            // PROPOSER_BOND — the latter can change across a UUPS upgrade.
+            uint256 totalSlash = proposal.bond;
             uint256 burnAmount = (totalSlash * SLASH_BURN_BPS) / 10000;
             uint256 challengerReward = (totalSlash * SLASH_CHALLENGER_BPS) / 10000;
             uint256 insuranceAmount = totalSlash - burnAmount - challengerReward;
@@ -282,8 +287,10 @@ contract RollupStateManager is IRollupStateManager, Initializable, UUPSUpgradeab
 
         proposal.finalized = true;
 
-        // Refund proposer bond. Rejected ETH must not block finalization.
-        _payOrCredit(proposal.proposer, PROPOSER_BOND);
+        // Refund the bond this proposal actually escrowed (#717), not the
+        // live PROPOSER_BOND — the latter can change across a UUPS upgrade.
+        // Rejected ETH must not block finalization.
+        _payOrCredit(proposal.proposer, proposal.bond);
 
         // Update latest finalized block
         if (l2BlockNumber > _latestFinalizedBlock) {
