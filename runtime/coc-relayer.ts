@@ -143,6 +143,15 @@ const contractReader = useV2 ? new ContractReader({
 }) : null;
 
 const rewardManifestDir = config.rewardManifestDir ?? join(config.dataDir, "reward-manifests");
+// #727: trusted reward-manifest signer. When set, verifyManifestSignature
+// requires the recovered EIP-712 signer to match this address (overrides
+// the manifest's self-claimed generatorAddress).
+const rewardManifestSigner = process.env.COC_REWARD_MANIFEST_SIGNER
+  || config.rewardManifestSigner
+  || undefined;
+if (rewardManifestSigner) {
+  log.info("reward manifest signer pinned via config", { signer: rewardManifestSigner });
+}
 const pendingChallengesPath = process.env.COC_PENDING_CHALLENGES_PATH
   || config.pendingChallengesPath
   || join(config.dataDir, "pending-challenges-v2.json");
@@ -282,7 +291,7 @@ async function tryDistributeRewards(epochId: number, _batchIds: string[]): Promi
 
   // Signature verification (V1: warn only, non-blocking)
   if (v2Domain && manifest.generatorSignature) {
-    const sigResult = verifyManifestSignature(manifest, v2Domain);
+    const sigResult = verifyManifestSignature(manifest, v2Domain, { expectedSigner: rewardManifestSigner });
     if (sigResult.valid) {
       log.info("v1 manifest signature valid", { epochId, signer: sigResult.recoveredAddress });
     } else {
@@ -525,7 +534,7 @@ async function tryFinalizeV2(): Promise<void> {
 
       // Signature verification (V2: reject on invalid signature)
       if (v2Domain && manifest.generatorSignature) {
-        const sigResult = verifyManifestSignature(manifest, v2Domain);
+        const sigResult = verifyManifestSignature(manifest, v2Domain, { expectedSigner: rewardManifestSigner });
         if (sigResult.valid) {
           log.info("v2 manifest signature valid", { epochId: candidate, signer: sigResult.recoveredAddress });
         } else {

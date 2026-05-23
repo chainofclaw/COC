@@ -185,12 +185,39 @@ export interface ManifestVerifyResult {
   error?: string
 }
 
+export interface ManifestVerifyOptions {
+  /**
+   * #727: a trusted signer address configured offline (e.g. via
+   * COC_REWARD_MANIFEST_SIGNER). When set, takes priority over the
+   * manifest's self-claimed `generatorAddress` — the recovered signer
+   * must match this value. When unset the function falls back to
+   * `manifest.generatorAddress`; if THAT is also missing the signature
+   * is rejected, because a sig without any authoritative address to
+   * cross-check against silently accepted any random-key forgery.
+   */
+  expectedSigner?: string
+}
+
 export function verifyManifestSignature(
   manifest: RewardManifest,
   domain: { name: string; version: string; chainId: bigint | number; verifyingContract: string },
+  opts: ManifestVerifyOptions = {},
 ): ManifestVerifyResult {
   if (!manifest.generatorSignature) {
     return { valid: false, error: "missing" }
+  }
+
+  // #727: fail-closed when no authoritative address is available. Before this
+  // guard, a manifest with `generatorSignature` set but `generatorAddress`
+  // omitted would let any well-formed 65-byte signature pass verification,
+  // since the only cross-check (recoveredLower vs generatorAddress) was
+  // skipped entirely. A relayer wired to gate finalizeEpochV2 on the result
+  // would therefore commit an attacker-chosen rewardRoot from a forged
+  // manifest signed with a throwaway random key.
+  const expectedFromOpts = opts.expectedSigner ? opts.expectedSigner.toLowerCase() : undefined
+  const expectedFromManifest = manifest.generatorAddress ? manifest.generatorAddress.toLowerCase() : undefined
+  if (!expectedFromOpts && !expectedFromManifest) {
+    return { valid: false, error: "no_signer_to_verify_against" }
   }
 
   try {
@@ -198,7 +225,12 @@ export function verifyManifestSignature(
     const recovered = verifyTypedData(domain, REWARD_MANIFEST_TYPES, payload, manifest.generatorSignature)
     const recoveredLower = recovered.toLowerCase()
 
-    if (manifest.generatorAddress && recoveredLower !== manifest.generatorAddress.toLowerCase()) {
+    // Trusted-signer override (configured offline) takes priority over the
+    // self-claimed `generatorAddress`. The self-claim is otherwise just a
+    // hint that the forger could match — pinning the address out-of-band is
+    // the actual defence.
+    const required = expectedFromOpts ?? expectedFromManifest!
+    if (recoveredLower !== required) {
       return { valid: false, recoveredAddress: recoveredLower, error: "address_mismatch" }
     }
 

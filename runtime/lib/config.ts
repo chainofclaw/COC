@@ -60,6 +60,10 @@ export interface CocRuntimeConfig {
   insuranceFundAddress?: string;
   poseManagerV2Address?: string;
   rewardManifestDir?: string;
+  /** #727: trusted signer address for reward manifest verification. When set,
+   *  verifyManifestSignature requires the recovered EIP-712 signer to match
+   *  this value (overrides the manifest's self-claimed generatorAddress). */
+  rewardManifestSigner?: string;
   epochNonceStrict?: boolean;
   pendingChallengesPath?: string;
   /**

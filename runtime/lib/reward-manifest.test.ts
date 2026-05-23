@@ -155,6 +155,101 @@ describe("reward-manifest", () => {
     assert.equal(result.error, "address_mismatch");
   });
 
+  it("verifyManifestSignature rejects when neither generatorAddress nor expectedSigner is set (#727)", async () => {
+    // Pre-fix: any well-formed 65-byte signature passed verification when
+    // generatorAddress was omitted from the manifest. The relayer's V2
+    // finalize path would then trust the manifest's rewardRoot and commit
+    // an attacker-chosen value on chain.
+    const wallet = Wallet.createRandom();
+    const domain = buildDomain(1n, "0x0000000000000000000000000000000000000001");
+    const manifest: RewardManifest = {
+      epochId: 7,
+      rewardRoot: `0x${"ab".repeat(32)}`,
+      totalReward: "500",
+      slashTotal: "0",
+      treasuryDelta: "0",
+      leaves: [],
+      proofs: {},
+      scoringInputsHash: `0x${"cd".repeat(32)}`,
+      generatedAtMs: Date.now(),
+    };
+
+    const payload = manifestSigningPayload(manifest);
+    const signature = await wallet.signTypedData(
+      toEthersDomain(domain),
+      REWARD_MANIFEST_TYPES,
+      payload,
+    );
+    manifest.generatorSignature = signature;
+    // Intentionally omit manifest.generatorAddress.
+
+    const result = verifyManifestSignature(manifest, domain);
+    assert.equal(result.valid, false);
+    assert.equal(result.error, "no_signer_to_verify_against");
+  });
+
+  it("verifyManifestSignature accepts when expectedSigner matches recovered (#727)", async () => {
+    const wallet = Wallet.createRandom();
+    const domain = buildDomain(1n, "0x0000000000000000000000000000000000000001");
+    const manifest: RewardManifest = {
+      epochId: 8,
+      rewardRoot: `0x${"ab".repeat(32)}`,
+      totalReward: "500",
+      slashTotal: "0",
+      treasuryDelta: "0",
+      leaves: [],
+      proofs: {},
+      scoringInputsHash: `0x${"cd".repeat(32)}`,
+      generatedAtMs: Date.now(),
+    };
+
+    const payload = manifestSigningPayload(manifest);
+    manifest.generatorSignature = await wallet.signTypedData(
+      toEthersDomain(domain),
+      REWARD_MANIFEST_TYPES,
+      payload,
+    );
+    // Omit generatorAddress on purpose; trust comes from the offline-pinned
+    // expectedSigner.
+
+    const result = verifyManifestSignature(manifest, domain, { expectedSigner: wallet.address });
+    assert.equal(result.valid, true);
+    assert.equal(result.recoveredAddress, wallet.address.toLowerCase());
+  });
+
+  it("verifyManifestSignature rejects when expectedSigner overrides a matching self-claim (#727)", async () => {
+    const realSigner = Wallet.createRandom();
+    const trustedSigner = Wallet.createRandom();
+    const domain = buildDomain(1n, "0x0000000000000000000000000000000000000001");
+    const manifest: RewardManifest = {
+      epochId: 9,
+      rewardRoot: `0x${"ab".repeat(32)}`,
+      totalReward: "500",
+      slashTotal: "0",
+      treasuryDelta: "0",
+      leaves: [],
+      proofs: {},
+      scoringInputsHash: `0x${"cd".repeat(32)}`,
+      generatedAtMs: Date.now(),
+    };
+
+    const payload = manifestSigningPayload(manifest);
+    // Attacker signs with a random key and sets the self-claimed
+    // generatorAddress to that key — the self-claim alone would pass.
+    manifest.generatorSignature = await realSigner.signTypedData(
+      toEthersDomain(domain),
+      REWARD_MANIFEST_TYPES,
+      payload,
+    );
+    manifest.generatorAddress = realSigner.address.toLowerCase();
+
+    // Operator pinned a different trusted signer offline — must reject.
+    const result = verifyManifestSignature(manifest, domain, { expectedSigner: trustedSigner.address });
+    assert.equal(result.valid, false);
+    assert.equal(result.error, "address_mismatch");
+    assert.equal(result.recoveredAddress, realSigner.address.toLowerCase());
+  });
+
   it("verifyManifestSignature handles corrupted signature gracefully", () => {
     const domain = buildDomain(1n, "0x0000000000000000000000000000000000000001");
     const manifest: RewardManifest = {
@@ -168,6 +263,9 @@ describe("reward-manifest", () => {
       scoringInputsHash: `0x${"22".repeat(32)}`,
       generatedAtMs: 1,
       generatorSignature: "0xdeadbeef",
+      // #727: include a self-claim so the corrupt-signature path is reached
+      // (else the new fail-closed guard short-circuits before verifyTypedData).
+      generatorAddress: "0x0000000000000000000000000000000000000099",
     };
     const result = verifyManifestSignature(manifest, domain);
     assert.equal(result.valid, false);
