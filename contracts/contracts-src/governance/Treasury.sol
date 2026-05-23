@@ -140,7 +140,11 @@ contract Treasury is Initializable, UUPSUpgradeable {
         if (proposalId >= proposalCount) revert InvalidProposal();
         Proposal storage p = proposals[proposalId];
         if (p.executed) revert AlreadyExecuted();
-        if (p.confirmations < REQUIRED_CONFIRMATIONS) revert NotEnoughConfirmations();
+        // Count confirmations over the CURRENT signer set (#719). The raw
+        // `p.confirmations` counter is not decremented by `replaceSigner`, so
+        // a removed signer's stale confirmation would otherwise still count
+        // toward the 3-of-5 threshold.
+        if (_currentConfirmations(p) < REQUIRED_CONFIRMATIONS) revert NotEnoughConfirmations();
         uint256 available = _availableBalance();
         if (available < p.amount) revert InsufficientBalance();
 
@@ -213,6 +217,24 @@ contract Treasury is Initializable, UUPSUpgradeable {
     function _availableBalance() internal view returns (uint256) {
         uint256 balance = address(this).balance;
         return balance > pendingWithdrawalTotal ? balance - pendingWithdrawalTotal : 0;
+    }
+
+    /// @notice Confirmations on a proposal from the CURRENT signer set (#719).
+    ///         `replaceSigner` does not revisit pending proposals, so the raw
+    ///         `p.confirmations` counter can include confirmations from
+    ///         signers that have since been removed. Recomputing over
+    ///         `signers` is the source of truth for the 3-of-5 threshold.
+    function _currentConfirmations(Proposal storage p) internal view returns (uint8 count) {
+        for (uint8 i = 0; i < MAX_SIGNERS; i++) {
+            if (p.confirmed[signers[i]]) count++;
+        }
+    }
+
+    /// @notice Confirmations on `proposalId` counted over the current signer
+    ///         set — what `executeWithdrawal` actually gates on.
+    function currentConfirmations(uint256 proposalId) external view returns (uint8) {
+        if (proposalId >= proposalCount) revert InvalidProposal();
+        return _currentConfirmations(proposals[proposalId]);
     }
 
     function _payOrCredit(address to, uint256 amount) internal {
