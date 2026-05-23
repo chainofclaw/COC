@@ -972,34 +972,44 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage, UUPSUpgradeable {
 
                 // (c) Try v2 typehash first (binds epochId). Fall back to v1
                 //     during the rollout window. PR-E will drop the v1 path.
+                //     `verifiedDigest` holds whichever digest actually
+                //     recovered the operator — it is the canonical identity of
+                //     this attestation and is reused for the anti-replay key.
                 address operator = nodeOperator[witnessSet[i]];
                 bytes calldata sig = witnessSignatures[sigIdx];
-                bytes32 digestV2 = _buildWitnessDigestV2(
+                bytes32 verifiedDigest = _buildWitnessDigestV2(
                     metadata.challengeIds[receiptIdx],
                     witnessSet[i],
                     metadata.responseBodyHashes[receiptIdx],
                     uint8(i),
                     epochId
                 );
-                address recovered = _recoverSigner(digestV2, sig);
+                address recovered = _recoverSigner(verifiedDigest, sig);
                 if (recovered != operator) {
-                    bytes32 digestV1 = _buildWitnessDigestV1(
+                    verifiedDigest = _buildWitnessDigestV1(
                         metadata.challengeIds[receiptIdx],
                         witnessSet[i],
                         metadata.responseBodyHashes[receiptIdx],
                         uint8(i)
                     );
-                    recovered = _recoverSigner(digestV1, sig);
+                    recovered = _recoverSigner(verifiedDigest, sig);
                 }
                 if (recovered == address(0) || recovered != operator) {
                     revert InvalidWitnessQuorum();
                 }
 
-                // (d) Anti-replay. (epochId, witnessNodeId, sigHash) uniquely
-                //     identifies a witness attestation usage; same sig cannot
-                //     be reused in two batches within an epoch nor (under v1
-                //     fallback) across epochs.
-                bytes32 replayKey = keccak256(abi.encodePacked(epochId, witnessSet[i], keccak256(sig)));
+                // (d) Anti-replay keyed on the verified EIP-712 digest, NOT the
+                //     raw signature bytes (#715). ECDSA signatures are malleable
+                //     in the `v` byte: `_recoverSigner` accepts sig[64] ∈
+                //     {0,1,27,28} and normalises {0,27}/{1,28} to the same `v`,
+                //     so every signature has two encodings that recover the same
+                //     signer — keccak256(sig) is therefore not a stable
+                //     attestation identity and a v-flip would mint a fresh key.
+                //     The digest is canonical: it fixes (challengeId,
+                //     witnessNodeId, responseBodyHash, witnessIndex[, epochId]).
+                //     `epochId` is mixed in explicitly so the v1-fallback digest
+                //     (which omits it) still stays epoch-scoped.
+                bytes32 replayKey = keccak256(abi.encodePacked(epochId, witnessSet[i], verifiedDigest));
                 if (_witnessSigUsed[replayKey]) revert WitnessSigReplay();
                 _witnessSigUsed[replayKey] = true;
 

@@ -107,6 +107,19 @@ function buildMetadata(receipts, witnessReceiptIndex) {
   }
 }
 
+// #715: re-encode an ECDSA signature's recovery byte to its equivalent
+// non-EIP-155 form (0x1b<->0x00, 0x1c<->0x01). `_recoverSigner` normalises
+// both encodings to the same `v`, so the re-encoded signature recovers the
+// SAME signer while having different raw bytes — the malleability an
+// anti-replay guard keyed on keccak256(sig) would have been fooled by.
+function flipVByteEncoding(sig) {
+  const body = sig.slice(0, -2)
+  const v = sig.slice(-2).toLowerCase()
+  const flipped = { "1b": "00", "1c": "01", "00": "1b", "01": "1c" }[v]
+  if (flipped === undefined) throw new Error(`unexpected v byte: 0x${v}`)
+  return body + flipped
+}
+
 function makeReceipt(label) {
   return {
     challengeId: ethers.keccak256(ethers.toUtf8Bytes(`challenge-${label}`)),
@@ -269,6 +282,59 @@ describe("PoSeManagerV2 — #667 witness-quorum independent verification", funct
       sampleProofs2,
       1 << witnessIndex,
       [sig1], // <-- replayed
+      buildMetadata([r1, r2], [[witnessIndex, 0]]),
+    )).to.be.revertedWithCustomError(manager, "WitnessSigReplay")
+  })
+
+  it("reverts WitnessSigReplay when a v-byte-malleated copy of a used signature is reused (#715)", async function () {
+    const witness = await registerWitness(manager, deployer, "vmalleate")
+    const r1 = makeReceipt("vmalleate-1")
+    const r2 = makeReceipt("vmalleate-2")
+
+    const epochId = Math.floor((await ethers.provider.getBlock("latest")).timestamp / 3600)
+    const witnessIndex = 0
+
+    const sig1 = await signWitnessV2(manager, witness, {
+      challengeId: r1.challengeId,
+      responseBodyHash: r1.responseBodyHash,
+      witnessIndex,
+      epochId,
+    })
+
+    // Batch 1 — references r1 with the genuine signature, succeeds.
+    await submitV2Metadata(manager, {
+      epochId,
+      merkleRoot: buildMerkleRoot([r1.leafHash]),
+      sampleLeaf: r1.leafHash,
+      witnessBitmap: 1 << witnessIndex,
+      witnessSignatures: [sig1],
+      metadata: buildMetadata([r1], [[witnessIndex, 0]]),
+    })
+
+    // Batch 2 — distinct merkleRoot (r1+r2) so `epochMerkleRootUsed` does not
+    // block it. Reuses sig1 but with its recovery byte re-encoded: the bytes
+    // (and thus keccak256(sig)) differ, yet `_recoverSigner` recovers the same
+    // witness. A guard keyed on keccak256(sig) would NOT fire here; keyed on
+    // the verified EIP-712 digest it must still revert WitnessSigReplay.
+    const malleated = flipVByteEncoding(sig1)
+    expect(malleated).to.not.equal(sig1)
+
+    const merkleRoot2 = buildMerkleRoot([r1.leafHash, r2.leafHash])
+    const sampleProofs2 = [{ leaf: r1.leafHash, merkleProof: [r2.leafHash], leafIndex: 0 }]
+    const sampleCommitment2 = ethers.keccak256(
+      ethers.solidityPacked(["bytes32", "uint32", "bytes32"], [ethers.ZeroHash, 0, r1.leafHash])
+    )
+    const summaryHash2 = ethers.keccak256(
+      ethers.solidityPacked(["uint64", "bytes32", "bytes32", "uint32"], [epochId, merkleRoot2, sampleCommitment2, 1])
+    )
+
+    await expect(manager.submitBatchV2WithMetadata(
+      epochId,
+      merkleRoot2,
+      summaryHash2,
+      sampleProofs2,
+      1 << witnessIndex,
+      [malleated], // <-- v-malleated copy of sig1
       buildMetadata([r1, r2], [[witnessIndex, 0]]),
     )).to.be.revertedWithCustomError(manager, "WitnessSigReplay")
   })
