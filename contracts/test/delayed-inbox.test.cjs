@@ -96,16 +96,18 @@ describe("DelayedInbox", function () {
       ).to.be.revertedWithCustomError(inbox, "QueueIndexOutOfRange")
     })
 
-    it("rejects force-include for already included tx", async function () {
-      // Mark as included first
+    it("still emits TransactionForceIncluded after a sequencer's unverified markIncluded (#723)", async function () {
+      // A malicious sequencer can pre-emptively `markIncluded` to set
+      // `entry.included = true` without actually including the tx on L2.
+      // `forceInclude` must NOT depend on that unverified flag — otherwise
+      // the censorship-resistance signal can be suppressed.
       await inbox.connect(sequencer).markIncluded(0)
 
       await ethers.provider.send("evm_increaseTime", [INCLUSION_DELAY + 1])
       await ethers.provider.send("evm_mine", [])
 
-      await expect(
-        inbox.connect(user1).forceInclude(0),
-      ).to.be.revertedWithCustomError(inbox, "AlreadyIncluded")
+      const tx = await inbox.connect(user1).forceInclude(0)
+      await expect(tx).to.emit(inbox, "TransactionForceIncluded").withArgs(0)
     })
 
     it("allows anyone to call forceInclude (not just sender)", async function () {

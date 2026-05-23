@@ -68,14 +68,18 @@ contract DelayedInbox is IDelayedInbox, Initializable, UUPSUpgradeable {
     /// @notice Force-include a transaction after the inclusion delay has elapsed.
     ///         Emits TransactionForceIncluded; the L2 sequencer must honor this.
     /// @param queueIndex Index in the queue
+    ///
+    /// #723: NOT gated on `entry.included` — that flag is set by an
+    /// unverified sequencer claim via `markIncluded`, and a malicious
+    /// sequencer would otherwise be able to suppress the censorship-
+    /// resistance signal by pre-emptively marking enqueued txs as
+    /// included without actually including them on L2. `_forceIncluded`
+    /// is the contract-owned one-shot guard against double-emit.
     function forceInclude(uint256 queueIndex) external override {
         if (queueIndex >= _queue.length) {
             revert QueueIndexOutOfRange(queueIndex, _queue.length);
         }
         RollupTypes.ForcedTx storage entry = _queue[queueIndex];
-        if (entry.included) {
-            revert AlreadyIncluded(queueIndex);
-        }
         if (_forceIncluded[queueIndex]) {
             revert AlreadyForceIncluded(queueIndex);
         }
