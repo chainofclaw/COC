@@ -181,6 +181,50 @@ describe("RoutingTable", () => {
     assert.equal(add3, false, "third alias of same IP should hit per-IP bucket limit")
   })
 
+  it("rejects address-update to a host that would exceed the per-IP global cap (#729)", async () => {
+    // Pre-fix: addPeer's existing-id branch updated the address in-place and
+    // re-balanced globalIpCount with no cap check. An attacker who'd
+    // established N peers from N distinct IPs could reconnect each from a
+    // single funnel IP, every update succeeding and globalIpCount[funnel]
+    // piling up far past MAX_PEERS_PER_IP_GLOBAL = 10.
+    const rt = new RoutingTable("0x" + "00".repeat(32))
+
+    // Use bucket indices 255 down to 245 — distinct buckets, distinct
+    // starting IPs, so the initial inserts all succeed.
+    const N = 11
+    const ids: string[] = []
+    for (let i = 1; i <= N; i++) {
+      // High byte 0x80 >> (i-1) keeps each ID in a unique high bucket.
+      const bucket = i - 1
+      const hi = (0x80 >> bucket).toString(16).padStart(2, "0")
+      const id = "0x" + hi + i.toString(16).padStart(62, "0")
+      ids.push(id)
+      const ok = await rt.addPeer(makePeer(id, `192.0.2.${10 + i}:9000`))
+      assert.equal(ok, true, `initial add for peer ${i} should succeed (distinct IPs)`)
+    }
+    assert.equal(rt.size(), N)
+
+    // Funnel: update each peer's address to a single target IP. The first
+    // 10 updates fill globalIpCount[target] up to the cap; the 11th must be
+    // rejected so the funnel cannot eclipse the routing table.
+    const target = "203.0.113.7:9100"
+    let accepted = 0
+    let rejected = 0
+    for (let i = 0; i < N; i++) {
+      const ok = await rt.addPeer({ id: ids[i], address: target, lastSeenMs: Date.now() })
+      if (ok) accepted++
+      else rejected++
+    }
+    assert.equal(accepted, 10, "first 10 updates fit under the per-IP global cap")
+    assert.equal(rejected, 1, "11th update must be rejected to stop the eclipse funnel")
+
+    // The 11th peer must still be in the table with its original address —
+    // the rejected update only denies the address swap, not the entry.
+    const eleventh = rt.getPeer(ids[N - 1])
+    assert.ok(eleventh, "rejected peer must still exist in the table")
+    assert.equal(eleventh.address, "192.0.2.21:9000", "rejected peer keeps original address")
+  })
+
   it("evicts unreachable oldest peer via ping-evict", async () => {
     const rt = new RoutingTable("0x" + "00".repeat(32), {
       pingPeer: async () => false, // oldest peer always unreachable
