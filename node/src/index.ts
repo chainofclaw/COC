@@ -1232,7 +1232,7 @@ if (stateTrie && config.enableSnapSync) {
       // the engine's state-exclusive queue so applyBlock cannot interleave.
       // Pinning the root in the SAME critical section makes import+setStateRoot
       // atomic: no applyBlock can slip between them and then be rolled back.
-      const runExclusive = (chain as { runStateExclusive?: <T>(fn: () => Promise<T>) => Promise<T> }).runStateExclusive
+      const runExclusive = (chain as { runStateExclusive?: <T>(fn: () => Promise<T>) => Promise<T> }).runStateExclusive?.bind(chain)
       const doImport = async () => {
         const result = await importStateSnapshot(trieRef, snapshot as StateSnapshot, expectedStateRoot)
         if (expectedStateRoot && typeof trieRef.setStateRoot === "function") {
@@ -1247,7 +1247,7 @@ if (stateTrie && config.enableSnapSync) {
       // #671: serialize the root-set against applyBlock too. The forceSnapSync
       // path no longer calls this separately (importStateSnapshot pins the
       // root atomically above); kept for any other caller.
-      const runExclusive = (chain as { runStateExclusive?: <T>(fn: () => Promise<T>) => Promise<T> }).runStateExclusive
+      const runExclusive = (chain as { runStateExclusive?: <T>(fn: () => Promise<T>) => Promise<T> }).runStateExclusive?.bind(chain)
       const setIt = () => trieRef.setStateRoot!(root)
       if (runExclusive) { await runExclusive(setIt) } else { await setIt() }
     },
