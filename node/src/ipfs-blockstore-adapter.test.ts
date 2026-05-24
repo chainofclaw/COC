@@ -85,4 +85,40 @@ describe("InterfaceBlockstoreAdapter", () => {
     await adapter.delete(cid)
     assert.equal(await store.has(cid.toString()), true)
   })
+
+  it("#8: localOnly=true forwards through to store.get, suppressing fetchRemote", async () => {
+    let fetchCalled = false
+    store.setHooks({
+      fetchRemote: async () => {
+        fetchCalled = true
+        return new TextEncoder().encode("peer would have replied")
+      },
+    })
+    const missingCid = await rawCid(new TextEncoder().encode("never-stored"))
+    const adapter = new InterfaceBlockstoreAdapter(store, { localOnly: true })
+    assert.equal(adapter.isLocalOnly, true)
+    await assert.rejects(
+      () => adapter.get(missingCid),
+      (err: NodeJS.ErrnoException) => err.code === "ENOENT",
+    )
+    assert.equal(fetchCalled, false,
+      "InterfaceBlockstoreAdapter(localOnly:true) MUST NOT trigger fetchRemote")
+  })
+
+  it("#8: localOnly default (false) preserves transparent fetchRemote on miss", async () => {
+    const peerReply = new TextEncoder().encode("from peer")
+    const cid = await rawCid(peerReply)
+    let fetchCalled = false
+    store.setHooks({
+      fetchRemote: async () => {
+        fetchCalled = true
+        return peerReply
+      },
+    })
+    const adapter = new InterfaceBlockstoreAdapter(store)
+    assert.equal(adapter.isLocalOnly, false)
+    const bytes = await adapter.get(cid)
+    assert.equal(fetchCalled, true, "default adapter must keep transparent fetch behaviour")
+    assert.deepEqual(Buffer.from(bytes), Buffer.from(peerReply))
+  })
 })

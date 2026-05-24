@@ -262,7 +262,20 @@ export class IpfsBlockstore {
     }
   }
 
-  async get(cid: CidString): Promise<IpfsBlock> {
+  /**
+   * Read a block by CID. Behaviour on local miss:
+   *   - default: when a `fetchRemote` hook is attached, the miss
+   *     triggers a peer/DHT pull (C1.3). The pull verifies content
+   *     addressing and caches on success.
+   *   - `opts.localOnly`: the miss propagates as ENOENT and `fetchRemote`
+   *     is NOT consulted. Use this for **public-facing untrusted read
+   *     paths** (anonymous gateway / cat / ls / get) so an attacker
+   *     cannot weaponize the node as a DHT-reflection / SSRF amplifier
+   *     by asking for arbitrary unknown CIDs (#8). Admin-authorized
+   *     read paths (loopback / X-COC-IPFS-Admin-Token) leave it false
+   *     so operator tooling keeps the transparent fetch behaviour.
+   */
+  async get(cid: CidString, opts?: { localOnly?: boolean }): Promise<IpfsBlock> {
     const path = this.blockPath(cid)
     try {
       const bytes = await readFile(path)
@@ -281,6 +294,11 @@ export class IpfsBlockstore {
       // (permissions, disk) should surface unmodified — a misconfigured
       // data dir shouldn't silently masquerade as a DHT lookup miss.
       if (!isNotFound(err)) throw err
+      // #8 SSRF defense: skip the remote-fetch hook entirely when the
+      // caller demanded local-only. Anonymous gateway / cat / ls / get
+      // pass `localOnly: true` so unknown-CID probes don't cause a
+      // DHT findProviders + wire BlockRequest fan-out.
+      if (opts?.localOnly) throw err
       if (!this.hooks.fetchRemote) throw err
 
       // Ask providers. Returning null ⇒ no peer had the CID → let the

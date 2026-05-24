@@ -384,6 +384,27 @@ export function enforceAddAuth(
   return { ok: true, reservation: result.reservation! }
 }
 
+/**
+ * #8: returns true when a request must read in local-only mode (no
+ * fetchRemote on miss). Anonymous (non-loopback non-token) callers get
+ * `true`; admin tier (loopback / X-COC-IPFS-Admin-Token) gets `false`.
+ *
+ * Without this guard, PR #711's directory-DAG walker could be
+ * weaponized: a request for `/ipfs/<unknown-cid>/...` triggers one
+ * `store.get` per visited block, each of which falls into
+ * `fetchRemote → DHT findProviders + wire BlockRequest` on miss. That
+ * turns the node into an N×-amplifying DHT-reflection / SSRF proxy.
+ *
+ * Module-level + exported so unit tests can exercise the gate without
+ * spinning up an HTTP server bound to a non-loopback address (same
+ * pattern as {@link isIpfsAdminAuthorized} / {@link enforceAddAuth}).
+ */
+export function isLocalOnlyRead(req: http.IncomingMessage, cfg: IpfsServerConfig): boolean {
+  const raw = req.socket?.remoteAddress ?? ""
+  const ip = raw.startsWith("::ffff:") ? raw.slice(7) : raw
+  return !isIpfsAdminAuthorized(req, ip, cfg)
+}
+
 function safeStringEq(a: string, b: string): boolean {
   if (a.length !== b.length) {
     // Still iterate one of the strings so the timing leak is bounded
@@ -633,9 +654,12 @@ export class IpfsHttpServer {
         // #468: resolve the full `<cid>/<subpath>` through the UnixFS DAG
         // walker. Maps both 404 (missing component) and 400 (mid-path
         // non-directory) to a structured JSON error with CORS preserved.
+        // #8: anonymous gateway callers walk in local-only mode so unknown
+        // CIDs can't be weaponized as DHT-reflection amplifiers.
+        const gatewayLocalOnly = this.isLocalOnlyRead(req)
         let resolved: ResolvedCidPath
         try {
-          resolved = await this.resolveCidPath(cid, parsed.path)
+          resolved = await this.resolveCidPath(cid, parsed.path, { localOnly: gatewayLocalOnly })
         } catch (err) {
           if (err instanceof HttpError && (err.status === 404 || err.status === 400)) {
             res.writeHead(err.status, { "content-type": "application/json", "access-control-allow-origin": "*" })
@@ -842,11 +866,11 @@ export class IpfsHttpServer {
         return
       }
       if (url.pathname === "/api/v0/ls") {
-        await this.handleLs(res, argParam ?? "")
+        await this.handleLs(req, res, argParam ?? "")
         return
       }
       if (url.pathname === "/api/v0/object/stat") {
-        await this.handleObjectStat(res, argParam ?? "")
+        await this.handleObjectStat(req, res, argParam ?? "")
         return
       }
       if (url.pathname === "/api/v0/cat") {
@@ -857,7 +881,7 @@ export class IpfsHttpServer {
         return
       }
       if (url.pathname === "/api/v0/get") {
-        await this.handleGet(res, argParam ?? "")
+        await this.handleGet(req, res, argParam ?? "")
         return
       }
       if (url.pathname === "/api/v0/block/put") {
@@ -1049,6 +1073,14 @@ export class IpfsHttpServer {
         resolve()
       })
     })
+  }
+
+  /**
+   * #8: instance wrapper around module-level {@link isLocalOnlyRead}.
+   * See that function for the SSRF rationale.
+   */
+  private isLocalOnlyRead(req: http.IncomingMessage): boolean {
+    return isLocalOnlyRead(req, this.cfg)
   }
 
   /**
@@ -1349,10 +1381,19 @@ export class IpfsHttpServer {
     return parsed
   }
 
+  /**
+   * Shared wrapper around {@link resolveCidPath}:
+   *   - validates the bare CID arg (write 400 + return null on bad shape)
+   *   - splits `<cid>/<sub/path>` form into CID + path segments
+   *   - delegates to {@link resolveCidPath}
+   * `opts.localOnly` is forwarded so callers can suppress fetchRemote
+   * on the public read tier (#8). `opts.probeDirectory: false` (#310)
+   * keeps block-level endpoints off the directory walker.
+   */
   private async resolveCidPathArg(
     res: http.ServerResponse,
     arg?: string,
-    opts?: { probeDirectory?: boolean },
+    opts?: { probeDirectory?: boolean; localOnly?: boolean },
   ): Promise<ResolvedCidPath | null> {
     const parsed = this.parseCidPathArg(res, arg)
     if (!parsed) return null
@@ -1382,13 +1423,17 @@ export class IpfsHttpServer {
   private async resolveCidPath(
     rootCid: string,
     path: string[],
-    opts?: { probeDirectory?: boolean },
+    opts?: { probeDirectory?: boolean; localOnly?: boolean },
   ): Promise<ResolvedCidPath> {
     // `probeDirectory: false` keeps block-level endpoints (block/stat,
     // block/get) off the UnixFS DAG walker entirely — block/stat must
     // stay a local-only metadata query (#310: no fetchRemote on miss).
     const probeDirectory = opts?.probeDirectory !== false
-    const adapter = new InterfaceBlockstoreAdapter(this.store, { maxBlockReads: MAX_BLOCK_READS })
+    // #8: anonymous read paths pass `localOnly: true` so the directory
+    // walker can't be weaponized as a DHT-reflection amplifier on
+    // unknown CIDs. Admin paths leave it false for transparent peer fetch.
+    const localOnly = opts?.localOnly === true
+    const adapter = new InterfaceBlockstoreAdapter(this.store, { maxBlockReads: MAX_BLOCK_READS, localOnly })
     const signal = AbortSignal.timeout(IPFS_RESOLVE_TIMEOUT_MS)
 
     if (!probeDirectory) {
@@ -1470,8 +1515,9 @@ export class IpfsHttpServer {
     return listDirectory(entry, AbortSignal.timeout(IPFS_RESOLVE_TIMEOUT_MS))
   }
 
-  private async handleLs(res: http.ServerResponse, cid?: string): Promise<void> {
-    const resolved = await this.resolveCidPathArg(res, cid)
+  private async handleLs(req: http.IncomingMessage, res: http.ServerResponse, cid?: string): Promise<void> {
+    const localOnly = this.isLocalOnlyRead(req)
+    const resolved = await this.resolveCidPathArg(res, cid, { localOnly })
     if (!resolved) {
       return
     }
@@ -1547,8 +1593,9 @@ export class IpfsHttpServer {
     }))
   }
 
-  private async handleObjectStat(res: http.ServerResponse, cid?: string): Promise<void> {
-    const resolved = await this.resolveCidPathArg(res, cid)
+  private async handleObjectStat(req: http.IncomingMessage, res: http.ServerResponse, cid?: string): Promise<void> {
+    const localOnly = this.isLocalOnlyRead(req)
+    const resolved = await this.resolveCidPathArg(res, cid, { localOnly })
     if (!resolved) {
       return
     }
@@ -1556,7 +1603,7 @@ export class IpfsHttpServer {
     // child listing rather than the file-meta leaf table.
     if (resolved.entry?.type === "directory") {
       const links = await this.listResolvedDirectory(resolved.entry)
-      const block = await this.store.get(resolved.cid)
+      const block = await this.store.get(resolved.cid, { localOnly })
       // kubo's CumulativeSize is the *recursive* byte size of the whole
       // subtree. Computing that exactly needs a full subtree walk — too
       // costly for a stat call — so report a lower-bound approximation:
@@ -1585,7 +1632,7 @@ export class IpfsHttpServer {
     // from a real server fault (500).
     let block: Awaited<ReturnType<typeof this.store.get>>
     try {
-      block = await this.store.get(resolved.cid)
+      block = await this.store.get(resolved.cid, { localOnly })
     } catch (err) {
       if (isNotFoundError(err)) {
         res.writeHead(404, { "content-type": "application/json" })
@@ -1620,7 +1667,8 @@ export class IpfsHttpServer {
     cid?: string,
     range?: { offset?: string; length?: string },
   ): Promise<void> {
-    const resolved = await this.resolveCidPathArg(res, cid)
+    const localOnly = this.isLocalOnlyRead(req)
+    const resolved = await this.resolveCidPathArg(res, cid, { localOnly })
     if (!resolved) {
       return
     }
@@ -1668,14 +1716,15 @@ export class IpfsHttpServer {
     res.end(slice)
   }
 
-  private async handleGet(res: http.ServerResponse, cid?: string): Promise<void> {
-    const resolved = await this.resolveCidPathArg(res, cid)
+  private async handleGet(req: http.IncomingMessage, res: http.ServerResponse, cid?: string): Promise<void> {
+    const localOnly = this.isLocalOnlyRead(req)
+    const resolved = await this.resolveCidPathArg(res, cid, { localOnly })
     if (!resolved) {
       return
     }
     // #468: `get` of a directory streams a tar of every file in the tree.
     if (resolved.entry?.type === "directory") {
-      const files = await this.collectDirectoryFiles(resolved.entry, "", { bytes: 0, files: 0, nodes: 0 }, 0)
+      const files = await this.collectDirectoryFiles(resolved.entry, "", { bytes: 0, files: 0, nodes: 0 }, 0, localOnly)
       const archive = createTarArchive(files)
       res.writeHead(200, { "content-type": "application/x-tar" })
       res.end(archive)
@@ -1718,6 +1767,7 @@ export class IpfsHttpServer {
     prefix: string,
     acc: { bytes: number; files: number; nodes: number },
     depth: number,
+    localOnly = false,
   ): Promise<Array<{ name: string; data: Uint8Array }>> {
     if (depth > MAX_DIRECTORY_GET_DEPTH) {
       throw new HttpError(400, "directory too deep",
@@ -1736,11 +1786,11 @@ export class IpfsHttpServer {
           `directory tree exceeds ${MAX_DIRECTORY_GET_NODES} nodes`)
       }
       const childPath = prefix ? `${prefix}/${link.name}` : link.name
-      const adapter = new InterfaceBlockstoreAdapter(this.store, { maxBlockReads: MAX_BLOCK_READS })
+      const adapter = new InterfaceBlockstoreAdapter(this.store, { maxBlockReads: MAX_BLOCK_READS, localOnly })
       const child = await resolveUnixfsPath(link.cid, [], adapter,
         AbortSignal.timeout(IPFS_RESOLVE_TIMEOUT_MS))
       if (child.type === "directory") {
-        out.push(...await this.collectDirectoryFiles(child, childPath, acc, depth + 1))
+        out.push(...await this.collectDirectoryFiles(child, childPath, acc, depth + 1, localOnly))
       } else {
         const data = await readEntryBytes(child, undefined, AbortSignal.timeout(IPFS_RESOLVE_TIMEOUT_MS))
         acc.files += 1
@@ -1769,10 +1819,11 @@ export class IpfsHttpServer {
     res: http.ServerResponse,
     dir: ResolvedEntry,
   ): Promise<void> {
+    const localOnly = this.isLocalOnlyRead(req)
     const links = await this.listResolvedDirectory(dir)
     const index = links.find((l) => l.name === "index.html" && l.type === "file")
     if (index) {
-      const adapter = new InterfaceBlockstoreAdapter(this.store, { maxBlockReads: MAX_BLOCK_READS })
+      const adapter = new InterfaceBlockstoreAdapter(this.store, { maxBlockReads: MAX_BLOCK_READS, localOnly })
       const child = await resolveUnixfsPath(index.cid, [], adapter,
         AbortSignal.timeout(IPFS_RESOLVE_TIMEOUT_MS))
       const data = await readEntryBytes(child, undefined, AbortSignal.timeout(IPFS_RESOLVE_TIMEOUT_MS))

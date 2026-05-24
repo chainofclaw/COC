@@ -26,6 +26,16 @@ import type { IpfsBlockstore } from "./ipfs-blockstore.ts"
 export interface BlockstoreAdapterLimits {
   /** Max number of `get` calls over this adapter's lifetime. */
   maxBlockReads?: number
+  /**
+   * #8: when true, local-store misses do NOT trigger
+   * {@link IpfsBlockstore.get}'s `fetchRemote` hook. Pass `true` on every
+   * public-facing read path (anonymous gateway / cat / ls / get) so an
+   * attacker cannot weaponize the node as a DHT-reflection / SSRF
+   * amplifier via arbitrary unknown CIDs. Admin-authorized callers
+   * (loopback / X-COC-IPFS-Admin-Token) leave it false / undefined so
+   * operator tooling keeps the transparent peer-fetch behaviour.
+   */
+  localOnly?: boolean
 }
 
 /**
@@ -44,11 +54,13 @@ export class BlockstoreReadBudgetError extends Error {
 export class InterfaceBlockstoreAdapter implements Pick<Blockstore, "get" | "put" | "has"> {
   private readonly inner: IpfsBlockstore
   private readonly maxBlockReads: number
+  private readonly localOnly: boolean
   private blockReads = 0
 
   constructor(inner: IpfsBlockstore, limits?: BlockstoreAdapterLimits) {
     this.inner = inner
     this.maxBlockReads = limits?.maxBlockReads ?? Number.POSITIVE_INFINITY
+    this.localOnly = limits?.localOnly ?? false
   }
 
   /** Number of `get` calls served so far — exposed for tests / metrics. */
@@ -56,11 +68,16 @@ export class InterfaceBlockstoreAdapter implements Pick<Blockstore, "get" | "put
     return this.blockReads
   }
 
+  /** Whether this adapter suppresses remote-fetch on local miss. */
+  get isLocalOnly(): boolean {
+    return this.localOnly
+  }
+
   async get(cid: CID): Promise<Uint8Array> {
     if (++this.blockReads > this.maxBlockReads) {
       throw new BlockstoreReadBudgetError(this.maxBlockReads)
     }
-    const block = await this.inner.get(cid.toString())
+    const block = await this.inner.get(cid.toString(), { localOnly: this.localOnly })
     return block.bytes
   }
 

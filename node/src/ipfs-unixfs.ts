@@ -109,8 +109,12 @@ export async function storeRawBlock(store: IpfsBlockstore, bytes: Uint8Array): P
   return { cid: cid.toString(), bytes }
 }
 
-export async function loadRawBlock(store: IpfsBlockstore, cid: CidString): Promise<IpfsBlock> {
-  return await store.get(cid)
+export async function loadRawBlock(
+  store: IpfsBlockstore,
+  cid: CidString,
+  opts?: { localOnly?: boolean },
+): Promise<IpfsBlock> {
+  return await store.get(cid, opts)
 }
 
 /**
