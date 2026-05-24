@@ -10,6 +10,7 @@ import type { IpfsMfs } from "./ipfs-mfs.ts"
 import type { IpfsPubsub } from "./ipfs-pubsub.ts"
 import { createTarArchive } from "./ipfs-tar.ts"
 import { RateLimiter } from "./rate-limiter.ts"
+import { ByteQuota, type QuotaReservation } from "./byte-quota.ts"
 import { createLogger } from "./logger.ts"
 import {
   encodeFile as erasureEncode,
@@ -319,6 +320,70 @@ export function isIpfsAdminAuthorized(
   return false
 }
 
+/**
+ * #9 (audit follow-up): admin gate + anonymous byte-quota gate for
+ * /api/v0/add. Module-level + exported so unit tests can exercise the
+ * three auth tiers (admin / anonymous-quota / denied) without spinning
+ * up an HTTP server bound to a non-loopback address.
+ *
+ * Returns:
+ *   - `{ ok: true, reservation }` when the request may proceed. Caller
+ *     MUST commit / refund the reservation against actual bytes.
+ *   - `{ ok: false, status, body, headers? }` when the request was
+ *     rejected. Caller writes status + body to the response.
+ */
+export type AddAuthResult =
+  | { ok: true; reservation: QuotaReservation }
+  | { ok: false; status: number; body: Record<string, unknown>; headers?: Record<string, string> }
+
+export function enforceAddAuth(
+  req: http.IncomingMessage,
+  clientIp: string,
+  cfg: IpfsServerConfig,
+  anonQuota: ByteQuota | null,
+): AddAuthResult {
+  if (isIpfsAdminAuthorized(req, clientIp, cfg)) {
+    return { ok: true, reservation: { commit: () => {}, refund: () => {} } }
+  }
+  if (!anonQuota) {
+    return {
+      ok: false,
+      status: 403,
+      headers: { "www-authenticate": "X-COC-IPFS-Admin-Token" },
+      body: {
+        error: "forbidden",
+        message: "/api/v0/add requires loopback or X-COC-IPFS-Admin-Token; set anonymousAdd to opt in",
+      },
+    }
+  }
+  const declared = Number(req.headers["content-length"])
+  if (!Number.isFinite(declared) || declared <= 0) {
+    return {
+      ok: false,
+      status: 411,
+      body: {
+        error: "length_required",
+        message: "/api/v0/add anonymous tier requires a Content-Length header",
+      },
+    }
+  }
+  const result = anonQuota.tryReserve(clientIp, declared)
+  if (!result.ok) {
+    return {
+      ok: false,
+      status: 413,
+      headers: { "x-coc-quota-scope": result.reason ?? "unknown" },
+      body: {
+        error: "quota_exceeded",
+        scope: result.reason,
+        remaining: result.remaining ?? 0,
+        message: `anonymous add quota exhausted (scope=${result.reason}); retry after window roll-over`,
+      },
+    }
+  }
+  return { ok: true, reservation: result.reservation! }
+}
+
 function safeStringEq(a: string, b: string): boolean {
   if (a.length !== b.length) {
     // Still iterate one of the strings so the timing leak is bounded
@@ -394,6 +459,28 @@ export interface IpfsServerConfig {
     url: string
     advertisedUrl?: string
   }>
+  /**
+   * #9 (audit follow-up): anonymous /api/v0/add policy.
+   *
+   * Default (undefined) is secure: anonymous (non-loopback, no admin
+   * token) callers are 403'd, matching the existing #344 / #460 gate
+   * pattern on repo/gc, block/rm, pin/rm. Operators who want to
+   * accept anonymous uploads MUST opt-in AND pick byte budgets — the
+   * config is intentionally non-default to force a conscious decision
+   * given the disk-fill risk (obs-1 disk-full crash loop, 2026-05-24).
+   *
+   * Admin-authorized uploads (loopback OR X-COC-IPFS-Admin-Token) are
+   * never quota-gated; only the anonymous tier hits the budget.
+   */
+  anonymousAdd?: {
+    allowed: boolean
+    /** Max bytes a single source IP can upload per `windowMs`. */
+    perIpBytes: number
+    /** Aggregate cap across all anonymous IPs per `windowMs` (Sybil cap). */
+    totalBytes: number
+    /** Window size (default 24h). */
+    windowMs?: number
+  }
 }
 
 export class IpfsHttpServer {
@@ -404,11 +491,32 @@ export class IpfsHttpServer {
   private pubsub: IpfsPubsub | null = null
   private server: http.Server | null = null
   private readonly sockets = new Set<net.Socket>()
+  /**
+   * #9: byte-quota tracker for the anonymous /api/v0/add tier. Null when
+   * anonymous uploads are disabled (secure default), so the auth-gate
+   * fast-path skips quota math entirely.
+   */
+  private readonly anonymousAddQuota: ByteQuota | null
 
   constructor(cfg: IpfsServerConfig, store: IpfsBlockstore, unixfs: UnixFsBuilder) {
     this.cfg = cfg
     this.store = store
     this.unixfs = unixfs
+    if (cfg.anonymousAdd?.allowed) {
+      if (!Number.isFinite(cfg.anonymousAdd.perIpBytes) || cfg.anonymousAdd.perIpBytes <= 0) {
+        throw new Error("anonymousAdd.perIpBytes must be a positive finite number")
+      }
+      if (!Number.isFinite(cfg.anonymousAdd.totalBytes) || cfg.anonymousAdd.totalBytes <= 0) {
+        throw new Error("anonymousAdd.totalBytes must be a positive finite number")
+      }
+      this.anonymousAddQuota = new ByteQuota({
+        windowMs: cfg.anonymousAdd.windowMs,
+        perKeyMax: cfg.anonymousAdd.perIpBytes,
+        globalMax: cfg.anonymousAdd.totalBytes,
+      })
+    } else {
+      this.anonymousAddQuota = null
+    }
   }
 
   /**
@@ -674,7 +782,18 @@ export class IpfsHttpServer {
         validateAddParams(url.query as Record<string, string | string[] | undefined>)
         const wrapRaw = firstQueryValue(url.query["wrap-with-directory"])?.toLowerCase()
         const wrapWithDirectory = wrapRaw === "true" || wrapRaw === "1"
-        await this.handleAdd(req, res, firstQueryValue(url.query.erasure), wrapWithDirectory)
+        // #9 (audit follow-up): admin gate + anonymous byte quota.
+        // Returns null when the gate already wrote the response; otherwise
+        // returns a reservation handle (no-op for admin, real budget
+        // for anonymous) that handleAdd must commit/refund.
+        const reservation = this.enforceAddAuth(req, res, clientIp)
+        if (!reservation) return
+        try {
+          await this.handleAdd(req, res, firstQueryValue(url.query.erasure), wrapWithDirectory, reservation)
+        } catch (err) {
+          reservation.refund()
+          throw err
+        }
         return
       }
       if (url.pathname === "/api/v0/version") {
@@ -932,16 +1051,47 @@ export class IpfsHttpServer {
     })
   }
 
+  /**
+   * #9: instance wrapper around module-level {@link enforceAddAuth}.
+   * Writes the response when the gate denies; otherwise returns the
+   * reservation that handleAdd must commit/refund.
+   */
+  private enforceAddAuth(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    clientIp: string,
+  ): QuotaReservation | null {
+    const result = enforceAddAuth(req, clientIp, this.cfg, this.anonymousAddQuota)
+    if (result.ok) return result.reservation
+    res.writeHead(result.status, { "content-type": "application/json", ...(result.headers ?? {}) })
+    res.end(JSON.stringify(result.body))
+    return null
+  }
+
   private async handleAdd(
     req: http.IncomingMessage,
     res: http.ServerResponse,
     erasureSpec?: string,
     wrapWithDirectory = false,
+    quotaReservation: QuotaReservation = { commit: () => {}, refund: () => {} },
   ): Promise<void> {
     // #468: read every multipart part. A request is a directory upload
     // when the client asked to wrap, OR sent more than one part, OR any
     // part carries a nested relative path / explicit-directory marker.
-    const parts = await readMultipartFiles(req)
+    let parts
+    try {
+      parts = await readMultipartFiles(req)
+    } catch (err) {
+      // Multipart parsing failed (truncated body, oversize, etc.) —
+      // refund the anonymous reservation so the client isn't charged
+      // for bytes we couldn't actually accept.
+      quotaReservation.refund()
+      throw err
+    }
+    const actualBytes = parts.reduce((sum, p) => sum + (p.bytes?.byteLength ?? 0), 0)
+    // Reconcile reservation to the real bytes pinned (Content-Length
+    // includes multipart boundaries / headers, so actual < declared).
+    quotaReservation.commit(actualBytes)
     const nested = parts.some((p) => p.path !== undefined && p.path.includes("/"))
     const isDirectory =
       wrapWithDirectory || nested || parts.length > 1 || parts.some((p) => p.isDir)

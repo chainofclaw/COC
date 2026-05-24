@@ -1132,6 +1132,19 @@ const ipfs = new IpfsHttpServer(
     port: config.ipfsPort,
     storageDir: config.storageDir,
     nodeId: config.nodeId,
+    // #9: thread the admin token + anonymous /api/v0/add policy through.
+    // Pre-fix the IPFS server received none of these — `COC_IPFS_ADMIN_TOKEN`
+    // was documented in the source but never read, so admin auth degraded
+    // to loopback-only and /api/v0/add was wide-open to anonymous DoS.
+    adminAuthToken: config.ipfsAdminAuthToken,
+    anonymousAdd: config.ipfsAnonymousAddAllowed
+      ? {
+          allowed: true,
+          perIpBytes: config.ipfsAnonymousAddPerIpBytes,
+          totalBytes: config.ipfsAnonymousAddTotalBytes,
+          windowMs: config.ipfsAnonymousAddWindowMs,
+        }
+      : undefined,
   },
   ipfsStore,
   unixfs,

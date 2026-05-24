@@ -7,7 +7,8 @@ import { randomBytes } from "node:crypto"
 import http from "node:http"
 import { IpfsBlockstore } from "./ipfs-blockstore.ts"
 import { UnixFsBuilder } from "./ipfs-unixfs.ts"
-import { IpfsHttpServer, isIpfsAdminAuthorized } from "./ipfs-http.ts"
+import { IpfsHttpServer, isIpfsAdminAuthorized, enforceAddAuth } from "./ipfs-http.ts"
+import { ByteQuota } from "./byte-quota.ts"
 import { InterfaceBlockstoreAdapter } from "./ipfs-blockstore-adapter.ts"
 import { buildDirectoryDag } from "./ipfs-unixfs-dir.ts"
 import type { CidString } from "./ipfs-types.ts"
@@ -2160,6 +2161,137 @@ describe("IpfsHttpServer", () => {
       const ls = await fetch(`/api/v0/pin/ls?arg=${m1.cid}`, { method: "POST" })
       assert.equal(ls.status, 404, "cid1 must NOT have been pinned despite cid1 being valid (atomic batch)")
     })
+  })
+})
+
+// #9 (audit follow-up, 2026-05-24): /api/v0/add anonymous DoS hardening.
+// PR #711 (UnixFS dir DAG) made it trivial to anonymously write large
+// directories with no admin gate and no byte quota — obs-1 disk-full
+// crash loop on 2026-05-24 was the wake-up call. The fix layers an
+// admin gate + opt-in anonymous tier with per-IP and global byte
+// budgets on top of the existing rate limiter.
+describe("#9 /api/v0/add auth + quota gate", () => {
+  const baseCfg = { bind: "0.0.0.0", port: 0, storageDir: "/tmp" }
+
+  it("admin loopback caller bypasses the gate with a no-op reservation", () => {
+    const fakeReq = { headers: { "content-length": "999999" } } as http.IncomingMessage
+    const r = enforceAddAuth(fakeReq, "127.0.0.1", baseCfg, null)
+    assert.equal(r.ok, true)
+    if (r.ok) r.reservation.commit(0) // no-op handle must not throw
+  })
+
+  it("admin token caller bypasses the gate even from non-loopback", () => {
+    const fakeReq = {
+      headers: { "x-coc-ipfs-admin-token": "supersecret", "content-length": "999999" },
+    } as unknown as http.IncomingMessage
+    const cfg = { ...baseCfg, adminAuthToken: "supersecret" }
+    const r = enforceAddAuth(fakeReq, "203.0.113.7", cfg, null)
+    assert.equal(r.ok, true)
+  })
+
+  it("secure default: non-loopback non-token caller is 403'd", () => {
+    const fakeReq = { headers: { "content-length": "100" } } as http.IncomingMessage
+    const r = enforceAddAuth(fakeReq, "203.0.113.7", baseCfg, null)
+    assert.equal(r.ok, false)
+    if (!r.ok) {
+      assert.equal(r.status, 403)
+      assert.equal(r.body.error, "forbidden")
+      assert.equal(r.headers?.["www-authenticate"], "X-COC-IPFS-Admin-Token")
+    }
+  })
+
+  it("anonymous tier requires Content-Length (411 otherwise)", () => {
+    const fakeReq = { headers: {} } as http.IncomingMessage
+    const quota = new ByteQuota({ perKeyMax: 1_000_000, globalMax: 10_000_000 })
+    const r = enforceAddAuth(fakeReq, "203.0.113.7", baseCfg, quota)
+    assert.equal(r.ok, false)
+    if (!r.ok) {
+      assert.equal(r.status, 411)
+      assert.equal(r.body.error, "length_required")
+    }
+  })
+
+  it("anonymous tier admits an upload within the per-IP budget", () => {
+    const fakeReq = { headers: { "content-length": "500" } } as http.IncomingMessage
+    const quota = new ByteQuota({ perKeyMax: 1_000, globalMax: 10_000 })
+    const r = enforceAddAuth(fakeReq, "203.0.113.7", baseCfg, quota)
+    assert.equal(r.ok, true)
+    assert.equal(quota.used("203.0.113.7"), 500)
+    if (r.ok) r.reservation.commit(450)
+    assert.equal(quota.used("203.0.113.7"), 450, "commit reconciled charge to actual bytes")
+  })
+
+  it("anonymous tier rejects with 413 + per-key scope when per-IP exhausted", () => {
+    const quota = new ByteQuota({ perKeyMax: 1_000, globalMax: 10_000 })
+    // Prime the bucket up to the cap
+    quota.tryReserve("203.0.113.7", 1_000).reservation!.commit(1_000)
+    const fakeReq = { headers: { "content-length": "1" } } as http.IncomingMessage
+    const r = enforceAddAuth(fakeReq, "203.0.113.7", baseCfg, quota)
+    assert.equal(r.ok, false)
+    if (!r.ok) {
+      assert.equal(r.status, 413)
+      assert.equal(r.body.scope, "per-key")
+      assert.equal(r.headers?.["x-coc-quota-scope"], "per-key")
+    }
+  })
+
+  it("anonymous tier rejects with 413 + global scope when total cap hit (Sybil defense)", () => {
+    const quota = new ByteQuota({ perKeyMax: 1_000, globalMax: 2_000 })
+    quota.tryReserve("ip-a", 1_000).reservation!.commit(1_000)
+    quota.tryReserve("ip-b", 1_000).reservation!.commit(1_000)
+    // ip-c is fresh per-key but global is exhausted
+    const fakeReq = { headers: { "content-length": "100" } } as http.IncomingMessage
+    const r = enforceAddAuth(fakeReq, "ip-c", baseCfg, quota)
+    assert.equal(r.ok, false)
+    if (!r.ok) {
+      assert.equal(r.status, 413)
+      assert.equal(r.body.scope, "global")
+    }
+  })
+
+  it("refund() releases the reservation when multipart parsing fails", () => {
+    const fakeReq = { headers: { "content-length": "800" } } as http.IncomingMessage
+    const quota = new ByteQuota({ perKeyMax: 1_000, globalMax: 10_000 })
+    const r = enforceAddAuth(fakeReq, "ip-x", baseCfg, quota)
+    assert.equal(r.ok, true)
+    assert.equal(quota.used("ip-x"), 800)
+    if (r.ok) r.reservation.refund()
+    assert.equal(quota.used("ip-x"), 0, "refund must fully release reservation")
+  })
+
+  it("IpfsHttpServer constructor rejects invalid anonymousAdd budgets", () => {
+    assert.throws(
+      () => new IpfsHttpServer(
+        { ...baseCfg, anonymousAdd: { allowed: true, perIpBytes: 0, totalBytes: 1 } },
+        store, unixfs,
+      ),
+      /perIpBytes must be a positive finite number/,
+    )
+    assert.throws(
+      () => new IpfsHttpServer(
+        { ...baseCfg, anonymousAdd: { allowed: true, perIpBytes: 1, totalBytes: Number.POSITIVE_INFINITY } },
+        store, unixfs,
+      ),
+      /totalBytes must be a positive finite number/,
+    )
+  })
+
+  it("loopback caller still works after enforceAddAuth via the live HTTP server (regression)", async () => {
+    // The 137 pre-existing /api/v0/add tests all go through 127.0.0.1 → the
+    // admin gate must let them through unchanged. This is the smoke check
+    // that the route-level wiring didn't break the loopback path.
+    const boundary = "----GateSmoke"
+    const payload = Buffer.concat([
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="x.txt"\r\nContent-Type: application/octet-stream\r\n\r\n`, "utf8"),
+      Buffer.from("loopback admin path"),
+      Buffer.from(`\r\n--${boundary}--\r\n`, "utf8"),
+    ])
+    const res = await fetch(new URL("/api/v0/add", baseUrl), {
+      method: "POST",
+      headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+      body: payload,
+    })
+    assert.equal(res.status, 200, "loopback /api/v0/add must keep returning 200 after #9 gate")
   })
 })
 

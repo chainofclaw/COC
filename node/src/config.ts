@@ -119,6 +119,38 @@ export interface NodeConfig {
   // envelope (e.g. 100MB); archive nodes leave it unset to retain all
   // history. Env override: `COC_IPFS_MAX_BYTES`.
   ipfsMaxStorageBytes?: number
+  /**
+   * #9: optional Bearer-token (via `X-COC-IPFS-Admin-Token` header) that
+   * authorizes destructive IPFS admin ops (repo/gc, block/rm, pin/rm)
+   * and `/api/v0/add` from non-loopback origins. Env: `COC_IPFS_ADMIN_TOKEN`.
+   * When unset, those ops are loopback-only (secure default).
+   */
+  ipfsAdminAuthToken?: string
+  /**
+   * #9: opt-in anonymous `/api/v0/add` tier. Default false — non-loopback
+   * non-token callers are 403'd, matching the existing admin-gate model
+   * on repo/gc, block/rm, pin/rm. Operators who want public gateway
+   * uploads MUST set `COC_IPFS_ANONYMOUS_ADD=true` AND review the
+   * per-IP / global byte budgets below.
+   */
+  ipfsAnonymousAddAllowed: boolean
+  /**
+   * #9: per-source-IP byte budget for the anonymous add tier (default
+   * 100 MB / day). Env: `COC_IPFS_ANONYMOUS_ADD_PER_IP_MB`. Ignored
+   * when `ipfsAnonymousAddAllowed=false`.
+   */
+  ipfsAnonymousAddPerIpBytes: number
+  /**
+   * #9: aggregate cap across all anonymous IPs (Sybil defense, default
+   * 10 GB / day). Env: `COC_IPFS_ANONYMOUS_ADD_TOTAL_GB`. Ignored when
+   * `ipfsAnonymousAddAllowed=false`.
+   */
+  ipfsAnonymousAddTotalBytes: number
+  /**
+   * #9: sliding-window length for the anonymous add budgets in ms
+   * (default 24h). Env: `COC_IPFS_ANONYMOUS_ADD_WINDOW_MS`.
+   */
+  ipfsAnonymousAddWindowMs: number
   // Node identity key (hex private key for signing)
   nodePrivateKey?: string
   // RPC authentication (optional Bearer token)
@@ -410,6 +442,46 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     if (nodeMode === "light") return 100 * 1024 * 1024
     return undefined
   })()
+  // #9: IPFS admin token + anonymous /api/v0/add policy. Env overrides
+  // user config. Anonymous tier is opt-in; default secure (admin-only).
+  const ipfsAdminAuthToken = process.env.COC_IPFS_ADMIN_TOKEN
+    ?? (typeof (user as Record<string, unknown>).ipfsAdminAuthToken === "string"
+      ? (user as Record<string, unknown>).ipfsAdminAuthToken as string : undefined)
+  const ipfsAnonymousAddAllowed = parseBooleanFlag(
+    process.env.COC_IPFS_ANONYMOUS_ADD ?? (user as Record<string, unknown>).ipfsAnonymousAddAllowed,
+    false,
+  )
+  const ipfsAnonymousAddPerIpBytes = ((): number => {
+    const envRaw = process.env.COC_IPFS_ANONYMOUS_ADD_PER_IP_MB
+    if (envRaw !== undefined) {
+      const n = Number(envRaw)
+      if (Number.isFinite(n) && n > 0) return Math.floor(n * 1024 * 1024)
+    }
+    const userRaw = (user as Record<string, unknown>).ipfsAnonymousAddPerIpBytes
+    if (typeof userRaw === "number" && userRaw > 0) return Math.floor(userRaw)
+    return 100 * 1024 * 1024 // 100 MB
+  })()
+  const ipfsAnonymousAddTotalBytes = ((): number => {
+    const envRaw = process.env.COC_IPFS_ANONYMOUS_ADD_TOTAL_GB
+    if (envRaw !== undefined) {
+      const n = Number(envRaw)
+      if (Number.isFinite(n) && n > 0) return Math.floor(n * 1024 * 1024 * 1024)
+    }
+    const userRaw = (user as Record<string, unknown>).ipfsAnonymousAddTotalBytes
+    if (typeof userRaw === "number" && userRaw > 0) return Math.floor(userRaw)
+    return 10 * 1024 * 1024 * 1024 // 10 GB
+  })()
+  const ipfsAnonymousAddWindowMs = ((): number => {
+    const envRaw = process.env.COC_IPFS_ANONYMOUS_ADD_WINDOW_MS
+    if (envRaw !== undefined) {
+      const n = Number(envRaw)
+      if (Number.isFinite(n) && n > 0) return Math.floor(n)
+    }
+    const userRaw = (user as Record<string, unknown>).ipfsAnonymousAddWindowMs
+    if (typeof userRaw === "number" && userRaw > 0) return Math.floor(userRaw)
+    return 24 * 60 * 60 * 1000 // 24h
+  })()
+
   const hardfork = normalizeHardfork(
     process.env.COC_EVM_HARDFORK ?? (user as Record<string, unknown>).hardfork,
     Hardfork.Shanghai,
@@ -589,6 +661,11 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     ipfsReplicationFactor: 3,
     ipfsMinReplicas: 2,
     ipfsMaxStorageBytes,
+    ipfsAdminAuthToken,
+    ipfsAnonymousAddAllowed,
+    ipfsAnonymousAddPerIpBytes,
+    ipfsAnonymousAddTotalBytes,
+    ipfsAnonymousAddWindowMs,
     nodePrivateKey,
     rpcAuthToken,
     enableAdminRpc,
