@@ -957,6 +957,18 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage, UUPSUpgradeable {
 
         uint256 numReceipts = metadata.leafHashes.length;
         uint256 sigIdx = 0;
+        // #7 (audit follow-up): per-operator dedup. A single real-world
+        // entity may register up to MAX_NODES_PER_OPERATOR distinct
+        // nodeIds; when the PRNG-selected witnessSet contains multiple
+        // nodeIds owned by the same operator, naïve bit-counting lets
+        // that one entity deliver the K-of-N quorum singlehandedly,
+        // collapsing the security threshold to 1-of-1. `seenOperators`
+        // collects the verified operator address for every counted slot
+        // and rejects on second appearance. `m ≤ 32` (witnessBitmap is
+        // uint32) so the O(n²) seen-scan is bounded by 32×32=1024
+        // address comparisons, well within the EVM gas envelope.
+        address[] memory seenOperators = new address[](m);
+        uint256 seenCount = 0;
         for (uint256 i = 0; i < m && i < 32; i++) {
             if (witnessBitmap & (1 << i) != 0) {
                 if (sigIdx >= witnessSignatures.length) revert InvalidWitnessQuorum();
@@ -997,6 +1009,16 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage, UUPSUpgradeable {
                 if (recovered == address(0) || recovered != operator) {
                     revert InvalidWitnessQuorum();
                 }
+
+                // (c-bis) #7: reject a second contribution from the same
+                //     operator. Without this, two nodeIds owned by the
+                //     same EOA both bit-set in witnessBitmap would each
+                //     pass (a)–(c) and contribute to the K-of-N count.
+                for (uint256 j = 0; j < seenCount; j++) {
+                    if (seenOperators[j] == operator) revert WitnessOperatorDuplicate();
+                }
+                seenOperators[seenCount] = operator;
+                seenCount += 1;
 
                 // (d) Anti-replay keyed on the verified EIP-712 digest, NOT the
                 //     raw signature bytes (#715). ECDSA signatures are malleable
