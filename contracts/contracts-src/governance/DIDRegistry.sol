@@ -548,6 +548,32 @@ contract DIDRegistry is Initializable, UUPSUpgradeable {
         emit EphemeralIdentityCreated(parentAgentId, ephemeralId);
     }
 
+    /// @notice #11 (audit follow-up): canonical validity check for an
+    ///         ephemeral identity. Mirrors {isDelegationValid}'s
+    ///         re-anchoring discipline so a parent soul re-registration
+    ///         transparently invalidates ephemeral children issued by
+    ///         the previous owner — even when the new owner forgets to
+    ///         call {deactivateEphemeralIdentity}.
+    ///
+    ///      Without this, an old owner who created `ephemeralAddress E`
+    ///      under `parentAgentId P` keeps E live across a guardian
+    ///      recovery; the new owner of P silently inherits E's authority
+    ///      until they happen to enumerate + deactivate every ephemeral.
+    ///      Downstream verifiers MUST consult this view rather than
+    ///      reading `ephemeralIdentities[id]` directly.
+    function isEphemeralValid(bytes32 ephemeralId) public view returns (bool) {
+        EphemeralIdentity storage eph = ephemeralIdentities[ephemeralId];
+        if (eph.parentAgentId == bytes32(0)) return false;
+        if (!eph.active) return false;
+        if (eph.expiresAt <= uint64(block.timestamp)) return false;
+        ISoulRegistry.SoulIdentity memory soul = soulRegistry.getSoul(eph.parentAgentId);
+        if (!soul.active) return false;
+        // Re-anchor to current registeredAt — ephemeral created before the
+        // most-recent parent registration is from a prior owner's tenure.
+        if (eph.createdAt < soul.registeredAt) return false;
+        return true;
+    }
+
     /// @notice Deactivate an ephemeral identity
     function deactivateEphemeralIdentity(bytes32 ephemeralId) external {
         EphemeralIdentity storage eph = ephemeralIdentities[ephemeralId];
@@ -617,6 +643,32 @@ contract DIDRegistry is Initializable, UUPSUpgradeable {
         });
 
         emit CredentialAnchored(credentialId, issuerAgentId, subjectAgentId);
+    }
+
+    /// @notice #11 (audit follow-up): canonical validity check for an
+    ///         anchored verifiable credential. Mirrors
+    ///         {isDelegationValid} / {isEphemeralValid} re-anchoring:
+    ///         a credential issued before the issuer soul's most recent
+    ///         registration is from a prior owner and MUST NOT carry
+    ///         current trust.
+    ///
+    ///      Threat: issuer agent A registers → issues credential C →
+    ///      A is recovered by new owner via SoulRegistry guardians →
+    ///      `soul.registeredAt` advances → C remains `revoked=false`
+    ///      and `expiresAt` in the future → verifiers that read
+    ///      `credentials[id]` directly still treat C as authoritative
+    ///      under the new owner's name. Downstream MUST consult this
+    ///      view, which applies the same stale-after-reregister rule
+    ///      already enforced on delegations (#721) and ephemerals (#11).
+    function isCredentialValid(bytes32 credentialId) public view returns (bool) {
+        CredentialAnchor storage c = credentials[credentialId];
+        if (c.issuerAgentId == bytes32(0)) return false;
+        if (c.revoked) return false;
+        if (c.expiresAt <= uint64(block.timestamp)) return false;
+        ISoulRegistry.SoulIdentity memory soul = soulRegistry.getSoul(c.issuerAgentId);
+        if (!soul.active) return false;
+        if (c.issuedAt < soul.registeredAt) return false;
+        return true;
     }
 
     /// @notice Revoke a credential
