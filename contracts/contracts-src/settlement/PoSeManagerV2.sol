@@ -111,6 +111,10 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage, UUPSUpgradeable {
     error NoBondToWithdraw();
     error AlreadyInitialized();
     error ZeroAddress();
+    // #734: enableEmission is one-shot; subsequent calls would rewind
+    // genesisEpoch or swap cocToken, inflating mining emission or
+    // routing rewards to an unintended token.
+    error EmissionAlreadyEnabled();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -148,6 +152,12 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage, UUPSUpgradeable {
      * @param _genesisEpoch  The epoch ID when mining begins (current epoch)
      */
     function enableEmission(address token, uint64 _genesisEpoch) external onlyOwner {
+        // #734: idempotency guard. Without this, repeat calls overwrite
+        // cocToken (mint target) and genesisEpoch (year-decay anchor) —
+        // rewinding genesisEpoch inflates emission to year-0 rates, and
+        // swapping cocToken routes future mints to an arbitrary token.
+        // Bootstrap is one-shot; runtime token swaps should use UUPS upgrades.
+        if (emissionEnabled) revert EmissionAlreadyEnabled();
         require(token != address(0), "zero token address");
         cocToken = ICOCToken(token);
         genesisEpoch = _genesisEpoch;

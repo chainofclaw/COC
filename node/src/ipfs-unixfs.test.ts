@@ -4,7 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { IpfsBlockstore } from "./ipfs-blockstore.ts"
-import { UnixFsBuilder, storeRawBlock, loadRawBlock, resolveChunks } from "./ipfs-unixfs.ts"
+import { UnixFsBuilder, storeRawBlock, loadRawBlock, resolveChunks, computeFileMerkle } from "./ipfs-unixfs.ts"
 import { hashLeaf, buildMerkleRoot } from "./ipfs-merkle.ts"
 
 let tmpDir: string
@@ -205,5 +205,64 @@ describe("resolveChunks (Phase C2.1)", () => {
     } finally {
       await rm(mirrorDir, { recursive: true, force: true })
     }
+  })
+})
+
+// #10 (audit follow-up): computeFileMerkle is the PoSe-merkle hook the
+// directory-upload path uses to recover the per-file commitment that
+// `wrap-with-directory=true` would otherwise silently strip. The hook
+// MUST be byte-for-byte equivalent to UnixFsBuilder.addFile for any
+// input — otherwise the directory path and the single-file path would
+// produce different merkle commitments on the same bytes, breaking
+// PoSe getProof verification.
+describe("#10 computeFileMerkle — PoSe-equivalence with addFile", () => {
+  it("matches addFile().merkleRoot + merkleLeaves on a tiny file", async () => {
+    const bytes = new TextEncoder().encode("tiny file content")
+    const meta = await builder.addFile("tiny.txt", bytes)
+    const recomputed = computeFileMerkle(bytes)
+    assert.equal(recomputed.merkleRoot, meta.merkleRoot,
+      "merkleRoot from computeFileMerkle MUST equal addFile's merkleRoot")
+    assert.deepEqual(recomputed.merkleLeaves, meta.merkleLeaves,
+      "merkleLeaves from computeFileMerkle MUST equal addFile's merkleLeaves")
+    assert.equal(recomputed.chunkCount, 1, "tiny file fits in 1 chunk")
+  })
+
+  it("matches addFile on a multi-chunk file (3 chunks @ 262144)", async () => {
+    // 3 × 262144 + a tail → 4 chunks
+    const blockSize = 262144
+    const bytes = new Uint8Array(blockSize * 3 + 1000)
+    for (let i = 0; i < bytes.length; i++) bytes[i] = i & 0xff
+    const meta = await builder.addFile("multi.bin", bytes)
+    const recomputed = computeFileMerkle(bytes)
+    assert.equal(recomputed.merkleRoot, meta.merkleRoot)
+    assert.deepEqual(recomputed.merkleLeaves, meta.merkleLeaves)
+    assert.equal(recomputed.chunkCount, 4)
+  })
+
+  it("matches addFile on an empty file (1 empty chunk)", async () => {
+    const bytes = new Uint8Array(0)
+    const meta = await builder.addFile("empty", bytes)
+    const recomputed = computeFileMerkle(bytes)
+    assert.equal(recomputed.merkleRoot, meta.merkleRoot)
+    assert.deepEqual(recomputed.merkleLeaves, meta.merkleLeaves)
+    assert.equal(recomputed.chunkCount, 1)
+  })
+
+  it("uses the leaf hash domain separator (0x00 prefix) — matches hashLeaf directly", () => {
+    const bytes = new TextEncoder().encode("verify direct call")
+    const recomputed = computeFileMerkle(bytes)
+    assert.equal(recomputed.merkleLeaves[0], hashLeaf(bytes),
+      "single-chunk file's leaf hash MUST equal hashLeaf(bytes)")
+  })
+
+  it("custom blockSize partitions identically to addFile(_, _, blockSize)", async () => {
+    const blockSize = 1024
+    const bytes = new Uint8Array(blockSize * 2 + 100)
+    for (let i = 0; i < bytes.length; i++) bytes[i] = (i * 7) & 0xff
+    const meta = await builder.addFile("custom.bin", bytes, blockSize)
+    const recomputed = computeFileMerkle(bytes, blockSize)
+    assert.equal(recomputed.merkleRoot, meta.merkleRoot)
+    assert.deepEqual(recomputed.merkleLeaves, meta.merkleLeaves)
+    assert.equal(recomputed.chunkCount, 3)
   })
 })

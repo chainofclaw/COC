@@ -90,6 +90,17 @@ export interface WireServerConfig {
   sharedSeenTx?: BoundedSet<Hex>
   /** Shared dedup sets from P2P layer — prevents cross-protocol amplification */
   sharedSeenBlocks?: BoundedSet<Hex>
+  /**
+   * #733: inbound wire handshake roster. Populated from `peers[].id`
+   * (lowercased) + self `nodeId` at construction. When `requireRoster`
+   * is on (default), the handshake's claimed `nodeId` must be in the
+   * roster or the connection is destroyed — closing the same self-sign
+   * bypass that #732 fixed on the HTTP side. Without this, any EOA can
+   * complete a wire handshake and fill the 50-connection cap, evicting
+   * legitimate validator-to-validator BFT links.
+   */
+  peers?: Array<{ id: string }>
+  inboundWireRequireRoster?: boolean
 }
 
 interface PeerConnection {
@@ -122,11 +133,38 @@ export class WireServer {
   private readonly seenTx: BoundedSet<Hex>
   private readonly seenBlocks: BoundedSet<Hex>
   private readonly handshakeNonces = new BoundedSet<string>(10_000)
+  // #733: inbound wire roster (lowercased peer/validator nodeIds + self).
+  private readonly knownPeerIds: Set<string>
+  private rosterRejectedHandshakes = 0
 
   constructor(cfg: WireServerConfig) {
     this.cfg = cfg
     this.seenTx = cfg.sharedSeenTx ?? new BoundedSet<Hex>(50_000)
     this.seenBlocks = cfg.sharedSeenBlocks ?? new BoundedSet<Hex>(10_000)
+    this.knownPeerIds = new Set(
+      (cfg.peers ?? []).map((p) => p.id.toLowerCase()).filter((id) => id.length > 0),
+    )
+    if (cfg.nodeId) this.knownPeerIds.add(cfg.nodeId.toLowerCase())
+  }
+
+  /**
+   * #733: gate inbound wire handshake by checking the claimed nodeId
+   * against the roster. Returns true when allowed; defaults to allowing
+   * when no roster is configured (open permissionless wire deployment).
+   */
+  private rosterAllowsSender(nodeId: string): boolean {
+    if (this.cfg.inboundWireRequireRoster === false) return true
+    if (this.knownPeerIds.size === 0) return true
+    return this.knownPeerIds.has(nodeId.toLowerCase())
+  }
+
+  /** Add a nodeId to the inbound wire roster at runtime (e.g. when a new
+   *  peer is discovered via DHT or manually joined). Mirrors the
+   *  P2PNode.addAllowedSender API. */
+  addAllowedSender(nodeId: string): void {
+    if (typeof nodeId === "string" && nodeId.length > 0) {
+      this.knownPeerIds.add(nodeId.toLowerCase())
+    }
   }
 
   /**
@@ -449,6 +487,21 @@ export class WireServer {
             return
           }
           // nonce already added atomically after has() check above
+        }
+        // #733: wire roster check. Without this, ANY EOA can self-sign a
+        // valid handshake (recovered === claimed for any keypair), fill the
+        // 50-connection wire cap, and starve legitimate validator-to-
+        // validator BFT links. Roster check runs only when verifier is
+        // active (un-verified mode is already open by design).
+        if (this.cfg.verifier && !this.rosterAllowsSender(hs.nodeId)) {
+          this.rosterRejectedHandshakes++
+          log.warn("wire handshake rejected: nodeId not in roster", {
+            claimed: hs.nodeId,
+            remote: conn.socket.remoteAddress,
+          })
+          this.cfg.peerScoring?.recordInvalidData(conn.socket.remoteAddress ?? "unknown")
+          conn.socket.destroy()
+          return
         }
         // Evict existing connection with same nodeId only when verifier is active
         // (nodeId was cryptographically authenticated). Without verifier, skip eviction

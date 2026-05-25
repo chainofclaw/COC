@@ -628,6 +628,7 @@ describe("WireServer handshake nonce replay and peer scoring", () => {
       getHeight: () => Promise.resolve(0n),
       signer: serverSigner,
       verifier: serverSigner,
+      peers: [{ id: clientNodeId }], // #733: roster needed for verifier mode
     })
     server.start()
     await new Promise((r) => setTimeout(r, 100))

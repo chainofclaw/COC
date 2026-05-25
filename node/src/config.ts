@@ -63,6 +63,20 @@ export interface NodeConfig {
   p2pRateLimitMaxRequests: number
   p2pRequireInboundAuth: boolean
   p2pInboundAuthMode: "off" | "monitor" | "enforce"
+  /**
+   * #732: when enforce mode is on, additionally require the auth-envelope
+   * senderId to be a member of cfg.peers[].id ∪ self nodeId. Defaults true
+   * in enforce mode; set false for permissionless public-sync deployments
+   * that want to rely on rate-limit alone.
+   */
+  p2pInboundAuthRequireRoster: boolean
+  /**
+   * #733: wire-server handshake equivalent. When on (default true), the
+   * claimed nodeId in an inbound wire handshake must be in cfg.peers[].id ∪
+   * self nodeId — otherwise an EOA can self-sign a handshake and saturate
+   * the wire connection cap.
+   */
+  inboundWireRequireRoster: boolean
   p2pAuthMaxClockSkewMs: number
   p2pAuthNonceRegistryPath: string
   p2pAuthNonceTtlMs: number
@@ -119,6 +133,38 @@ export interface NodeConfig {
   // envelope (e.g. 100MB); archive nodes leave it unset to retain all
   // history. Env override: `COC_IPFS_MAX_BYTES`.
   ipfsMaxStorageBytes?: number
+  /**
+   * #9: optional Bearer-token (via `X-COC-IPFS-Admin-Token` header) that
+   * authorizes destructive IPFS admin ops (repo/gc, block/rm, pin/rm)
+   * and `/api/v0/add` from non-loopback origins. Env: `COC_IPFS_ADMIN_TOKEN`.
+   * When unset, those ops are loopback-only (secure default).
+   */
+  ipfsAdminAuthToken?: string
+  /**
+   * #9: opt-in anonymous `/api/v0/add` tier. Default false — non-loopback
+   * non-token callers are 403'd, matching the existing admin-gate model
+   * on repo/gc, block/rm, pin/rm. Operators who want public gateway
+   * uploads MUST set `COC_IPFS_ANONYMOUS_ADD=true` AND review the
+   * per-IP / global byte budgets below.
+   */
+  ipfsAnonymousAddAllowed: boolean
+  /**
+   * #9: per-source-IP byte budget for the anonymous add tier (default
+   * 100 MB / day). Env: `COC_IPFS_ANONYMOUS_ADD_PER_IP_MB`. Ignored
+   * when `ipfsAnonymousAddAllowed=false`.
+   */
+  ipfsAnonymousAddPerIpBytes: number
+  /**
+   * #9: aggregate cap across all anonymous IPs (Sybil defense, default
+   * 10 GB / day). Env: `COC_IPFS_ANONYMOUS_ADD_TOTAL_GB`. Ignored when
+   * `ipfsAnonymousAddAllowed=false`.
+   */
+  ipfsAnonymousAddTotalBytes: number
+  /**
+   * #9: sliding-window length for the anonymous add budgets in ms
+   * (default 24h). Env: `COC_IPFS_ANONYMOUS_ADD_WINDOW_MS`.
+   */
+  ipfsAnonymousAddWindowMs: number
   // Node identity key (hex private key for signing)
   nodePrivateKey?: string
   // RPC authentication (optional Bearer token)
@@ -246,6 +292,19 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
         ? (p2pRequireInboundAuthFromUser ? "enforce" : "off")
         : "enforce")
   const p2pRequireInboundAuth = p2pInboundAuthMode === "enforce"
+  // #732 / #733: roster-check toggles. Default true (secure default).
+  // Operators can disable via COC_*_REQUIRE_ROSTER=0 or user config bool.
+  const parseRosterFlag = (envName: string, userField: string): boolean => {
+    const envRaw = process.env[envName]
+    if (envRaw !== undefined) return !(envRaw === "0" || envRaw.toLowerCase() === "false")
+    const userVal = (user as Record<string, unknown>)[userField]
+    if (typeof userVal === "boolean") return userVal
+    return true
+  }
+  const p2pInboundAuthRequireRoster = parseRosterFlag(
+    "COC_P2P_AUTH_REQUIRE_ROSTER", "p2pInboundAuthRequireRoster")
+  const inboundWireRequireRoster = parseRosterFlag(
+    "COC_WIRE_REQUIRE_ROSTER", "inboundWireRequireRoster")
   const p2pAuthMaxClockSkewMs = safeParseInt(
     process.env.COC_P2P_AUTH_MAX_CLOCK_SKEW_MS,
     Number((user as Record<string, unknown>).p2pAuthMaxClockSkewMs ?? 120_000),
@@ -410,6 +469,46 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     if (nodeMode === "light") return 100 * 1024 * 1024
     return undefined
   })()
+  // #9: IPFS admin token + anonymous /api/v0/add policy. Env overrides
+  // user config. Anonymous tier is opt-in; default secure (admin-only).
+  const ipfsAdminAuthToken = process.env.COC_IPFS_ADMIN_TOKEN
+    ?? (typeof (user as Record<string, unknown>).ipfsAdminAuthToken === "string"
+      ? (user as Record<string, unknown>).ipfsAdminAuthToken as string : undefined)
+  const ipfsAnonymousAddAllowed = parseBooleanFlag(
+    process.env.COC_IPFS_ANONYMOUS_ADD ?? (user as Record<string, unknown>).ipfsAnonymousAddAllowed,
+    false,
+  )
+  const ipfsAnonymousAddPerIpBytes = ((): number => {
+    const envRaw = process.env.COC_IPFS_ANONYMOUS_ADD_PER_IP_MB
+    if (envRaw !== undefined) {
+      const n = Number(envRaw)
+      if (Number.isFinite(n) && n > 0) return Math.floor(n * 1024 * 1024)
+    }
+    const userRaw = (user as Record<string, unknown>).ipfsAnonymousAddPerIpBytes
+    if (typeof userRaw === "number" && userRaw > 0) return Math.floor(userRaw)
+    return 100 * 1024 * 1024 // 100 MB
+  })()
+  const ipfsAnonymousAddTotalBytes = ((): number => {
+    const envRaw = process.env.COC_IPFS_ANONYMOUS_ADD_TOTAL_GB
+    if (envRaw !== undefined) {
+      const n = Number(envRaw)
+      if (Number.isFinite(n) && n > 0) return Math.floor(n * 1024 * 1024 * 1024)
+    }
+    const userRaw = (user as Record<string, unknown>).ipfsAnonymousAddTotalBytes
+    if (typeof userRaw === "number" && userRaw > 0) return Math.floor(userRaw)
+    return 10 * 1024 * 1024 * 1024 // 10 GB
+  })()
+  const ipfsAnonymousAddWindowMs = ((): number => {
+    const envRaw = process.env.COC_IPFS_ANONYMOUS_ADD_WINDOW_MS
+    if (envRaw !== undefined) {
+      const n = Number(envRaw)
+      if (Number.isFinite(n) && n > 0) return Math.floor(n)
+    }
+    const userRaw = (user as Record<string, unknown>).ipfsAnonymousAddWindowMs
+    if (typeof userRaw === "number" && userRaw > 0) return Math.floor(userRaw)
+    return 24 * 60 * 60 * 1000 // 24h
+  })()
+
   const hardfork = normalizeHardfork(
     process.env.COC_EVM_HARDFORK ?? (user as Record<string, unknown>).hardfork,
     Hardfork.Shanghai,
@@ -589,6 +688,11 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     ipfsReplicationFactor: 3,
     ipfsMinReplicas: 2,
     ipfsMaxStorageBytes,
+    ipfsAdminAuthToken,
+    ipfsAnonymousAddAllowed,
+    ipfsAnonymousAddPerIpBytes,
+    ipfsAnonymousAddTotalBytes,
+    ipfsAnonymousAddWindowMs,
     nodePrivateKey,
     rpcAuthToken,
     enableAdminRpc,
@@ -599,6 +703,8 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     poseNonceRegistryMaxEntries,
     p2pRequireInboundAuth,
     p2pInboundAuthMode,
+    p2pInboundAuthRequireRoster,
+    inboundWireRequireRoster,
     p2pAuthMaxClockSkewMs,
     p2pAuthNonceRegistryPath,
     p2pAuthNonceTtlMs,
@@ -904,6 +1010,14 @@ export function validateConfig(cfg: Partial<NodeConfig>): string[] {
 
   if (cfg.p2pRequireInboundAuth !== undefined && typeof cfg.p2pRequireInboundAuth !== "boolean") {
     errors.push("p2pRequireInboundAuth must be a boolean")
+  }
+
+  if (cfg.p2pInboundAuthRequireRoster !== undefined && typeof cfg.p2pInboundAuthRequireRoster !== "boolean") {
+    errors.push("p2pInboundAuthRequireRoster must be a boolean")
+  }
+
+  if (cfg.inboundWireRequireRoster !== undefined && typeof cfg.inboundWireRequireRoster !== "boolean") {
+    errors.push("inboundWireRequireRoster must be a boolean")
   }
 
   if (cfg.allowLoopbackRpcAuth !== undefined && typeof cfg.allowLoopbackRpcAuth !== "boolean") {

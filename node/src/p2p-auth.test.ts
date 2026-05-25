@@ -207,3 +207,125 @@ describe("P2P auth envelope", () => {
     assert.ok(p2p.scoring.getScore(senderPeerId) < 100)
   })
 })
+
+describe("P2P inbound auth roster (#732)", () => {
+  const PEER_ID_ALICE = "0x" + "aa".repeat(20)
+  const PEER_ID_BOB = "0x" + "bb".repeat(20)
+  const NOT_IN_ROSTER = "0x" + "cc".repeat(20)
+
+  it("allows senderId in cfg.peers[].id under enforce", () => {
+    const signer = createNodeSigner(TEST_KEY)
+    const p2p = new P2PNode(
+      {
+        bind: "127.0.0.1",
+        port: 0,
+        peers: [{ id: PEER_ID_ALICE, url: "http://127.0.0.1:1" }, { id: PEER_ID_BOB, url: "http://127.0.0.1:2" }],
+        enableDiscovery: false,
+        inboundAuthMode: "enforce",
+        verifier: signer,
+        signer,
+      },
+      {
+        onTx: async () => {},
+        onBlock: async () => {},
+        onSnapshotRequest: () => ({ blocks: [], updatedAtMs: Date.now() }),
+      },
+    )
+    startedNodes.push(p2p)
+    assert.equal((p2p as any).rosterAllowsSender(PEER_ID_ALICE), true)
+    assert.equal((p2p as any).rosterAllowsSender(PEER_ID_BOB.toUpperCase()), true, "case-insensitive")
+    // Self is also allowed (signer.nodeId added in constructor)
+    assert.equal((p2p as any).rosterAllowsSender(signer.nodeId), true, "self always allowed")
+  })
+
+  it("rejects senderId NOT in roster under enforce (fresh EOA self-sign attack)", () => {
+    const signer = createNodeSigner(TEST_KEY)
+    const p2p = new P2PNode(
+      {
+        bind: "127.0.0.1",
+        port: 0,
+        peers: [{ id: PEER_ID_ALICE, url: "http://127.0.0.1:1" }],
+        enableDiscovery: false,
+        inboundAuthMode: "enforce",
+        verifier: signer,
+        signer,
+      },
+      {
+        onTx: async () => {},
+        onBlock: async () => {},
+        onSnapshotRequest: () => ({ blocks: [], updatedAtMs: Date.now() }),
+      },
+    )
+    startedNodes.push(p2p)
+    assert.equal((p2p as any).rosterAllowsSender(NOT_IN_ROSTER), false)
+  })
+
+  it("opts out via inboundAuthRequireRoster=false (permissionless-sync deployments)", () => {
+    const signer = createNodeSigner(TEST_KEY)
+    const p2p = new P2PNode(
+      {
+        bind: "127.0.0.1",
+        port: 0,
+        peers: [{ id: PEER_ID_ALICE, url: "http://127.0.0.1:1" }],
+        enableDiscovery: false,
+        inboundAuthMode: "enforce",
+        inboundAuthRequireRoster: false,
+        verifier: signer,
+        signer,
+      },
+      {
+        onTx: async () => {},
+        onBlock: async () => {},
+        onSnapshotRequest: () => ({ blocks: [], updatedAtMs: Date.now() }),
+      },
+    )
+    startedNodes.push(p2p)
+    assert.equal((p2p as any).rosterAllowsSender(NOT_IN_ROSTER), true, "opt-out lets anyone through")
+  })
+
+  it("skips roster check when not in enforce mode", () => {
+    const signer = createNodeSigner(TEST_KEY)
+    const p2p = new P2PNode(
+      {
+        bind: "127.0.0.1",
+        port: 0,
+        peers: [{ id: PEER_ID_ALICE, url: "http://127.0.0.1:1" }],
+        enableDiscovery: false,
+        inboundAuthMode: "monitor",
+        verifier: signer,
+        signer,
+      },
+      {
+        onTx: async () => {},
+        onBlock: async () => {},
+        onSnapshotRequest: () => ({ blocks: [], updatedAtMs: Date.now() }),
+      },
+    )
+    startedNodes.push(p2p)
+    assert.equal((p2p as any).rosterAllowsSender(NOT_IN_ROSTER), true, "monitor mode lets through")
+  })
+
+  it("allows runtime addAllowedSender for joining peers", () => {
+    const signer = createNodeSigner(TEST_KEY)
+    const p2p = new P2PNode(
+      {
+        bind: "127.0.0.1",
+        port: 0,
+        peers: [{ id: PEER_ID_ALICE, url: "http://127.0.0.1:1" }],
+        enableDiscovery: false,
+        inboundAuthMode: "enforce",
+        verifier: signer,
+        signer,
+      },
+      {
+        onTx: async () => {},
+        onBlock: async () => {},
+        onSnapshotRequest: () => ({ blocks: [], updatedAtMs: Date.now() }),
+      },
+    )
+    startedNodes.push(p2p)
+    assert.equal((p2p as any).rosterAllowsSender(NOT_IN_ROSTER), false)
+    p2p.addAllowedSender(NOT_IN_ROSTER)
+    assert.equal((p2p as any).rosterAllowsSender(NOT_IN_ROSTER), true)
+  })
+})

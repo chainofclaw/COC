@@ -90,6 +90,8 @@ describe("Wire handshake auth", () => {
       getHeight: () => Promise.resolve(0n),
       signer: serverSigner,
       verifier: serverSigner,
+      // #733: client must be in the roster for handshake to complete
+      peers: [{ id: clientSigner.nodeId }],
     })
     server.start()
     await new Promise((r) => setTimeout(r, 100))
@@ -167,5 +169,135 @@ describe("Wire handshake auth", () => {
 
     assert.ok(firstConnected, "first client accepts a fresh-nonce server handshake")
     assert.ok(!secondConnected, "second client must reject the replayed handshake nonce")
+  })
+})
+
+describe("Wire handshake roster (#733)", () => {
+  let server: WireServer | null = null
+  const sockets: net.Socket[] = []
+
+  afterEach(() => {
+    for (const s of sockets) { try { s.destroy() } catch {} }
+    sockets.length = 0
+    if (server) { server.stop(); server = null }
+  })
+
+  it("rejects signed handshake from nodeId NOT in peers roster (fresh EOA attack)", async () => {
+    const port = getRandomPort()
+    const serverSigner = createNodeSigner("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80")
+    const knownPeer = createNodeSigner("0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d")
+    // Attacker's fresh EOA — NOT in peers roster
+    const attacker = createNodeSigner("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+
+    server = new WireServer({
+      port,
+      nodeId: serverSigner.nodeId,
+      chainId: 18780,
+      onBlock: async () => {},
+      onTx: async () => {},
+      getHeight: () => Promise.resolve(0n),
+      signer: serverSigner,
+      verifier: serverSigner,
+      peers: [{ id: knownPeer.nodeId }], // only knownPeer is allowed
+    })
+    server.start()
+    await new Promise((r) => setTimeout(r, 100))
+
+    const socket = await connectSocket("127.0.0.1", port)
+    sockets.push(socket)
+    const decoder = new FrameDecoder()
+    await receiveFrames(socket, decoder, 1)
+
+    let closed = false
+    socket.on("close", () => { closed = true })
+    const nonce = `${Date.now()}:roster-attacker-test`
+    const msg = buildWireHandshakeMessage(attacker.nodeId, 18780, nonce)
+    socket.write(encodeJsonPayload(MessageType.Handshake, {
+      nodeId: attacker.nodeId,
+      chainId: 18780,
+      height: "0",
+      nonce,
+      signature: attacker.sign(msg), // valid sig — but attacker not in roster
+    }))
+    await new Promise((r) => setTimeout(r, 300))
+    assert.ok(closed, "attacker's well-signed handshake must be rejected (roster gate)")
+  })
+
+  it("allows handshake when inboundWireRequireRoster=false (open mode)", async () => {
+    const port = getRandomPort()
+    const serverSigner = createNodeSigner("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80")
+    const externalNode = createNodeSigner("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+
+    server = new WireServer({
+      port,
+      nodeId: serverSigner.nodeId,
+      chainId: 18780,
+      onBlock: async () => {},
+      onTx: async () => {},
+      getHeight: () => Promise.resolve(0n),
+      signer: serverSigner,
+      verifier: serverSigner,
+      peers: [], // no roster
+      inboundWireRequireRoster: false, // opt-out
+    })
+    server.start()
+    await new Promise((r) => setTimeout(r, 100))
+
+    const socket = await connectSocket("127.0.0.1", port)
+    sockets.push(socket)
+    const decoder = new FrameDecoder()
+    await receiveFrames(socket, decoder, 1)
+
+    const nonce = `${Date.now()}:open-mode-test`
+    const msg = buildWireHandshakeMessage(externalNode.nodeId, 18780, nonce)
+    socket.write(encodeJsonPayload(MessageType.Handshake, {
+      nodeId: externalNode.nodeId,
+      chainId: 18780,
+      height: "0",
+      nonce,
+      signature: externalNode.sign(msg),
+    }))
+    const frames = await receiveFrames(socket, decoder, 1)
+    assert.ok(frames.length >= 1, "open mode accepts external signed handshake")
+  })
+
+  it("runtime addAllowedSender unblocks a previously-rejected nodeId", async () => {
+    const port = getRandomPort()
+    const serverSigner = createNodeSigner("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80")
+    const joiner = createNodeSigner("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+
+    server = new WireServer({
+      port,
+      nodeId: serverSigner.nodeId,
+      chainId: 18780,
+      onBlock: async () => {},
+      onTx: async () => {},
+      getHeight: () => Promise.resolve(0n),
+      signer: serverSigner,
+      verifier: serverSigner,
+      peers: [],
+    })
+    server.start()
+    await new Promise((r) => setTimeout(r, 100))
+
+    // Join roster at runtime (simulating DHT-discovered peer)
+    server.addAllowedSender(joiner.nodeId)
+
+    const socket = await connectSocket("127.0.0.1", port)
+    sockets.push(socket)
+    const decoder = new FrameDecoder()
+    await receiveFrames(socket, decoder, 1)
+
+    const nonce = `${Date.now()}:runtime-add-test`
+    const msg = buildWireHandshakeMessage(joiner.nodeId, 18780, nonce)
+    socket.write(encodeJsonPayload(MessageType.Handshake, {
+      nodeId: joiner.nodeId,
+      chainId: 18780,
+      height: "0",
+      nonce,
+      signature: joiner.sign(msg),
+    }))
+    const frames = await receiveFrames(socket, decoder, 1)
+    assert.ok(frames.length >= 1, "addAllowedSender lets joiner complete handshake")
   })
 })

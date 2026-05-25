@@ -117,6 +117,18 @@ export interface P2PConfig {
   inboundBftRateLimitMaxRequests?: number
   enableInboundAuth?: boolean
   inboundAuthMode?: "off" | "monitor" | "enforce"
+  /**
+   * #732: in enforce mode, additionally require the auth-envelope `senderId`
+   * to be a member of the local inbound roster (built from `peers[].id` ∪
+   * `nodeId`). Without this check, signature verification only proves the
+   * client signed the header with whatever key they declared — anyone with a
+   * fresh EOA can sign their own envelope and pass, defeating the access-
+   * control intent of `enforce` and exposing /p2p/state-snapshot (and other
+   * auth-gated GETs/POSTs) to DoS amplification.
+   * Default: true in enforce mode. Set false for open permissionless-sync
+   * deployments that explicitly want to rely on rate-limiting alone.
+   */
+  inboundAuthRequireRoster?: boolean
   authMaxClockSkewMs?: number
   authNonceRegistryPath?: string
   authNonceTtlMs?: number
@@ -444,10 +456,23 @@ export class P2PNode {
   private pubsubHandler: ((topic: string, message: unknown) => void) | null = null
   private server: http.Server | null = null
   private readonly sockets = new Set<net.Socket>()
+  // #732: inbound auth roster. Populated from cfg.peers[].id (lowercased) at
+  // construction. When enforce mode is on and inboundAuthRequireRoster is
+  // not explicitly disabled, the signed auth envelope's senderId must be
+  // a member of this set — otherwise an attacker with any fresh EOA could
+  // self-sign an envelope and pass auth (DoS amplification on /p2p/state-
+  // snapshot in particular). Mutable to allow operators to add joining
+  // peers at runtime via `addAllowedSender` without server restart.
+  private readonly knownInboundSenders: Set<string>
+  private authRosterRejectedRequests = 0
 
   constructor(cfg: P2PConfig, handlers: P2PHandlers) {
     this.cfg = cfg
     this.handlers = handlers
+    this.knownInboundSenders = new Set(
+      (cfg.peers ?? []).map((p) => p.id.toLowerCase()).filter((id) => id.length > 0),
+    )
+    if (cfg.signer?.nodeId) this.knownInboundSenders.add(cfg.signer.nodeId.toLowerCase())
     this.authNonceTracker = new PersistentAuthNonceTracker({
       maxSize: cfg.authNonceMaxEntries ?? 100_000,
       ttlMs: cfg.authNonceTtlMs ?? (24 * 60 * 60 * 1000),
@@ -806,8 +831,22 @@ export class P2PNode {
                   return
                 }
               } else {
-                this.authAcceptedRequests += 1
-                this.recordInboundAuthSuccess(inboundIpPeerId, inboundSenderPeerId)
+                // #732: roster check on POST path too.
+                if (!this.rosterAllowsSender(authCheck.senderId)) {
+                  this.authRosterRejectedRequests += 1
+                  if (authMode === "enforce") {
+                    this.authRejectedRequests += 1
+                    this.recordInboundAuthFailure("invalid", inboundIpPeerId, inboundSenderPeerId)
+                    res.writeHead(403)
+                    res.end(serializeJson({ error: `senderId ${authCheck.senderId} not in inbound auth roster` }))
+                    return
+                  }
+                  // monitor mode: log but accept
+                  this.authAcceptedRequests += 1
+                } else {
+                  this.authAcceptedRequests += 1
+                  this.recordInboundAuthSuccess(inboundIpPeerId, inboundSenderPeerId)
+                }
               }
             }
           }
@@ -1418,6 +1457,29 @@ export class P2PNode {
     }
   }
 
+  /**
+   * #732: gate inbound auth by checking the signed senderId against the
+   * inbound roster (peers[] ∪ self). Returns true when senderId is allowed,
+   * or when the roster check is disabled / not applicable.
+   */
+  private rosterAllowsSender(senderId: string): boolean {
+    // Roster check is opt-out via inboundAuthRequireRoster=false, only runs
+    // in enforce mode, and is skipped when no roster is configured (peers[]
+    // empty AND no self signer — open permissionless deployment).
+    if (this.cfg.inboundAuthRequireRoster === false) return true
+    if (resolveInboundAuthMode(this.cfg) !== "enforce") return true
+    if (this.knownInboundSenders.size === 0) return true
+    return this.knownInboundSenders.has(senderId.toLowerCase())
+  }
+
+  /** Add a node id to the inbound auth roster at runtime (e.g. when a new
+   *  peer is discovered via DHT or manually joined). */
+  addAllowedSender(nodeId: string): void {
+    if (typeof nodeId === "string" && nodeId.length > 0) {
+      this.knownInboundSenders.add(nodeId.toLowerCase())
+    }
+  }
+
   private inboundIpPeerId(clientIp: string): string {
     const normalized = clientIp.startsWith("::ffff:")
       ? clientIp.slice(7)
@@ -1524,6 +1586,20 @@ export class P2PNode {
       return true
     }
     this.authNonceTracker.add(replayKey)
+
+    // #732: roster check. Signature verification only proves senderId is
+    // self-consistent — without this, any EOA can pass auth.
+    if (!this.rosterAllowsSender(senderId)) {
+      this.authRosterRejectedRequests += 1
+      if (authMode === "enforce") {
+        this.authRejectedRequests += 1
+        res.writeHead(403, { "content-type": "application/json" })
+        res.end(serializeJson({ error: `senderId ${senderId} not in inbound auth roster` }))
+        return false
+      }
+      // monitor mode: log + allow (lets operators observe before enforcing)
+      return true
+    }
 
     this.authAcceptedRequests += 1
     return true

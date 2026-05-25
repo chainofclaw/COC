@@ -109,8 +109,12 @@ export async function storeRawBlock(store: IpfsBlockstore, bytes: Uint8Array): P
   return { cid: cid.toString(), bytes }
 }
 
-export async function loadRawBlock(store: IpfsBlockstore, cid: CidString): Promise<IpfsBlock> {
-  return await store.get(cid)
+export async function loadRawBlock(
+  store: IpfsBlockstore,
+  cid: CidString,
+  opts?: { localOnly?: boolean },
+): Promise<IpfsBlock> {
+  return await store.get(cid, opts)
 }
 
 /**
@@ -170,6 +174,31 @@ function buildUnixFsRoot(leaves: CidString[], chunkSizes: number[], totalSize: n
   const unixfs = new UnixFS({ type: "file", filesize: totalSize })
   const links = leaves.map((cid, i) => dagPB.createLink("", chunkSizes[i] ?? 0, CID.parse(cid)))
   return dagPB.prepare({ Data: unixfs.marshal(), Links: links })
+}
+
+/**
+ * #10 (audit follow-up): compute the PoSe merkle commitment for a file
+ * WITHOUT writing any blocks. Used by the directory-add path so files
+ * uploaded inside a wrapping directory (`?wrap-with-directory=true`)
+ * still carry a `merkleRoot` + `merkleLeaves` in `file-meta.json`, and
+ * therefore remain challengeable via PoSe — closing the bypass where
+ * adding `wrap-with-directory=true` to a single-file upload silently
+ * exempted the content from storage-proof challenges.
+ *
+ * Determinism: the chunk boundary + leaf-hash rule must match
+ * {@link UnixFsBuilder.addFile} exactly (same `chunkBytes` + `hashLeaf`),
+ * so a file uploaded bare vs. inside a directory yields the same
+ * `merkleRoot` and the same per-chunk `leafHash` series. PoSe proof
+ * generation is then identical regardless of upload path.
+ */
+export function computeFileMerkle(
+  bytes: Uint8Array,
+  blockSize = DEFAULT_BLOCK_SIZE,
+): { merkleRoot: import("./ipfs-types.ts").Hex; merkleLeaves: import("./ipfs-types.ts").Hex[]; chunkCount: number } {
+  const chunks = chunkBytes(bytes, blockSize)
+  const merkleLeaves = chunks.map((c) => hashLeaf(c))
+  const merkleRoot = buildMerkleRoot(merkleLeaves)
+  return { merkleRoot, merkleLeaves, chunkCount: chunks.length }
 }
 
 function chunkBytes(bytes: Uint8Array, size: number): Uint8Array[] {

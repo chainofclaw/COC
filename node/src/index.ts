@@ -247,6 +247,7 @@ const p2p = new P2PNode(
     inboundRateLimitMaxRequests: config.p2pRateLimitMaxRequests,
     inboundAuthMode: config.p2pInboundAuthMode,
     enableInboundAuth: config.p2pRequireInboundAuth,
+    inboundAuthRequireRoster: config.p2pInboundAuthRequireRoster,
     authMaxClockSkewMs: config.p2pAuthMaxClockSkewMs,
     authNonceRegistryPath: config.p2pAuthNonceRegistryPath,
     authNonceTtlMs: config.p2pAuthNonceTtlMs,
@@ -1132,6 +1133,19 @@ const ipfs = new IpfsHttpServer(
     port: config.ipfsPort,
     storageDir: config.storageDir,
     nodeId: config.nodeId,
+    // #9: thread the admin token + anonymous /api/v0/add policy through.
+    // Pre-fix the IPFS server received none of these — `COC_IPFS_ADMIN_TOKEN`
+    // was documented in the source but never read, so admin auth degraded
+    // to loopback-only and /api/v0/add was wide-open to anonymous DoS.
+    adminAuthToken: config.ipfsAdminAuthToken,
+    anonymousAdd: config.ipfsAnonymousAddAllowed
+      ? {
+          allowed: true,
+          perIpBytes: config.ipfsAnonymousAddPerIpBytes,
+          totalBytes: config.ipfsAnonymousAddTotalBytes,
+          windowMs: config.ipfsAnonymousAddWindowMs,
+        }
+      : undefined,
   },
   ipfsStore,
   unixfs,
@@ -1537,6 +1551,11 @@ if (config.enableWireProtocol) {
     peerScoring: { recordInvalidData: (ip) => p2p.scoring.recordInvalidData(ip) },
     sharedSeenTx: p2p.seenTx,
     sharedSeenBlocks: p2p.seenBlocks,
+    // #733: feed the same peer roster used by P2P inbound auth (#732) into
+    // the wire layer so a fresh-EOA attacker can't self-sign a handshake
+    // and saturate the wire connection cap.
+    peers: config.peers,
+    inboundWireRequireRoster: config.inboundWireRequireRoster,
     onBlock: async (block) => {
       if (!bftCoordinator) {
         try { await chain.applyBlock(block) } catch { /* ignore */ }

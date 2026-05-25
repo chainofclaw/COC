@@ -179,6 +179,42 @@ describe("IpfsBlockstore", () => {
     )
   })
 
+  it("#8: get({ localOnly: true }) skips fetchRemote even when hook is attached", async () => {
+    // SSRF defense: the public read tier must not let an attacker probe
+    // unknown CIDs to coerce a DHT findProviders + wire BlockRequest
+    // fan-out. localOnly:true means a local miss surfaces ENOENT directly,
+    // fetchRemote is bypassed entirely.
+    let fetchCalled = false
+    store.setHooks({
+      fetchRemote: async () => {
+        fetchCalled = true
+        return Buffer.from("would-be-peer-bytes")
+      },
+    })
+    await assert.rejects(
+      () => store.get("QmLocalOnlyMiss" as CidString, { localOnly: true }),
+      (err: NodeJS.ErrnoException) => err.code === "ENOENT",
+    )
+    assert.equal(fetchCalled, false, "fetchRemote MUST NOT be called when localOnly:true")
+  })
+
+  it("#8: get(cid) without opts still triggers fetchRemote (backward-compat)", async () => {
+    let fetchCalled = false
+    const reply = Buffer.from("peer-served")
+    store.setHooks({
+      fetchRemote: async () => {
+        fetchCalled = true
+        return reply
+      },
+    })
+    // Use a CID-shape that matches the bytes so the content-address
+    // verification passes; otherwise fetchRemote's reply is dropped and
+    // ENOENT surfaces, masking what we're trying to assert.
+    const result = await store.get(cidFor(reply))
+    assert.equal(fetchCalled, true, "default behaviour must still call fetchRemote")
+    assert.deepEqual(Buffer.from(result.bytes), reply)
+  })
+
   it("get: fetchRemote throwing is treated as a miss, original ENOENT surfaces", async () => {
     store.setHooks({
       fetchRemote: async () => { throw new Error("peer RPC exploded") },

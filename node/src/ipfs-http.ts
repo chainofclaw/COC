@@ -4,12 +4,13 @@ import { parse as parseUrl } from "node:url"
 import { mkdir, readFile, writeFile, rename } from "node:fs/promises"
 import { join } from "node:path"
 import type { IpfsBlockstore } from "./ipfs-blockstore.ts"
-import { UnixFsBuilder, storeRawBlock, loadRawBlock } from "./ipfs-unixfs.ts"
+import { UnixFsBuilder, storeRawBlock, loadRawBlock, computeFileMerkle } from "./ipfs-unixfs.ts"
 import type { IpfsAddResult, UnixFsFileMeta } from "./ipfs-types.ts"
 import type { IpfsMfs } from "./ipfs-mfs.ts"
 import type { IpfsPubsub } from "./ipfs-pubsub.ts"
 import { createTarArchive } from "./ipfs-tar.ts"
 import { RateLimiter } from "./rate-limiter.ts"
+import { ByteQuota, type QuotaReservation } from "./byte-quota.ts"
 import { createLogger } from "./logger.ts"
 import {
   encodeFile as erasureEncode,
@@ -319,6 +320,91 @@ export function isIpfsAdminAuthorized(
   return false
 }
 
+/**
+ * #9 (audit follow-up): admin gate + anonymous byte-quota gate for
+ * /api/v0/add. Module-level + exported so unit tests can exercise the
+ * three auth tiers (admin / anonymous-quota / denied) without spinning
+ * up an HTTP server bound to a non-loopback address.
+ *
+ * Returns:
+ *   - `{ ok: true, reservation }` when the request may proceed. Caller
+ *     MUST commit / refund the reservation against actual bytes.
+ *   - `{ ok: false, status, body, headers? }` when the request was
+ *     rejected. Caller writes status + body to the response.
+ */
+export type AddAuthResult =
+  | { ok: true; reservation: QuotaReservation }
+  | { ok: false; status: number; body: Record<string, unknown>; headers?: Record<string, string> }
+
+export function enforceAddAuth(
+  req: http.IncomingMessage,
+  clientIp: string,
+  cfg: IpfsServerConfig,
+  anonQuota: ByteQuota | null,
+): AddAuthResult {
+  if (isIpfsAdminAuthorized(req, clientIp, cfg)) {
+    return { ok: true, reservation: { commit: () => {}, refund: () => {} } }
+  }
+  if (!anonQuota) {
+    return {
+      ok: false,
+      status: 403,
+      headers: { "www-authenticate": "X-COC-IPFS-Admin-Token" },
+      body: {
+        error: "forbidden",
+        message: "/api/v0/add requires loopback or X-COC-IPFS-Admin-Token; set anonymousAdd to opt in",
+      },
+    }
+  }
+  const declared = Number(req.headers["content-length"])
+  if (!Number.isFinite(declared) || declared <= 0) {
+    return {
+      ok: false,
+      status: 411,
+      body: {
+        error: "length_required",
+        message: "/api/v0/add anonymous tier requires a Content-Length header",
+      },
+    }
+  }
+  const result = anonQuota.tryReserve(clientIp, declared)
+  if (!result.ok) {
+    return {
+      ok: false,
+      status: 413,
+      headers: { "x-coc-quota-scope": result.reason ?? "unknown" },
+      body: {
+        error: "quota_exceeded",
+        scope: result.reason,
+        remaining: result.remaining ?? 0,
+        message: `anonymous add quota exhausted (scope=${result.reason}); retry after window roll-over`,
+      },
+    }
+  }
+  return { ok: true, reservation: result.reservation! }
+}
+
+/**
+ * #8: returns true when a request must read in local-only mode (no
+ * fetchRemote on miss). Anonymous (non-loopback non-token) callers get
+ * `true`; admin tier (loopback / X-COC-IPFS-Admin-Token) gets `false`.
+ *
+ * Without this guard, PR #711's directory-DAG walker could be
+ * weaponized: a request for `/ipfs/<unknown-cid>/...` triggers one
+ * `store.get` per visited block, each of which falls into
+ * `fetchRemote → DHT findProviders + wire BlockRequest` on miss. That
+ * turns the node into an N×-amplifying DHT-reflection / SSRF proxy.
+ *
+ * Module-level + exported so unit tests can exercise the gate without
+ * spinning up an HTTP server bound to a non-loopback address (same
+ * pattern as {@link isIpfsAdminAuthorized} / {@link enforceAddAuth}).
+ */
+export function isLocalOnlyRead(req: http.IncomingMessage, cfg: IpfsServerConfig): boolean {
+  const raw = req.socket?.remoteAddress ?? ""
+  const ip = raw.startsWith("::ffff:") ? raw.slice(7) : raw
+  return !isIpfsAdminAuthorized(req, ip, cfg)
+}
+
 function safeStringEq(a: string, b: string): boolean {
   if (a.length !== b.length) {
     // Still iterate one of the strings so the timing leak is bounded
@@ -394,6 +480,28 @@ export interface IpfsServerConfig {
     url: string
     advertisedUrl?: string
   }>
+  /**
+   * #9 (audit follow-up): anonymous /api/v0/add policy.
+   *
+   * Default (undefined) is secure: anonymous (non-loopback, no admin
+   * token) callers are 403'd, matching the existing #344 / #460 gate
+   * pattern on repo/gc, block/rm, pin/rm. Operators who want to
+   * accept anonymous uploads MUST opt-in AND pick byte budgets — the
+   * config is intentionally non-default to force a conscious decision
+   * given the disk-fill risk (obs-1 disk-full crash loop, 2026-05-24).
+   *
+   * Admin-authorized uploads (loopback OR X-COC-IPFS-Admin-Token) are
+   * never quota-gated; only the anonymous tier hits the budget.
+   */
+  anonymousAdd?: {
+    allowed: boolean
+    /** Max bytes a single source IP can upload per `windowMs`. */
+    perIpBytes: number
+    /** Aggregate cap across all anonymous IPs per `windowMs` (Sybil cap). */
+    totalBytes: number
+    /** Window size (default 24h). */
+    windowMs?: number
+  }
 }
 
 export class IpfsHttpServer {
@@ -404,11 +512,32 @@ export class IpfsHttpServer {
   private pubsub: IpfsPubsub | null = null
   private server: http.Server | null = null
   private readonly sockets = new Set<net.Socket>()
+  /**
+   * #9: byte-quota tracker for the anonymous /api/v0/add tier. Null when
+   * anonymous uploads are disabled (secure default), so the auth-gate
+   * fast-path skips quota math entirely.
+   */
+  private readonly anonymousAddQuota: ByteQuota | null
 
   constructor(cfg: IpfsServerConfig, store: IpfsBlockstore, unixfs: UnixFsBuilder) {
     this.cfg = cfg
     this.store = store
     this.unixfs = unixfs
+    if (cfg.anonymousAdd?.allowed) {
+      if (!Number.isFinite(cfg.anonymousAdd.perIpBytes) || cfg.anonymousAdd.perIpBytes <= 0) {
+        throw new Error("anonymousAdd.perIpBytes must be a positive finite number")
+      }
+      if (!Number.isFinite(cfg.anonymousAdd.totalBytes) || cfg.anonymousAdd.totalBytes <= 0) {
+        throw new Error("anonymousAdd.totalBytes must be a positive finite number")
+      }
+      this.anonymousAddQuota = new ByteQuota({
+        windowMs: cfg.anonymousAdd.windowMs,
+        perKeyMax: cfg.anonymousAdd.perIpBytes,
+        globalMax: cfg.anonymousAdd.totalBytes,
+      })
+    } else {
+      this.anonymousAddQuota = null
+    }
   }
 
   /**
@@ -525,9 +654,12 @@ export class IpfsHttpServer {
         // #468: resolve the full `<cid>/<subpath>` through the UnixFS DAG
         // walker. Maps both 404 (missing component) and 400 (mid-path
         // non-directory) to a structured JSON error with CORS preserved.
+        // #8: anonymous gateway callers walk in local-only mode so unknown
+        // CIDs can't be weaponized as DHT-reflection amplifiers.
+        const gatewayLocalOnly = this.isLocalOnlyRead(req)
         let resolved: ResolvedCidPath
         try {
-          resolved = await this.resolveCidPath(cid, parsed.path)
+          resolved = await this.resolveCidPath(cid, parsed.path, { localOnly: gatewayLocalOnly })
         } catch (err) {
           if (err instanceof HttpError && (err.status === 404 || err.status === 400)) {
             res.writeHead(err.status, { "content-type": "application/json", "access-control-allow-origin": "*" })
@@ -674,7 +806,18 @@ export class IpfsHttpServer {
         validateAddParams(url.query as Record<string, string | string[] | undefined>)
         const wrapRaw = firstQueryValue(url.query["wrap-with-directory"])?.toLowerCase()
         const wrapWithDirectory = wrapRaw === "true" || wrapRaw === "1"
-        await this.handleAdd(req, res, firstQueryValue(url.query.erasure), wrapWithDirectory)
+        // #9 (audit follow-up): admin gate + anonymous byte quota.
+        // Returns null when the gate already wrote the response; otherwise
+        // returns a reservation handle (no-op for admin, real budget
+        // for anonymous) that handleAdd must commit/refund.
+        const reservation = this.enforceAddAuth(req, res, clientIp)
+        if (!reservation) return
+        try {
+          await this.handleAdd(req, res, firstQueryValue(url.query.erasure), wrapWithDirectory, reservation)
+        } catch (err) {
+          reservation.refund()
+          throw err
+        }
         return
       }
       if (url.pathname === "/api/v0/version") {
@@ -723,11 +866,11 @@ export class IpfsHttpServer {
         return
       }
       if (url.pathname === "/api/v0/ls") {
-        await this.handleLs(res, argParam ?? "")
+        await this.handleLs(req, res, argParam ?? "")
         return
       }
       if (url.pathname === "/api/v0/object/stat") {
-        await this.handleObjectStat(res, argParam ?? "")
+        await this.handleObjectStat(req, res, argParam ?? "")
         return
       }
       if (url.pathname === "/api/v0/cat") {
@@ -738,7 +881,7 @@ export class IpfsHttpServer {
         return
       }
       if (url.pathname === "/api/v0/get") {
-        await this.handleGet(res, argParam ?? "")
+        await this.handleGet(req, res, argParam ?? "")
         return
       }
       if (url.pathname === "/api/v0/block/put") {
@@ -932,16 +1075,55 @@ export class IpfsHttpServer {
     })
   }
 
+  /**
+   * #8: instance wrapper around module-level {@link isLocalOnlyRead}.
+   * See that function for the SSRF rationale.
+   */
+  private isLocalOnlyRead(req: http.IncomingMessage): boolean {
+    return isLocalOnlyRead(req, this.cfg)
+  }
+
+  /**
+   * #9: instance wrapper around module-level {@link enforceAddAuth}.
+   * Writes the response when the gate denies; otherwise returns the
+   * reservation that handleAdd must commit/refund.
+   */
+  private enforceAddAuth(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    clientIp: string,
+  ): QuotaReservation | null {
+    const result = enforceAddAuth(req, clientIp, this.cfg, this.anonymousAddQuota)
+    if (result.ok) return result.reservation
+    res.writeHead(result.status, { "content-type": "application/json", ...(result.headers ?? {}) })
+    res.end(JSON.stringify(result.body))
+    return null
+  }
+
   private async handleAdd(
     req: http.IncomingMessage,
     res: http.ServerResponse,
     erasureSpec?: string,
     wrapWithDirectory = false,
+    quotaReservation: QuotaReservation = { commit: () => {}, refund: () => {} },
   ): Promise<void> {
     // #468: read every multipart part. A request is a directory upload
     // when the client asked to wrap, OR sent more than one part, OR any
     // part carries a nested relative path / explicit-directory marker.
-    const parts = await readMultipartFiles(req)
+    let parts
+    try {
+      parts = await readMultipartFiles(req)
+    } catch (err) {
+      // Multipart parsing failed (truncated body, oversize, etc.) —
+      // refund the anonymous reservation so the client isn't charged
+      // for bytes we couldn't actually accept.
+      quotaReservation.refund()
+      throw err
+    }
+    const actualBytes = parts.reduce((sum, p) => sum + (p.bytes?.byteLength ?? 0), 0)
+    // Reconcile reservation to the real bytes pinned (Content-Length
+    // includes multipart boundaries / headers, so actual < declared).
+    quotaReservation.commit(actualBytes)
     const nested = parts.some((p) => p.path !== undefined && p.path.includes("/"))
     const isDirectory =
       wrapWithDirectory || nested || parts.length > 1 || parts.some((p) => p.isDir)
@@ -1093,8 +1275,70 @@ export class IpfsHttpServer {
       await this.store.pin(node.cid)
     }
 
+    // #10 (audit follow-up): write PoSe `merkleRoot` + `merkleLeaves` to
+    // `file-meta.json` for every file leaf in the upload. Pre-fix, the
+    // directory path bypassed `unixfs.addFile` entirely → no merkle
+    // commitment → those file CIDs were silently exempted from PoSe
+    // challenges (`wrap-with-directory=true` was a free PoSe immunity
+    // header on any single-file upload). `computeFileMerkle` uses the
+    // same `chunkBytes` + `hashLeaf` as `addFile`, so the merkleRoot
+    // is byte-identical for the same input regardless of which upload
+    // path produced the file CID. CID parity is intentionally NOT
+    // claimed — `addFile` wraps single-chunk files in a 1-link dag-pb
+    // root while ipfs-unixfs-importer skips the wrap — but each CID
+    // gets its own file-meta entry keyed by itself, and PoSe `getProof`
+    // resolves the merkle from whatever CID the challenger names.
+    let poseCovered = 0
+    let poseSkipped = 0
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i]
+      if (part.isDir) continue
+      // Find the importer-emitted file CID for this input. The importer
+      // preserves input `path` verbatim, so the file node's `path` ends
+      // with the relative input path. We match by `endsWith` because
+      // wrapWithDirectory may prepend a synthetic wrapper prefix.
+      const inputPath = part.path ?? "file"
+      const fileNode = imported.all.find((n) =>
+        (n.type === "file" || n.type === "raw") &&
+        (n.path === inputPath || n.path.endsWith("/" + inputPath))
+      )
+      if (!fileNode) {
+        poseSkipped += 1
+        continue
+      }
+      try {
+        const { merkleRoot, merkleLeaves } = computeFileMerkle(part.bytes)
+        await this.saveFileMeta({
+          cid: fileNode.cid,
+          size: part.bytes.byteLength,
+          blockSize: 262144,
+          // Leaf CIDs aren't required by PoSe `getProof` (it operates on
+          // merkleLeaves + merklePath only). Leaving empty avoids a second
+          // pass to re-derive leaf CIDs from the importer output, which
+          // doesn't surface chunk-level CIDs in its public emit stream.
+          leaves: [],
+          root: fileNode.cid,
+          merkleRoot,
+          merkleLeaves,
+        })
+        poseCovered += 1
+      } catch (err) {
+        log.warn("PoSe meta computation failed for directory upload entry", {
+          path: inputPath,
+          cid: fileNode.cid,
+          error: String(err),
+        })
+        poseSkipped += 1
+      }
+    }
+
     // kubo NDJSON: one JSON object per line, children first, root last.
-    res.writeHead(200, { "content-type": "application/json" })
+    // X-COC-PoSe-Coverage surfaces the merkle-meta result to operators
+    // so under-coverage (e.g. importer/path mismatch) is visible.
+    res.writeHead(200, {
+      "content-type": "application/json",
+      "x-coc-pose-coverage": `files=${poseCovered},skipped=${poseSkipped}`,
+    })
     for (const node of imported.all) {
       const line: IpfsAddResult = {
         Name: node.path,
@@ -1199,10 +1443,19 @@ export class IpfsHttpServer {
     return parsed
   }
 
+  /**
+   * Shared wrapper around {@link resolveCidPath}:
+   *   - validates the bare CID arg (write 400 + return null on bad shape)
+   *   - splits `<cid>/<sub/path>` form into CID + path segments
+   *   - delegates to {@link resolveCidPath}
+   * `opts.localOnly` is forwarded so callers can suppress fetchRemote
+   * on the public read tier (#8). `opts.probeDirectory: false` (#310)
+   * keeps block-level endpoints off the directory walker.
+   */
   private async resolveCidPathArg(
     res: http.ServerResponse,
     arg?: string,
-    opts?: { probeDirectory?: boolean },
+    opts?: { probeDirectory?: boolean; localOnly?: boolean },
   ): Promise<ResolvedCidPath | null> {
     const parsed = this.parseCidPathArg(res, arg)
     if (!parsed) return null
@@ -1232,13 +1485,17 @@ export class IpfsHttpServer {
   private async resolveCidPath(
     rootCid: string,
     path: string[],
-    opts?: { probeDirectory?: boolean },
+    opts?: { probeDirectory?: boolean; localOnly?: boolean },
   ): Promise<ResolvedCidPath> {
     // `probeDirectory: false` keeps block-level endpoints (block/stat,
     // block/get) off the UnixFS DAG walker entirely — block/stat must
     // stay a local-only metadata query (#310: no fetchRemote on miss).
     const probeDirectory = opts?.probeDirectory !== false
-    const adapter = new InterfaceBlockstoreAdapter(this.store, { maxBlockReads: MAX_BLOCK_READS })
+    // #8: anonymous read paths pass `localOnly: true` so the directory
+    // walker can't be weaponized as a DHT-reflection amplifier on
+    // unknown CIDs. Admin paths leave it false for transparent peer fetch.
+    const localOnly = opts?.localOnly === true
+    const adapter = new InterfaceBlockstoreAdapter(this.store, { maxBlockReads: MAX_BLOCK_READS, localOnly })
     const signal = AbortSignal.timeout(IPFS_RESOLVE_TIMEOUT_MS)
 
     if (!probeDirectory) {
@@ -1320,8 +1577,9 @@ export class IpfsHttpServer {
     return listDirectory(entry, AbortSignal.timeout(IPFS_RESOLVE_TIMEOUT_MS))
   }
 
-  private async handleLs(res: http.ServerResponse, cid?: string): Promise<void> {
-    const resolved = await this.resolveCidPathArg(res, cid)
+  private async handleLs(req: http.IncomingMessage, res: http.ServerResponse, cid?: string): Promise<void> {
+    const localOnly = this.isLocalOnlyRead(req)
+    const resolved = await this.resolveCidPathArg(res, cid, { localOnly })
     if (!resolved) {
       return
     }
@@ -1397,8 +1655,9 @@ export class IpfsHttpServer {
     }))
   }
 
-  private async handleObjectStat(res: http.ServerResponse, cid?: string): Promise<void> {
-    const resolved = await this.resolveCidPathArg(res, cid)
+  private async handleObjectStat(req: http.IncomingMessage, res: http.ServerResponse, cid?: string): Promise<void> {
+    const localOnly = this.isLocalOnlyRead(req)
+    const resolved = await this.resolveCidPathArg(res, cid, { localOnly })
     if (!resolved) {
       return
     }
@@ -1406,7 +1665,7 @@ export class IpfsHttpServer {
     // child listing rather than the file-meta leaf table.
     if (resolved.entry?.type === "directory") {
       const links = await this.listResolvedDirectory(resolved.entry)
-      const block = await this.store.get(resolved.cid)
+      const block = await this.store.get(resolved.cid, { localOnly })
       // kubo's CumulativeSize is the *recursive* byte size of the whole
       // subtree. Computing that exactly needs a full subtree walk — too
       // costly for a stat call — so report a lower-bound approximation:
@@ -1435,7 +1694,7 @@ export class IpfsHttpServer {
     // from a real server fault (500).
     let block: Awaited<ReturnType<typeof this.store.get>>
     try {
-      block = await this.store.get(resolved.cid)
+      block = await this.store.get(resolved.cid, { localOnly })
     } catch (err) {
       if (isNotFoundError(err)) {
         res.writeHead(404, { "content-type": "application/json" })
@@ -1470,7 +1729,8 @@ export class IpfsHttpServer {
     cid?: string,
     range?: { offset?: string; length?: string },
   ): Promise<void> {
-    const resolved = await this.resolveCidPathArg(res, cid)
+    const localOnly = this.isLocalOnlyRead(req)
+    const resolved = await this.resolveCidPathArg(res, cid, { localOnly })
     if (!resolved) {
       return
     }
@@ -1518,14 +1778,15 @@ export class IpfsHttpServer {
     res.end(slice)
   }
 
-  private async handleGet(res: http.ServerResponse, cid?: string): Promise<void> {
-    const resolved = await this.resolveCidPathArg(res, cid)
+  private async handleGet(req: http.IncomingMessage, res: http.ServerResponse, cid?: string): Promise<void> {
+    const localOnly = this.isLocalOnlyRead(req)
+    const resolved = await this.resolveCidPathArg(res, cid, { localOnly })
     if (!resolved) {
       return
     }
     // #468: `get` of a directory streams a tar of every file in the tree.
     if (resolved.entry?.type === "directory") {
-      const files = await this.collectDirectoryFiles(resolved.entry, "", { bytes: 0, files: 0, nodes: 0 }, 0)
+      const files = await this.collectDirectoryFiles(resolved.entry, "", { bytes: 0, files: 0, nodes: 0 }, 0, localOnly)
       const archive = createTarArchive(files)
       res.writeHead(200, { "content-type": "application/x-tar" })
       res.end(archive)
@@ -1568,6 +1829,7 @@ export class IpfsHttpServer {
     prefix: string,
     acc: { bytes: number; files: number; nodes: number },
     depth: number,
+    localOnly = false,
   ): Promise<Array<{ name: string; data: Uint8Array }>> {
     if (depth > MAX_DIRECTORY_GET_DEPTH) {
       throw new HttpError(400, "directory too deep",
@@ -1586,11 +1848,11 @@ export class IpfsHttpServer {
           `directory tree exceeds ${MAX_DIRECTORY_GET_NODES} nodes`)
       }
       const childPath = prefix ? `${prefix}/${link.name}` : link.name
-      const adapter = new InterfaceBlockstoreAdapter(this.store, { maxBlockReads: MAX_BLOCK_READS })
+      const adapter = new InterfaceBlockstoreAdapter(this.store, { maxBlockReads: MAX_BLOCK_READS, localOnly })
       const child = await resolveUnixfsPath(link.cid, [], adapter,
         AbortSignal.timeout(IPFS_RESOLVE_TIMEOUT_MS))
       if (child.type === "directory") {
-        out.push(...await this.collectDirectoryFiles(child, childPath, acc, depth + 1))
+        out.push(...await this.collectDirectoryFiles(child, childPath, acc, depth + 1, localOnly))
       } else {
         const data = await readEntryBytes(child, undefined, AbortSignal.timeout(IPFS_RESOLVE_TIMEOUT_MS))
         acc.files += 1
@@ -1619,10 +1881,11 @@ export class IpfsHttpServer {
     res: http.ServerResponse,
     dir: ResolvedEntry,
   ): Promise<void> {
+    const localOnly = this.isLocalOnlyRead(req)
     const links = await this.listResolvedDirectory(dir)
     const index = links.find((l) => l.name === "index.html" && l.type === "file")
     if (index) {
-      const adapter = new InterfaceBlockstoreAdapter(this.store, { maxBlockReads: MAX_BLOCK_READS })
+      const adapter = new InterfaceBlockstoreAdapter(this.store, { maxBlockReads: MAX_BLOCK_READS, localOnly })
       const child = await resolveUnixfsPath(index.cid, [], adapter,
         AbortSignal.timeout(IPFS_RESOLVE_TIMEOUT_MS))
       const data = await readEntryBytes(child, undefined, AbortSignal.timeout(IPFS_RESOLVE_TIMEOUT_MS))
@@ -2036,6 +2299,23 @@ export class IpfsHttpServer {
     // #192: dup query params arrive as arrays; coalesce to first.
     const arg = firstQueryValue(url.query?.arg) ?? ""
 
+    // #736: mirror the #9 admin-gate + byte-quota that protects /api/v0/add.
+    // MFS write-side endpoints (write/mkdir/rm/cp/mv) are an equivalent
+    // anonymous-write attack surface — the obs-1 2026-05-24 disk-fill
+    // reproduces through /files/write at the same throughput as /add did.
+    // Read-side endpoints (read/ls/stat/flush) stay anonymous.
+    let mfsReservation: QuotaReservation = { commit: () => {}, refund: () => {} }
+    const isMfsWriteSide =
+      route === "write" || route === "mkdir" || route === "rm" ||
+      route === "cp" || route === "mv" || route === "move"
+    if (isMfsWriteSide) {
+      const rawClientIp = req.socket.remoteAddress ?? "unknown"
+      const clientIp = rawClientIp.startsWith("::ffff:") ? rawClientIp.slice(7) : rawClientIp
+      const reservation = this.enforceAddAuth(req, res, clientIp)
+      if (!reservation) return  // 401 / 429 already written
+      mfsReservation = reservation
+    }
+
     try {
       switch (route) {
         case "mkdir": {
@@ -2063,6 +2343,8 @@ export class IpfsHttpServer {
           }
           const parents = url.query?.parents === "true"
           await this.mfs.mkdir(arg, { parents })
+          // #736: tiny metadata charge so mkdir floods aren't entirely free.
+          mfsReservation.commit(256)
           res.writeHead(200, { "content-type": "application/json" })
           res.end(JSON.stringify({ ok: true }))
           break
@@ -2096,6 +2378,8 @@ export class IpfsHttpServer {
             writeOpts.offset = n
           }
           await this.mfs.write(arg, body, writeOpts)
+          // #736: charge actual bytes written against the anonymous quota.
+          mfsReservation.commit(body.length)
           res.writeHead(200, { "content-type": "application/json" })
           res.end(JSON.stringify({ ok: true }))
           break
@@ -2153,6 +2437,7 @@ export class IpfsHttpServer {
         case "rm": {
           const recursive = url.query?.recursive === "true"
           await this.mfs.rm(arg, { recursive })
+          mfsReservation.commit(256)
           res.writeHead(200, { "content-type": "application/json" })
           res.end(JSON.stringify({ ok: true }))
           break
@@ -2168,6 +2453,7 @@ export class IpfsHttpServer {
             throw new HttpError(400, "bad request", "mv requires two ?arg= values: source and destination")
           }
           await this.mfs.mv(source, dest)
+          mfsReservation.commit(256)
           res.writeHead(200, { "content-type": "application/json" })
           res.end(JSON.stringify({ ok: true }))
           break
@@ -2182,6 +2468,7 @@ export class IpfsHttpServer {
             throw new HttpError(400, "bad request", "cp requires two ?arg= values: source and destination")
           }
           await this.mfs.cp(source, dest)
+          mfsReservation.commit(256)
           res.writeHead(200, { "content-type": "application/json" })
           res.end(JSON.stringify({ ok: true }))
           break
@@ -2298,6 +2585,8 @@ export class IpfsHttpServer {
       try {
         res.end(JSON.stringify(message ? { error: code, message } : { error: code }))
       } catch { /* connection already closed */ }
+      // #736: error path — refund the entire reservation (no bytes consumed).
+      if (isMfsWriteSide) mfsReservation.refund()
     }
   }
 
