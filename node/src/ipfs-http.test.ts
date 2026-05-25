@@ -1485,15 +1485,28 @@ describe("IpfsHttpServer", () => {
       `must NOT say 'invalid CID' (the pre-fix bug shape), got ${JSON.stringify(subBody)}`)
     assert.match(`${subBody.error} ${subBody.message ?? ""}`, /no link|no such file/i,
       `error must reference 'no link' or 'no such file', got ${JSON.stringify(subBody)}`)
-    assert.match(subBody.message ?? "", new RegExp(`'extra'.*${cid.slice(0, 20)}`),
-      `message must name both subpath and CID for clarity, got: ${subBody.message}`)
+    // #15 (audit follow-up): the response body intentionally NO LONGER
+    // names the specific CID / subpath — that detail was an enumeration
+    // side channel ("'foo' under bafy…X" lets a probe distinguish
+    // "node has not heard of bafy…X" from "bafy…X exists but lacks
+    // link 'foo'"). The detail still lands in `log.warn` server-side
+    // for operator debugging; only the generic kind reaches the wire.
+    assert.equal(
+      (subBody.message ?? "").includes(cid), false,
+      "response body MUST NOT echo the CID — that's a #15 enumeration oracle")
 
     // (c) /ipfs/<cid>/a/b/c — multi-segment subpath
     const deep = await fetch(`/ipfs/${cid}/a/b/c`)
     assert.equal(deep.status, 404)
     const deepBody = await deep.json() as { error?: string; message?: string }
     assert.notEqual(deepBody.error, "invalid CID")
-    assert.match(deepBody.message ?? "", /'a'/, "message names the FIRST missing segment")
+    // #15 (audit follow-up): segment names also redacted — naming "'a'"
+    // here would let an attacker enumerate which directory layer the
+    // walk stopped at, narrowing the probe target.
+    assert.equal(
+      (deepBody.message ?? "").includes("a/b/c"), false,
+      "response must not echo the requested subpath — #15 enumeration oracle")
+    assert.match(deepBody.error ?? "", /no such file/i)
 
     // (d) Truly invalid CID still returns 400 "invalid CID" (regression sentinel)
     const invalid = await fetch("/ipfs/not-a-cid")
@@ -3343,6 +3356,60 @@ describe("#468 UnixFS directory DAG", () => {
       assert.equal(res.status, 200)
       assert.equal(res.headers["x-coc-pose-coverage"], "files=0,skipped=0",
         "zero-file directory → zero coverage required, zero skipped")
+    })
+  })
+
+  // #14 (audit follow-up): handleAddDirectory partial-import cleanup.
+  // The ipfs-unixfs-importer streams blocks into the blockstore as it
+  // walks the candidate list; if it throws mid-build (oversized input,
+  // bad path, abort signal) every block put-so-far would sit on disk,
+  // unpinned, until the next repo/gc — an attacker repeating the
+  // failing shape could slowly fill disk between GC cycles. Fix:
+  // adapter records each successful put, and handleAddDirectory's
+  // catch block iterates those CIDs to issue best-effort removeBlock.
+  describe("#14 handleAddDirectory partial-import cleanup", () => {
+    it("removeBlock-sweeps every CID the importer wrote when buildDirectoryDag throws", async () => {
+      // Monkey-patch store.put so the third put throws — a realistic
+      // mid-import failure shape. The importer will have written ≥2
+      // blocks by then; those CIDs must be reclaimed.
+      const realPut = store.put.bind(store)
+      let putCount = 0
+      const seenCids: string[] = []
+      const FAIL_AFTER = 2
+      ;(store as { put: typeof store.put }).put = async (block, opts) => {
+        putCount += 1
+        if (putCount > FAIL_AFTER) {
+          throw new Error("simulated mid-import failure")
+        }
+        seenCids.push(block.cid)
+        return realPut(block, opts)
+      }
+      try {
+        // Multi-file directory that forces at least 3 puts (3 files →
+        // ≥3 file CIDs + 1 wrapping directory CID after success).
+        const { body, contentType } = multipart([
+          { filename: "a.txt", content: "alpha-content" },
+          { filename: "b.txt", content: "bravo-content" },
+          { filename: "c.txt", content: "charlie-content" },
+        ])
+        const res = await fetch("/api/v0/add", {
+          method: "POST",
+          headers: { "content-type": contentType },
+          body,
+        })
+        // Failure surfaces as a 500 (the throw propagates through the
+        // outer try/catch's generic 500 mapper).
+        assert.equal(res.status, 500,
+          "mid-import failure must surface — must NOT silently swallow + return 200")
+        // Every block successfully written before the failure must have
+        // been removed by the catch path.
+        for (const cid of seenCids) {
+          assert.equal(await store.has(cid), false,
+            `CID ${cid} was written before the failure and MUST be removed by cleanup`)
+        }
+      } finally {
+        ;(store as { put: typeof store.put }).put = realPut
+      }
     })
   })
 })

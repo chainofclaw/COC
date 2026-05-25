@@ -1265,7 +1265,31 @@ export class IpfsHttpServer {
     )
 
     const adapter = new InterfaceBlockstoreAdapter(this.store, { maxBlockReads: MAX_BLOCK_READS })
-    const imported = await buildDirectoryDag(entries, adapter)
+    // #15: bound the importer the same way `resolveUnixfsPath` is bounded
+    // on the read path — a stalled or maliciously-slow build must surface
+    // fast rather than wedge the handler.
+    const buildSignal = AbortSignal.timeout(IPFS_RESOLVE_TIMEOUT_MS)
+    let imported
+    try {
+      imported = await buildDirectoryDag(entries, adapter, buildSignal)
+    } catch (err) {
+      // #14 (audit follow-up): the importer streams blocks into the
+      // blockstore as it builds the DAG; a mid-import failure (oversized
+      // input, validator rejection, abort signal, etc.) leaves every
+      // block put-so-far on disk, unpinned, occupying space until the
+      // next `repo/gc` cycle. Best-effort cleanup here closes that gap:
+      // iterate the adapter's tracked CIDs and removeBlock each one.
+      // Errors during cleanup are swallowed so the operator still sees
+      // the original importer failure, not a cascading delete error.
+      for (const cid of adapter.putCids) {
+        try {
+          await this.store.removeBlock(cid)
+        } catch {
+          /* best-effort — partial cleanup is still better than none */
+        }
+      }
+      throw err
+    }
 
     // Recursively pin every node the importer emitted. COC's blockstore
     // GC is flat (it does not walk a pinned root's children), so each
@@ -1506,7 +1530,11 @@ export class IpfsHttpServer {
         const numeric = await this.resolveNumericLeaf(rootCid, path)
         if (numeric) return numeric
       }
-      throw new HttpError(404, "no such file", `no link named '${path[0]}' under ${rootCid}`)
+      // #15: detail (CID + segment) goes to log only — embedding it in
+      // the HTTP response is a side channel an enumerator can use to
+      // probe local cache state and directory layouts.
+      log.warn("path resolve miss", { rootCid, segment: path[0], reason: "block-mode-numeric-fallback-failed" })
+      throw new HttpError(404, "no such file", "no link found at requested path")
     }
 
     if (path.length === 0) {
@@ -1542,13 +1570,18 @@ export class IpfsHttpServer {
             const numeric = await this.resolveNumericLeaf(rootCid, path)
             if (numeric) return numeric
           }
-          throw new HttpError(404, "no such file", `no link named '${path[0]}' under ${rootCid}`)
+          // #15: detail to log only — see numeric-fallback miss above.
+          log.warn("path resolve miss", { rootCid, segment: path[0], reason: "not-a-directory-at-root" })
+          throw new HttpError(404, "no such file", "no link found at requested path")
         }
         // Mid-path non-directory → 400; missing component → 404.
+        // #15: route detailed err.message to log; response carries the
+        // PathResolveError.publicMessage (kind-only, no CID/segment).
+        log.warn("path resolve miss", { rootCid, segments: path, kind: err.kind, depth: err.depth, detail: err.message })
         if (err.kind === "not_a_directory") {
-          throw new HttpError(400, "not a directory", err.message)
+          throw new HttpError(400, "not a directory", err.publicMessage)
         }
-        throw new HttpError(404, "no such file", err.message)
+        throw new HttpError(404, "no such file", err.publicMessage)
       }
       // Read-budget / timeout → 504, not an opaque 500.
       const limit = resolveLimitError(err, signal)

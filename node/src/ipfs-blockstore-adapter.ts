@@ -56,6 +56,17 @@ export class InterfaceBlockstoreAdapter implements Pick<Blockstore, "get" | "put
   private readonly maxBlockReads: number
   private readonly localOnly: boolean
   private blockReads = 0
+  /**
+   * #14 (audit follow-up): every CID we successfully `put` through the
+   * adapter is recorded here so the caller can roll back a partial
+   * import. The importer streams blocks to the blockstore as it builds
+   * the DAG; when it throws mid-way (oversized inputs, malformed
+   * candidates, etc.) the already-written blocks would otherwise sit
+   * unpinned on disk until the next `repo/gc` cycle. handleAddDirectory
+   * iterates this set inside its `catch` to issue best-effort
+   * `removeBlock` calls and reclaim the space immediately.
+   */
+  private readonly _putCids = new Set<string>()
 
   constructor(inner: IpfsBlockstore, limits?: BlockstoreAdapterLimits) {
     this.inner = inner
@@ -73,6 +84,11 @@ export class InterfaceBlockstoreAdapter implements Pick<Blockstore, "get" | "put
     return this.localOnly
   }
 
+  /** #14: CIDs successfully put through this adapter — for partial-import rollback. */
+  get putCids(): ReadonlySet<string> {
+    return this._putCids
+  }
+
   async get(cid: CID): Promise<Uint8Array> {
     if (++this.blockReads > this.maxBlockReads) {
       throw new BlockstoreReadBudgetError(this.maxBlockReads)
@@ -83,6 +99,9 @@ export class InterfaceBlockstoreAdapter implements Pick<Blockstore, "get" | "put
 
   async put(cid: CID, bytes: Uint8Array): Promise<CID> {
     await this.inner.put({ cid: cid.toString(), bytes })
+    // Record only after the inner put succeeded — a failed put didn't
+    // actually allocate disk, so the rollback set must not include it.
+    this._putCids.add(cid.toString())
     return cid
   }
 

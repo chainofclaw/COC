@@ -1416,7 +1416,14 @@ if (config.soulRegistryAddress && config.didRegistryAddress) {
   const resolver = createDIDResolver({ defaultChainId: config.chainId, provider: didProvider })
   didResolverInstance = resolver
   didDataProviderInstance = didProvider
-  console.log(`[DID] Resolver configured: SoulRegistry=${config.soulRegistryAddress}, DIDRegistry=${config.didRegistryAddress}`)
+  // #15 (audit follow-up): structured log instead of console.log so the
+  // line goes through the project logger (level / component / fields)
+  // and isn't a free-form line on stdout. Public-chain addresses, but
+  // routing through `log.info` keeps the stdout shape consistent.
+  log.info("DID resolver configured", {
+    soulRegistry: config.soulRegistryAddress,
+    didRegistry: config.didRegistryAddress,
+  })
 }
 
 startRpcServer(
