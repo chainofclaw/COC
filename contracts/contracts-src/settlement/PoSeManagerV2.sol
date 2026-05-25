@@ -141,7 +141,30 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage, UUPSUpgradeable {
         __PoSeManagerStorage_init(initialOwner);
 
         initialized = true;
-        DOMAIN_SEPARATOR = keccak256(
+        // #15 (audit follow-up): keep `DOMAIN_SEPARATOR` populated for
+        // backwards-compat with off-chain readers that hard-coded the
+        // public field, but signature verification now uses the dynamic
+        // {@link domainSeparator} view below — `block.chainid` is read
+        // at every digest build, so a chain fork that keeps the same
+        // proxy address can no longer have witness signatures from the
+        // pre-fork chain replayed against the post-fork chain.
+        DOMAIN_SEPARATOR = _computeDomainSeparator();
+        challengeBondMin = _challengeBondMin;
+        emit Initialized(block.chainid, address(this), _challengeBondMin);
+    }
+
+    /// @notice #15 (audit follow-up): dynamic EIP-712 domain separator
+    ///         that reads `block.chainid` at call time. Used by every
+    ///         signature digest builder so chain forks cannot replay
+    ///         pre-fork witness signatures against the post-fork chain.
+    ///         The stored `DOMAIN_SEPARATOR` snapshot is retained for
+    ///         backwards-compat with off-chain integrations.
+    function domainSeparator() public view returns (bytes32) {
+        return _computeDomainSeparator();
+    }
+
+    function _computeDomainSeparator() internal view returns (bytes32) {
+        return keccak256(
             abi.encode(
                 keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
                 keccak256("COCPoSe"),
@@ -150,8 +173,6 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage, UUPSUpgradeable {
                 address(this)
             )
         );
-        challengeBondMin = _challengeBondMin;
-        emit Initialized(block.chainid, address(this), _challengeBondMin);
     }
 
     /**
@@ -917,10 +938,14 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage, UUPSUpgradeable {
             if (witnessBitmap & (1 << i) != 0) {
                 if (sigIdx >= witnessSignatures.length) revert InvalidWitnessQuorum();
                 // Verify witness signature over the batch merkle root
+                // #15: dynamic domain separator (block.chainid is read
+                // at call time) prevents pre-fork witness signatures
+                // being replayed against a post-fork chain that kept
+                // the same proxy address.
                 bytes32 witnessHash = keccak256(
                     abi.encodePacked(
                         "\x19\x01",
-                        DOMAIN_SEPARATOR,
+                        _computeDomainSeparator(),
                         keccak256(abi.encode(
                             PoSeTypesV2.WITNESS_TYPEHASH,
                             merkleRoot, // challengeId field used as batch root
@@ -1073,10 +1098,11 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage, UUPSUpgradeable {
         bytes32 responseBodyHash,
         uint8 witnessIndex
     ) internal view returns (bytes32) {
+        // #15: dynamic domain separator — see initialize() / domainSeparator()
         return keccak256(
             abi.encodePacked(
                 "\x19\x01",
-                DOMAIN_SEPARATOR,
+                _computeDomainSeparator(),
                 keccak256(abi.encode(
                     PoSeTypesV2.WITNESS_TYPEHASH,
                     challengeId,
@@ -1098,10 +1124,11 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage, UUPSUpgradeable {
         uint8 witnessIndex,
         uint64 epochId
     ) internal view returns (bytes32) {
+        // #15: dynamic domain separator — see initialize() / domainSeparator()
         return keccak256(
             abi.encodePacked(
                 "\x19\x01",
-                DOMAIN_SEPARATOR,
+                _computeDomainSeparator(),
                 keccak256(abi.encode(
                     PoSeTypesV2.WITNESS_TYPEHASH_V2,
                     challengeId,

@@ -36,6 +36,18 @@ contract Treasury is Initializable, UUPSUpgradeable {
     mapping(uint256 => Proposal) public proposals;
     mapping(address => uint256) public pendingWithdrawals;
     uint256 public pendingWithdrawalTotal;
+    /**
+     * #15 (audit follow-up): address has historically served as a
+     * signer at least once. Set in `replaceSigner` for the OLD signer
+     * being removed, never cleared. Used to surface a warning event
+     * when `replaceSigner` re-adds an address that previously served:
+     * that address's `confirmed[]` bits on pending proposals are still
+     * `true` and will silently re-count once the address is back in
+     * `signers[]`, so operators must `cancel + re-propose` any pending
+     * proposals before re-adding. Append-only storage slot — safe to
+     * add under UUPS without breaking layout.
+     */
+    mapping(address => bool) public wasSignerHistorical;
 
     event Deposit(address indexed from, uint256 amount);
     event ProposalCreated(uint256 indexed proposalId, address indexed to, uint256 amount);
@@ -46,6 +58,18 @@ contract Treasury is Initializable, UUPSUpgradeable {
     event GovernanceUpdated(address indexed newGovernance);
     event SignerUpdated(uint8 indexed index, address indexed oldSigner, address indexed newSigner);
     event OwnerUpdated(address indexed oldOwner, address indexed newOwner);
+    /**
+     * #15: emitted when `replaceSigner` re-adds an address that has
+     * served as a signer in the past. The address's `confirmed[]` bits
+     * on any pending proposals are still set from the previous tenure
+     * and will silently re-count toward the 3-of-5 threshold once the
+     * address is back in `signers[]`. Operators MUST cancel + recreate
+     * any pending proposals (or wait for them to execute) before
+     * re-adding a historical signer, otherwise stale confirmations
+     * from the prior tenure resurrect on re-entry. Defence-in-depth
+     * warning only — the runtime path is not blocked.
+     */
+    event ReusingHistoricalSigner(uint8 indexed index, address indexed signer);
 
     error NotSigner();
     error NotOwner();
@@ -188,9 +212,23 @@ contract Treasury is Initializable, UUPSUpgradeable {
         if (newSigner == address(0)) revert ZeroAddress();
         address old = signers[index];
         if (newSigner != old && isSigner[newSigner]) revert DuplicateSigner();
+        // #15: record OLD signer as historical BEFORE we remove them.
+        // This catches the case where `replaceSigner` is called with
+        // `newSigner == old` (no-op identity churn) — they're already
+        // a current signer, so we don't need to flag them as historical,
+        // but updating the bit is harmless and keeps the semantics
+        // simple: "this address has ever been a signer".
+        wasSignerHistorical[old] = true;
         isSigner[old] = false;
         signers[index] = newSigner;
         isSigner[newSigner] = true;
+        // #15: surface a warning event if the new signer is being
+        // re-added after a prior tenure — operators must verify no
+        // pending proposals carry stale confirmations from their
+        // previous slot before relying on the 3-of-5 threshold.
+        if (wasSignerHistorical[newSigner] && newSigner != old) {
+            emit ReusingHistoricalSigner(index, newSigner);
+        }
         emit SignerUpdated(index, old, newSigner);
     }
 

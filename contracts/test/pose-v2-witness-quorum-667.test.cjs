@@ -472,6 +472,59 @@ describe("PoSeManagerV2 — #667 witness-quorum independent verification", funct
   // that one entity deliver the K-of-N quorum singlehandedly — collapsing
   // the security threshold to 1-of-1. The fix rejects on second appearance
   // of the same operator within a single quorum vote.
+  // #15 (audit follow-up): dynamic EIP-712 domain separator.
+  // initialize() snapshots DOMAIN_SEPARATOR at deploy time using
+  // block.chainid; pre-fix every signature digest used that snapshot,
+  // so a chain fork that kept the same proxy address could replay
+  // pre-fork witness sigs against the post-fork chain. Fix: the
+  // _buildWitnessDigest{V1,V2} paths call _computeDomainSeparator()
+  // which reads block.chainid at call time. The public domainSeparator()
+  // view exposes the dynamic value; the legacy DOMAIN_SEPARATOR field
+  // is retained as a back-compat snapshot.
+  describe("#15 dynamic EIP-712 domain separator", function () {
+    it("exposes domainSeparator() view that matches the snapshotted DOMAIN_SEPARATOR on the initial chain", async function () {
+      const dynamic = await manager.domainSeparator()
+      const stored = await manager.DOMAIN_SEPARATOR()
+      expect(dynamic).to.not.equal(ethers.ZeroHash)
+      expect(stored).to.not.equal(ethers.ZeroHash)
+      // Same chain → same value as the deploy-time snapshot.
+      expect(dynamic).to.equal(stored)
+    })
+
+    it("dynamic separator is deterministic when block.chainid is stable", async function () {
+      // Real protection (forked chain refusing pre-fork sigs) needs
+      // cross-chain fixtures; here we just confirm the view is pure
+      // and stable across calls on the same chain.
+      const a = await manager.domainSeparator()
+      const b = await manager.domainSeparator()
+      expect(a).to.equal(b)
+    })
+
+    it("happy-path signature still verifies with the new dynamic separator", async function () {
+      // Regression: the witness verifier paths (V1 + V2) now build
+      // their domain separator via _computeDomainSeparator(); confirm
+      // a legitimate witness signature still passes end-to-end.
+      const witness = await registerWitness(manager, deployer, "ds-dyn")
+      const receipt = makeReceipt("ds-dyn")
+      const sampleLeaf = receipt.leafHash
+      const epochId = Math.floor((await ethers.provider.getBlock("latest")).timestamp / 3600)
+      const witnessIndex = 0
+      const sig = await signWitnessV2(manager, witness, {
+        challengeId: receipt.challengeId,
+        responseBodyHash: receipt.responseBodyHash,
+        witnessIndex, epochId,
+      })
+      await expect(submitV2Metadata(manager, {
+        epochId,
+        merkleRoot: buildMerkleRoot([receipt.leafHash]),
+        sampleLeaf,
+        witnessBitmap: 1 << witnessIndex,
+        witnessSignatures: [sig],
+        metadata: buildMetadata([receipt], [[witnessIndex, 0]]),
+      })).to.emit(manager, "ReceiptBatchMetadataSubmitted")
+    })
+  })
+
   describe("#7 per-operator quorum dedup", function () {
     // Register an "alias" nodeId under an existing operator EOA. The alias
     // is a fresh signing key whose public key derives the nodeId; the
