@@ -61,11 +61,18 @@ export interface DirectoryImportResult {
 export async function buildDirectoryDag(
   entries: DirEntryInput[],
   blockstore: InterfaceBlockstoreAdapter,
+  signal?: AbortSignal,
 ): Promise<DirectoryImportResult> {
   const candidates = entries.map((e) =>
     e.content !== undefined ? { path: e.path, content: e.content } : { path: e.path },
   )
 
+  // #15 (audit follow-up): honour an optional abort signal. The read
+  // path (`resolveUnixfsPath`) has been timeout-bounded since #468;
+  // the write path was not, leaving room for a slow / large upload to
+  // pin the importer indefinitely. Callers in `ipfs-http.ts` set a
+  // bounded `AbortSignal.timeout(IPFS_RESOLVE_TIMEOUT_MS)` so a stalled
+  // importer surfaces as a fast error rather than wedging the handler.
   const all: ImportedNode[] = []
   for await (const node of importer(candidates, blockstore, {
     wrapWithDirectory: true,
@@ -74,7 +81,14 @@ export async function buildDirectoryDag(
     rawLeaves: false,
     leafType: "file",
     cidVersion: 1,
-  })) {
+    signal,
+  } as Parameters<typeof importer>[2])) {
+    // Fast-bail mid-import if the caller aborted (rare — the importer
+    // already honours `signal` internally, but the throw-on-abort
+    // contract is centralised here).
+    if (signal?.aborted) {
+      throw new Error(`buildDirectoryDag aborted: ${String(signal.reason ?? "AbortError")}`)
+    }
     all.push({
       path: node.path ?? "",
       cid: node.cid.toString(),

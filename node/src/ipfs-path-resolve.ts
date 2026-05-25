@@ -44,6 +44,25 @@ export class PathResolveError extends Error {
     this.kind = kind
     this.depth = depth
   }
+
+  /**
+   * #15 (audit follow-up): the constructor's `message` carries the
+   * specific CID + path segment that failed (useful for operator
+   * logs), but echoing it back to anonymous callers is a side-channel
+   * — by enumerating `<known-dir-cid>/<guess>` an attacker can learn
+   * which CIDs the node has resolved (timing + "no link named 'foo'"
+   * vs "block not found" distinguishes hot/cold paths) and which
+   * link names exist inside a private directory.
+   *
+   * HTTP responders MUST surface `publicMessage` rather than `message`
+   * so the wire body is a non-enumerable short code; full detail
+   * still lands in `log.warn`.
+   */
+  get publicMessage(): string {
+    return this.kind === "not_a_directory"
+      ? "this dag node is not a directory"
+      : "no such file"
+  }
 }
 
 export interface ResolvedEntry {
