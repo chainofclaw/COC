@@ -75,4 +75,35 @@ describe("Treasury — #719 signer rotation confirmation accounting", function (
     const after = await ethers.provider.getBalance(recipient.address)
     expect(after - before).to.equal(ethers.parseEther("1"))
   })
+
+  // #15 (audit follow-up): signer rotation history surface.
+  describe("#15 historical-signer hygiene warnings", function () {
+    it("records wasSignerHistorical when a signer is replaced", async function () {
+      expect(await treasury.wasSignerHistorical(s0.address)).to.equal(false)
+      await treasury.connect(owner).replaceSigner(0, newSigner.address)
+      expect(await treasury.wasSignerHistorical(s0.address)).to.equal(true,
+        "old signer must be flagged as historical after being removed")
+      expect(await treasury.wasSignerHistorical(newSigner.address)).to.equal(false,
+        "fresh signer who was never in the set should not be marked historical")
+    })
+
+    it("emits ReusingHistoricalSigner when re-adding an address that previously served", async function () {
+      // Cycle s0 out, then back in — second replaceSigner must surface
+      // the warning because s0 has pending-proposal confirmation history.
+      await treasury.connect(owner).replaceSigner(0, newSigner.address)
+      // Now re-add s0 to slot 0 (replacing newSigner). s0.wasSignerHistorical
+      // is already true → ReusingHistoricalSigner event MUST fire.
+      const tx = await treasury.connect(owner).replaceSigner(0, s0.address)
+      await expect(tx).to.emit(treasury, "ReusingHistoricalSigner")
+        .withArgs(0, s0.address)
+      // SignerUpdated still fires too — they coexist.
+      await expect(tx).to.emit(treasury, "SignerUpdated")
+        .withArgs(0, newSigner.address, s0.address)
+    })
+
+    it("does NOT emit ReusingHistoricalSigner when adding a fresh signer", async function () {
+      const tx = await treasury.connect(owner).replaceSigner(0, newSigner.address)
+      await expect(tx).to.not.emit(treasury, "ReusingHistoricalSigner")
+    })
+  })
 })
