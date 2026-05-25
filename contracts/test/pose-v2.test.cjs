@@ -1067,6 +1067,52 @@ describe("PoSeManagerV2", function () {
     })
   })
 
+  describe("enableEmission idempotency (#734)", function () {
+    it("rejects second call once emission is enabled", async function () {
+      const Token = await ethers.getContractFactory("COCToken")
+      const token = await upgrades.deployProxy(
+        Token,
+        [[deployer.address], [ethers.parseEther("250000000")], deployer.address],
+        { initializer: "initialize", kind: "uups" },
+      )
+      await token.waitForDeployment()
+      await token.setMinter(await manager.getAddress())
+      // First call succeeds (bootstrap)
+      await manager.enableEmission(await token.getAddress(), 100)
+      expect(await manager.emissionEnabled()).to.equal(true)
+      // Second call must revert — would otherwise overwrite cocToken / rewind genesisEpoch
+      await expect(
+        manager.enableEmission(await token.getAddress(), 1000)
+      ).to.be.revertedWithCustomError(manager, "EmissionAlreadyEnabled")
+      // genesisEpoch unchanged
+      expect(await manager.genesisEpoch()).to.equal(100)
+    })
+
+    it("blocks malicious-token swap after emission is enabled", async function () {
+      const Token = await ethers.getContractFactory("COCToken")
+      const realToken = await upgrades.deployProxy(
+        Token,
+        [[deployer.address], [ethers.parseEther("250000000")], deployer.address],
+        { initializer: "initialize", kind: "uups" },
+      )
+      await realToken.waitForDeployment()
+      await realToken.setMinter(await manager.getAddress())
+      await manager.enableEmission(await realToken.getAddress(), 100)
+
+      const maliciousToken = await upgrades.deployProxy(
+        Token,
+        [[deployer.address], [ethers.parseEther("250000000")], deployer.address],
+        { initializer: "initialize", kind: "uups" },
+      )
+      await maliciousToken.waitForDeployment()
+      await expect(
+        manager.enableEmission(await maliciousToken.getAddress(), 100)
+      ).to.be.revertedWithCustomError(manager, "EmissionAlreadyEnabled")
+      // cocToken pointer unchanged
+      expect(await manager.cocToken()).to.equal(await realToken.getAddress())
+    })
+  })
+
   describe("Read helpers", function () {
     it("getNode returns registered node", async function () {
       const { nodeId } = await registerNode(manager, deployer)
