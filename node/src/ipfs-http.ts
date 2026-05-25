@@ -2299,6 +2299,23 @@ export class IpfsHttpServer {
     // #192: dup query params arrive as arrays; coalesce to first.
     const arg = firstQueryValue(url.query?.arg) ?? ""
 
+    // #736: mirror the #9 admin-gate + byte-quota that protects /api/v0/add.
+    // MFS write-side endpoints (write/mkdir/rm/cp/mv) are an equivalent
+    // anonymous-write attack surface — the obs-1 2026-05-24 disk-fill
+    // reproduces through /files/write at the same throughput as /add did.
+    // Read-side endpoints (read/ls/stat/flush) stay anonymous.
+    let mfsReservation: QuotaReservation = { commit: () => {}, refund: () => {} }
+    const isMfsWriteSide =
+      route === "write" || route === "mkdir" || route === "rm" ||
+      route === "cp" || route === "mv" || route === "move"
+    if (isMfsWriteSide) {
+      const rawClientIp = req.socket.remoteAddress ?? "unknown"
+      const clientIp = rawClientIp.startsWith("::ffff:") ? rawClientIp.slice(7) : rawClientIp
+      const reservation = this.enforceAddAuth(req, res, clientIp)
+      if (!reservation) return  // 401 / 429 already written
+      mfsReservation = reservation
+    }
+
     try {
       switch (route) {
         case "mkdir": {
@@ -2326,6 +2343,8 @@ export class IpfsHttpServer {
           }
           const parents = url.query?.parents === "true"
           await this.mfs.mkdir(arg, { parents })
+          // #736: tiny metadata charge so mkdir floods aren't entirely free.
+          mfsReservation.commit(256)
           res.writeHead(200, { "content-type": "application/json" })
           res.end(JSON.stringify({ ok: true }))
           break
@@ -2359,6 +2378,8 @@ export class IpfsHttpServer {
             writeOpts.offset = n
           }
           await this.mfs.write(arg, body, writeOpts)
+          // #736: charge actual bytes written against the anonymous quota.
+          mfsReservation.commit(body.length)
           res.writeHead(200, { "content-type": "application/json" })
           res.end(JSON.stringify({ ok: true }))
           break
@@ -2416,6 +2437,7 @@ export class IpfsHttpServer {
         case "rm": {
           const recursive = url.query?.recursive === "true"
           await this.mfs.rm(arg, { recursive })
+          mfsReservation.commit(256)
           res.writeHead(200, { "content-type": "application/json" })
           res.end(JSON.stringify({ ok: true }))
           break
@@ -2431,6 +2453,7 @@ export class IpfsHttpServer {
             throw new HttpError(400, "bad request", "mv requires two ?arg= values: source and destination")
           }
           await this.mfs.mv(source, dest)
+          mfsReservation.commit(256)
           res.writeHead(200, { "content-type": "application/json" })
           res.end(JSON.stringify({ ok: true }))
           break
@@ -2445,6 +2468,7 @@ export class IpfsHttpServer {
             throw new HttpError(400, "bad request", "cp requires two ?arg= values: source and destination")
           }
           await this.mfs.cp(source, dest)
+          mfsReservation.commit(256)
           res.writeHead(200, { "content-type": "application/json" })
           res.end(JSON.stringify({ ok: true }))
           break
@@ -2561,6 +2585,8 @@ export class IpfsHttpServer {
       try {
         res.end(JSON.stringify(message ? { error: code, message } : { error: code }))
       } catch { /* connection already closed */ }
+      // #736: error path — refund the entire reservation (no bytes consumed).
+      if (isMfsWriteSide) mfsReservation.refund()
     }
   }
 
