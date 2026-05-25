@@ -3412,4 +3412,87 @@ describe("#468 UnixFS directory DAG", () => {
       }
     })
   })
+
+  // #15 (8) (audit follow-up): malicious-input coverage for the multipart
+  // upload path. Existing tests cover the obvious traversal case
+  // (`../escape.txt`); these add cases the auditor flagged as missing —
+  // URL-encoded traversal, Unicode look-alikes, embedded NUL / backslash
+  // / absolute paths, oversize segments, multiple consecutive slashes.
+  describe("#15 (8) sanitizeRelPath / multipart input edge cases", () => {
+    it("accepts URL-encoded `%2e%2e` as a literal segment (NOT decoded — does NOT escape the directory)", async () => {
+      // `%2e%2e` is the literal bytes %, 2, e, %, 2, e — sanitizeRelPath
+      // does not URL-decode. The 6-char string `%2e%2e` is a legitimate
+      // file name and the upload should succeed. The IPFS DAG holds it
+      // as a logical name; it never reaches the local filesystem so
+      // even were it interpreted as `..`, no FS escape is possible.
+      const { status, lines } = await addDir(
+        [{ filename: "%2e%2e", content: "literal" }],
+        "?wrap-with-directory=true",
+      )
+      assert.equal(status, 200, "URL-encoded `..` is literal — must NOT be rejected as traversal")
+      assert(lines.length >= 1)
+    })
+
+    it("accepts Unicode full-width period `．．` as a literal segment", async () => {
+      // U+FF0E FULLWIDTH FULL STOP encodes UTF-8 bytes 0xEF 0xBC 0x8E.
+      // sanitizeRelPath compares strings as `.toString('binary')` so the
+      // raw bytes flow through; none match the ASCII `..` literal.
+      const { status } = await addDir(
+        [{ filename: "．．", content: "wide-dot" }],
+        "?wrap-with-directory=true",
+      )
+      assert.equal(status, 200, "U+FF0E is not ASCII '.', must pass through as a literal name")
+    })
+
+    it("rejects a backslash in the filename", async () => {
+      const { status, raw } = await addDir([{ filename: "foo\\bar.txt", content: "win-style" }])
+      assert.equal(status, 400)
+      assert.match(raw, /backslash|invalid_path/i)
+    })
+
+    it("rejects a NUL byte in the filename", async () => {
+      const { status, raw } = await addDir([{ filename: "name .txt", content: "nul" }])
+      assert.equal(status, 400)
+      assert.match(raw, /NUL|invalid_path/i)
+    })
+
+    it("rejects an absolute path (leading slash)", async () => {
+      const { status, raw } = await addDir([{ filename: "/etc/passwd", content: "absolute" }])
+      assert.equal(status, 400)
+      assert.match(raw, /absolute|invalid_path/i)
+    })
+
+    it("rejects a path with a single-dot `.` segment", async () => {
+      const { status, raw } = await addDir([{ filename: "./hidden", content: "dotseg" }])
+      assert.equal(status, 400)
+      assert.match(raw, /traversal|invalid_path/i)
+    })
+
+    it("normalises consecutive slashes — `a//b/c` becomes `a/b/c`", async () => {
+      const { status, lines } = await addDir(
+        [{ filename: "a//b/c.txt", content: "squished" }],
+        "?wrap-with-directory=true",
+      )
+      assert.equal(status, 200, "consecutive slashes are stripped by the segment filter")
+      // The wrapping root + the file's entries should exist; the importer
+      // collapses the empty segment so we should see `a/b/c.txt` somewhere
+      // in the NDJSON Name lines.
+      assert(lines.some((l) => /b\/c\.txt|\/c\.txt|c\.txt/.test(l.Name)),
+        `expected an entry naming c.txt, got ${JSON.stringify(lines.map((l) => l.Name))}`)
+    })
+
+    it("rejects an oversize single segment (>255 chars)", async () => {
+      const longName = "x".repeat(300) + ".txt"
+      const { status, raw } = await addDir([{ filename: longName, content: "long" }])
+      assert.equal(status, 400)
+      assert.match(raw, /segment too long|invalid_path/i)
+    })
+
+    it("rejects a path with too many nesting levels (>64 segments)", async () => {
+      const deepName = Array.from({ length: 70 }, (_, i) => `d${i}`).join("/") + "/leaf.txt"
+      const { status, raw } = await addDir([{ filename: deepName, content: "deep" }])
+      assert.equal(status, 400)
+      assert.match(raw, /too deep|invalid_path/i)
+    })
+  })
 })
