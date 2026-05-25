@@ -27,5 +27,8 @@
     "storage"
   ],
   "author": "ChainOfClaw",
-  "license": "MIT"
+  "license": "MIT",
+  "overrides": {
+    "multiformats": "^13.3.2"
+  }
 }

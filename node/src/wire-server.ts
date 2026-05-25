@@ -136,6 +136,18 @@ export class WireServer {
   // #733: inbound wire roster (lowercased peer/validator nodeIds + self).
   private readonly knownPeerIds: Set<string>
   private rosterRejectedHandshakes = 0
+  // #13 (audit follow-up): observed source IP per cryptographically-
+  // authenticated nodeId. The handshake's `nodeId` field is peer-self-
+  // reported (Sybil attackers can claim any), and the DHT's per-IP cap
+  // is currently fed by `peer.address` (also self-reported). Recording
+  // the observed `socket.remoteAddress` here lets downstream cap logic
+  // (DHT, rate-limiter) reach back for the real source and refuse to
+  // trust peers' advertised hosts. Map is populated only after the
+  // signature verifier confirms `recovered === claimed`, so any nodeId
+  // present here is genuine (the EOA that owns the signing key did
+  // really connect from that IP).
+  private readonly _observedIpByNodeId = new Map<string, string>()
+  private observedIpMismatchCount = 0
 
   constructor(cfg: WireServerConfig) {
     this.cfg = cfg
@@ -165,6 +177,22 @@ export class WireServer {
     if (typeof nodeId === "string" && nodeId.length > 0) {
       this.knownPeerIds.add(nodeId.toLowerCase())
     }
+  }
+
+  /**
+   * #13 (audit follow-up): observed source IP for a verified nodeId,
+   * or null when we've never seen a successful (signature-verified)
+   * inbound handshake from this nodeId. DHT cap logic should prefer
+   * this over the peer-self-reported `peer.address` so Sybil attackers
+   * cannot pretend to come from arbitrary IPs.
+   *
+   * Returns null when the wire server isn't configured with a verifier
+   * — without cryptographic authentication of nodeId, "observed IP"
+   * for a self-claimed nodeId would lie about authenticity.
+   */
+  observedIpForNodeId(nodeId: string): string | null {
+    if (!this.cfg.verifier) return null
+    return this._observedIpByNodeId.get(nodeId.toLowerCase()) ?? null
   }
 
   /**
@@ -527,6 +555,31 @@ export class WireServer {
         }
         conn.nodeId = hs.nodeId
         conn.handshakeComplete = true
+        // #13: record observed IP for this verified nodeId. Only meaningful
+        // when the signature verifier is active — without it `nodeId` is
+        // pure self-report and binding it to an IP would lie about
+        // authenticity. The IP is normalised the same way the per-IP cap
+        // normalises it (strip IPv4-mapped IPv6 prefix).
+        if (this.cfg.verifier) {
+          const observedRaw = conn.socket.remoteAddress ?? ""
+          const observed = observedRaw.startsWith("::ffff:") ? observedRaw.slice(7) : observedRaw
+          if (observed) {
+            const previous = this._observedIpByNodeId.get(hs.nodeId.toLowerCase())
+            if (previous && previous !== observed) {
+              // Same nodeId now connecting from a different IP — could be a
+              // legitimate roaming validator OR a key-compromise / Sybil
+              // attempt. Log + count; the latest IP wins (avoids ossifying
+              // on a stale entry for a peer that genuinely moved hosts).
+              this.observedIpMismatchCount++
+              log.warn("nodeId observed-IP changed", {
+                nodeId: hs.nodeId,
+                previous,
+                observed,
+              })
+            }
+            this._observedIpByNodeId.set(hs.nodeId.toLowerCase(), observed)
+          }
+        }
         if (conn.handshakeTimer) clearTimeout(conn.handshakeTimer)
         // Reply with ack if this was a handshake (not ack)
         if (frame.type === MessageType.Handshake) {
