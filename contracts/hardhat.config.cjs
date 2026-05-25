@@ -15,12 +15,28 @@ const cocNetwork = {
 
 module.exports = {
   solidity: {
-    version: "0.8.24",
-    settings: {
-      viaIR: true,
-      optimizer: {
-        enabled: true,
-        runs: 200
+    compilers: [
+      {
+        version: "0.8.24",
+        settings: {
+          viaIR: true,
+          optimizer: { enabled: true, runs: 200 }
+        }
+      }
+    ],
+    overrides: {
+      // 2026-05-26: after the #737/#738/#741 audit batch, PoSeManagerV2
+      // bytecode hit 24624 B — 48 B past the EIP-170 24576 B ceiling.
+      // Local override to runs:1 trims ~hundreds of bytes; runtime gas
+      // is a touch higher for V2-internal logic but storage-bound paths
+      // (the majority of finalizeEpochV2 / submitBatchV2 cost) are
+      // largely unaffected. Keep the rest of the suite at runs:200.
+      "contracts-src/settlement/PoSeManagerV2.sol": {
+        version: "0.8.24",
+        settings: {
+          viaIR: true,
+          optimizer: { enabled: true, runs: 1 }
+        }
       }
     }
   },

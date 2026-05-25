@@ -288,6 +288,7 @@ contract Treasury is Initializable, UUPSUpgradeable {
         emit Deposit(msg.sender, msg.value);
     }
 
-    // UUPS storage gap — append-only state from now on.
-    uint256[50] private __gap;
+    // UUPS storage gap — append-only state from now on. Decremented from
+    // 50 → 49 when #15(3) (PR #741) added `wasSignerHistorical` above.
+    uint256[49] private __gap;
 }
