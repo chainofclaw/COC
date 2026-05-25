@@ -27,6 +27,15 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage, UUPSUpgradeable {
     // #680: max epoch batches finalizeEpochV2 / processEpochBatches walk per
     // call — sized to stay well under the block gas limit even at this many.
     uint256 public constant FINALIZE_BATCH_BUDGET = 200;
+    // #12 (audit follow-up): max receipts a single submitBatchV2WithMetadata
+    // call may declare. Bounds the in-memory Merkle rebuild (`_rebuildMerkleRoot`
+    // allocates `bytes32[n]` and runs O(n log n) hashing) so an attacker cannot
+    // burn an unbounded amount of block gas by submitting a maximally wide
+    // batch. The grief cost is borne by the attacker (their own gas), but the
+    // hard cap turns this from an open-ended DoS shape into a fixed envelope —
+    // and the cap is well above any legitimate batch size observed in production
+    // (~tens to low hundreds of receipts per epoch per node).
+    uint256 public constant MAX_RECEIPTS_PER_BATCH = 4096;
     uint256 internal constant SECP256K1N_HALF =
         0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0;
 
@@ -326,6 +335,11 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage, UUPSUpgradeable {
         // produce a zero Merkle root).
         uint256 numReceipts = metadata.leafHashes.length;
         if (numReceipts == 0) revert MetadataLengthMismatch();
+        // #12 (audit follow-up): hard cap on receipts per batch. Bounds the
+        // in-memory Merkle rebuild and the per-receipt loop in
+        // `_validateWitnessQuorumV2` so a single tx can't grief
+        // submitBatchV2WithMetadata into block-gas exhaustion.
+        if (numReceipts > MAX_RECEIPTS_PER_BATCH) revert MetadataLengthMismatch();
         if (metadata.challengeIds.length != numReceipts
             || metadata.nodeIds.length != numReceipts
             || metadata.responseBodyHashes.length != numReceipts) {
