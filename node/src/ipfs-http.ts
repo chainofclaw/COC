@@ -4,7 +4,7 @@ import { parse as parseUrl } from "node:url"
 import { mkdir, readFile, writeFile, rename } from "node:fs/promises"
 import { join } from "node:path"
 import type { IpfsBlockstore } from "./ipfs-blockstore.ts"
-import { UnixFsBuilder, storeRawBlock, loadRawBlock } from "./ipfs-unixfs.ts"
+import { UnixFsBuilder, storeRawBlock, loadRawBlock, computeFileMerkle } from "./ipfs-unixfs.ts"
 import type { IpfsAddResult, UnixFsFileMeta } from "./ipfs-types.ts"
 import type { IpfsMfs } from "./ipfs-mfs.ts"
 import type { IpfsPubsub } from "./ipfs-pubsub.ts"
@@ -1275,8 +1275,70 @@ export class IpfsHttpServer {
       await this.store.pin(node.cid)
     }
 
+    // #10 (audit follow-up): write PoSe `merkleRoot` + `merkleLeaves` to
+    // `file-meta.json` for every file leaf in the upload. Pre-fix, the
+    // directory path bypassed `unixfs.addFile` entirely → no merkle
+    // commitment → those file CIDs were silently exempted from PoSe
+    // challenges (`wrap-with-directory=true` was a free PoSe immunity
+    // header on any single-file upload). `computeFileMerkle` uses the
+    // same `chunkBytes` + `hashLeaf` as `addFile`, so the merkleRoot
+    // is byte-identical for the same input regardless of which upload
+    // path produced the file CID. CID parity is intentionally NOT
+    // claimed — `addFile` wraps single-chunk files in a 1-link dag-pb
+    // root while ipfs-unixfs-importer skips the wrap — but each CID
+    // gets its own file-meta entry keyed by itself, and PoSe `getProof`
+    // resolves the merkle from whatever CID the challenger names.
+    let poseCovered = 0
+    let poseSkipped = 0
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i]
+      if (part.isDir) continue
+      // Find the importer-emitted file CID for this input. The importer
+      // preserves input `path` verbatim, so the file node's `path` ends
+      // with the relative input path. We match by `endsWith` because
+      // wrapWithDirectory may prepend a synthetic wrapper prefix.
+      const inputPath = part.path ?? "file"
+      const fileNode = imported.all.find((n) =>
+        (n.type === "file" || n.type === "raw") &&
+        (n.path === inputPath || n.path.endsWith("/" + inputPath))
+      )
+      if (!fileNode) {
+        poseSkipped += 1
+        continue
+      }
+      try {
+        const { merkleRoot, merkleLeaves } = computeFileMerkle(part.bytes)
+        await this.saveFileMeta({
+          cid: fileNode.cid,
+          size: part.bytes.byteLength,
+          blockSize: 262144,
+          // Leaf CIDs aren't required by PoSe `getProof` (it operates on
+          // merkleLeaves + merklePath only). Leaving empty avoids a second
+          // pass to re-derive leaf CIDs from the importer output, which
+          // doesn't surface chunk-level CIDs in its public emit stream.
+          leaves: [],
+          root: fileNode.cid,
+          merkleRoot,
+          merkleLeaves,
+        })
+        poseCovered += 1
+      } catch (err) {
+        log.warn("PoSe meta computation failed for directory upload entry", {
+          path: inputPath,
+          cid: fileNode.cid,
+          error: String(err),
+        })
+        poseSkipped += 1
+      }
+    }
+
     // kubo NDJSON: one JSON object per line, children first, root last.
-    res.writeHead(200, { "content-type": "application/json" })
+    // X-COC-PoSe-Coverage surfaces the merkle-meta result to operators
+    // so under-coverage (e.g. importer/path mismatch) is visible.
+    res.writeHead(200, {
+      "content-type": "application/json",
+      "x-coc-pose-coverage": `files=${poseCovered},skipped=${poseSkipped}`,
+    })
     for (const node of imported.all) {
       const line: IpfsAddResult = {
         Name: node.path,

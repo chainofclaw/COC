@@ -3226,4 +3226,123 @@ describe("#468 UnixFS directory DAG", () => {
     assert.equal(res.status, 400, `deep directory get must be rejected, got ${res.status}`)
     assert.match(await res.text(), /too deep/)
   })
+
+  // #10 (audit follow-up): wrap-with-directory used to be a PoSe immunity
+  // header — adding it to a single-file upload bypassed unixfs.addFile,
+  // skipped merkle computation, and left the file CID absent from
+  // file-meta.json so PoSe getProof could never address it. Anyone who
+  // wanted to host content without being subject to storage-proof
+  // challenges just had to set the flag. Fix: handleAddDirectory now
+  // computes the merkle commitment for every file leaf via
+  // computeFileMerkle (proven bit-equivalent to addFile in
+  // ipfs-unixfs.test.ts) and persists it to file-meta.json. The
+  // X-COC-PoSe-Coverage response header surfaces the result.
+  describe("#10 PoSe coverage on directory uploads", () => {
+    async function readFileMeta(): Promise<Record<string, { merkleRoot?: string; merkleLeaves?: string[] }>> {
+      const path = join(tmpDir, "file-meta.json")
+      try {
+        const { readFile } = await import("node:fs/promises")
+        return JSON.parse(await readFile(path, "utf8"))
+      } catch {
+        return {}
+      }
+    }
+
+    it("wrap-with-directory single file persists PoSe merkle in file-meta", async () => {
+      const res = await fetch("/api/v0/add?wrap-with-directory=true", {
+        method: "POST",
+        headers: { "content-type": multipart([{ filename: "doc.txt", content: "covered by PoSe" }]).contentType },
+        body: multipart([{ filename: "doc.txt", content: "covered by PoSe" }]).body,
+      })
+      assert.equal(res.status, 200)
+      assert.equal(res.headers["x-coc-pose-coverage"], "files=1,skipped=0",
+        "exactly one file must have been PoSe-covered")
+      const raw = await res.text()
+      const lines = raw.trim().split("\n").map((l) => JSON.parse(l) as Record<string, string>)
+      // file line first, wrapping root last
+      const fileEntry = lines.find((l) => l.Name === "doc.txt")
+      assert.ok(fileEntry, "importer must emit a file entry named doc.txt")
+      const meta = await readFileMeta()
+      assert.ok(meta[fileEntry!.Hash],
+        "file-meta.json MUST contain an entry for the directory-uploaded file CID")
+      assert.match(meta[fileEntry!.Hash].merkleRoot ?? "", /^0x[0-9a-f]{64}$/,
+        "merkleRoot must be present and well-formed")
+      assert.equal(meta[fileEntry!.Hash].merkleLeaves?.length, 1,
+        "single-chunk file → 1 merkle leaf")
+    })
+
+    it("nested directory upload — every file leaf gets PoSe meta", async () => {
+      const { body, contentType } = multipart([
+        { filename: "a.txt", content: "alpha" },
+        { filename: "docs/b.txt", content: "bravo" },
+        { filename: "docs/sub/c.bin", content: "charlie-bytes" },
+      ])
+      const res = await fetch("/api/v0/add", {
+        method: "POST",
+        headers: { "content-type": contentType },
+        body,
+      })
+      assert.equal(res.status, 200)
+      assert.equal(res.headers["x-coc-pose-coverage"], "files=3,skipped=0",
+        "all three file leaves must be PoSe-covered")
+      const meta = await readFileMeta()
+      const fileCount = Object.values(meta).filter((m) => m.merkleRoot && (m.merkleLeaves?.length ?? 0) > 0).length
+      assert.ok(fileCount >= 3,
+        `expected ≥3 file entries in file-meta, got ${fileCount}`)
+    })
+
+    it("PoSe merkle from directory upload matches bare addFile on the same bytes", async () => {
+      // The PoSe security model only requires merkleRoot/merkleLeaves
+      // parity (same raw bytes → same merkle commitment) so storage
+      // proofs are interchangeable regardless of upload path. CID parity
+      // is NOT required and is in fact intentionally divergent:
+      // UnixFsBuilder.addFile always wraps a single-chunk file in a
+      // dag-pb root with one Link, while ipfs-unixfs-importer skips
+      // the wrapping root for files that fit in a single chunk. Both
+      // CIDs are independently valid; each gets its own file-meta entry
+      // keyed by its own CID, and PoSe `getProof` looks up the merkle
+      // by whatever CID the challenger names.
+      const payload = "PoSe equivalence — bare vs directory upload path"
+      // Path 1: directory upload (wrap=true, single file)
+      const dirRes = await addDir([{ filename: "same.txt", content: payload }], "?wrap-with-directory=true")
+      assert.equal(dirRes.status, 200)
+      const dirFile = dirRes.lines.find((l) => l.Name === "same.txt")
+      assert.ok(dirFile, "importer must emit same.txt")
+      const meta1 = await readFileMeta()
+      const dirMerkle = meta1[dirFile!.Hash]
+      assert.ok(dirMerkle, "directory upload must persist meta for the importer's file CID")
+
+      // Path 2: bare single-file upload (no wrap)
+      const bareRes = await fetch("/api/v0/add", {
+        method: "POST",
+        headers: { "content-type": multipart([{ filename: "same.txt", content: payload }]).contentType },
+        body: multipart([{ filename: "same.txt", content: payload }]).body,
+      })
+      assert.equal(bareRes.status, 200)
+      const bareLine = JSON.parse((await bareRes.text()).trim()) as Record<string, string>
+      const meta2 = await readFileMeta()
+      const bareMerkle = meta2[bareLine.Hash]
+      assert.ok(bareMerkle, "bare upload must persist meta for the addFile CID")
+
+      // CIDs may diverge (single-chunk wrap difference) — assert merkle parity:
+      assert.equal(dirMerkle.merkleRoot, bareMerkle.merkleRoot,
+        "merkleRoot parity: same bytes MUST produce identical merkleRoot " +
+        "(PoSe getProof works on either CID's meta)")
+      assert.deepEqual(dirMerkle.merkleLeaves, bareMerkle.merkleLeaves,
+        "merkleLeaves parity: same bytes MUST produce identical merkleLeaves")
+    })
+
+    it("upload of a directory containing 0 files yields coverage files=0,skipped=0", async () => {
+      // Explicit empty directory (no file parts at all)
+      const { body, contentType } = multipart([{ filename: "emptydir", directory: true }])
+      const res = await fetch("/api/v0/add?wrap-with-directory=true", {
+        method: "POST",
+        headers: { "content-type": contentType },
+        body,
+      })
+      assert.equal(res.status, 200)
+      assert.equal(res.headers["x-coc-pose-coverage"], "files=0,skipped=0",
+        "zero-file directory → zero coverage required, zero skipped")
+    })
+  })
 })
