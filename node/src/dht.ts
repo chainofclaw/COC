@@ -88,11 +88,53 @@ export class RoutingTable {
   private readonly pingPeer: ((peer: DhtPeer) => Promise<boolean>) | null
   // Pre-computed global IP count index for O(1) Sybil checks (avoids O(n²) full scan)
   private readonly globalIpCount = new Map<string, number>()
+  /**
+   * #13 (audit follow-up): resolver for the *observed* source IP of a
+   * given nodeId — the IP a verified inbound wire handshake came from,
+   * supplied by `WireServer.observedIpForNodeId`. When attached, the
+   * per-IP Sybil cap (`MAX_PEERS_PER_IP_*`) prefers this over the
+   * peer-self-reported `peer.address`. Without it, an attacker who
+   * connects from one real IP but advertises N different addresses can
+   * occupy N bucket slots that look distinct to the cap.
+   *
+   * Returns null when:
+   *   - the wire server has no verifier (we can't trust the link
+   *     between nodeId and IP), OR
+   *   - we've never had a verified handshake from that nodeId (e.g.
+   *     learned via DHT gossip, not a direct connection).
+   * Falls back to the advertised host in either case.
+   */
+  private readonly observedIpResolver: ((nodeId: string) => string | null) | null
 
-  constructor(localId: string, opts?: { pingPeer?: (peer: DhtPeer) => Promise<boolean> }) {
+  constructor(localId: string, opts?: {
+    pingPeer?: (peer: DhtPeer) => Promise<boolean>
+    observedIpResolver?: (nodeId: string) => string | null
+  }) {
     this.localId = localId
     this.buckets = Array.from({ length: ID_BITS }, () => ({ peers: [] }))
     this.pingPeer = opts?.pingPeer ?? null
+    this.observedIpResolver = opts?.observedIpResolver ?? null
+  }
+
+  /**
+   * #13: attach the wire-server observed-IP resolver post-construction.
+   * The routing table is built before the wire server is wired up in
+   * `coc-ipfs-wiring.ts`; this hook lets the wiring inject the resolver
+   * once both are alive, mirroring `setAwaitReplicationResult` and the
+   * other post-construction injection sites in `IpfsHttpServer`.
+   */
+  setObservedIpResolver(resolver: (nodeId: string) => string | null): void {
+    ;(this as { observedIpResolver: ((nodeId: string) => string | null) | null }).observedIpResolver = resolver
+  }
+
+  /**
+   * #13: resolve a peer's effective host for Sybil-cap purposes —
+   * observed IP wins when known (it's the cryptographically attested
+   * source), else fall back to whatever the peer advertised.
+   */
+  private effectiveHost(peer: DhtPeer): string {
+    const observed = this.observedIpResolver?.(peer.id) ?? null
+    return normalizeHostForBucket(observed ?? extractHost(peer.address))
   }
 
   /**
@@ -110,14 +152,17 @@ export class RoutingTable {
 
     const idx = bucketIndex(this.localId, peer.id)
     const bucket = this.buckets[idx]
-    const peerHost = normalizeHostForBucket(extractHost(peer.address))
+    // #13: prefer the observed source IP when the wire server has
+    // cryptographically attested it. Falls back to the peer's
+    // self-reported `address` when no verified handshake has happened.
+    const peerHost = this.effectiveHost(peer)
 
     // Check if peer already exists
     const existing = bucket.peers.findIndex((p) => p.id === peer.id)
     if (existing >= 0) {
       // Move to tail (most recently seen); update global IP count if address changed
       const oldPeer = bucket.peers[existing]
-      const oldHost = normalizeHostForBucket(extractHost(oldPeer.address))
+      const oldHost = this.effectiveHost(oldPeer)
       // #729: when the address normalises to a different host, re-validate
       // the per-IP Sybil caps against the new host BEFORE swapping. Without
       // this gate, an attacker who established N peers across N distinct
@@ -129,7 +174,7 @@ export class RoutingTable {
         let sameHostInBucket = 0
         for (let i = 0; i < bucket.peers.length; i++) {
           if (i === existing) continue // exclude the entry we'd be updating
-          const h = normalizeHostForBucket(extractHost(bucket.peers[i].address))
+          const h = this.effectiveHost(bucket.peers[i])
           if (h === peerHost) sameHostInBucket++
         }
         if (sameHostInBucket >= MAX_PEERS_PER_IP_PER_BUCKET) {
@@ -166,7 +211,7 @@ export class RoutingTable {
     if (!isLoopbackHost(peerHost)) {
       let sameHostInBucket = 0
       for (const p of bucket.peers) {
-        const existingHost = normalizeHostForBucket(extractHost(p.address))
+        const existingHost = this.effectiveHost(p)
         if (existingHost === peerHost) sameHostInBucket++
       }
       if (sameHostInBucket >= MAX_PEERS_PER_IP_PER_BUCKET) {
@@ -206,7 +251,7 @@ export class RoutingTable {
         }
       } else if (!alive) {
         // Evict unreachable peer, add new peer at tail (only if bucket won't exceed K)
-        const evictedHost = normalizeHostForBucket(extractHost(bucket.peers[pos].address))
+        const evictedHost = this.effectiveHost(bucket.peers[pos])
         bucket.peers.splice(pos, 1)
         this.decrementGlobalIpCount(evictedHost)
         if (bucket.peers.length < K) {
@@ -234,7 +279,7 @@ export class RoutingTable {
     const bucket = this.buckets[idx]
     const pos = bucket.peers.findIndex((p) => p.id === peerId)
     if (pos >= 0) {
-      const removedHost = normalizeHostForBucket(extractHost(bucket.peers[pos].address))
+      const removedHost = this.effectiveHost(bucket.peers[pos])
       bucket.peers.splice(pos, 1)
       this.decrementGlobalIpCount(removedHost)
       return true

@@ -302,3 +302,67 @@ describe("RoutingTable", () => {
     assert.equal(stats.nonEmptyBuckets, 5)
   })
 })
+
+// #13 (audit follow-up): RoutingTable's per-IP Sybil cap had been keyed
+// off the peer-self-reported `peer.address`. A Sybil attacker connecting
+// from one real IP but advertising N distinct addresses would occupy N
+// bucket slots that look distinct to the cap. The fix lets the wire
+// server inject an observedIpResolver that returns the IP the verified
+// handshake actually came from; the cap now uses observed when known.
+describe("#13 RoutingTable observed-IP cap", () => {
+  it("falls back to advertised host when no resolver attached", async () => {
+    const rt = new RoutingTable("0x" + "00".repeat(32))
+    const p = { id: "0x" + "11".repeat(32), address: "203.0.113.5:1000" } as DhtPeer
+    assert.equal(await rt.addPeer(p), true)
+    assert.equal(rt.size(), 1)
+  })
+
+  it("falls back to advertised when resolver returns null for the nodeId", async () => {
+    const rt = new RoutingTable("0x" + "00".repeat(32), {
+      observedIpResolver: () => null,
+    })
+    const p = { id: "0x" + "22".repeat(32), address: "198.51.100.7:1000" } as DhtPeer
+    assert.equal(await rt.addPeer(p), true)
+  })
+
+  it("uses observed IP — collapses two distinct-advertised peers into one bucket slot when observed matches", async () => {
+    // Setup: 2 peers, each advertising different IPs but both observed
+    // from the SAME real source. Without the fix both pass the per-IP
+    // cap because peer.address differs. With the fix, observed wins and
+    // the second is rejected once we hit MAX_PEERS_PER_IP_PER_BUCKET=2.
+    const observed = "10.0.0.1"
+    const observedByNodeId = new Map<string, string>()
+    const rt = new RoutingTable("0x" + "00".repeat(32), {
+      observedIpResolver: (nodeId) => observedByNodeId.get(nodeId.toLowerCase()) ?? null,
+    })
+    // 3 peers in the same bucket (bucket 0 — leading byte 0x01) so they
+    // compete for MAX_PEERS_PER_IP_PER_BUCKET=2.
+    const peerIds = [
+      "0x01" + "11".repeat(31),
+      "0x01" + "22".repeat(31),
+      "0x01" + "33".repeat(31),
+    ]
+    for (let i = 0; i < peerIds.length; i++) {
+      observedByNodeId.set(peerIds[i].toLowerCase(), observed)
+    }
+    // All advertise different addresses; observed is the same for all.
+    assert.equal(await rt.addPeer({ id: peerIds[0], address: "203.0.113.1:1000" } as DhtPeer), true)
+    assert.equal(await rt.addPeer({ id: peerIds[1], address: "203.0.113.2:1000" } as DhtPeer), true)
+    // 3rd would push same-host count to 3 > MAX_PEERS_PER_IP_PER_BUCKET=2.
+    assert.equal(await rt.addPeer({ id: peerIds[2], address: "203.0.113.3:1000" } as DhtPeer), false,
+      "3rd peer with same observed IP MUST be capped even though advertised IPs differ")
+  })
+
+  it("setObservedIpResolver attaches post-construction (wiring injection)", async () => {
+    const observed = "10.0.0.42"
+    const rt = new RoutingTable("0x" + "00".repeat(32))
+    // Pre-injection: cap uses advertised — both peers admitted (different addresses)
+    rt.setObservedIpResolver((nodeId) => nodeId.startsWith("0xaa") ? observed : null)
+    // Verify the resolver is consulted — but exact effect depends on
+    // bucket placement; a more granular assertion would duplicate the
+    // cap-test above. Smoke check that setObservedIpResolver doesn't
+    // throw and the routing table keeps accepting peers.
+    const p = { id: "0xaa" + "00".repeat(31), address: "203.0.113.1:1000" } as DhtPeer
+    assert.equal(await rt.addPeer(p), true)
+  })
+})
