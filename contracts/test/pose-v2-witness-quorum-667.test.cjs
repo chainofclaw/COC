@@ -421,4 +421,128 @@ describe("PoSeManagerV2 — #667 witness-quorum independent verification", funct
       metadata,
     })).to.be.revertedWithCustomError(manager, "MetadataLengthMismatch")
   })
+
+  // #7 (audit follow-up): per-operator dedup in _validateWitnessQuorumV2.
+  // A single real-world entity can register up to MAX_NODES_PER_OPERATOR (5)
+  // distinct nodeIds. When the PRNG-selected witnessSet contains two slots
+  // whose nodeOperator[] resolves to the same EOA, naïve bit-counting let
+  // that one entity deliver the K-of-N quorum singlehandedly — collapsing
+  // the security threshold to 1-of-1. The fix rejects on second appearance
+  // of the same operator within a single quorum vote.
+  describe("#7 per-operator quorum dedup", function () {
+    // Register an "alias" nodeId under an existing operator EOA. The alias
+    // is a fresh signing key whose public key derives the nodeId; the
+    // ownership proof is signed by the alias (proving alias controls the
+    // pubkey), while msg.sender = operator (proving operator pays bond).
+    // This is the legitimate multi-node-per-operator flow that #7 closes.
+    async function registerAliasForOperator(manager, funder, operator, label) {
+      const alias = ethers.Wallet.createRandom()
+      const pubkey = alias.signingKey.publicKey
+      const nodeId = ethers.keccak256(pubkey)
+      // Operator bond cost: MIN_BOND << existingNodeCount; with 2 nodes it's
+      // 0.1 + 0.2 = 0.3 ETH. registerWitness funded operator with 5 ETH.
+      const serviceCommitment = ethers.keccak256(ethers.toUtf8Bytes(`svc-${label}`))
+      const endpointCommitment = ethers.keccak256(ethers.toUtf8Bytes(`ep-${label}-${Date.now()}-${Math.random()}`))
+      const metadataHash = ethers.keccak256(ethers.toUtf8Bytes(`meta-${label}`))
+      const messageHash = ethers.keccak256(
+        ethers.solidityPacked(["string", "bytes32", "address"], ["coc-register:", nodeId, operator.address])
+      )
+      const ownershipSig = await alias.signMessage(ethers.getBytes(messageHash))
+      // Bond for the second node is MIN_BOND << 1 = 0.2 ETH. Pay 0.5 ETH
+      // to keep tests cheap.
+      await manager.connect(operator).registerNode(
+        nodeId, pubkey, 7, serviceCommitment, endpointCommitment, metadataHash, ownershipSig, "0x",
+        { value: ethers.parseEther("0.5") }
+      )
+      return { operator, nodeId, pubkey }
+    }
+
+    // Locate witnessSet[i] for the given nodeId — needed because the PRNG
+    // determines slot order, so callers must dynamically construct the
+    // witnessBitmap + signatures keyed off the actual slot of each node.
+    function slotOf(witnessSet, nodeId) {
+      const target = nodeId.toLowerCase()
+      for (let i = 0; i < witnessSet.length; i++) {
+        if (witnessSet[i].toLowerCase() === target) return i
+      }
+      throw new Error(`nodeId ${nodeId} not found in witnessSet`)
+    }
+
+    it("reverts WitnessOperatorDuplicate when both witnessSet slots resolve to the same operator", async function () {
+      // Operator EOA registers two distinct nodeIds. Both are in the
+      // witnessSet (m=2 since activeCount=2 → ceil(sqrt(2))=2).
+      const first = await registerWitness(manager, deployer, "dup-primary")
+      const second = await registerAliasForOperator(manager, deployer, first.operator, "dup-alias")
+      const receipt = makeReceipt("dup")
+      const epochId = Math.floor((await ethers.provider.getBlock("latest")).timestamp / 3600)
+
+      const witnessSet = await manager.getWitnessSet(epochId)
+      expect(witnessSet.length).to.equal(2)
+      const slotA = slotOf(witnessSet, first.nodeId)
+      const slotB = slotOf(witnessSet, second.nodeId)
+      // required = ceil(2*m/3) = ceil(4/3) = 2 — both bits must be set.
+      // Both sigs recover to first.operator — pre-fix this passed; post-fix
+      // it must revert.
+      const sigArgs = (witnessIndex) => ({
+        challengeId: receipt.challengeId,
+        responseBodyHash: receipt.responseBodyHash,
+        witnessIndex,
+        epochId,
+      })
+      const sigA = await signWitnessV2(manager, { operator: first.operator, nodeId: witnessSet[slotA] }, sigArgs(slotA))
+      const sigB = await signWitnessV2(manager, { operator: first.operator, nodeId: witnessSet[slotB] }, sigArgs(slotB))
+      const witnessBitmap = (1 << slotA) | (1 << slotB)
+      // witnessSignatures must be ordered low-bit-first — matches the
+      // contract's iteration order.
+      const sigs = slotA < slotB ? [sigA, sigB] : [sigB, sigA]
+      const witnessReceiptIndex = slotA < slotB ? [[slotA, 0], [slotB, 0]] : [[slotB, 0], [slotA, 0]]
+      const metadata = buildMetadata([receipt], witnessReceiptIndex)
+
+      await expect(submitV2Metadata(manager, {
+        epochId,
+        merkleRoot: buildMerkleRoot([receipt.leafHash]),
+        sampleLeaf: receipt.leafHash,
+        witnessBitmap,
+        witnessSignatures: sigs,
+        metadata,
+      })).to.be.revertedWithCustomError(manager, "WitnessOperatorDuplicate")
+    })
+
+    it("admits a quorum from two distinct operators (no false-positive on legitimate K-of-N)", async function () {
+      // Same shape as the duplicate test but each nodeId has its OWN
+      // operator EOA. The dedup must not fire.
+      const a = await registerWitness(manager, deployer, "dist-a")
+      const b = await registerWitness(manager, deployer, "dist-b")
+      const receipt = makeReceipt("dist")
+      const epochId = Math.floor((await ethers.provider.getBlock("latest")).timestamp / 3600)
+
+      const witnessSet = await manager.getWitnessSet(epochId)
+      expect(witnessSet.length).to.equal(2)
+      const slotA = slotOf(witnessSet, a.nodeId)
+      const slotB = slotOf(witnessSet, b.nodeId)
+      const sigA = await signWitnessV2(
+        manager,
+        { operator: a.operator, nodeId: witnessSet[slotA] },
+        { challengeId: receipt.challengeId, responseBodyHash: receipt.responseBodyHash, witnessIndex: slotA, epochId },
+      )
+      const sigB = await signWitnessV2(
+        manager,
+        { operator: b.operator, nodeId: witnessSet[slotB] },
+        { challengeId: receipt.challengeId, responseBodyHash: receipt.responseBodyHash, witnessIndex: slotB, epochId },
+      )
+      const witnessBitmap = (1 << slotA) | (1 << slotB)
+      const sigs = slotA < slotB ? [sigA, sigB] : [sigB, sigA]
+      const witnessReceiptIndex = slotA < slotB ? [[slotA, 0], [slotB, 0]] : [[slotB, 0], [slotA, 0]]
+      const metadata = buildMetadata([receipt], witnessReceiptIndex)
+
+      await expect(submitV2Metadata(manager, {
+        epochId,
+        merkleRoot: buildMerkleRoot([receipt.leafHash]),
+        sampleLeaf: receipt.leafHash,
+        witnessBitmap,
+        witnessSignatures: sigs,
+        metadata,
+      })).to.emit(manager, "ReceiptBatchMetadataSubmitted")
+    })
+  })
 })

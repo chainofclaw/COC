@@ -59,6 +59,11 @@ interface IPoSeManagerV2 {
     error MerkleRootMismatch();
     error MetadataLengthMismatch();
     error BadReceiptIndex();
+    /// @notice #7 — two witnessSet slots resolved to the same operator address
+    ///         within a single quorum vote. A single real-world entity running
+    ///         multiple nodeIds (up to MAX_NODES_PER_OPERATOR) would otherwise
+    ///         be able to deliver the K-of-N quorum singlehandedly.
+    error WitnessOperatorDuplicate();
 
     // Functions
     function initEpochNonce(uint64 epochId) external;
