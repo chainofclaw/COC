@@ -198,6 +198,10 @@ describe("B1: Node identity authentication", () => {
     const serverKey = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
     const serverSigner = createNodeSigner(serverKey)
 
+    // Client with valid identity
+    const clientKey = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
+    const clientSigner = createNodeSigner(clientKey)
+
     server = new WireServer({
       port,
       nodeId: serverSigner.nodeId,
@@ -207,13 +211,11 @@ describe("B1: Node identity authentication", () => {
       getHeight: () => Promise.resolve(0n),
       signer: serverSigner,
       verifier: serverSigner,
+      // #733: client must be in roster for handshake to complete
+      peers: [{ id: clientSigner.nodeId }],
     })
     server.start()
     await new Promise((r) => setTimeout(r, 100))
-
-    // Client with valid identity
-    const clientKey = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
-    const clientSigner = createNodeSigner(clientKey)
 
     const socket = await connectSocket("127.0.0.1", port)
     sockets.push(socket)

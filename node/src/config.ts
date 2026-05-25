@@ -63,6 +63,20 @@ export interface NodeConfig {
   p2pRateLimitMaxRequests: number
   p2pRequireInboundAuth: boolean
   p2pInboundAuthMode: "off" | "monitor" | "enforce"
+  /**
+   * #732: when enforce mode is on, additionally require the auth-envelope
+   * senderId to be a member of cfg.peers[].id ∪ self nodeId. Defaults true
+   * in enforce mode; set false for permissionless public-sync deployments
+   * that want to rely on rate-limit alone.
+   */
+  p2pInboundAuthRequireRoster: boolean
+  /**
+   * #733: wire-server handshake equivalent. When on (default true), the
+   * claimed nodeId in an inbound wire handshake must be in cfg.peers[].id ∪
+   * self nodeId — otherwise an EOA can self-sign a handshake and saturate
+   * the wire connection cap.
+   */
+  inboundWireRequireRoster: boolean
   p2pAuthMaxClockSkewMs: number
   p2pAuthNonceRegistryPath: string
   p2pAuthNonceTtlMs: number
@@ -278,6 +292,19 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
         ? (p2pRequireInboundAuthFromUser ? "enforce" : "off")
         : "enforce")
   const p2pRequireInboundAuth = p2pInboundAuthMode === "enforce"
+  // #732 / #733: roster-check toggles. Default true (secure default).
+  // Operators can disable via COC_*_REQUIRE_ROSTER=0 or user config bool.
+  const parseRosterFlag = (envName: string, userField: string): boolean => {
+    const envRaw = process.env[envName]
+    if (envRaw !== undefined) return !(envRaw === "0" || envRaw.toLowerCase() === "false")
+    const userVal = (user as Record<string, unknown>)[userField]
+    if (typeof userVal === "boolean") return userVal
+    return true
+  }
+  const p2pInboundAuthRequireRoster = parseRosterFlag(
+    "COC_P2P_AUTH_REQUIRE_ROSTER", "p2pInboundAuthRequireRoster")
+  const inboundWireRequireRoster = parseRosterFlag(
+    "COC_WIRE_REQUIRE_ROSTER", "inboundWireRequireRoster")
   const p2pAuthMaxClockSkewMs = safeParseInt(
     process.env.COC_P2P_AUTH_MAX_CLOCK_SKEW_MS,
     Number((user as Record<string, unknown>).p2pAuthMaxClockSkewMs ?? 120_000),
@@ -676,6 +703,8 @@ export async function loadNodeConfig(): Promise<NodeConfig> {
     poseNonceRegistryMaxEntries,
     p2pRequireInboundAuth,
     p2pInboundAuthMode,
+    p2pInboundAuthRequireRoster,
+    inboundWireRequireRoster,
     p2pAuthMaxClockSkewMs,
     p2pAuthNonceRegistryPath,
     p2pAuthNonceTtlMs,
@@ -981,6 +1010,14 @@ export function validateConfig(cfg: Partial<NodeConfig>): string[] {
 
   if (cfg.p2pRequireInboundAuth !== undefined && typeof cfg.p2pRequireInboundAuth !== "boolean") {
     errors.push("p2pRequireInboundAuth must be a boolean")
+  }
+
+  if (cfg.p2pInboundAuthRequireRoster !== undefined && typeof cfg.p2pInboundAuthRequireRoster !== "boolean") {
+    errors.push("p2pInboundAuthRequireRoster must be a boolean")
+  }
+
+  if (cfg.inboundWireRequireRoster !== undefined && typeof cfg.inboundWireRequireRoster !== "boolean") {
+    errors.push("inboundWireRequireRoster must be a boolean")
   }
 
   if (cfg.allowLoopbackRpcAuth !== undefined && typeof cfg.allowLoopbackRpcAuth !== "boolean") {
