@@ -53,6 +53,33 @@ export class ContractReader {
     return tip
   }
 
+  // #667 (audit follow-up, 2026-05-26) — Push-verification needs the
+  // witness side to look up the prover's registered operator address
+  // so it can compare against `ecrecover(RECEIPT digest, nodeSig)`.
+  // Without this view call the witness only knows "some EOA signed it",
+  // which any attacker controls — defeating the whole point of the
+  // verification.
+  //
+  // Result is cached for `cacheTtlMs` (default 30s) so the per-attestation
+  // RPC cost is amortized across batches of receipts on the same prover.
+  async getNodeOperator(nodeId: Hex32): Promise<string> {
+    const key = `nodeOperator:${nodeId.toLowerCase()}`
+    const cached = this.getCached<string>(key)
+    if (cached !== undefined) return cached
+
+    // `nodeOperator(bytes32 nodeId) returns (address)` — `bytes32` ABI-encoded as 32-byte big-endian.
+    const padded = nodeId.startsWith("0x") || nodeId.startsWith("0X") ? nodeId.slice(2) : nodeId
+    if (padded.length !== 64) {
+      throw new Error(`getNodeOperator: nodeId must be 32 bytes (got ${padded.length / 2} bytes)`)
+    }
+    const selector = encodeBytes32FunctionCall("nodeOperator(bytes32)", padded)
+    const result = await this.ethCall(selector)
+    // Address is the last 20 bytes of the 32-byte return word.
+    const addr = `0x${result.slice(2).padStart(64, "0").slice(-40)}`.toLowerCase()
+    this.setCache(key, addr)
+    return addr
+  }
+
   async getEpochRewardRoot(epochId: bigint): Promise<Hex32> {
     const key = `rewardRoot:${epochId}`
     const cached = this.getCached<Hex32>(key)
@@ -115,6 +142,15 @@ function encodeFunctionCall(sig: string, params: bigint[]): string {
     data += p.toString(16).padStart(64, "0")
   }
   return data
+}
+
+// ABI encoder for a single bytes32 argument — used by getNodeOperator (#667).
+// Selector hash is computed the same way as encodeFunctionCall; the only
+// difference is the value is already a 64-char hex string (no padding).
+function encodeBytes32FunctionCall(sig: string, paramHex: string): string {
+  const fnSelector = sig.slice(0, sig.indexOf("("))
+  const selectorHash = simpleKeccak256(fnSelector + sig.slice(sig.indexOf("(")))
+  return "0x" + selectorHash.slice(0, 8) + paramHex
 }
 
 function simpleKeccak256(input: string): string {

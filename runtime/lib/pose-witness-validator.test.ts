@@ -91,3 +91,78 @@ test("#322: KEY invariant — error message must NOT echo client input", () => {
     assert.ok(!r.error.includes("AAA"), `error must not echo input, got: ${r.error}`);
   }
 });
+
+// #667 (audit follow-up, 2026-05-26) — validator regressions.
+
+test("#667: accepts 32-byte poseNodeId (v2 EIP-712 bytes32 form)", () => {
+  // Pre-fix the validator hard-locked nodeId to 20-byte address, which
+  // silently rejected every v2 witness request (collector uses 32-byte
+  // poseNodeId = keccak(pubkey)). That left production stuck on the
+  // empty-witness owner-only fallback.
+  const r = validatePoseWitnessPayload({
+    ...VALID,
+    nodeId: "0x" + "b".repeat(64), // 32 bytes
+  });
+  assert.equal(r.ok, true);
+  if (r.ok) {
+    assert.equal(r.fields.nodeId.length, 66);
+  }
+});
+
+test("#667: partial push-fields set rejected (no downgrade attack)", () => {
+  // Caller must provide either all five push fields or none. Partial
+  // sets must reject so a malicious caller can't drop nodeSig (skip sig
+  // verification) while keeping responseBody (look legit in logs).
+  const partial = validatePoseWitnessPayload({
+    ...VALID,
+    responseBody: { ok: true },
+    responseAtMs: 1234,
+    // nodeSig / tipHash / tipHeight intentionally omitted
+  });
+  assert.equal(partial.ok, false);
+  if (!partial.ok) {
+    assert.match(partial.error, /push fields must be supplied together/);
+  }
+});
+
+test("#667: all push fields present → carried through to fields", () => {
+  const r = validatePoseWitnessPayload({
+    ...VALID,
+    responseBody: { ok: true, blockNumber: 42 },
+    responseAtMs: 1700000000000,
+    nodeSig: "0x" + "ab".repeat(65),
+    tipHash: "0x" + "cd".repeat(32),
+    tipHeight: 100,
+  });
+  assert.equal(r.ok, true);
+  if (r.ok) {
+    assert.deepEqual(r.fields.responseBody, { ok: true, blockNumber: 42 });
+    assert.equal(r.fields.responseAtMs, 1700000000000);
+    assert.equal(r.fields.nodeSig?.length, 132);
+    assert.equal(r.fields.tipHeight, 100n);
+  }
+});
+
+test("#667: invalid push-field shapes rejected with deterministic errors", () => {
+  const FULL_PUSH = {
+    responseBody: { ok: true },
+    responseAtMs: 1234,
+    nodeSig: "0x" + "ab".repeat(65),
+    tipHash: "0x" + "cd".repeat(32),
+    tipHeight: 100,
+  };
+  // responseBody must be object (array is rejected)
+  const r1 = validatePoseWitnessPayload({ ...VALID, ...FULL_PUSH, responseBody: [1, 2, 3] });
+  assert.equal(r1.ok, false);
+  if (!r1.ok) assert.match(r1.error, /responseBody/);
+
+  // nodeSig wrong length
+  const r2 = validatePoseWitnessPayload({ ...VALID, ...FULL_PUSH, nodeSig: "0x00" });
+  assert.equal(r2.ok, false);
+  if (!r2.ok) assert.match(r2.error, /nodeSig/);
+
+  // tipHeight negative
+  const r3 = validatePoseWitnessPayload({ ...VALID, ...FULL_PUSH, tipHeight: -1 });
+  assert.equal(r3.ok, false);
+  if (!r3.ok) assert.match(r3.error, /tipHeight/);
+});
