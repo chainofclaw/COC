@@ -7,7 +7,11 @@ import { recordChallengeBounded } from "./lib/bounded-challenge-store.ts";
 import { validatePoseWitnessPayload } from "./lib/pose-witness-validator.ts";
 import { verifyPushedReceipt } from "./lib/pose-witness-verifier.ts";
 import { ContractReader } from "./lib/contract-reader.ts";
-import { isPoseWitnessRequestAuthorized, resolvePoseWitnessAuthToken } from "./lib/pose-witness-auth.ts";
+import {
+  assertPoseWitnessAuthConfigured,
+  createPoseWitnessAuth,
+  resolvePoseWitnessAuthToken,
+} from "./lib/pose-witness-auth.ts";
 import { IpfsBlockstore } from "../node/src/ipfs-blockstore.ts";
 import { loadStorageProof, MerkleLeavesCache } from "./lib/storage-proof.ts";
 import { readBoundedBody } from "./lib/pose-body-reader.ts";
@@ -23,6 +27,36 @@ const bind = process.env.COC_NODE_BIND || config.nodeBind || "127.0.0.1";
 const port = Number(process.env.COC_NODE_PORT || config.nodePort || 18780);
 const storageDir = resolveStorageDir(config.dataDir, config.storageDir);
 const poseWitnessAuthToken = resolvePoseWitnessAuthToken(process.env.COC_POSE_WITNESS_AUTH_TOKEN, config.poseWitnessAuthToken);
+
+// #750 (#667 F7, audit follow-up 2026-05-26) — runtime auth mode.
+// Reads X-Forwarded-For only when the immediate peer is in the
+// trusted-proxy allowlist so an external caller can't spoof loopback
+// by injecting the header themselves. Asserts the mode at startup so
+// a misconfigured deployment (non-loopback bind without a token AND
+// without a trusted proxy) refuses to start instead of silently
+// accepting every external request as loopback after the reverse proxy.
+const poseWitnessTrustedProxies = (process.env.COC_POSE_WITNESS_TRUSTED_PROXIES ?? "")
+  .split(",")
+  .map(s => s.trim())
+  .filter(Boolean);
+const poseWitnessAllowInsecure = (() => {
+  const raw = process.env.COC_POSE_WITNESS_ALLOW_INSECURE?.trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes";
+})();
+assertPoseWitnessAuthConfigured(
+  { authToken: poseWitnessAuthToken, trustedProxies: poseWitnessTrustedProxies },
+  { bindHost: bind, allowInsecure: poseWitnessAllowInsecure },
+);
+const poseWitnessAuth = createPoseWitnessAuth(
+  { authToken: poseWitnessAuthToken, trustedProxies: poseWitnessTrustedProxies },
+  { bindHost: bind },
+);
+log.info("pose-witness auth configured", {
+  mode: poseWitnessAuth.mode(),
+  bind,
+  trustedProxies: poseWitnessTrustedProxies.length,
+  allowInsecure: poseWitnessAllowInsecure,
+});
 
 // Phase C2.1: when FF is on, the receipt handler reads real chunk bytes
 // from the IPFS blockstore rooted at `storageDir` (same path the main
@@ -435,7 +469,7 @@ const server = http.createServer((req, res) => {
     if (!nodeSignerV2) {
       return json(res, 501, { error: "v2 protocol not enabled" });
     }
-    if (!isPoseWitnessRequestAuthorized(req, poseWitnessAuthToken)) {
+    if (!poseWitnessAuth.isAuthorized(req)) {
       return json(res, 401, { error: "unauthorized witness request" });
     }
     // #292: body bounded via readBody (1 MB cap). Same DoS class as
