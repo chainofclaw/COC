@@ -219,6 +219,13 @@ test("R2.2 governance DAO lifecycle: propose → vote → queue → execute end-
     assert.equal(await fr.humanCount(), 4n)
     assert.equal(await fr.clawCount(), 0n)
 
+    // #735 (PR #745): onlyRegistered now also requires `isVerified`.
+    // Grandfather all 4 voters via the deployer/owner.
+    await (await fr.connect(deployerWallet).verify(deployerWallet.address, txOpts()) as any).wait()
+    for (const w of humanWallets) {
+      await (await fr.connect(deployerWallet).verify(w.address, txOpts()) as any).wait()
+    }
+
     // ── Step 5: Submit a FreeText proposal ─────────────────────────────
     // FreeText (type=5) has no execution side effect — verifies the
     // lifecycle (propose → vote → queue → execute state transitions)
