@@ -45,13 +45,17 @@ abstract contract PoSeManagerStorage is Initializable {
 
     event OwnerUpdated(address indexed oldOwner, address indexed newOwner);
 
+    error NotOwner();
+    error MissingRole();
+    error ZeroOwner();
+
     modifier onlyOwner() {
-        require(msg.sender == owner, "not owner");
+        if (msg.sender != owner) revert NotOwner();
         _;
     }
 
     modifier onlyRole(bytes32 role) {
-        require(roles[role][msg.sender], "missing role");
+        if (!roles[role][msg.sender]) revert MissingRole();
         _;
     }
 
@@ -59,14 +63,14 @@ abstract contract PoSeManagerStorage is Initializable {
     ///      v1 and PoSeManagerV2). Each derived contract calls this from its
     ///      own `initialize(...)` function under the `initializer` modifier.
     function __PoSeManagerStorage_init(address initialOwner) internal onlyInitializing {
-        require(initialOwner != address(0), "zero owner");
+        if (initialOwner == address(0)) revert ZeroOwner();
         owner = initialOwner;
         roles[SLASHER_ROLE][initialOwner] = true;
     }
 
     /// @notice Transfer contract ownership (#686 — moves owner to a multisig).
     function transferOwnership(address newOwner) external onlyOwner {
-        require(newOwner != address(0), "zero owner");
+        if (newOwner == address(0)) revert ZeroOwner();
         emit OwnerUpdated(owner, newOwner);
         owner = newOwner;
     }
@@ -87,6 +91,21 @@ abstract contract PoSeManagerStorage is Initializable {
         roles[role][account] = enabled;
     }
 
+    // --- #748 (#667 F5) — v1 witness typehash sunset cap ---
+    //
+    // `_validateWitnessQuorumV2` tries the v2 typehash (which binds
+    // epochId) first and falls back to v1 (which does not). v1 sigs
+    // can therefore be replayed across epochs as long as the witness
+    // is in both epochs' witnessSets and the (challengeId, bodyHash)
+    // pair matches the replay target. PR-E will drop v1 entirely; until
+    // then this storage slot lets the owner hard-cap the v1 fallback
+    // to `epochId <= v1SunsetEpoch`. Set to `type(uint64).max` at
+    // initialize() so legacy in-flight batches stay accepted by default
+    // (no behaviour change on the upgrade); operators tighten it once
+    // the agent fleet finishes the v2 typehash migration.
+    uint64 public v1SunsetEpoch;
+
     // UUPS storage gap (base class) — append-only state from now on.
-    uint256[50] private __gap;
+    // Reduced from 50 → 49 when `v1SunsetEpoch` was added in #748 (#667 F5).
+    uint256[49] private __gap;
 }

@@ -151,12 +151,14 @@ describe("Contract ownership transfer (#686)", function () {
     })
 
     it("rejects a non-owner and the zero address", async function () {
+      // #748 (#667 F5) — PoSeManagerStorage migrated to custom errors
+      // (NotOwner / ZeroOwner) so the contract bytecode would fit under
+      // EIP-170 alongside the v1 sunset cap. Tests follow.
       await expect(
         c.connect(outsider).transferOwnership(outsider.address),
-      ).to.be.revertedWith("not owner")
-      await expect(c.transferOwnership(ethers.ZeroAddress)).to.be.revertedWith(
-        "zero owner",
-      )
+      ).to.be.revertedWithCustomError(c, "NotOwner")
+      await expect(c.transferOwnership(ethers.ZeroAddress))
+        .to.be.revertedWithCustomError(c, "ZeroOwner")
     })
   })
 
@@ -176,17 +178,16 @@ describe("Contract ownership transfer (#686)", function () {
     it("rejects a non-owner and the zero address", async function () {
       await expect(
         c.connect(outsider).transferOwnership(outsider.address),
-      ).to.be.revertedWith("not owner")
-      await expect(c.transferOwnership(ethers.ZeroAddress)).to.be.revertedWith(
-        "zero owner",
-      )
+      ).to.be.revertedWithCustomError(c, "NotOwner")
+      await expect(c.transferOwnership(ethers.ZeroAddress))
+        .to.be.revertedWithCustomError(c, "ZeroOwner")
     })
 
     it("moves admin power to the new owner", async function () {
       await c.transferOwnership(newOwner.address)
       await expect(
         c.connect(deployer).setChallengeBondMin(1),
-      ).to.be.revertedWith("not owner")
+      ).to.be.revertedWithCustomError(c, "NotOwner")
       await c.connect(newOwner).setChallengeBondMin(1)
       expect(await c.challengeBondMin()).to.equal(1)
     })

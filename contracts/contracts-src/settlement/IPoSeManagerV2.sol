@@ -10,6 +10,9 @@ interface IPoSeManagerV2 {
 
     // v2 Events
     event EpochNonceSet(uint64 indexed epochId, uint64 nonce);
+    // #748 (#667 F5): owner-settable cap above which the v1 witness
+    // typehash fallback is rejected. See PoSeManagerV2._validateWitnessQuorumV2.
+    event V1SunsetEpochUpdated(uint64 newSunsetEpoch);
     event BatchSubmittedV2(uint64 indexed epochId, bytes32 indexed batchId, bytes32 merkleRoot, uint32 witnessBitmap);
     /// @notice Emitted when a v2 batch is submitted with per-receipt metadata
     ///         (#667). `challengeIds`/`nodeIds`/`responseBodyHashes` are aligned
