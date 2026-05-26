@@ -1125,13 +1125,31 @@ async function tryChallengeV2(nodeId: string, kind: keyof typeof ChallengeType):
       throw new Error("invalid node receipt signature");
     }
 
-    // Collect witnesses
+    // Collect witnesses.
+    //
+    // #667 (audit follow-up, 2026-05-26) — also pass the push-verification
+    // context so witnesses can validate the prover's nodeSig + recompute
+    // responseBodyHash before signing. Without the push fields the
+    // witness server's COC_POSE_WITNESS_REQUIRE_VERIFIED=true mode would
+    // refuse to sign (strict rollout); without strict mode it would
+    // silently fall back to the legacy rubber-stamp path. Pushing the
+    // fields keeps the agent's behaviour identical regardless of which
+    // mode each witness operator chose.
     const witnessResult = v2WitnessNodes.length > 0
       ? await collectWitnesses(
           { witnessNodes: v2WitnessNodes, requiredWitnesses: v2RequiredWitnesses, timeoutMs: 5000 },
           challenge.challengeId,
           nodeId as any,
           responseBodyHash,
+          undefined, // requestFn defaults to requestJson
+          BigInt(currentEpoch),
+          {
+            responseBody,
+            responseAtMs: Number(responseAtMs),
+            nodeSig: receiptPayload.nodeSig,
+            tipHash: tipHash as string,
+            tipHeight,
+          },
         )
       : { attestations: [], bitmap: 0, quorumMet: v2RequiredWitnesses === 0 };
 
