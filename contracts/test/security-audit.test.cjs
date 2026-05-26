@@ -212,6 +212,11 @@ describe("Security: GovernanceDAO", function () {
     await factionRegistry.connect(human2).registerHuman()
     await registerClaw(factionRegistry, claw1)
     await registerClaw(factionRegistry, claw2)
+
+    // #735: GovernanceDAO.onlyRegistered now requires verified=true.
+    for (const s of [human1, human2, claw1, claw2]) {
+      await factionRegistry.connect(owner).verify(s.address)
+    }
   })
 
   it("rejects empty title proposal", async function () {
@@ -412,6 +417,9 @@ describe("Security: GovernanceDAO", function () {
     await dao2.setBicameralEnabled(true)
     await reg2.connect(human1).registerHuman()
     await reg2.connect(human2).registerHuman()
+    // #735: GovernanceDAO.onlyRegistered now requires verified=true.
+    await reg2.connect(owner).verify(human1.address)
+    await reg2.connect(owner).verify(human2.address)
 
     const descHash = ethers.keccak256(ethers.toUtf8Bytes("no-claws"))
     await dao2.connect(human1).createProposal(5, "Humans Only", descHash, ethers.ZeroAddress, "0x", 0)

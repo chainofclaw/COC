@@ -114,6 +114,12 @@ describe("Governance Contracts", function () {
       )
       const attestation = await claw1.signMessage(ethers.getBytes(messageHash))
       await factionRegistry.connect(claw1).registerClaw(agentId, attestation)
+
+      // #735: GovernanceDAO.onlyRegistered now requires verified=true.
+      // Verify the participants we expect to act on governance.
+      await factionRegistry.connect(owner).verify(human1.address)
+      await factionRegistry.connect(owner).verify(human2.address)
+      await factionRegistry.connect(owner).verify(claw1.address)
     })
 
     it("should create a proposal", async function () {

@@ -15,12 +15,36 @@ const cocNetwork = {
 
 module.exports = {
   solidity: {
-    version: "0.8.24",
-    settings: {
-      viaIR: true,
-      optimizer: {
-        enabled: true,
-        runs: 200
+    compilers: [
+      {
+        version: "0.8.24",
+        settings: {
+          viaIR: true,
+          optimizer: { enabled: true, runs: 200 }
+        }
+      }
+    ],
+    overrides: {
+      // After the #737/#738/#741 audit batch (dynamic domain separator,
+      // receipts cap, operator dedup, etc.) PoSeManagerV2 bytecode hit
+      // 24624 B — 48 B past the EIP-170 24576 B ceiling. The default
+      // `runs:200` optimizer therefore produced a contract that
+      // hardhat-upgrades refuses to deploy ("code is too large"), which
+      // broke every test that deploys PoSeManagerV2 via the upgrades
+      // plugin (UUPS upgrade-safety suite, v2 E2E lifecycle, #667
+      // witness-quorum, #686 ownership transfer).
+      //
+      // Dropping the optimizer to `runs:1` for PoSeManagerV2 only trims
+      // ~hundreds of bytes; runtime gas is a touch higher for V2-internal
+      // logic but storage-bound paths (the majority of finalizeEpochV2 /
+      // submitBatchV2 cost) are largely unaffected. The rest of the suite
+      // keeps `runs:200`.
+      "contracts-src/settlement/PoSeManagerV2.sol": {
+        version: "0.8.24",
+        settings: {
+          viaIR: true,
+          optimizer: { enabled: true, runs: 1 }
+        }
       }
     }
   },

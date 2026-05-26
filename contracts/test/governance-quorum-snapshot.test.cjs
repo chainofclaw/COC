@@ -46,6 +46,8 @@ describe("Security: GovernanceDAO quorum snapshot", function () {
 
     for (const m of members) {
       await factionRegistry.connect(m).registerHuman()
+      // #735: GovernanceDAO.onlyRegistered now requires verified=true.
+      await factionRegistry.connect(all[0]).verify(m.address)
     }
   })
 

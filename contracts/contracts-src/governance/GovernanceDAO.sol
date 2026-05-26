@@ -67,6 +67,7 @@ contract GovernanceDAO is Initializable, UUPSUpgradeable {
     event OwnerUpdated(address indexed oldOwner, address indexed newOwner);
 
     error NotRegistered();
+    error NotVerified();
     error AlreadyVoted();
     error VotingClosed();
     error VotingNotEnded();
@@ -85,8 +86,22 @@ contract GovernanceDAO is Initializable, UUPSUpgradeable {
         _;
     }
 
+    // #735 (audit follow-up): gate proposing/voting on `isVerified` instead
+    // of `getFaction() != None`. FactionRegistry.registerHuman/registerClaw
+    // are both permissionless (zero cost, self-signed attestation), so a
+    // pure `Faction.None` check enabled end-to-end Sybil — N cheap EOAs
+    // could swing votes, inflate quorum denominators (registrations after
+    // proposal creation don't dilute `registeredSnapshot` but do count toward
+    // `totalVotes`), and pass bicameral approval with single-faction sybils.
+    // `Identity.verified` is owner/verifier-gated (`FactionRegistry.verify`),
+    // raising the attacker's cost from "1 tx per sybil" to "convince the
+    // verifier" — a single-point bottleneck but a real bar where there was
+    // none. Tracked as defence-in-depth: follow-up issue covers a structural
+    // anti-Sybil cost (registration bond) to remove the verifier single
+    // point of trust.
     modifier onlyRegistered() {
         if (factionRegistry.getFaction(msg.sender) == FactionRegistry.Faction.None) revert NotRegistered();
+        if (!factionRegistry.isVerified(msg.sender)) revert NotVerified();
         _;
     }
 
