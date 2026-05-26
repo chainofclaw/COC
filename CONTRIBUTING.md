@@ -84,4 +84,11 @@ See [Milestones](https://github.com/chainofclaw/COC/milestones) for the Prowl te
 
 ## Security
 
-For security vulnerabilities, please use the [Security Report template](https://github.com/chainofclaw/COC/issues/new?template=security_report.yml) or email security@chainofclaw.io for critical issues.
+For security vulnerabilities, **do not** open a public GitHub issue. See
+the canonical [`SECURITY.md`](./SECURITY.md) for the full disclosure policy,
+severity-tier rewards (canary testnet: $100–$50,000 USD-equivalent),
+response timeline (24h ack for Critical), and safe-harbor terms. Quick
+paths:
+
+- Email `security@chainofclaw.io` (preferred for time-sensitive)
+- GitHub private advisory: <https://github.com/chainofclaw/COC/security/advisories/new>
