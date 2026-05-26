@@ -299,6 +299,9 @@ test("Treasury: 3-of-5 multisig + 5% spend cap (within-cap ok, over-cap needs go
 
       // ── 1d. DAO grants governanceApprove via a real execute() proposal ──
       await (await (fr.connect(deployer).registerHuman(txOpts()) as any)).wait()
+      // #735 (PR #745): onlyRegistered now also requires `isVerified`.
+      // deployer is FactionRegistry owner+verifier in this stack — grandfather it.
+      await (await (fr.connect(deployer).verify(deployer.address, txOpts()) as any)).wait()
       const treasuryIface = new Interface(loadArtifact("Treasury").abi as any)
       const approveData = treasuryIface.encodeFunctionData("governanceApprove", [wId1])
       await (await (dao.connect(deployer).createProposal(
@@ -373,6 +376,12 @@ test("GovernanceDAO bicameral: passes only when BOTH HUMAN and CLAW chambers app
       }
       assert.equal(await fr.humanCount(), 3n, "3 HUMAN registered")
       assert.equal(await fr.clawCount(), 2n, "2 CLAW registered")
+
+      // #735 (PR #745): verify all 5 voters so onlyRegistered + isVerified passes.
+      await (await (fr.connect(deployer).verify(deployer.address, txOpts()) as any)).wait()
+      for (const w of [...humans, ...claws]) {
+        await (await (fr.connect(deployer).verify(w.address, txOpts()) as any)).wait()
+      }
 
       const proposalIface = (proposer: Wallet, title: string) =>
         dao.connect(proposer).createProposal(
@@ -452,6 +461,11 @@ test("GovernanceDAO rejection paths: against-majority and sub-quorum proposals c
         await (await (fr.connect(w).registerHuman({ nonce: 0 }) as any)).wait()
       }
       assert.equal(await fr.humanCount(), 5n, "5 HUMAN registered")
+      // #735 (PR #745): verify all 5 voters so onlyRegistered + isVerified passes.
+      await (await (fr.connect(deployer).verify(deployer.address, txOpts()) as any)).wait()
+      for (const w of voters) {
+        await (await (fr.connect(deployer).verify(w.address, txOpts()) as any)).wait()
+      }
 
       const mkProposal = (title: string) =>
         dao.connect(deployer).createProposal(
@@ -534,6 +548,8 @@ test("GovernanceDAO parameter-change: execute() runs executionData and mutates t
 
       // ── Governance proposal that calls Treasury.governanceApprove(wId) ──
       await (await (fr.connect(deployer).registerHuman(txOpts()) as any)).wait()
+      // #735 (PR #745): onlyRegistered now also requires `isVerified`.
+      await (await (fr.connect(deployer).verify(deployer.address, txOpts()) as any)).wait()
       const treasuryIface = new Interface(loadArtifact("Treasury").abi as any)
       const execData = treasuryIface.encodeFunctionData("governanceApprove", [wId])
 
