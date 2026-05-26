@@ -57,6 +57,13 @@ describe("Governance Lifecycle: Prowl Testnet Proposals", function () {
     await registry.connect(human3).registerHuman()
     await registry.connect(human4).registerHuman()
     await registry.connect(human5).registerHuman()
+
+    // #735: GovernanceDAO.onlyRegistered now requires verified=true.
+    // Verify all six so the lifecycle path mirrors a real network where the
+    // verifier has whitelisted active humans.
+    for (const s of [owner, human1, human2, human3, human4, human5]) {
+      await registry.connect(owner).verify(s.address)
+    }
   })
 
   it("creates and approves the first testnet parameter proposal", async function () {

@@ -72,12 +72,17 @@ describe("Gas Benchmarks: GovernanceDAO", function () {
     await dao.waitForDeployment()
 
     await registry.connect(owner).registerHuman()
+    // #735: GovernanceDAO.onlyRegistered now requires verified=true.
+    await registry.connect(owner).verify(owner.address)
   })
 
-  it("createProposal gas < 270k", async function () {
+  it("createProposal gas < 280k", async function () {
     // Budget bumped from 250k → 270k in gen-5: GovernanceDAO.createProposal
     // now writes humanSnapshot + clawSnapshot per proposal (#706 / #705) for
     // the silent-faction bicameral check, adding ~2 SSTOREs per call.
+    // Bumped 270k → 280k in #735 (audit follow-up): onlyRegistered now
+    // performs a second SLOAD via FactionRegistry.isVerified, adding ~2.1k
+    // gas across cross-contract call + storage read.
     const tx = await dao.createProposal(
       0, // ValidatorAdd
       "Benchmark proposal",
@@ -87,10 +92,10 @@ describe("Gas Benchmarks: GovernanceDAO", function () {
       0
     )
     const receipt = await tx.wait()
-    expect(receipt.gasUsed).to.be.lessThan(270000n)
+    expect(receipt.gasUsed).to.be.lessThan(280000n)
   })
 
-  it("vote gas < 120k", async function () {
+  it("vote gas < 130k", async function () {
     await dao.createProposal(
       0,
       "Vote benchmark",
@@ -101,7 +106,8 @@ describe("Gas Benchmarks: GovernanceDAO", function () {
     )
     const tx = await dao.vote(1, 1) // 1 = For
     const receipt = await tx.wait()
-    expect(receipt.gasUsed).to.be.lessThan(120000n)
+    // Budget 120k → 130k in #735: same isVerified() SLOAD added to vote.
+    expect(receipt.gasUsed).to.be.lessThan(130000n)
   })
 })
 
