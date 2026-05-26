@@ -735,7 +735,7 @@ describe("Security: PoSeManager", function () {
 
     await expect(
       pose.connect(operator1).slash(nodeId, { nodeId, evidenceHash, reasonCode: 1, rawEvidence })
-    ).to.be.revertedWith("missing role")
+    ).to.be.revertedWithCustomError(pose, "MissingRole")
   })
 
   it("non-operator cannot requestUnbond", async function () {

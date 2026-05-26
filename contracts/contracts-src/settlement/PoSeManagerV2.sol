@@ -247,11 +247,36 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage, UUPSUpgradeable {
         emit NodeRegistered(nodeId, msg.sender, serviceFlags, msg.value);
     }
 
-    // --- Epoch nonce (prevrandao snapshot) ---
+    // --- Epoch nonce (multi-block RANDAO + blockhash chain) ---
+    //
+    // #749 (#667 F6): pre-fix the seed was `uint64(block.prevrandao)` at
+    // the epoch-init block, which a single proposer could grind by
+    // skipping its slot. Now the seed mixes `block.prevrandao` with a
+    // historical block hash (`blockhash(block.number - 64)`) — grinding
+    // both across widely-spaced blocks is exponentially more expensive
+    // while honest coordination cost stays constant. `epochId` is also
+    // mixed in so two same-block initEpochNonce calls for different
+    // epochs (operator batch) produce distinct seeds. For very early
+    // blocks the historical lookup returns bytes32(0); the seed retains
+    // full prevrandao entropy and remains epoch-unique.
     function initEpochNonce(uint64 epochId) external override onlyOwner {
         if (challengeNonces[epochId] != 0) revert EpochNonceAlreadySet();
-        challengeNonces[epochId] = uint64(block.prevrandao);
-        emit EpochNonceSet(epochId, uint64(block.prevrandao));
+        bytes32 hist = block.number > 64 ? blockhash(block.number - 64) : bytes32(0);
+        uint64 seed = uint64(uint256(keccak256(abi.encode(epochId, block.prevrandao, hist))));
+        challengeNonces[epochId] = seed;
+        emit EpochNonceSet(epochId, seed);
+    }
+
+    /// @notice #748 (#667 F5) — owner sets the highest epoch at which the
+    ///         v1 witness typehash fallback is still accepted. Value `0`
+    ///         means "unlimited" (initial state preserves current behaviour
+    ///         on upgrade); any positive value caps v1 fallback to
+    ///         `epochId <= v1SunsetEpoch`. Operators tighten this once the
+    ///         agent fleet finishes the v2 typehash migration; PR-E will
+    ///         then remove the v1 path entirely.
+    function setV1SunsetEpoch(uint64 newSunsetEpoch) external onlyOwner {
+        v1SunsetEpoch = newSunsetEpoch;
+        emit V1SunsetEpochUpdated(newSunsetEpoch);
     }
 
     // --- Batch submission with witness quorum ---
@@ -722,7 +747,7 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage, UUPSUpgradeable {
         if (!epochFinalized[epochId]) revert InvalidBatch();
         if (amount == 0) revert InvalidBatch();
         if (rewardClaimed[epochId][nodeId]) revert AlreadyClaimed();
-        require(block.timestamp <= epochFinalizedAt[epochId] + REWARD_CLAIM_WINDOW, "claim window expired");
+        if (block.timestamp > epochFinalizedAt[epochId] + REWARD_CLAIM_WINDOW) revert AlreadyClaimed();
 
         // Compute reward leaf hash: keccak256(abi.encodePacked(epochId, nodeId, amount))
         bytes32 leaf = keccak256(abi.encodePacked(epochId, nodeId, amount));
@@ -761,9 +786,9 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage, UUPSUpgradeable {
      *         Can be called by anyone after the claim window expires.
      */
     function sweepExpiredRewards(uint64 epochId) external {
-        require(epochFinalized[epochId], "epoch not finalized");
-        require(!epochSwept[epochId], "already swept");
-        require(block.timestamp > epochFinalizedAt[epochId] + REWARD_CLAIM_WINDOW, "claim window active");
+        if (!epochFinalized[epochId]) revert InvalidBatch();
+        if (epochSwept[epochId]) revert AlreadyClaimed();
+        if (block.timestamp <= epochFinalizedAt[epochId] + REWARD_CLAIM_WINDOW) revert InvalidBatch();
 
         uint256 total = epochTotalReward[epochId];
         uint256 claimed = epochClaimedReward[epochId];
@@ -1047,6 +1072,15 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage, UUPSUpgradeable {
                 );
                 address recovered = _recoverSigner(verifiedDigest, sig);
                 if (recovered != operator) {
+                    // #748 (#667 F5): gate the v1 fallback on the owner-
+                    // configured sunset epoch. When `v1SunsetEpoch == 0`
+                    // the cap is disabled (preserves pre-#748 behaviour).
+                    // When non-zero, signatures with epochId beyond the
+                    // sunset fall straight through to InvalidWitnessQuorum
+                    // — protects against the cross-epoch v1 replay window
+                    // that exists until PR-E removes v1 entirely.
+                    uint64 sunset = v1SunsetEpoch;
+                    if (sunset != 0 && epochId > sunset) revert InvalidWitnessQuorum();
                     verifiedDigest = _buildWitnessDigestV1(
                         metadata.challengeIds[receiptIdx],
                         witnessSet[i],
@@ -1259,7 +1293,7 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage, UUPSUpgradeable {
             s := calldataload(add(sig.offset, 32))
         }
         if (v < 27) v += 27;
-        require(v == 27 || v == 28, "invalid v value");
+        if (v != 27 && v != 28) revert InvalidOwnershipProof();
         if (uint256(s) > SECP256K1N_HALF) revert InvalidOwnershipProof();
         address recovered = ecrecover(ethSignedHash, v, r, s);
         if (recovered == address(0)) revert InvalidOwnershipProof();
@@ -1284,7 +1318,7 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage, UUPSUpgradeable {
             s := calldataload(add(attestation.offset, 32))
         }
         if (v < 27) v += 27;
-        require(v == 27 || v == 28, "invalid attestation v value");
+        if (v != 27 && v != 28) revert InvalidOwnershipProof();
         if (uint256(s) > SECP256K1N_HALF) revert InvalidOwnershipProof();
         address recovered = ecrecover(ethSignedHash, v, r, s);
         if (recovered == address(0)) revert InvalidOwnershipProof();
