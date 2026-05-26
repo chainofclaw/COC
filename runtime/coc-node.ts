@@ -5,6 +5,7 @@ import { loadConfig } from "./lib/config.ts";
 import { InMemoryStore } from "./lib/state.ts";
 import { recordChallengeBounded } from "./lib/bounded-challenge-store.ts";
 import { validatePoseWitnessPayload } from "./lib/pose-witness-validator.ts";
+import { validatePoseChallengePayload } from "./lib/pose-challenge-validator.ts";
 import { verifyPushedReceipt } from "./lib/pose-witness-verifier.ts";
 import { ContractReader } from "./lib/contract-reader.ts";
 import {
@@ -57,6 +58,26 @@ log.info("pose-witness auth configured", {
   trustedProxies: poseWitnessTrustedProxies.length,
   allowInsecure: poseWitnessAllowInsecure,
 });
+
+// #747 (#667 F4, audit follow-up 2026-05-26) — strict-verified-challenge mode.
+// When enabled, /pose/challenge rejects v1-shape payloads (no challengerSig,
+// no derived challengeId). Default false to preserve in-flight callers
+// during rollout. Once all challengers ship v2 payloads, operators flip
+// this on to lock down the challenge submission path.
+const poseRequireVerifiedChallenge = (() => {
+  const raw = process.env.COC_POSE_REQUIRE_VERIFIED_CHALLENGE?.trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes";
+})();
+const poseChallengeIssuedAtDriftMs = (() => {
+  const raw = process.env.COC_POSE_CHALLENGE_DRIFT_MS?.trim();
+  if (!raw) return 5 * 60_000;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed <= 0) {
+    log.warn("invalid COC_POSE_CHALLENGE_DRIFT_MS — falling back to 5m", { raw });
+    return 5 * 60_000;
+  }
+  return parsed;
+})();
 
 // Phase C2.1: when FF is on, the receipt handler reads real chunk bytes
 // from the IPFS blockstore rooted at `storageDir` (same path the main
@@ -272,29 +293,37 @@ const server = http.createServer((req, res) => {
       // the async callback and bubbled to process.on("uncaughtException"),
       // either crashing coc-node or leaking the V8 SyntaxError wording.
       // Unauthenticated DoS / destabilisation vector.
-      let payload: { challengeId?: string };
+      let payload: Record<string, unknown>;
       try {
-        payload = JSON.parse(body || "{}");
+        payload = JSON.parse(body || "{}") as Record<string, unknown>;
       } catch {
         return json(res, 400, { error: "invalid JSON body" });
       }
-      // #320: tighten challengeId shape — pre-fix the falsy check accepted
-      // objects, arrays, numbers as keys via `challenges.set(key, ...)`,
-      // and Map.set treats {} / [] as fresh references, so even a fixed
-      // JSON like {"challengeId":{}} produced a brand-new Map entry on
-      // every request. Require a non-empty string so each entry is
-      // addressable from /pose/receipt by hex/uuid.
-      if (typeof payload.challengeId !== "string" || payload.challengeId.length === 0) {
-        return json(res, 400, { error: "missing or invalid challengeId (must be non-empty string)" });
+      // #747 (#667 F4) — validate the challenge. v2 shape gets the full
+      // deterministic-derivation + EIP-712 signature check; v1 shape
+      // falls through to the legacy non-empty-string check (preserves
+      // the #320 hardening) unless the operator has flipped
+      // `requireVerified` on. Either way the challenges Map key remains
+      // the canonical (lowercased) challengeId so /pose/receipt /
+      // /pose/witness lookups stay consistent.
+      const validated = validatePoseChallengePayload(payload, {
+        chainId: BigInt(chainId),
+        verifyingContract,
+        requireVerified: poseRequireVerifiedChallenge,
+        maxIssuedAtDriftMs: poseChallengeIssuedAtDriftMs,
+      });
+      if (!validated.ok) {
+        return json(res, validated.status, { error: validated.error });
       }
-      // Cap the challenge ID length so an attacker cannot amplify the
-      // payload by spamming many giant strings — even with the FIFO cap
-      // below, each entry holds the full string as a Map key.
-      if (payload.challengeId.length > 256) {
-        return json(res, 400, { error: "challengeId too long (max 256 chars)" });
+      if (validated.challenge.version === 1) {
+        // Legacy length cap retained for v1 (raw string keys could be
+        // up to 256 chars — sized for hex/uuid).
+        if (validated.challenge.challengeId.length > 256) {
+          return json(res, 400, { error: "challengeId too long (max 256 chars)" });
+        }
       }
-      recordChallengeBounded(challenges, payload.challengeId, payload);
-      return json(res, 200, { accepted: true });
+      recordChallengeBounded(challenges, validated.challenge.challengeId, payload);
+      return json(res, 200, { accepted: true, version: validated.challenge.version });
     });
     return;
   }
