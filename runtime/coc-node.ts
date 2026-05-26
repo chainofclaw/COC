@@ -5,6 +5,8 @@ import { loadConfig } from "./lib/config.ts";
 import { InMemoryStore } from "./lib/state.ts";
 import { recordChallengeBounded } from "./lib/bounded-challenge-store.ts";
 import { validatePoseWitnessPayload } from "./lib/pose-witness-validator.ts";
+import { verifyPushedReceipt } from "./lib/pose-witness-verifier.ts";
+import { ContractReader } from "./lib/contract-reader.ts";
 import { isPoseWitnessRequestAuthorized, resolvePoseWitnessAuthToken } from "./lib/pose-witness-auth.ts";
 import { IpfsBlockstore } from "../node/src/ipfs-blockstore.ts";
 import { loadStorageProof, MerkleLeavesCache } from "./lib/storage-proof.ts";
@@ -55,6 +57,51 @@ const verifyingContract = config.verifyingContract ?? config.poseManagerV2Addres
 const nodeSignerV2 = useV2
   ? createNodeSignerV2(nodePrivateKey, buildDomain(BigInt(chainId), verifyingContract))
   : null;
+
+// #667 (audit follow-up, 2026-05-26) — Push-verification configuration.
+//
+// `poseWitnessReaderOrNull` is the ContractReader the /pose/witness path
+// uses to look up `nodeOperator(poseNodeId)` when verifying a pushed
+// receipt's nodeSig. Only constructed when the v2 protocol is on and
+// both the L2 RPC URL and PoSeManagerV2 address are configured — without
+// either, an on-chain lookup is impossible so verification can't run.
+//
+// `poseWitnessRequireVerified` is the rollout switch. Default `false`
+// (rubber-stamp fallback retained for in-flight callers that haven't
+// upgraded to push fields yet). Operators flip it to `true` once their
+// agent fleet ships push fields, at which point unverified requests
+// receive a 400 instead of silently falling back.
+//
+// `poseWitnessFreshnessMs` bounds |now - responseAtMs|. Default 60s.
+const poseWitnessReaderOrNull = useV2 && config.l2RpcUrl && config.poseManagerV2Address
+  ? new ContractReader({
+      l2RpcUrl: config.l2RpcUrl,
+      poseManagerV2Address: config.poseManagerV2Address,
+      cacheTtlMs: 30_000,
+    })
+  : null;
+const poseWitnessRequireVerified = (() => {
+  const raw = process.env.COC_POSE_WITNESS_REQUIRE_VERIFIED?.trim().toLowerCase();
+  if (raw === "1" || raw === "true" || raw === "yes") return true;
+  return false;
+})();
+const poseWitnessFreshnessMs = (() => {
+  const raw = process.env.COC_POSE_WITNESS_FRESHNESS_MS?.trim();
+  if (!raw) return 60_000;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed <= 0) {
+    log.warn("invalid COC_POSE_WITNESS_FRESHNESS_MS — falling back to 60_000ms", { raw });
+    return 60_000;
+  }
+  return parsed;
+})();
+if (poseWitnessRequireVerified && !poseWitnessReaderOrNull) {
+  // Strict mode requested but the on-chain lookup capability isn't wired —
+  // refuse to start rather than silently degrade. Operators that hit this
+  // need to configure config.l2RpcUrl + config.poseManagerV2Address before
+  // enabling COC_POSE_WITNESS_REQUIRE_VERIFIED.
+  throw new Error("COC_POSE_WITNESS_REQUIRE_VERIFIED=true but l2RpcUrl/poseManagerV2Address not configured");
+}
 
 function resolveRuntimeNodePrivateKey(): string {
   const canonical = process.env.COC_NODE_KEY?.trim();
@@ -415,6 +462,64 @@ const server = http.createServer((req, res) => {
         return json(res, result.status, { error: result.error });
       }
       const fields = result.fields;
+
+      // #667 (audit follow-up) — Push-verification gate. Three states:
+      //   (a) Caller supplied all push fields + reader configured →
+      //       run verifier; on failure return 400 (no signature).
+      //   (b) Caller supplied push fields but reader is missing →
+      //       cannot run verifier; treat as misconfiguration (502).
+      //   (c) Caller did NOT supply push fields:
+      //       - poseWitnessRequireVerified=true → 400 (strict rollout)
+      //       - otherwise → legacy rubber-stamp path (with a debug log
+      //         so operators can spot un-migrated callers)
+      const hasPushFields = fields.responseBody !== undefined;
+      if (hasPushFields) {
+        if (!poseWitnessReaderOrNull) {
+          return json(res, 502, { error: "witness verification not configured" });
+        }
+        verifyPushedReceipt(
+          {
+            challengeId: fields.challengeId,
+            nodeId: fields.nodeId,
+            responseBodyHash: fields.responseBodyHash,
+            responseBody: fields.responseBody!,
+            responseAtMs: fields.responseAtMs!,
+            nodeSig: fields.nodeSig!,
+            tipHash: fields.tipHash!,
+            tipHeight: fields.tipHeight!,
+          },
+          {
+            chainId: BigInt(chainId),
+            verifyingContract,
+            freshnessWindowMs: poseWitnessFreshnessMs,
+            contractReader: poseWitnessReaderOrNull,
+          },
+        )
+          .then(verifyResult => {
+            if (!verifyResult.ok) {
+              return json(res, verifyResult.status, { error: verifyResult.error });
+            }
+            return signAndRespond();
+          })
+          .catch(error => {
+            log.error("witness push-verification failed", { error: String(error) });
+            return json(res, 500, { error: "witness verification failed" });
+          });
+        return;
+      }
+      if (poseWitnessRequireVerified) {
+        return json(res, 400, {
+          error: "push verification required (responseBody/responseAtMs/nodeSig/tipHash/tipHeight missing)",
+        });
+      }
+      // Legacy rubber-stamp path — preserved for migration window.
+      log.warn("witness signing without push verification", {
+        challengeId: fields.challengeId,
+        nodeId: fields.nodeId,
+      });
+      return signAndRespond();
+
+      function signAndRespond(): void {
       const signV1 = signWitnessAttestation(
         fields.challengeId,
         fields.nodeId,
@@ -455,6 +560,7 @@ const server = http.createServer((req, res) => {
           log.error("witness signing failed", { error: String(error) });
           return json(res, 500, { error: "witness signing failed" });
         });
+      }
     });
     return;
   }

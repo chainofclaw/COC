@@ -44,6 +44,23 @@ type WitnessRequestFn = (
   headers?: Record<string, string>,
 ) => Promise<{ status?: number; json?: any }>
 
+/**
+ * #667 (audit follow-up, 2026-05-26) — fields the caller can pass through
+ * for Push-verification on the witness side. When all five are provided,
+ * the witness validates `keccak(stableStringify(body)) == responseBodyHash`
+ * AND `ecrecover(RECEIPT digest, nodeSig) == nodeOperator(nodeId)` before
+ * signing. Backwards-compatible: if these are omitted the witness falls
+ * back to the legacy rubber-stamp path (gated by the witness-side
+ * `COC_POSE_WITNESS_REQUIRE_VERIFIED` env flag).
+ */
+export interface PushVerifyContext {
+  responseBody: Record<string, unknown>
+  responseAtMs: number
+  nodeSig: string
+  tipHash: string
+  tipHeight: bigint
+}
+
 export async function collectWitnesses(
   config: WitnessCollectorConfig,
   challengeId: Hex32,
@@ -51,6 +68,7 @@ export async function collectWitnesses(
   responseBodyHash: Hex32,
   requestFn: WitnessRequestFn = requestJson,
   epochId?: bigint,
+  pushCtx?: PushVerifyContext,
 ): Promise<CollectResult> {
   const requests = config.witnessNodes.map(async (w) => {
     try {
@@ -64,6 +82,17 @@ export async function collectWitnesses(
       // the witness server returns a `witnessSigV2` alongside the v1
       // signature. The aggregator prefers v2 when building the batch.
       if (epochId !== undefined) body.epochId = epochId.toString()
+      // #667 (audit follow-up, 2026-05-26) — push the prover's signed
+      // receipt fields when available so the witness can run
+      // Push-verification before signing. Stringify tipHeight/responseAtMs
+      // to keep the request JSON valid (BigInt isn't serializable).
+      if (pushCtx) {
+        body.responseBody = pushCtx.responseBody
+        body.responseAtMs = pushCtx.responseAtMs
+        body.nodeSig = pushCtx.nodeSig
+        body.tipHash = pushCtx.tipHash
+        body.tipHeight = pushCtx.tipHeight.toString()
+      }
       const response = await requestFn(
         `${w.url}/pose/witness`,
         "POST",
