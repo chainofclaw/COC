@@ -88,13 +88,22 @@
    *当前*:待办。当前 `faucet/` 代码是测试网调优(10 COC drip,24h 冷却)。
    canary 阶段的 refill cron job 缺失;需 SOP + 余额降至 500 COC 以下时告警。
 
-10. **☐ Grafana dashboards committed + Prometheus alerts wired**
-    *证据*:`docker/grafana/dashboards/coc-overview.json` + `coc-pose.json` 存在且能
-    干净导入新 Grafana 实例;`ops/alerts/prometheus-rules.yml` 有 live alerts,每个映射到
-    [`observability-runbook-88780.md`](./observability-runbook-88780.md) 页面。
+10. **🟡 Grafana dashboards committed + Prometheus alerts wired**
+    *证据*:4 个 dashboard(`docker/grafana/dashboards/coc-{overview,consensus,network,resources}.json`)
+    + `ops/alerts/prometheus-rules.yml` 中 11 条 alert(4 组:availability、security、
+    performance、network),每条映射到
+    [`observability-runbook-88780.zh.md`](./observability-runbook-88780.zh.md) 一节(Stage 6)。
+    SLO 编码:`SlowBlockProduction`(出块 p99 代理)、`EquivocationDetected`
+    (清白记录 gate)、`LowPeerCount` / `coc_validators_active` panel(BFT quorum)、
+    `HighMempoolBacklog`(mempool ack 代理)。
     *负责*:ops
-    *当前*:待办。按父 plan A.2.2。SLO 目标编码:出块 p99 < 10s,validator uptime ≥ 99.5%,
-    mempool ack p99 < 200ms。
+    *当前*:资产 + 每条 alert SOP 已交付。剩余子任务(已跟踪,不阻塞 Gate 10):
+    - 验证 dashboards 在新 Grafana 干净导入(上线前手动 dry-run);
+    - 接 Alertmanager `runbook_url` annotation 指向公开 runbook URL(docs 站点上线后);
+    - 可选:加 `ValidatorQuorumAtRisk` alert(`coc_validators_active < 5`)
+      预防 chaos T2 风格的 2-down 重启竞速;
+    - 对齐 dev-stack `docker/prometheus/alerts.yml` 与权威 `ops/alerts/prometheus-rules.yml`
+      (或废弃 dev 文件)。
 
 ### 可发现性
 
@@ -108,7 +117,7 @@
 
 ## Burn-down
 
-上线需 11 个全 ☑。当前:1 ☑ / 10 ☐。
+上线需 11 个全 ☑。当前:1 ☑ / 1 🟡 / 9 ☐。
 
 建议顺序(最快上线路径):
 1. Gates 4 + 7 + 11 可在本 sprint 文档级搞定

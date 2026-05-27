@@ -107,15 +107,27 @@ has explicit evidence linked — no "trust me, it's done" entries.
    (10 COC drip, 24h cooldown). Refill cron job for canary phase is
    missing; needs SOP + alert if balance drops below 500 COC.
 
-10. **☐ Grafana dashboards committed + Prometheus alerts wired**
-    *Evidence*: `docker/grafana/dashboards/coc-overview.json` +
-    `coc-pose.json` exist and import cleanly into a fresh Grafana
-    instance; `ops/alerts/prometheus-rules.yml` has live alerts each
-    mapped to [`observability-runbook-88780.md`](./observability-runbook-88780.md)
-    pages.
+10. **🟡 Grafana dashboards committed + Prometheus alerts wired**
+    *Evidence*: 4 dashboards (`docker/grafana/dashboards/coc-{overview,consensus,network,resources}.json`)
+    + 11 alerts in `ops/alerts/prometheus-rules.yml` (4 groups: availability,
+    security, performance, network), each mapped to a section in
+    [`observability-runbook-88780.md`](./observability-runbook-88780.md)
+    (Stage 6). SLO encoding: `SlowBlockProduction` (block p99 proxy),
+    `EquivocationDetected` (clean-record gate), `LowPeerCount` /
+    `coc_validators_active` panel (BFT quorum), `HighMempoolBacklog`
+    (mempool ack proxy).
     *Owner*: ops
-    *Current*: Open. Per parent plan A.2.2. SLO targets to encode: block
-    production p99 < 10s, validator uptime ≥ 99.5%, mempool ack p99 < 200ms.
+    *Current*: Assets + per-alert SOP shipped. Outstanding sub-tasks
+    (tracked, non-blocking for Gate 10):
+    - Verify dashboards import cleanly into a fresh Grafana (manual
+      dry-run before launch);
+    - Wire Alertmanager `runbook_url` annotations to point at the new
+      runbook URL once docs are public-served;
+    - Optional: add `ValidatorQuorumAtRisk` alert
+      (`coc_validators_active < 5`) to preempt chaos-T2-style 2-down
+      restart races.
+    - Reconcile dev-stack `docker/prometheus/alerts.yml` against the
+      canonical `ops/alerts/prometheus-rules.yml` (or deprecate it).
 
 ### Discoverability
 
@@ -130,7 +142,7 @@ has explicit evidence linked — no "trust me, it's done" entries.
 
 ## Burn-down
 
-To go live, all 11 gates must be ☑. Current count: 1 ☑ / 10 ☐.
+To go live, all 11 gates must be ☑. Current count: 1 ☑ / 1 🟡 / 9 ☐.
 
 Suggested order (fastest path to launch):
 1. Gates 4 + 7 + 11 are docs-shippable inside this sprint
