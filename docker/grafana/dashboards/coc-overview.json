@@ -1,7 +1,7 @@
 {
   "dashboard": {
-    "title": "COC Prowl Testnet",
-    "uid": "coc-prowl-overview",
+    "title": "COC Canary 88780",
+    "uid": "coc-canary-overview",
     "timezone": "utc",
     "refresh": "10s",
     "time": { "from": "now-1h", "to": "now" },
