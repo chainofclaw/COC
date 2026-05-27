@@ -131,6 +131,39 @@ plateau); `coc-consensus` → "BFT Phase" panel (stuck on `propose` or
 
 ---
 
+### `ValidatorQuorumAtRisk` — warning
+
+**Expr**: `coc_validators_active < 5` for 2 m
+
+**Symptom**: Active validator count fell below 5. BFT quorum is 4 of 6
+on the canary network — one more dropping triggers a stall (chaos T3
+result: 3 down = clean stall, chain frozen until restored).
+
+**Dashboards**: `coc-consensus` → "Active Validator Count" stat.
+
+**Diagnosis**:
+1. Identify which validator is missing via `coc_validators_active`
+   per-instance label or by cross-checking `coc_block_height` (the
+   missing one's metric is stale).
+2. Check `journalctl -u coc-node@<unit>` on the missing validator's
+   host. Could be planned restart, crashed process, or network
+   partition.
+
+**First response** (THIS IS THE CHAOS T2 SOP — read carefully):
+- **Do NOT restart any other validator** until the missing one is
+  back. Two simultaneous down = 2.5 min stall (chaos T2 result).
+- If the missing validator is a planned restart, wait for it to come
+  back (typically < 30 s with snap-sync) and the alert clears.
+- If unplanned (crash), restart **only that single validator** per
+  the `NodeDown` SOP. Stagger any other planned ops ≥ 60 s after
+  recovery confirmed.
+
+**Escalation**: validator count drops to 4 → preemptively warn
+the on-call lead. Drops to 3 → `BlockProductionStalled` will fire
+(chain has stalled); escalate to disaster-recovery flow.
+
+---
+
 ### `ConsensusStateDegraded` — warning
 
 **Expr**: `coc_consensus_state != 0` for 5 m
@@ -385,6 +418,80 @@ BFT messages — without it BFT runs on HTTP fallback and is slower.
 **First response**: if config is right and ports are open, restart the
 node. If wire stays at 0 across all nodes after the restart, open an
 issue — likely a wire-protocol regression.
+
+---
+
+## Faucet group (`coc_faucet`)
+
+The faucet alerts depend on a textfile-collector probe — see
+[`faucet-operations-88780.md`](./faucet-operations-88780.md) for the
+install/cron procedure for `scripts/faucet-balance-check.sh`.
+
+### `FaucetBalanceLow` — warning
+
+**Expr**: `coc_faucet_balance_eth < 500` for 5 m
+
+**Symptom**: Faucet wallet balance fell below 500 COC (~50 drips at
+default 10 COC/drip, ~12 h headroom at canary onboarding pace).
+
+**Dashboards**: `coc-overview` → "Faucet Balance" panel (if added — at
+time of writing, the metric is in the textfile collector but not yet
+wired into a dashboard panel; tracked as Gate 10 polish).
+
+**Diagnosis**:
+1. `curl -s https://faucet.chainofclaw.io/faucet/status | jq` — confirm
+   the on-chain balance matches the alert (rules out probe drift).
+2. Check `totalDrips` field — sudden ramp = onboarding spike, organic.
+   Steady rate = expected drain; treat as a refill cycle.
+
+**First response**: trigger a standard refill per
+[`faucet-operations-88780.md` § Refill procedure](./faucet-operations-88780.md#refill-procedure).
+For ≤ 10 000 COC, multisig signers can approve directly. Verify within
+1 block after the multisig tx lands.
+
+**Escalation**: if balance keeps dropping after refill at the same
+rate, suspect abuse — escalate to faucet-operations § Abuse response.
+
+---
+
+### `FaucetBalanceCritical` — critical
+
+**Expr**: `coc_faucet_balance_eth < 100` for 1 m
+
+**Symptom**: Faucet has < 100 COC. Drips will start failing within
+hours; if `daily_global_limit` interacts at the same time, immediately.
+
+**Dashboards**: same as `FaucetBalanceLow`.
+
+**First response**: refill **IMMEDIATELY**. If the multisig signers
+aren't reachable in time, fall back to `pm2 stop coc-faucet` to fail
+fast rather than partially serve — drip failures are worse for
+onboarding UX than a `503` with a clear retry message. Then page on-call.
+
+---
+
+### `FaucetProbeStale` — warning
+
+**Expr**: `time() - coc_faucet_balance_check_timestamp_seconds > 1800` for 5 m
+
+**Symptom**: The faucet balance probe (`scripts/faucet-balance-check.sh`)
+has not refreshed the textfile metric in 30+ minutes. The probe is
+dead, not the faucet itself — but a dead probe hides a draining faucet.
+
+**Diagnosis**:
+1. SSH to the faucet host. `systemctl status cron` — confirm cron is
+   running.
+2. `cat /etc/cron.d/coc-faucet-balance-check` — confirm cron entry
+   exists.
+3. Run the script manually: `bash /usr/local/bin/faucet-balance-check.sh`
+   and check exit code + stderr.
+4. Confirm `/var/lib/node_exporter/textfile_collector/coc_faucet_balance.prom`
+   gets updated with current timestamp.
+
+**First response**: most common cause is `jq` / `curl` not installed
+on a new host. Install via package manager + rerun. If `node_exporter`
+isn't reading the textfile collector dir, confirm the
+`--collector.textfile.directory` flag in its systemd unit.
 
 ---
 

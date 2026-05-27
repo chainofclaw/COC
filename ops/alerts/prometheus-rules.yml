@@ -9,6 +9,7 @@ groups:
         annotations:
           summary: "COC node {{ $labels.instance }} is down"
           description: "Node has been unreachable for 2 minutes."
+          runbook_url: "https://github.com/chainofclaw/COC/blob/main/docs/observability-runbook-88780.md#nodedown--critical"
 
       - alert: BlockProductionStalled
         expr: increase(coc_block_height[5m]) == 0
@@ -18,6 +19,7 @@ groups:
         annotations:
           summary: "Block production stalled on {{ $labels.instance }}"
           description: "No new blocks produced in 5 minutes."
+          runbook_url: "https://github.com/chainofclaw/COC/blob/main/docs/observability-runbook-88780.md#blockproductionstalled--critical"
 
       - alert: ConsensusStateDegraded
         expr: coc_consensus_state != 0
@@ -27,6 +29,17 @@ groups:
         annotations:
           summary: "Consensus degraded on {{ $labels.instance }}"
           description: "Consensus state is {{ $value }} (1=degraded, 2=recovering) for 5+ minutes."
+          runbook_url: "https://github.com/chainofclaw/COC/blob/main/docs/observability-runbook-88780.md#consensusstatedegraded--warning"
+
+      - alert: ValidatorQuorumAtRisk
+        expr: coc_validators_active < 5
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Validator quorum margin thin (active={{ $value }} on {{ $labels.instance }})"
+          description: "Active validator count fell below 5. BFT quorum needs 4; losing one more triggers stall. Per chaos T2 SOP: do NOT restart additional validators until quorum margin restored."
+          runbook_url: "https://github.com/chainofclaw/COC/blob/main/docs/observability-runbook-88780.md#validatorquorumatrisk--warning"
 
   - name: coc_security
     rules:
@@ -38,6 +51,7 @@ groups:
         annotations:
           summary: "High P2P auth rejection rate on {{ $labels.instance }}"
           description: "More than 10 auth rejections per second for 3+ minutes. Possible attack."
+          runbook_url: "https://github.com/chainofclaw/COC/blob/main/docs/observability-runbook-88780.md#highauthrejections--warning"
 
       - alert: DiscoveryIdentityFailures
         expr: increase(coc_discovery_identity_failures_total[10m]) > 50
@@ -47,6 +61,7 @@ groups:
         annotations:
           summary: "Discovery identity failures on {{ $labels.instance }}"
           description: "{{ $value }} identity verification failures in 10 minutes. Possible Sybil attempt."
+          runbook_url: "https://github.com/chainofclaw/COC/blob/main/docs/observability-runbook-88780.md#discoveryidentityfailures--warning"
 
       - alert: DhtVerifyFailures
         expr: increase(coc_dht_verify_failures_total[10m]) > 20
@@ -56,6 +71,7 @@ groups:
         annotations:
           summary: "DHT verify failures on {{ $labels.instance }}"
           description: "{{ $value }} DHT peer verification failures in 10 minutes."
+          runbook_url: "https://github.com/chainofclaw/COC/blob/main/docs/observability-runbook-88780.md#dhtverifyfailures--warning"
 
       - alert: EquivocationDetected
         expr: increase(coc_bft_equivocations_total[5m]) > 0
@@ -65,6 +81,7 @@ groups:
         annotations:
           summary: "BFT equivocation detected on {{ $labels.instance }}"
           description: "A validator double-voted. Slashing should be triggered."
+          runbook_url: "https://github.com/chainofclaw/COC/blob/main/docs/observability-runbook-88780.md#equivocationdetected--critical"
 
   - name: coc_performance
     rules:
@@ -76,6 +93,7 @@ groups:
         annotations:
           summary: "Slow block production on {{ $labels.instance }}"
           description: "More than 5% of blocks taking longer than 6 seconds."
+          runbook_url: "https://github.com/chainofclaw/COC/blob/main/docs/observability-runbook-88780.md#slowblockproduction--warning"
 
       - alert: HighMempoolBacklog
         expr: coc_tx_pool_pending > 500
@@ -85,6 +103,7 @@ groups:
         annotations:
           summary: "High mempool backlog on {{ $labels.instance }}"
           description: "{{ $value }} pending transactions for 5+ minutes."
+          runbook_url: "https://github.com/chainofclaw/COC/blob/main/docs/observability-runbook-88780.md#highmempoolbacklog--warning"
 
       - alert: HighMemoryUsage
         expr: coc_process_memory_bytes > 2e9
@@ -94,6 +113,7 @@ groups:
         annotations:
           summary: "High memory usage on {{ $labels.instance }}"
           description: "Process RSS is {{ $value | humanize1024 }}B."
+          runbook_url: "https://github.com/chainofclaw/COC/blob/main/docs/observability-runbook-88780.md#highmemoryusage--warning"
 
   - name: coc_network
     rules:
@@ -105,6 +125,7 @@ groups:
         annotations:
           summary: "Low peer count on {{ $labels.instance }}"
           description: "Only {{ $value }} peers connected. Network may be partitioned."
+          runbook_url: "https://github.com/chainofclaw/COC/blob/main/docs/observability-runbook-88780.md#lowpeercount--warning"
 
       - alert: NoWireConnections
         expr: coc_wire_connections == 0 and coc_peers_connected > 0
@@ -114,3 +135,42 @@ groups:
         annotations:
           summary: "No wire protocol connections on {{ $labels.instance }}"
           description: "Wire protocol has 0 connections but HTTP peers are available."
+          runbook_url: "https://github.com/chainofclaw/COC/blob/main/docs/observability-runbook-88780.md#nowireconnections--warning"
+
+  - name: coc_faucet
+    rules:
+      - alert: FaucetBalanceLow
+        # Source: textfile collector via scripts/faucet-balance-check.sh.
+        # Threshold: 500 COC = ~50 drips at default 10 COC/drip — buys
+        # ~12h headroom at canary onboarding pace before drips start failing.
+        expr: coc_faucet_balance_eth < 500
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Faucet balance low ({{ $value }} COC)"
+          description: "Faucet wallet balance fell below 500 COC. At 10 COC/drip, ~50 drips remain. Refill from multisig per faucet-operations runbook before drips start failing."
+          runbook_url: "https://github.com/chainofclaw/COC/blob/main/docs/observability-runbook-88780.md#faucetbalancelow--warning"
+
+      - alert: FaucetBalanceCritical
+        expr: coc_faucet_balance_eth < 100
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Faucet balance critical ({{ $value }} COC)"
+          description: "Faucet wallet has < 100 COC. Public faucet drips will start failing within hours. Refill IMMEDIATELY."
+          runbook_url: "https://github.com/chainofclaw/COC/blob/main/docs/observability-runbook-88780.md#faucetbalancelow--warning"
+
+      - alert: FaucetProbeStale
+        # If the textfile metric hasn't been updated in 30+ minutes, the
+        # balance-check cron has died — alert independently so a dead
+        # probe doesn't hide a draining faucet.
+        expr: time() - coc_faucet_balance_check_timestamp_seconds > 1800
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Faucet balance probe stale ({{ $value }}s since last update)"
+          description: "scripts/faucet-balance-check.sh has not refreshed the textfile metric in 30+ minutes. Check the cron and the node_exporter --collector.textfile.directory path."
+          runbook_url: "https://github.com/chainofclaw/COC/blob/main/docs/observability-runbook-88780.md#faucetprobestale--warning"

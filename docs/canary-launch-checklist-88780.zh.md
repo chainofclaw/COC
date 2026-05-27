@@ -82,28 +82,39 @@
    *当前*:待办。按父 plan A.2.4;独立于本文档 sprint。
    Validator-internal RPC(`209.74.64.88:38780` 等)保持私有;仅 LB 前端暴露流量。
 
-9. **☐ Faucet 可持续模型**
-   *证据*:faucet 24h 连续 100 drip 请求/小时下存活,余额维持 ≥ 1000 COC(自动 refill 在位)。
+9. **🟡 Faucet 可持续模型**
+   *证据*:faucet 24h 连续 100 drip 请求/小时下存活,余额维持 ≥ 1000 COC
+   (refill SOP 在位;余额告警已触发)。
    *负责*:ops
-   *当前*:待办。当前 `faucet/` 代码是测试网调优(10 COC drip,24h 冷却)。
-   canary 阶段的 refill cron job 缺失;需 SOP + 余额降至 500 COC 以下时告警。
+   *当前*:SOP 已交付
+   [`faucet-operations-88780.zh.md`](./faucet-operations-88780.zh.md)(Stage 7)。
+   余额探针 `scripts/faucet-balance-check.sh` 寫 textfile metric
+   (`coc_faucet_balance_eth`);`ops/alerts/prometheus-rules.yml` 中接入 3 條告警:
+   `FaucetBalanceLow`(< 500 COC,warning)、`FaucetBalanceCritical`
+   (< 100 COC,critical)、`FaucetProbeStale`(30+ 分鐘無刷新)。剩餘子任務
+   (不阻塞 Gate 9):
+   - 在 faucet 主機安裝探針 cron(ops,上線前);
+   - 一旦 `configs/deployed-contracts-88780.json` 記錄了 faucet 錢包地址,
+     開 `TreasurySpend` 提案,把 faucet 充到 30-day-headroom 閾值(300 000 COC);
+   - 跑 100-drip/h × 24h 負載測試(k6 或簡單 bash 循環),驗證 SOP 在真實上線節奏下成立。
 
 10. **🟡 Grafana dashboards committed + Prometheus alerts wired**
-    *证据*:4 个 dashboard(`docker/grafana/dashboards/coc-{overview,consensus,network,resources}.json`)
-    + `ops/alerts/prometheus-rules.yml` 中 11 条 alert(4 组:availability、security、
-    performance、network),每条映射到
-    [`observability-runbook-88780.zh.md`](./observability-runbook-88780.zh.md) 一节(Stage 6)。
-    SLO 编码:`SlowBlockProduction`(出块 p99 代理)、`EquivocationDetected`
-    (清白记录 gate)、`LowPeerCount` / `coc_validators_active` panel(BFT quorum)、
-    `HighMempoolBacklog`(mempool ack 代理)。
+    *证据*:4 個 dashboard(`docker/grafana/dashboards/coc-{overview,consensus,network,resources}.json`)
+    + `ops/alerts/prometheus-rules.yml` 中 15 條 alert(5 組:availability(含
+    `ValidatorQuorumAtRisk`)、security、performance、network、faucet),每條都帶
+    `runbook_url` annotation 指向
+    [`observability-runbook-88780.zh.md`](./observability-runbook-88780.zh.md) 一節
+    (Stages 6 + 7)。SLO 編碼:`SlowBlockProduction`(出塊 p99 代理)、
+    `EquivocationDetected`(清白記錄 gate)、`ValidatorQuorumAtRisk` + `LowPeerCount`
+    (BFT quorum margin)、`HighMempoolBacklog`(mempool ack 代理)、`FaucetBalance*`
+    (上線容量)。
     *负责*:ops
-    *当前*:资产 + 每条 alert SOP 已交付。剩余子任务(已跟踪,不阻塞 Gate 10):
-    - 验证 dashboards 在新 Grafana 干净导入(上线前手动 dry-run);
-    - 接 Alertmanager `runbook_url` annotation 指向公开 runbook URL(docs 站点上线后);
-    - 可选:加 `ValidatorQuorumAtRisk` alert(`coc_validators_active < 5`)
-      预防 chaos T2 风格的 2-down 重启竞速;
-    - 对齐 dev-stack `docker/prometheus/alerts.yml` 与权威 `ops/alerts/prometheus-rules.yml`
-      (或废弃 dev 文件)。
+    *当前*:資產 + 每條 alert SOP + `runbook_url` annotation 已交付。Dev-stack
+    `docker/prometheus/alerts.yml` 現帶 non-canonical banner。剩餘子任務
+    (不阻塞 Gate 10):
+    - 驗證 dashboards 在新 Grafana 乾淨導入(上線前手動 dry-run);
+    - 探針 cron 上線後在 `coc-overview.json` 加 "Faucet Balance" panel;
+    - 長期:決定是完全對齊還是廢棄 `docker/prometheus/alerts.yml`。
 
 ### 可发现性
 
@@ -117,7 +128,7 @@
 
 ## Burn-down
 
-上线需 11 个全 ☑。当前:1 ☑ / 1 🟡 / 9 ☐。
+上线需 11 个全 ☑。当前:1 ☑ / 2 🟡 / 8 ☐。
 
 建议顺序(最快上线路径):
 1. Gates 4 + 7 + 11 可在本 sprint 文档级搞定

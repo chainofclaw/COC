@@ -109,6 +109,33 @@
 
 ---
 
+### `ValidatorQuorumAtRisk` — warning
+
+**表達式**:`coc_validators_active < 5` 持續 2m
+
+**症狀**:active validator 數量降到 5 以下。canary 網絡 BFT quorum 為 6 取 4 —
+再掉 1 個觸發 stall(chaos T3 結果:3 down = 乾淨 stall,鏈凍結直至恢復)。
+
+**Dashboards**:`coc-consensus` → "Active Validator Count" stat。
+
+**診斷**:
+1. 通過 `coc_validators_active` per-instance label 識別缺失的 validator,
+   或交叉檢查 `coc_block_height`(缺失者的 metric 是 stale)。
+2. 在缺失 validator 主機跑 `journalctl -u coc-node@<unit>`。可能是計劃內重啟、
+   進程崩潰或網絡分區。
+
+**首響應**(這是 chaos T2 SOP — 細讀):
+- **不要重啟任何其他 validator**,直到缺失那個回來。兩個同時 down = 2.5 分鐘
+  stall(chaos T2 結果)。
+- 缺失 validator 是計劃內重啟:等它回來(snap-sync 通常 < 30s),告警自動清除。
+- 計劃外(崩潰):按 `NodeDown` SOP **只**重啟那一個 validator。任何其他計劃內
+  ops 在恢復確認後再 ≥ 60s 錯峰。
+
+**升級**:validator 數降到 4 → 提前 warn on-call lead。降到 3 →
+`BlockProductionStalled` 會觸發(鏈已 stall);升級到 disaster-recovery 流程。
+
+---
+
 ### `ConsensusStateDegraded` — warning
 
 **表達式**:`coc_consensus_state != 0` 持續 5m
@@ -330,6 +357,72 @@ systemctl restart coc-node@<unit>
 
 **首響應**:配置對 + 端口開,重啟節點。重啟後所有節點 wire 仍為 0,
 開 issue — 可能 wire-protocol 回歸。
+
+---
+
+## Faucet 組 (`coc_faucet`)
+
+Faucet 告警依賴 textfile-collector 探針 — 見
+[`faucet-operations-88780.zh.md`](./faucet-operations-88780.zh.md)
+中 `scripts/faucet-balance-check.sh` 的安裝/cron 程序。
+
+### `FaucetBalanceLow` — warning
+
+**表達式**:`coc_faucet_balance_eth < 500` 持續 5m
+
+**症狀**:Faucet 錢包餘額降到 500 COC 以下(默認 10 COC/drip,~50 drip,
+canary 上線節奏下 ~12h headroom)。
+
+**Dashboards**:`coc-overview` → "Faucet Balance" panel(若加了 — 撰文時 metric 在
+textfile collector 但尚未接到 dashboard panel;作為 Gate 10 polish 跟蹤)。
+
+**診斷**:
+1. `curl -s https://faucet.chainofclaw.io/faucet/status | jq` — 確認鏈上餘額
+   與告警一致(排除探針漂移)。
+2. 查 `totalDrips` 字段 — 突發增長 = 上線高峰,有機。穩定速率 = 預期消耗;
+   按充值週期處理。
+
+**首響應**:按
+[`faucet-operations-88780.zh.md` § 充值流程](./faucet-operations-88780.zh.md#refill-procedure)
+觸發標準充值。≤ 10 000 COC multisig signer 可直接批准。multisig tx 落塊後 1 個塊內驗證。
+
+**升級**:充值後餘額仍以相同速率下降 → 懷疑濫用,升級到 faucet-operations § 濫用響應。
+
+---
+
+### `FaucetBalanceCritical` — critical
+
+**表達式**:`coc_faucet_balance_eth < 100` 持續 1m
+
+**症狀**:Faucet < 100 COC。drip 將在數小時內失敗;若 `daily_global_limit`
+同時觸發,立即失敗。
+
+**Dashboards**:同 `FaucetBalanceLow`。
+
+**首響應**:**立即**充值。multisig signer 無法及時聯繫到時,改用
+`pm2 stop coc-faucet` 快速失敗 — 比部分服務更好(drip 失敗對上線 UX
+比帶清晰重試訊息的 `503` 更糟)。然後 page on-call。
+
+---
+
+### `FaucetProbeStale` — warning
+
+**表達式**:`time() - coc_faucet_balance_check_timestamp_seconds > 1800` 持續 5m
+
+**症狀**:Faucet 餘額探針(`scripts/faucet-balance-check.sh`)30+ 分鐘未刷新
+textfile metric。探針死了,faucet 本身可能還活著 — 但死探針會掩蓋抽乾的 faucet。
+
+**診斷**:
+1. SSH 到 faucet 主機。`systemctl status cron` — 確認 cron 在跑。
+2. `cat /etc/cron.d/coc-faucet-balance-check` — 確認 cron 條目存在。
+3. 手動跑腳本:`bash /usr/local/bin/faucet-balance-check.sh`,
+   查 exit code + stderr。
+4. 確認 `/var/lib/node_exporter/textfile_collector/coc_faucet_balance.prom`
+   時間戳被更新。
+
+**首響應**:最常見原因是新主機沒裝 `jq` / `curl`。用包管理器裝 + 重跑。
+若 `node_exporter` 沒讀 textfile collector 目錄,確認 systemd unit 中
+`--collector.textfile.directory` flag。
 
 ---
 

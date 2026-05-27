@@ -1,3 +1,19 @@
+# NON-CANONICAL — DEV STACK ONLY.
+#
+# This file is the docker-compose dev-stack alert ruleset (looser thresholds,
+# faster `for:` durations, narrower coverage). The canonical PRODUCTION
+# alert ruleset for the canary testnet 88780 is `ops/alerts/prometheus-rules.yml`
+# (see docs/observability-runbook-88780.md for per-alert SOPs).
+#
+# When changing alerts:
+#   - Add new prod alerts to `ops/alerts/prometheus-rules.yml` ONLY.
+#   - Mirror to this file only if the dev stack genuinely needs the alert
+#     for local testing (most don't — dev stacks rarely run long enough).
+#   - Do NOT diverge thresholds without an explicit comment explaining why.
+#
+# Tracked as a Gate 10 cleanup: this file will either be brought into sync
+# with `ops/alerts/prometheus-rules.yml` or deprecated entirely.
+
 groups:
   - name: coc-node-alerts
     rules:

@@ -99,35 +99,48 @@ has explicit evidence linked — no "trust me, it's done" entries.
    Validator-internal RPCs (`209.74.64.88:38780` etc.) stay private; only
    the LB front-end exposes traffic.
 
-9. **☐ Faucet sustainable model**
+9. **🟡 Faucet sustainable model**
    *Evidence*: faucet survives 100 drip requests/hour over 24h continuous,
-   maintains balance ≥ 1000 COC (refill automation in place).
+   maintains balance ≥ 1000 COC (refill SOP in place; balance alerts firing).
    *Owner*: ops
-   *Current*: Open. Current faucet code at `faucet/` is testnet-tuned
-   (10 COC drip, 24h cooldown). Refill cron job for canary phase is
-   missing; needs SOP + alert if balance drops below 500 COC.
+   *Current*: SOP shipped at
+   [`faucet-operations-88780.md`](./faucet-operations-88780.md) (Stage 7).
+   Balance probe `scripts/faucet-balance-check.sh` writes a textfile
+   metric (`coc_faucet_balance_eth`); 3 alerts wired in
+   `ops/alerts/prometheus-rules.yml`: `FaucetBalanceLow` (< 500 COC,
+   warning), `FaucetBalanceCritical` (< 100 COC, critical),
+   `FaucetProbeStale` (no update 30+ min). Outstanding sub-tasks
+   (non-blocking for Gate 9):
+   - Install the probe cron on the faucet host (ops, pre-launch);
+   - Open a `TreasurySpend` proposal to seed the faucet wallet to the
+     30-day-headroom threshold (300 000 COC) once the wallet address
+     is recorded in `configs/deployed-contracts-88780.json`;
+   - Run the 100-drip/h × 24h load test (k6 or a simple bash loop) to
+     verify the SOP holds under realistic onboarding pace.
 
 10. **🟡 Grafana dashboards committed + Prometheus alerts wired**
     *Evidence*: 4 dashboards (`docker/grafana/dashboards/coc-{overview,consensus,network,resources}.json`)
-    + 11 alerts in `ops/alerts/prometheus-rules.yml` (4 groups: availability,
-    security, performance, network), each mapped to a section in
+    + 15 alerts in `ops/alerts/prometheus-rules.yml` (5 groups:
+    availability incl. `ValidatorQuorumAtRisk`, security, performance,
+    network, faucet), each carrying a `runbook_url` annotation pointing
+    at a section in
     [`observability-runbook-88780.md`](./observability-runbook-88780.md)
-    (Stage 6). SLO encoding: `SlowBlockProduction` (block p99 proxy),
-    `EquivocationDetected` (clean-record gate), `LowPeerCount` /
-    `coc_validators_active` panel (BFT quorum), `HighMempoolBacklog`
-    (mempool ack proxy).
+    (Stages 6 + 7). SLO encoding: `SlowBlockProduction` (block p99
+    proxy), `EquivocationDetected` (clean-record gate),
+    `ValidatorQuorumAtRisk` + `LowPeerCount` (BFT quorum margin),
+    `HighMempoolBacklog` (mempool ack proxy), `FaucetBalance*` (onboarding
+    capacity).
     *Owner*: ops
-    *Current*: Assets + per-alert SOP shipped. Outstanding sub-tasks
-    (tracked, non-blocking for Gate 10):
+    *Current*: Assets + per-alert SOP + `runbook_url` annotations
+    shipped. Dev-stack `docker/prometheus/alerts.yml` now carries a
+    non-canonical banner. Outstanding sub-tasks (non-blocking for
+    Gate 10):
     - Verify dashboards import cleanly into a fresh Grafana (manual
       dry-run before launch);
-    - Wire Alertmanager `runbook_url` annotations to point at the new
-      runbook URL once docs are public-served;
-    - Optional: add `ValidatorQuorumAtRisk` alert
-      (`coc_validators_active < 5`) to preempt chaos-T2-style 2-down
-      restart races.
-    - Reconcile dev-stack `docker/prometheus/alerts.yml` against the
-      canonical `ops/alerts/prometheus-rules.yml` (or deprecate it).
+    - Add a "Faucet Balance" panel to `coc-overview.json` once probe
+      cron is live;
+    - Long-term: decide whether to fully reconcile or deprecate
+      `docker/prometheus/alerts.yml`.
 
 ### Discoverability
 
@@ -142,7 +155,7 @@ has explicit evidence linked — no "trust me, it's done" entries.
 
 ## Burn-down
 
-To go live, all 11 gates must be ☑. Current count: 1 ☑ / 1 🟡 / 9 ☐.
+To go live, all 11 gates must be ☑. Current count: 1 ☑ / 2 🟡 / 8 ☐.
 
 Suggested order (fastest path to launch):
 1. Gates 4 + 7 + 11 are docs-shippable inside this sprint
