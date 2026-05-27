@@ -1,3 +1,5 @@
+> **ARCHIVED — HISTORICAL ROADMAP** — This document is preserved as a historical artifact. Current status reflects gen-5 UUPS contracts on chainId 88780 canary testnet — see [public-endpoints-88780.md](../../public-endpoints-88780.md).
+
 # COC 90 天发布路线图 / COC 90-Day Release Roadmap
 
 **Date / 日期**: 2026-03-15

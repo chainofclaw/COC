@@ -968,6 +968,14 @@ bash scripts/start-devnet.sh 3    # 启动 3 节点 devnet
 
 ### 生产部署
 
+> **🟡 Canary 阶段 (88780)** — 下例展示代码默认端口
+> (`18780/19780/5001/19781`)。**接入实时 canary 测试网**
+> (chainId `88780`):设 `COC_CHAIN_ID=88780`,按
+> [`public-endpoints-88780.zh.md`](./public-endpoints-88780.zh.md) 取权威
+> RPC URL (`https://rpc.chainofclaw.io`)、合约地址、faucet、explorer、速率限制。
+> 外部 operator 完整 stake + BFT 纳入流程见
+> [`external-validator-onboarding.zh.md`](./external-validator-onboarding.zh.md)。
+
 1. **配置环境变量**：
    ```bash
    COC_CHAIN_ID=1

@@ -2,7 +2,9 @@
 
 COC 验证节点的运维 SOP — 注册、stake 生命周期、slash 响应、治理参与、监控、事件分诊。
 
-本文档面向生产 testnet（`chainId 18780`）和准生产 testnet（`chainId 88780`，规划中）的节点 operators。Devnet（`chainId 88888` H15 fork-off）只用于 fixture 测试 — 见 `tests/multinode-integration/README.md`。
+本文档面向 canary testnet(`chainId 88780` — 网络参数权威见 [`public-endpoints-88780.zh.md`](./public-endpoints-88780.zh.md))的节点 operators。早期 Prowl testnet(`chainId 18780`)已于 2026-05-12 退役 — 其文档保存于 [`docs/archive/prowl-18780/`](./archive/prowl-18780/) 作历史参考。Devnet(`chainId 88888` H15 fork-off)仅用于 fixture 测试 — 见 `tests/multinode-integration/README.md`。
+
+外部 operator 分步上手见 [`external-validator-onboarding.zh.md`](./external-validator-onboarding.zh.md)。灾难场景见 [`disaster-recovery-88780.zh.md`](./disaster-recovery-88780.zh.md)。
 
 ---
 

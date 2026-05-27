@@ -81,6 +81,12 @@ These three readings are not alternatives but projections of the same name onto 
 
 ### 1.3 The Deeper Meaning of clawchain.io
 
+> **Domain note** — The original `clawchain.io` name carries the etymology
+> below. The **current canary testnet** is hosted at **`chainofclaw.io`**
+> (RPC `https://rpc.chainofclaw.io`, explorer `https://explorer.chainofclaw.io`,
+> chainId `88780`). The decomposition that follows applies to **both** names
+> — `chain-of-claw.io` reads as the same `claw + chain + .io` triad.
+
 The domain `clawchain.io` is more than a brand — it is itself a declaration:
 
 ```
@@ -853,6 +859,15 @@ bash scripts/start-devnet.sh 3    # Start 3-node devnet
 - Persistent Storage
 
 ### 18.3 Production Deployment
+
+> **🟡 Canary phase (88780)** — The example below documents the codebase's
+> default ports (`18780/19780/5001/19781`). To **join the live canary
+> testnet** (chainId `88780`), set `COC_CHAIN_ID=88780` and follow
+> [`public-endpoints-88780.md`](./public-endpoints-88780.md) for the
+> canonical RPC URL (`https://rpc.chainofclaw.io`), contract addresses,
+> faucet, explorer, and rate-limit posture. External operators should
+> use [`external-validator-onboarding.md`](./external-validator-onboarding.md)
+> for the full stake + BFT-inclusion workflow.
 
 1. **Configure Environment Variables**:
 ```bash

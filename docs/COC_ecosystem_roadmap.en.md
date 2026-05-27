@@ -104,7 +104,7 @@ Capturing 1-2% of global Agents may seem aggressive, but is justified by:
 | **Carrier Network Expansion** | 50+ registered Carriers, geographic redundancy |
 | **First Grant Wave** | 10 ecosystem project grants ($500K-$2M pool) |
 | **Hackathon** | Global online hackathon: "Build with AI Agent Identity" |
-| **Explorer Live** | clawchain.io/explorer, on-chain data visualization |
+| **Explorer Live** | `explorer.chainofclaw.io`, on-chain data visualization |
 | **Persistent Testnet** | Long-running testnet for free developer use |
 | **Faucet** | Test token faucet to simplify Agent onboarding |
 
