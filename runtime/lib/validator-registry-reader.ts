@@ -125,21 +125,7 @@ export class ValidatorRegistryReader {
   async init(): Promise<void> {
     if (this.initialized) return
 
-    if (this.cfg.persistPath && existsSync(this.cfg.persistPath)) {
-      try {
-        const raw = await readFile(this.cfg.persistPath, "utf-8")
-        const state = JSON.parse(raw) as PersistState
-        this.lastScannedBlock = BigInt(state.lastScannedBlock)
-      } catch (err) {
-        log.warn("failed to load persisted lastScannedBlock; starting from configured fromBlock", {
-          path: this.cfg.persistPath,
-          error: String(err),
-        })
-        this.lastScannedBlock = this.cfg.fromBlock
-      }
-    } else {
-      this.lastScannedBlock = this.cfg.fromBlock
-    }
+    await this.hydrateFromSidecar()
 
     // Snap-synced nodes don't have block history before the snap point, so
     // ValidatorRegistered events from earlier blocks aren't queryable via
@@ -187,6 +173,34 @@ export class ValidatorRegistryReader {
     if (this.pollTimer) {
       clearInterval(this.pollTimer)
       this.pollTimer = null
+    }
+  }
+
+  /**
+   * Load `lastScannedBlock` from the persisted sidecar (if any). Pulled out
+   * of `init()` so unit tests can verify hydration / corruption-fallback
+   * without standing up an RPC provider (init's `scanToTip` would otherwise
+   * hang on an unreachable endpoint).
+   *
+   * Corrupted sidecar (unparseable JSON, missing field) → log warn and fall
+   * back to `cfg.fromBlock`. Never throws — this path runs before any RPC
+   * work so a corrupt file should not prevent reader startup.
+   */
+  private async hydrateFromSidecar(): Promise<void> {
+    if (this.cfg.persistPath && existsSync(this.cfg.persistPath)) {
+      try {
+        const raw = await readFile(this.cfg.persistPath, "utf-8")
+        const state = JSON.parse(raw) as PersistState
+        this.lastScannedBlock = BigInt(state.lastScannedBlock)
+      } catch (err) {
+        log.warn("failed to load persisted lastScannedBlock; starting from configured fromBlock", {
+          path: this.cfg.persistPath,
+          error: String(err),
+        })
+        this.lastScannedBlock = this.cfg.fromBlock
+      }
+    } else {
+      this.lastScannedBlock = this.cfg.fromBlock
     }
   }
 
@@ -307,6 +321,35 @@ export class ValidatorRegistryReader {
    */
   _replayEventForTest(eventName: "ValidatorRegistered" | "ValidatorDeactivated" | "ValidatorSlashed", args: unknown[], blockNumber: number, index = 0): void {
     this.handleEvent({ eventName, args, blockNumber, index } as unknown as EventLog)
+  }
+
+  /**
+   * Test-only read of the persisted scan cursor. Production code should
+   * never depend on this — it exists so unit tests can verify that
+   * `init()` correctly hydrates `lastScannedBlock` from the sidecar file
+   * and that `persist()` writes a parseable record after a scan tick.
+   */
+  _lastScannedBlockForTest(): bigint {
+    return this.lastScannedBlock
+  }
+
+  /**
+   * Test-only trigger for the persistence write. Mirrors what `scanToTip`
+   * does at the end of a tick but without needing a live RPC. Production
+   * code should never call this — `scanToTip` is the canonical caller.
+   */
+  async _persistForTest(blockNumber: bigint): Promise<void> {
+    this.lastScannedBlock = blockNumber
+    await this.persist()
+  }
+
+  /**
+   * Test-only invocation of the sidecar-hydrate step. Lets unit tests verify
+   * the restart hydration + corrupted-sidecar fallback without standing up
+   * an RPC provider (which init's later scan step requires).
+   */
+  async _hydrateFromSidecarForTest(): Promise<void> {
+    await this.hydrateFromSidecar()
   }
 
   private handleEvent(ev: EventLog): void {

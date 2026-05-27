@@ -9,6 +9,9 @@
 
 import test from "node:test"
 import assert from "node:assert/strict"
+import { readFileSync, writeFileSync, existsSync, mkdtempSync, rmSync } from "node:fs"
+import { join } from "node:path"
+import { tmpdir } from "node:os"
 import { ValidatorRegistryReader } from "./validator-registry-reader.ts"
 
 const NODE_A = "0x" + "a".repeat(64) as `0x${string}`
@@ -134,6 +137,79 @@ test("ValidatorRegistryReader: handler exception does not break further dispatch
   // Must not throw out of replayEventForTest even though first handler does.
   reader._replayEventForTest("ValidatorRegistered", [NODE_A, OP_X, 32n * 10n ** 18n, PUB_X], 100)
   assert.equal(secondHandlerCalled, true)
+})
+
+test("ValidatorRegistryReader: persist writes a parseable JSON sidecar with the scan cursor", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "coc-vrr-persist-"))
+  try {
+    const persistPath = join(dir, "state.json")
+    const reader = new ValidatorRegistryReader({
+      rpcUrl: "http://127.0.0.1:1",
+      address: "0x0000000000000000000000000000000000000001",
+      persistPath,
+    })
+
+    await reader._persistForTest(12345n)
+
+    assert.equal(existsSync(persistPath), true, "persist sidecar created")
+    const raw = readFileSync(persistPath, "utf-8")
+    const state = JSON.parse(raw)
+    assert.equal(state.lastScannedBlock, "12345", "block stored as decimal string")
+    assert.equal(typeof state.lastScannedBlock, "string", "string form to keep JSON-safe (avoids bigint losing precision)")
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("ValidatorRegistryReader: hydrate picks up lastScannedBlock from a pre-existing sidecar", async () => {
+  // Restart scenario: a previous reader run wrote state.json; the new reader
+  // must pick up at that block, not re-scan from genesis. Without this the
+  // reader walks the entire chain history on every node restart — at 88780
+  // testnet height ~380k blocks, that's a 5+ min eth_getLogs storm.
+  const dir = mkdtempSync(join(tmpdir(), "coc-vrr-hydrate-"))
+  try {
+    const persistPath = join(dir, "state.json")
+    writeFileSync(persistPath, JSON.stringify({ lastScannedBlock: "67890" }) + "\n")
+
+    const reader = new ValidatorRegistryReader({
+      rpcUrl: "http://127.0.0.1:1",
+      address: "0x0000000000000000000000000000000000000001",
+      persistPath,
+    })
+
+    await reader._hydrateFromSidecarForTest()
+
+    assert.equal(reader._lastScannedBlockForTest(), 67890n, "cursor hydrated from sidecar")
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("ValidatorRegistryReader: corrupted sidecar falls back to configured fromBlock without crashing", async () => {
+  // Defense-in-depth: if the sidecar file is unparseable (disk corruption,
+  // partial write during ungraceful shutdown), the reader must not refuse
+  // to start. Fall back to `fromBlock` and re-scan; we'll catch up to head
+  // on the next tick. Without this, a corrupted sidecar would brick the
+  // node's BFT validator-set reader permanently until manual file deletion.
+  const dir = mkdtempSync(join(tmpdir(), "coc-vrr-corrupt-"))
+  try {
+    const persistPath = join(dir, "state.json")
+    writeFileSync(persistPath, "{ this is not valid json @@@", "utf-8")
+
+    const reader = new ValidatorRegistryReader({
+      rpcUrl: "http://127.0.0.1:1",
+      address: "0x0000000000000000000000000000000000000001",
+      persistPath,
+      fromBlock: 100n,
+    })
+
+    await reader._hydrateFromSidecarForTest()
+
+    // Corrupted sidecar → warned + fell back to fromBlock=100. No throw.
+    assert.equal(reader._lastScannedBlockForTest(), 100n, "fromBlock used as fallback")
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test("ValidatorRegistryReader: re-registering same nodeId after deactivation re-adds", () => {
