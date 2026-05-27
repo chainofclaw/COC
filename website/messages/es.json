@@ -15,6 +15,7 @@
     "resources": "Recursos",
     "development": "Desarrollo",
     "whitepaper": "Libro blanco",
+    "security": "Seguridad",
     "allRightsReserved": "Todos los derechos reservados",
     "copyright": "Copyright",
     "services": "Services"
@@ -950,6 +951,11 @@
       "seconds": "Segundos",
       "launchDate": "Lanzamiento el 27 de marzo de 2026"
     },
+    "canaryBanner": {
+      "title": "Testnet canario 88780 en vivo",
+      "subtitle": "Red BFT de 6 validadores · contratos gen-5 UUPS · RPC público + faucet + explorer abiertos",
+      "cta": "Ver endpoints públicos"
+    },
     "units": {
       "blocksPerMinute": "bloques/min",
       "authRequests": "solicitudes auth"
@@ -1680,5 +1686,53 @@
     "statusPass": "Pass",
     "statusReview": "Review",
     "statusSuspicious": "Suspicious"
+  },
+  "security": {
+    "title": "Divulgación de Seguridad",
+    "subtitle": "Reporta una vulnerabilidad. Acuse en 24h. Recompensa por hallazgos críticos válidos.",
+    "contact": {
+      "title": "Reportar una vulnerabilidad",
+      "body": "Aceptamos reportes por canales privados. No publiques issues públicos para bugs de seguridad.",
+      "advisory": "Abrir advisory privado en GitHub"
+    },
+    "scope": {
+      "title": "Alcance",
+      "inTitle": "En alcance",
+      "outTitle": "Fuera de alcance",
+      "in": {
+        "chain": "Código del nodo ChainOfClaw 88780 (RPC, P2P, mempool, consenso)",
+        "contracts": "Contratos Gen-5 UUPS (gobernanza, PoSe, identidad, liquidación)",
+        "explorer": "Block explorer en explorer.chainofclaw.io",
+        "website": "Este sitio (chainofclaw.io) y el faucet"
+      },
+      "out": {
+        "thirdParty": "Dependencias de terceros (reportar al proyecto upstream)",
+        "docs": "Errores tipográficos / enlaces rotos / sugerencias en docs",
+        "dos": "DoS volumétrico genérico (capa Cloudflare)",
+        "social": "Ingeniería social a miembros del proyecto"
+      }
+    },
+    "rewards": {
+      "title": "Niveles de recompensa (fase canary)",
+      "severity": "Severidad",
+      "range": "Rango",
+      "example": "Ejemplo",
+      "criticalEx": "Pérdida directa de fondos de validador, bypass de multisig, RCE en validador",
+      "highEx": "Consenso atascado, slash masivo, abuso de upgrade de contratos",
+      "mediumEx": "Escalada de privilegios RPC, mempool griefing, drenaje de faucet",
+      "lowEx": "Divulgación de información, gas griefing de bajo impacto, XSS en explorer"
+    },
+    "timeline": {
+      "title": "SLA de respuesta",
+      "ack": "Acuse de recibo (auto + humano para Critical)",
+      "triage": "Decisión de triage y asignación de severidad",
+      "fix": "Fix desplegado para Critical / High (caso por caso, más rápido)",
+      "disclosure": "Ventana de divulgación pública (coordinada con el reportero)"
+    },
+    "canonical": {
+      "title": "Política canónica",
+      "body": "Política completa de divulgación, safe-harbor y clave PGP en SECURITY.md (raíz del repo).",
+      "docs": "Ver documentación"
+    }
   }
 }

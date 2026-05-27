@@ -15,6 +15,7 @@
     "resources": "資源",
     "development": "開發",
     "whitepaper": "白皮書",
+    "security": "安全",
     "allRightsReserved": "保留所有權利",
     "copyright": "版權所有",
     "services": "服务"
@@ -950,6 +951,11 @@
       "seconds": "秒",
       "launchDate": "啟動日期：2026年3月27日"
     },
+    "canaryBanner": {
+      "title": "Canary 測試網 88780 已上線",
+      "subtitle": "6 個 validator BFT 網絡 · gen-5 UUPS 合約 · 公開 RPC + faucet + explorer 已開放",
+      "cta": "查看公開端點"
+    },
     "units": {
       "blocksPerMinute": "塊/分鐘",
       "authRequests": "認證請求"
@@ -1680,5 +1686,53 @@
     "statusPass": "Pass",
     "statusReview": "Review",
     "statusSuspicious": "Suspicious"
+  },
+  "security": {
+    "title": "安全披露",
+    "subtitle": "報告漏洞。24 小時內確認。Critical 級別有效漏洞獲得獎勵。",
+    "contact": {
+      "title": "報告漏洞",
+      "body": "請通過私密渠道提交。請勿在公開 issue 中提報安全問題。",
+      "advisory": "在 GitHub 發起私密 advisory"
+    },
+    "scope": {
+      "title": "範圍",
+      "inTitle": "範圍內",
+      "outTitle": "範圍外",
+      "in": {
+        "chain": "ChainOfClaw 88780 節點代碼(RPC、P2P、mempool、共識)",
+        "contracts": "Gen-5 UUPS 智能合約(治理、PoSe、身份、結算)",
+        "explorer": "區塊瀏覽器 explorer.chainofclaw.io",
+        "website": "本網站(chainofclaw.io)和 faucet"
+      },
+      "out": {
+        "thirdParty": "第三方依賴(請向上游項目報告)",
+        "docs": "文檔錯字 / 失效鏈接 / 建議",
+        "dos": "通用容量 DoS(Cloudflare 層)",
+        "social": "對項目成員的社會工程"
+      }
+    },
+    "rewards": {
+      "title": "獎勵層級(canary 階段)",
+      "severity": "嚴重度",
+      "range": "區間",
+      "example": "示例",
+      "criticalEx": "直接損失 validator 資金、multisig 繞過、validator 遠程代碼執行",
+      "highEx": "共識卡死、大規模 slash 觸發、合約升級濫用",
+      "mediumEx": "RPC 權限提升、mempool griefing、faucet 抽空",
+      "lowEx": "信息洩露、低影響 gas griefing、explorer XSS"
+    },
+    "timeline": {
+      "title": "響應 SLA",
+      "ack": "確認收到(自動 + Critical 級別人工)",
+      "triage": "分類決定和嚴重度分級",
+      "fix": "Critical / High 級別修復上鏈(視情況加快)",
+      "disclosure": "公開披露窗口(與報告者協調)"
+    },
+    "canonical": {
+      "title": "權威政策",
+      "body": "完整披露政策、safe-harbor 條款、PGP 密鑰見倉庫根目錄的 SECURITY.md。",
+      "docs": "閱讀文檔"
+    }
   }
 }

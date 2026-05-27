@@ -15,6 +15,7 @@
     "resources": "Resources",
     "development": "Development",
     "whitepaper": "Whitepaper",
+    "security": "Security",
     "allRightsReserved": "All rights reserved",
     "copyright": "Copyright",
     "services": "Services"
@@ -950,6 +951,11 @@
       "seconds": "Seconds",
       "launchDate": "Launching on March 27, 2026"
     },
+    "canaryBanner": {
+      "title": "Canary testnet 88780 is live",
+      "subtitle": "6-validator BFT network · gen-5 UUPS contracts · public RPC + faucet + explorer open",
+      "cta": "Read the public endpoints"
+    },
     "units": {
       "blocksPerMinute": "blocks/min",
       "authRequests": "auth requests"
@@ -1680,5 +1686,53 @@
     "statusPass": "Pass",
     "statusReview": "Review",
     "statusSuspicious": "Suspicious"
+  },
+  "security": {
+    "title": "Security Disclosure",
+    "subtitle": "Report a vulnerability. Get acknowledged in 24h. Get paid for valid critical findings.",
+    "contact": {
+      "title": "Report a vulnerability",
+      "body": "We accept reports via private channels. Please do not file public issues for security bugs.",
+      "advisory": "Open private advisory on GitHub"
+    },
+    "scope": {
+      "title": "Scope",
+      "inTitle": "In scope",
+      "outTitle": "Out of scope",
+      "in": {
+        "chain": "ChainOfClaw 88780 node code (RPC, P2P, mempool, consensus)",
+        "contracts": "Gen-5 UUPS smart contracts (governance, PoSe, identity, settlement)",
+        "explorer": "Block explorer at explorer.chainofclaw.io",
+        "website": "This website (chainofclaw.io) and the faucet"
+      },
+      "out": {
+        "thirdParty": "Third-party dependencies (report to the upstream project)",
+        "docs": "Documentation typos / dead links / suggestions",
+        "dos": "Generic volumetric DoS (Cloudflare layer)",
+        "social": "Social engineering of project members"
+      }
+    },
+    "rewards": {
+      "title": "Reward tiers (canary phase)",
+      "severity": "Severity",
+      "range": "Range",
+      "example": "Example",
+      "criticalEx": "Direct loss of validator funds, multisig bypass, remote code execution on validator",
+      "highEx": "Stuck consensus, mass slash trigger, contract upgrade abuse",
+      "mediumEx": "RPC privilege escalation, mempool griefing, faucet drain",
+      "lowEx": "Information disclosure, low-impact gas griefing, explorer XSS"
+    },
+    "timeline": {
+      "title": "Response SLA",
+      "ack": "Acknowledge receipt (auto + human for Critical)",
+      "triage": "Triage decision and severity assignment",
+      "fix": "Fix landed for Critical / High (faster on case-by-case)",
+      "disclosure": "Public disclosure window (coordinated with reporter)"
+    },
+    "canonical": {
+      "title": "Canonical policy",
+      "body": "Full disclosure policy, safe-harbor language, and PGP key live in SECURITY.md at the repository root.",
+      "docs": "Read the docs"
+    }
   }
 }

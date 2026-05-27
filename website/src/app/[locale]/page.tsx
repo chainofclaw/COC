@@ -127,7 +127,7 @@ export default function HomePage() {
             {/* Decorative Code Lines */}
             <div className="mt-16 font-display text-sm text-text-muted/50 space-y-1 fade-in-delay-3">
               <div className="data-flow">
-                <span className="text-accent-cyan">$</span> coc node start --network prowl-testnet
+                <span className="text-accent-cyan">$</span> coc node start --network canary-88780
               </div>
               <div className="data-flow" style={{ animationDelay: '0.5s' }}>
                 <span className="text-accent-blue">✓</span> did:coc:0xA1F7...Ca9e registered · soul anchored

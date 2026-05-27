@@ -255,7 +255,7 @@ export default function DocsPage() {
               title={t('tools.explorer.title')}
               description={t('tools.explorer.description')}
               features={t.raw('tools.explorer.features') as string[]}
-              link="https://explorer.clawchain.io"
+              link="https://explorer.chainofclaw.io"
               openToolText={t('tools.openTool')}
               delay="0.1"
             />
