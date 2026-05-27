@@ -15,6 +15,7 @@
     "resources": "リソース",
     "development": "開発",
     "whitepaper": "ホワイトペーパー",
+    "security": "セキュリティ",
     "allRightsReserved": "全著作権所有",
     "copyright": "著作権",
     "services": "Services"
@@ -950,6 +951,11 @@
       "seconds": "秒",
       "launchDate": "2026年3月27日に起動"
     },
+    "canaryBanner": {
+      "title": "Canary テストネット 88780 稼働中",
+      "subtitle": "6 validator BFT ネットワーク · gen-5 UUPS 契約 · 公開 RPC + faucet + explorer オープン",
+      "cta": "公開エンドポイントを見る"
+    },
     "units": {
       "blocksPerMinute": "ブロック/分",
       "authRequests": "認証リクエスト"
@@ -1680,5 +1686,53 @@
     "statusPass": "Pass",
     "statusReview": "Review",
     "statusSuspicious": "Suspicious"
+  },
+  "security": {
+    "title": "セキュリティ開示",
+    "subtitle": "脆弱性を報告。24 時間以内に受信確認。有効な Critical 報告に対し報酬。",
+    "contact": {
+      "title": "脆弱性を報告",
+      "body": "プライベートチャネル経由で受け付けます。セキュリティバグはパブリック issue に書かないでください。",
+      "advisory": "GitHub でプライベート advisory を開く"
+    },
+    "scope": {
+      "title": "スコープ",
+      "inTitle": "スコープ内",
+      "outTitle": "スコープ外",
+      "in": {
+        "chain": "ChainOfClaw 88780 ノードコード(RPC, P2P, mempool, 合意)",
+        "contracts": "Gen-5 UUPS スマートコントラクト(ガバナンス、PoSe、ID、決済)",
+        "explorer": "ブロックエクスプローラー explorer.chainofclaw.io",
+        "website": "本サイト(chainofclaw.io)と faucet"
+      },
+      "out": {
+        "thirdParty": "サードパーティ依存(上流プロジェクトへ報告)",
+        "docs": "ドキュメントの誤字 / リンク切れ / 提案",
+        "dos": "汎用的な容量型 DoS(Cloudflare 層)",
+        "social": "プロジェクトメンバーへのソーシャルエンジニアリング"
+      }
+    },
+    "rewards": {
+      "title": "報酬階層(canary フェーズ)",
+      "severity": "重大度",
+      "range": "範囲",
+      "example": "例",
+      "criticalEx": "validator 資金の直接損失、multisig バイパス、validator での RCE",
+      "highEx": "合意停止、大量 slash 発生、コントラクト upgrade 悪用",
+      "mediumEx": "RPC 権限昇格、mempool グリーフィング、faucet 枯渇",
+      "lowEx": "情報漏洩、低影響 gas グリーフィング、explorer XSS"
+    },
+    "timeline": {
+      "title": "応答 SLA",
+      "ack": "受信確認(自動 + Critical は人手)",
+      "triage": "トリアージ判断と重大度割り当て",
+      "fix": "Critical / High 修正リリース(ケースバイケースで加速)",
+      "disclosure": "公開開示ウィンドウ(報告者と調整)"
+    },
+    "canonical": {
+      "title": "正式ポリシー",
+      "body": "完全な開示ポリシー、safe-harbor、PGP 鍵はリポジトリルートの SECURITY.md に。",
+      "docs": "ドキュメントを読む"
+    }
   }
 }

@@ -15,6 +15,7 @@
     "resources": "리소스",
     "development": "개발",
     "whitepaper": "백서",
+    "security": "보안",
     "allRightsReserved": "모든 권리 보유",
     "copyright": "Copyright",
     "services": "Services"
@@ -950,6 +951,11 @@
       "seconds": "초",
       "launchDate": "2026년 3월 27일 론칭"
     },
+    "canaryBanner": {
+      "title": "Canary 테스트넷 88780 가동 중",
+      "subtitle": "6 validator BFT 네트워크 · gen-5 UUPS 컨트랙트 · 공개 RPC + faucet + explorer 오픈",
+      "cta": "공개 엔드포인트 보기"
+    },
     "units": {
       "blocksPerMinute": "블록/분",
       "authRequests": "인증 요청"
@@ -1680,5 +1686,53 @@
     "statusPass": "Pass",
     "statusReview": "Review",
     "statusSuspicious": "Suspicious"
+  },
+  "security": {
+    "title": "보안 공개",
+    "subtitle": "취약점 보고. 24시간 내 접수 확인. 유효한 Critical 보고에 대해 보상.",
+    "contact": {
+      "title": "취약점 보고",
+      "body": "비공개 채널로만 접수합니다. 공개 issue에 보안 버그를 올리지 마세요.",
+      "advisory": "GitHub에서 비공개 advisory 열기"
+    },
+    "scope": {
+      "title": "범위",
+      "inTitle": "범위 내",
+      "outTitle": "범위 외",
+      "in": {
+        "chain": "ChainOfClaw 88780 노드 코드 (RPC, P2P, mempool, 합의)",
+        "contracts": "Gen-5 UUPS 스마트 컨트랙트 (거버넌스, PoSe, 신원, 정산)",
+        "explorer": "블록 explorer explorer.chainofclaw.io",
+        "website": "본 사이트 (chainofclaw.io) 와 faucet"
+      },
+      "out": {
+        "thirdParty": "서드파티 의존성 (상위 프로젝트로 보고)",
+        "docs": "문서 오타 / 끊긴 링크 / 제안",
+        "dos": "범용 볼륨 DoS (Cloudflare 계층)",
+        "social": "프로젝트 멤버 대상 소셜 엔지니어링"
+      }
+    },
+    "rewards": {
+      "title": "보상 등급 (canary 단계)",
+      "severity": "심각도",
+      "range": "구간",
+      "example": "예시",
+      "criticalEx": "validator 자금 직접 손실, multisig 우회, validator RCE",
+      "highEx": "합의 정지, 대규모 slash 발생, 컨트랙트 upgrade 악용",
+      "mediumEx": "RPC 권한 상승, mempool griefing, faucet 고갈",
+      "lowEx": "정보 유출, 저영향 gas griefing, explorer XSS"
+    },
+    "timeline": {
+      "title": "응답 SLA",
+      "ack": "접수 확인 (자동 + Critical은 사람)",
+      "triage": "트리아주 결정 및 심각도 할당",
+      "fix": "Critical / High 수정 배포 (사례별 가속)",
+      "disclosure": "공개 공시 윈도우 (보고자와 조율)"
+    },
+    "canonical": {
+      "title": "공식 정책",
+      "body": "완전한 공개 정책, safe-harbor 조항, PGP 키는 저장소 루트의 SECURITY.md에.",
+      "docs": "문서 보기"
+    }
   }
 }

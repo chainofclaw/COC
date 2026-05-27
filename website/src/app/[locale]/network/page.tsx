@@ -102,13 +102,6 @@ type DaoStats = {
   treasuryBalance?: string
 }
 
-type CountdownTime = {
-  days: number
-  hours: number
-  minutes: number
-  seconds: number
-}
-
 export default function NetworkPage() {
   const t = useTranslations('network')
   const locale = useLocale()
@@ -124,7 +117,6 @@ export default function NetworkPage() {
   const [networkStats, setNetworkStats] = useState<NetworkStats | null>(null)
   const [memPoolStatus, setMemPoolStatus] = useState<MemPoolStatus | null>(null)
   const [daoStats, setDaoStats] = useState<DaoStats | null>(null)
-  const [countdown, setCountdown] = useState<CountdownTime>({ days: 0, hours: 0, minutes: 0, seconds: 0 })
 
   useEffect(() => {
     async function fetchData() {
@@ -215,30 +207,6 @@ export default function NetworkPage() {
     return () => clearInterval(interval)
   }, [])
 
-  // Countdown timer for testnet launch
-  useEffect(() => {
-    const calculateCountdown = () => {
-      // Target date: March 27, 2026, 00:00:00 UTC
-      const launchDate = new Date('2026-03-27T00:00:00Z').getTime()
-      const now = new Date().getTime()
-      const diff = launchDate - now
-
-      if (diff <= 0) {
-        setCountdown({ days: 0, hours: 0, minutes: 0, seconds: 0 })
-      } else {
-        const days = Math.floor(diff / (1000 * 60 * 60 * 24))
-        const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60))
-        const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60))
-        const seconds = Math.floor((diff % (1000 * 60)) / 1000)
-        setCountdown({ days, hours, minutes, seconds })
-      }
-    }
-
-    calculateCountdown()
-    const timer = setInterval(calculateCountdown, 1000)
-    return () => clearInterval(timer)
-  }, [])
-
   return (
     <div className="relative min-h-screen">
       {/* Hero Header */}
@@ -269,20 +237,19 @@ export default function NetworkPage() {
               {t('subtitle')}
             </p>
 
-            {/* Testnet Launch Countdown */}
+            {/* Canary 88780 status banner (replaces obsolete launch countdown) */}
             <div className="mt-12 mb-6 fade-in-delay-3">
               <div className="inline-block px-6 py-4 rounded-lg border border-accent-cyan/50 bg-accent-cyan/10 backdrop-blur-sm">
-                <p className="text-sm text-accent-cyan font-display uppercase tracking-widest mb-4">
-                  ⏱️ {t('countdown.title')}
+                <p className="text-sm text-accent-cyan font-display uppercase tracking-widest mb-2">
+                  🟢 {t('canaryBanner.title')}
                 </p>
-                <div className="grid grid-cols-4 gap-4">
-                  <CountdownUnit value={countdown.days} label={t('countdown.days')} />
-                  <CountdownUnit value={countdown.hours} label={t('countdown.hours')} />
-                  <CountdownUnit value={countdown.minutes} label={t('countdown.minutes')} />
-                  <CountdownUnit value={countdown.seconds} label={t('countdown.seconds')} />
-                </div>
-                <p className="text-xs text-accent-cyan/70 mt-4">
-                  {t('countdown.launchDate')}
+                <p className="text-base text-text-primary font-display">
+                  {t('canaryBanner.subtitle')}
+                </p>
+                <p className="text-xs text-accent-cyan/70 mt-3">
+                  <Link href="/docs" className="hover:text-accent-blue transition-colors">
+                    {t('canaryBanner.cta')} →
+                  </Link>
                 </p>
               </div>
             </div>
@@ -570,7 +537,7 @@ export default function NetworkPage() {
                 {t('recentBlocks.title')}
               </h2>
               <a
-                href="https://explorer.clawchain.io"
+                href="https://explorer.chainofclaw.io"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="group inline-flex items-center gap-2 font-display text-accent-cyan hover:text-accent-blue transition-colors"
@@ -610,7 +577,7 @@ export default function NetworkPage() {
                       <tr key={block.number} className="group hover:bg-accent-cyan/5 transition-colors duration-300">
                         <td className="px-6 py-4 font-display text-sm">
                           <a
-                            href={`https://explorer.clawchain.io/block/${block.number}`}
+                            href={`https://explorer.chainofclaw.io/block/${block.number}`}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="text-accent-cyan hover:text-accent-blue transition-colors"
@@ -650,7 +617,7 @@ export default function NetworkPage() {
                 <QuickLink
                   title={t('quickLinks.explorer.title')}
                   description={t('quickLinks.explorer.description')}
-                  href="https://explorer.clawchain.io"
+                  href="https://explorer.chainofclaw.io"
                   external
                 />
                 <QuickLink
@@ -811,20 +778,6 @@ function QuickLink({
       {/* Bottom Border Accent */}
       <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-accent-cyan to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
     </Component>
-  )
-}
-
-function CountdownUnit({ value, label }: { value: number; label: string }) {
-  const formattedValue = value.toString().padStart(2, '0')
-  return (
-    <div className="flex flex-col items-center">
-      <div className="bg-gradient-cyan/20 border border-accent-cyan/30 rounded-lg px-3 py-2 mb-2">
-        <span className="text-2xl font-display font-bold text-accent-cyan">
-          {formattedValue}
-        </span>
-      </div>
-      <span className="text-xs font-body text-text-secondary">{label}</span>
-    </div>
   )
 }
 
