@@ -2,7 +2,9 @@
 
 Operational SOP for running a COC validator node — registration, stake lifecycle, slash response, governance participation, monitoring, and incident triage.
 
-This document targets operators of the production testnet (`chainId 18780`) and the prod-candidate testnet (`chainId 88780`, planned). Devnet (`chainId 88888` H15 fork-off) is for fixture testing only — see `tests/multinode-integration/README.md`.
+This document targets operators of the canary testnet (`chainId 88780` — see [`public-endpoints-88780.md`](./public-endpoints-88780.md) for the canonical network parameters). The earlier Prowl testnet (`chainId 18780`) was decommissioned 2026-05-12 — its docs are preserved under [`docs/archive/prowl-18780/`](./archive/prowl-18780/) for historical reference. Devnet (`chainId 88888` H15 fork-off) is for fixture testing only — see `tests/multinode-integration/README.md`.
+
+For step-by-step external-operator onboarding, see [`external-validator-onboarding.md`](./external-validator-onboarding.md). For disaster scenarios, see [`disaster-recovery-88780.md`](./disaster-recovery-88780.md).
 
 ---
 

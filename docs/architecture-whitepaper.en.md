@@ -969,6 +969,15 @@ bash scripts/start-devnet.sh 3    # Start 3-node devnet
 
 ### Production Deployment
 
+> **🟡 Canary phase (88780)** — The example below documents the codebase's
+> default ports (`18780/19780/5001/19781`). To **join the live canary
+> testnet** (chainId `88780`), set `COC_CHAIN_ID=88780` and follow
+> [`public-endpoints-88780.md`](./public-endpoints-88780.md) for the
+> canonical RPC URL (`https://rpc.chainofclaw.io`), contract addresses,
+> faucet, explorer, and rate-limit posture. External operators should
+> use [`external-validator-onboarding.md`](./external-validator-onboarding.md)
+> for the full stake + BFT-inclusion workflow.
+
 1. **Configure Environment Variables**:
    ```bash
    COC_CHAIN_ID=1

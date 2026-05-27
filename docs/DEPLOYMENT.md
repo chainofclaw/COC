@@ -1,5 +1,13 @@
 # COC 项目生产部署文档
 
+> **🟡 历史快照** — 本文档记录 2026-03-15 的 `clawchain.io` 网站/explorer/faucet 部署。
+> 18780 Prowl 测试网已于 2026-05-12 退役。当前 canary 阶段域名迁至
+> **`chainofclaw.io`**(网站)、`https://rpc.chainofclaw.io`(RPC)、
+> `https://faucet.chainofclaw.io`(faucet)、`https://explorer.chainofclaw.io`
+> (explorer)、chainId **88780**。后续部署以
+> [`public-endpoints-88780.md`](./public-endpoints-88780.md) 为权威参考。
+> 本文以原貌保留作为部署历史。
+
 **更新日期**: 2026-03-15
 **部署环境**: Ubuntu 24.04 LTS
 **服务器**: root@159.198.44.136

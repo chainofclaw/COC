@@ -1,3 +1,5 @@
+> **DECOMMISSIONED** — This document describes the Prowl testnet (chainId 18780) which was retired on 2026-05-12. For the current canary testnet (88780), see [public-endpoints-88780.md](../../public-endpoints-88780.md).
+
 # Prowl Testnet - Validator Join Guide
 
 ## System Requirements

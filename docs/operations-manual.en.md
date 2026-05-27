@@ -2,6 +2,15 @@
 
 > From zero to testnet — a complete guide for operators.
 
+> **🟡 Canary 88780 note** — This document covers the **codebase defaults**
+> (chainId `18780`, RPC port `18780`, etc.). For the live canary testnet
+> (chainId **88780**, public RPC `https://rpc.chainofclaw.io`,
+> contract addresses, faucet, explorer, rate limits), the canonical
+> reference is [`public-endpoints-88780.md`](./public-endpoints-88780.md).
+> If you're spinning up a node to **join 88780** (not a local devnet),
+> set `COC_CHAIN_ID=88780` + use the validator/peer config from
+> [`external-validator-onboarding.md`](./external-validator-onboarding.md).
+
 ---
 
 ## Table of Contents

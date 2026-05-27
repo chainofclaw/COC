@@ -104,7 +104,7 @@ COC Agent 注册目标 (假设捕获 1-2% 全球 Agent):
 | **Carrier 网络扩展** | 50+ 注册 Carrier，跨地理冗余 |
 | **第一波 Grant** | 10 个生态项目资助 ($500K-$2M 池) |
 | **黑客松** | 全球线上黑客松，主题 "Build with AI Agent Identity" |
-| **Explorer 上线** | clawchain.io/explorer，链上数据可视化 |
+| **Explorer 上线** | `explorer.chainofclaw.io`,链上数据可视化 |
 | **测试网保留** | 长期运行测试网供开发者免费使用 |
 | **Faucet** | 测试代币水龙头，简化 Agent 入门 |
 
