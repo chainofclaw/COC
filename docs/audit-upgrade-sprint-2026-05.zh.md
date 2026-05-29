@@ -137,7 +137,18 @@
 
 ### 合约(全部 gen-5 UUPS proxy,owner = multisig `0x3c055D83…`)
 
-见 §2 表格。**当前 PoSeManagerV2 impl 在 PR #751 + #752 之前** — 节点跑新代码,但合约还在旧 impl,新 contract-side 特性(`v1SunsetEpoch` setter、新 PRNG seed、Push verification on-chain hooks)**尚未生效**。
+见 §2 表格。**合约升级 ceremony 已完成**(2026-05-26,详见 §6.2 Stage A)。链上 EIP-1967 impl slot + 功能于 2026-05-29 独立复核:
+
+| proxy | 链上 impl | 验证 |
+|---|---|---|
+| PoSeManagerV2 `0x256eb949…` | `0x0e8B945060…` | `v1SunsetEpoch()`=0、`domainSeparator()`=`0x8b80503c…`、owner=multisig ✓ |
+| GovernanceDAO `0x4b948567…` | `0xF2921b9AEA…` | `quorumPercent()`=40、owner=multisig、`isVerified` gate live ✓ |
+| Treasury `0x512B0126…` | `0x907EEb4220…` | r2 batch(本 sprint 无改动) ✓ |
+| DIDRegistry `0xe2D8165C…` | `0x8920247092…` | r2 batch(本 sprint 无改动) ✓ |
+
+`v1SunsetEpoch()` 能被调用且返 0 是决定性证据 —— 该 function 为 #752 新增,旧 impl 不存在,proxy 已指向新 impl。
+
+> ⚠ **生产 6 节点只跑 `coc-node@N`(`node/src/index.ts` 链引擎),不跑 `runtime/coc-node.ts`(PoSe 见证 HTTP server)**。`PoSeManagerV2.getActiveNodeCount()`==0(无 PoSe 节点注册)。因此 #667/#750 的**链下**修复(Push verification、freshness、loopback gate、challengeId 派生)虽已 merge + impl 上链,但**生产无运行对象**,会在 PoSe v2 pipeline 启动那天才激活。Stage B(strict env)的真实前提是先部署 PoSe 见证 server。
 
 ### main 自部署后增量(全 docs/chore,无需部署)
 
@@ -160,8 +171,8 @@ baef28a website(canary): Stage 5 — refresh for 88780 + new /security page (#76
 | Gate | 验收标准 | 当前状态 | 责任人 |
 |---|---|---|---|
 | **G1 节点健康** | 5+ validator 持续 7 天无 stall,出块率 >99.5%,stateRoot 跨节点 100% 一致 | ✅ 已满足(2026-05-12 上线至今 16 天稳定运行) | 运维 |
-| **G2 合约升级 ceremony** | multisig 通过 `upgradeProxy()` 把 PoSeManagerV2 / DIDRegistry / Treasury 升到带 #667+#735+#748+#749 修复的 impl | ⏳ 待执行(impl 已 ship 节点,合约未升) | multisig 签字方 |
-| **G3 节点 strict 模式** | 全 validator + obs-1 设 `COC_POSE_WITNESS_REQUIRE_VERIFIED=true` + `COC_POSE_REQUIRE_VERIFIED_CHALLENGE=true` + token 配齐 | ⏳ 待执行 | 运维 |
+| **G2 合约升级 ceremony** | multisig 通过 `upgradeToAndCall()` 把 PoSeManagerV2 / GovernanceDAO 升到带 #735+#745+#748+#749+#751+#754 修复的 impl | ✅ **已完成**(2026-05-26 multisig tx 8/9;链上 impl slot + 功能 2026-05-29 复核) | multisig 签字方 |
+| **G3 节点 strict 模式** | 全 validator + obs-1 设 `COC_POSE_WITNESS_REQUIRE_VERIFIED=true` + `COC_POSE_REQUIRE_VERIFIED_CHALLENGE=true` + token 配齐 | 🚫 **被阻塞**:前提是 PoSe 见证 server(`runtime/coc-node.ts`)在生产运行,但 6 节点当前只跑链引擎(见 §5)。env 设了也无作用对象 | 运维(待 PoSe v2 pipeline 上线) |
 | **G4 公开端点文档** | SECURITY.md + 公开 RPC endpoints + faucet 入口 + explorer URL | ✅ 完成(PR #757/#759/#760/#761) | docs |
 | **G5 Explorer 公网可达** | https://explorer.openclaw.com 或类似入口,WS + REST,合约 verify 入口可用 | ⚠ 需确认(canary stage 5 #760 是 website refresh) | 前端 |
 | **G6 Faucet 公网可达** | Drip 0.05 ETH/24h,Cloudflare Turnstile 或类似抗刷,coldown enforced(memory:#640 已修) | ✅ 后端就绪;需确认外部 host | faucet 运维 |
@@ -173,26 +184,42 @@ baef28a website(canary): Stage 5 — refresh for 88780 + new /security page (#76
 
 ### 6.2 上线步骤(顺序执行)
 
-#### Stage A:合约升级 ceremony(G2)— ETA 2026-05-30
+#### Stage A:合约升级 ceremony(G2)— ✅ 已完成 2026-05-26
 
-1. **PoSeManagerV2 impl 部署**(deployer EOA `0xB4E943F5…`)
+**本 sprint 只有 2 个合约真改了源码**:GovernanceDAO(#745)+ PoSeManagerV2(#752 含 #751/#754 的 on-chain hook)。DIDRegistry / Treasury 本 sprint 未改(它们在 2026-05-25 r2 batch #743 已升)。ceremony 已于 2026-05-26 执行(COC PR #755 记录,multisig tx 8/9):
+
+实际执行步骤(归档,供下次 ceremony 复用):
+
+1. **impl 部署**(deployer EOA `0xB4E943F5…`,`scripts/upgrade-security-prep-r2.js` 模板):
    ```bash
-   cd contracts && DEPLOYER_PRIVATE_KEY=… npx hardhat run --network coc \
-     scripts/upgrade-pose-manager-v2-667.js
+   cd contracts && git pull --ff-only   # ⚠ 必须:停在旧 HEAD 会命中 OZ prepareUpgrade 缓存,误判 noop
+   grep v1SunsetEpoch contracts-src/settlement/PoSeManagerStorage.sol   # 确认源码含新特性
+   DEPLOYER_PRIVATE_KEY=… npx hardhat run --network coc scripts/upgrade-security-prep-r2.js
    ```
-2. **multisig 提案**(3/5 签字):
+2. **multisig 提案 + 3/5 签字 + execute**:
    ```js
-   PoSeManagerV2_proxy.upgradeToAndCall(newImpl, "0x")
+   PoSeManagerV2_proxy.upgradeToAndCall(0x0e8B945060…, "0x")   // tx 8
+   GovernanceDAO_proxy.upgradeToAndCall(0xF2921b9AEA…, "0x")   // tx 9
    ```
-3. **链上 verify**:
-   - `domainSeparator()` 仍返回 expected value
-   - `v1SunsetEpoch()` 返回 0(unlimited,后续 step F 设)
-   - `getActiveNodeCount()` 不变
-4. 同步对 DIDRegistry / Treasury / GovernanceDAO 重复上述步骤(impl 已 ship in PR #745/#751/#752)
+3. **链上 verify**(2026-05-29 复核):
+   - PoSeManagerV2:`v1SunsetEpoch()`=0、`domainSeparator()`=`0x8b80503c…`、`getActiveNodeCount()`=0、owner=multisig ✓
+   - GovernanceDAO:`quorumPercent()`=40、`proposalCount()`=0、owner=multisig ✓
+   - 两 proxy EIP-1967 impl slot 链上 == 上述新 impl ✓
 
-#### Stage B:节点 strict 模式(G3)— ETA 2026-06-01
+> **结论**:G2 / Stage A 无需重做。下一未完成 gate 见 Stage B 起。
 
-每节点 systemd env 加:
+#### ⚠ Stage A 经验教训(已归档)
+
+- **OZ prepareUpgrade 缓存命中陷阱**:本地停在过时 git HEAD 跑 prep 会拿 r2 缓存地址 → 误判 noop。部署前必须 `git pull --ff-only` + grep 验证源码含新特性。
+- **EIP-170 余量**:PoSeManagerV2 新 impl 24326B(`runs:1` override),距 24576B 上限只剩 250B —— 再加 ~10 函数就要 refactor 到 external library。
+
+#### Stage B:节点 strict 模式(G3)— 🚫 阻塞,前置 Stage B0
+
+> **前提**:`runtime/coc-node.ts`(PoSe 见证 HTTP server)当前**不在生产运行** —— 6 节点只跑 `node/src/index.ts` 链引擎(§5)。下面的 env 在 PoSe 见证 server 部署前**无作用对象**。
+>
+> **Stage B0(新增前置)**:bring up PoSe v2 pipeline —— coc-agent(发挑战)+ coc-node 见证 server + coc-relayer(finalize epoch);在 PoSeManagerV2 注册 PoSe 节点(`getActiveNodeCount()` 从 0 起)。这是独立 milestone,不是单纯改 env。
+
+PoSe 见证 server 部署后,每节点 systemd env 加:
 ```
 Environment=COC_POSE_WITNESS_AUTH_TOKEN=<32-byte hex,multisig-shared>
 Environment=COC_POSE_WITNESS_REQUIRE_VERIFIED=true
