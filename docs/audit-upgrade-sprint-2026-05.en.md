@@ -137,7 +137,18 @@
 
 ### Contracts (all gen-5 UUPS proxies, owner = multisig `0x3c055D83…`)
 
-See §2 table. **PoSeManagerV2 impl is pre-PR #751 + #752**: nodes are running the new code but the contract still serves the old impl — new contract-side features (`v1SunsetEpoch` setter, new PRNG seed, Push-verification on-chain hooks) are **not live yet**.
+See §2 table. **The contract upgrade ceremony is complete** (2026-05-26, see §6.2 Stage A). On-chain EIP-1967 impl slots + behaviour independently re-verified 2026-05-29:
+
+| proxy | on-chain impl | verification |
+|---|---|---|
+| PoSeManagerV2 `0x256eb949…` | `0x0e8B945060…` | `v1SunsetEpoch()`=0, `domainSeparator()`=`0x8b80503c…`, owner=multisig ✓ |
+| GovernanceDAO `0x4b948567…` | `0xF2921b9AEA…` | `quorumPercent()`=40, owner=multisig, `isVerified` gate live ✓ |
+| Treasury `0x512B0126…` | `0x907EEb4220…` | r2 batch (unchanged this sprint) ✓ |
+| DIDRegistry `0xe2D8165C…` | `0x8920247092…` | r2 batch (unchanged this sprint) ✓ |
+
+`v1SunsetEpoch()` returning 0 is decisive — that function was added in #752 and does not exist on the old impl, so the proxy is pointing at the new impl.
+
+> ⚠ **The 6 production nodes only run `coc-node@N` (`node/src/index.ts` chain engine), NOT `runtime/coc-node.ts` (PoSe witness HTTP server)**. `PoSeManagerV2.getActiveNodeCount()`==0 (no PoSe nodes registered). So the **off-chain** parts of #667/#750 (Push verification, freshness, loopback gate, challengeId derivation) — though merged and with impls on-chain — have **no runtime target in production**; they activate the day the PoSe v2 pipeline is brought up. Stage B (strict env) genuinely requires the PoSe witness server to be deployed first.
 
 ### main increment since deployment (all docs/chore, no redeploy needed)
 
@@ -160,8 +171,8 @@ baef28a website(canary): Stage 5 — refresh for 88780 + new /security page (#76
 | Gate | Acceptance criterion | Current state | Owner |
 |---|---|---|---|
 | **G1 node health** | 5+ validators 7 days no stall, block rate >99.5%, stateRoot 100% consistent across nodes | ✅ Met (16-day continuous stable run since 2026-05-12) | ops |
-| **G2 contract upgrade ceremony** | multisig `upgradeProxy()` PoSeManagerV2 / DIDRegistry / Treasury to impls carrying #667+#735+#748+#749 fixes | ⏳ Pending (impl shipped to nodes, contracts not upgraded) | multisig signers |
-| **G3 node strict mode** | All validators + obs-1 set `COC_POSE_WITNESS_REQUIRE_VERIFIED=true` + `COC_POSE_REQUIRE_VERIFIED_CHALLENGE=true` + token configured | ⏳ Pending | ops |
+| **G2 contract upgrade ceremony** | multisig `upgradeToAndCall()` PoSeManagerV2 / GovernanceDAO to impls carrying #735+#745+#748+#749+#751+#754 fixes | ✅ **Done** (2026-05-26 multisig tx 8/9; on-chain impl slot + behaviour re-verified 2026-05-29) | multisig signers |
+| **G3 node strict mode** | All validators + obs-1 set `COC_POSE_WITNESS_REQUIRE_VERIFIED=true` + `COC_POSE_REQUIRE_VERIFIED_CHALLENGE=true` + token configured | 🚫 **Blocked**: prerequisite is the PoSe witness server (`runtime/coc-node.ts`) running in production, but the 6 nodes currently only run the chain engine (see §5). Setting the env has no target | ops (pending PoSe v2 pipeline bring-up) |
 | **G4 public endpoint docs** | SECURITY.md + public RPC endpoints + faucet entry + explorer URL | ✅ Done (PR #757/#759/#760/#761) | docs |
 | **G5 explorer reachable** | https://explorer.openclaw.com or similar, WS + REST, contract verify entry functional | ⚠ Needs confirmation (canary stage 5 #760 is website refresh) | frontend |
 | **G6 faucet reachable** | Drip 0.05 ETH/24h, Cloudflare Turnstile or equivalent anti-abuse, cooldown enforced (memory: #640 fixed) | ✅ Backend ready; needs external host confirmation | faucet ops |
@@ -173,26 +184,42 @@ baef28a website(canary): Stage 5 — refresh for 88780 + new /security page (#76
 
 ### 6.2 Launch steps (sequential)
 
-#### Stage A: Contract upgrade ceremony (G2) — ETA 2026-05-30
+#### Stage A: Contract upgrade ceremony (G2) — ✅ Completed 2026-05-26
 
-1. **Deploy PoSeManagerV2 impl** (deployer EOA `0xB4E943F5…`):
+**Only 2 contracts had source changes this sprint**: GovernanceDAO (#745) + PoSeManagerV2 (#752, including the on-chain hooks of #751/#754). DIDRegistry / Treasury were not changed this sprint (they were upgraded in the 2026-05-25 r2 batch #743). The ceremony was executed on 2026-05-26 (recorded in COC PR #755, multisig tx 8/9):
+
+Actual executed steps (archived for the next ceremony):
+
+1. **Deploy impl** (deployer EOA `0xB4E943F5…`, `scripts/upgrade-security-prep-r2.js` template):
    ```bash
-   cd contracts && DEPLOYER_PRIVATE_KEY=… npx hardhat run --network coc \
-     scripts/upgrade-pose-manager-v2-667.js
+   cd contracts && git pull --ff-only   # ⚠ required: stale HEAD hits the OZ prepareUpgrade cache → false noop
+   grep v1SunsetEpoch contracts-src/settlement/PoSeManagerStorage.sol   # confirm source has the new feature
+   DEPLOYER_PRIVATE_KEY=… npx hardhat run --network coc scripts/upgrade-security-prep-r2.js
    ```
-2. **multisig proposal** (3/5 signing):
+2. **multisig proposal + 3/5 signing + execute**:
    ```js
-   PoSeManagerV2_proxy.upgradeToAndCall(newImpl, "0x")
+   PoSeManagerV2_proxy.upgradeToAndCall(0x0e8B945060…, "0x")   // tx 8
+   GovernanceDAO_proxy.upgradeToAndCall(0xF2921b9AEA…, "0x")   // tx 9
    ```
-3. **On-chain verify**:
-   - `domainSeparator()` still returns the expected value
-   - `v1SunsetEpoch()` returns 0 (unlimited; tightened in Stage F)
-   - `getActiveNodeCount()` unchanged
-4. Repeat for DIDRegistry / Treasury / GovernanceDAO (impls already shipped in PR #745/#751/#752)
+3. **On-chain verify** (re-checked 2026-05-29):
+   - PoSeManagerV2: `v1SunsetEpoch()`=0, `domainSeparator()`=`0x8b80503c…`, `getActiveNodeCount()`=0, owner=multisig ✓
+   - GovernanceDAO: `quorumPercent()`=40, `proposalCount()`=0, owner=multisig ✓
+   - Both proxies' EIP-1967 impl slot on-chain == the new impls above ✓
 
-#### Stage B: Node strict mode (G3) — ETA 2026-06-01
+> **Conclusion**: G2 / Stage A does not need redoing. Next incomplete gate starts at Stage B.
 
-Per-node systemd env additions:
+#### ⚠ Stage A lessons learned (archived)
+
+- **OZ prepareUpgrade cache hit trap**: running prep on a stale local git HEAD picks up the r2 cached address → false noop. Always `git pull --ff-only` + grep-verify the source carries the new feature before deploying.
+- **EIP-170 headroom**: the new PoSeManagerV2 impl is 24326 B (`runs:1` override), only 250 B under the 24576 B ceiling — adding ~10 more functions forces a refactor into an external library.
+
+#### Stage B: Node strict mode (G3) — 🚫 Blocked, needs Stage B0 first
+
+> **Prerequisite**: `runtime/coc-node.ts` (the PoSe witness HTTP server) is **not running in production** — the 6 nodes only run the `node/src/index.ts` chain engine (§5). The env below has **no target** until the PoSe witness server is deployed.
+>
+> **Stage B0 (new prerequisite)**: bring up the PoSe v2 pipeline — coc-agent (issue challenges) + coc-node witness server + coc-relayer (finalize epochs); register PoSe nodes on PoSeManagerV2 (`getActiveNodeCount()` from 0). This is a standalone milestone, not just an env change.
+
+Once the PoSe witness server is deployed, per-node systemd env additions:
 ```
 Environment=COC_POSE_WITNESS_AUTH_TOKEN=<32-byte hex, multisig-shared>
 Environment=COC_POSE_WITNESS_REQUIRE_VERIFIED=true
