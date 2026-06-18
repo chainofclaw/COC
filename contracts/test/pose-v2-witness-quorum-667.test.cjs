@@ -103,6 +103,8 @@ function buildMetadata(receipts, witnessReceiptIndex) {
     nodeIds: receipts.map((r) => r.nodeId),
     responseBodyHashes: receipts.map((r) => r.responseBodyHash),
     leafHashes: receipts.map((r) => r.leafHash),
+    // #746: resultCodes default to 0 (Ok) when not explicitly set on the receipt
+    resultCodes: receipts.map((r) => r.resultCode ?? 0),
     witnessReceiptIndex: padded,
   }
 }
