@@ -345,7 +345,17 @@ test("relayer v2 recovery works against real Hardhat JSON-RPC + deployed PoSeMan
     const sampleProofs = [{ leaf: leafHash, merkleProof: [leafHash], leafIndex: 0 }]
     const summaryHash = buildSummaryHash(epochId, merkleRoot, sampleProofs)
 
-    const submitTx = await manager.submitBatchV2(epochId, merkleRoot, summaryHash, sampleProofs, 0, [])
+    // #746: legacy submitBatchV2 (no metadata) is sunset — owner-empty
+    // metadata path now required.
+    const metadata = {
+      challengeIds: [leafHash],
+      nodeIds: [leafHash],
+      responseBodyHashes: [leafHash],
+      leafHashes: [leafHash],
+      resultCodes: [0],
+      witnessReceiptIndex: new Array(32).fill(0xffff),
+    }
+    const submitTx = await manager.submitBatchV2WithMetadata(epochId, merkleRoot, summaryHash, sampleProofs, 0, [], metadata)
     const batchId = extractBatchId(manager, await submitTx.wait())
 
     const evidenceStore = new EvidenceStore(1000, evidencePath)
