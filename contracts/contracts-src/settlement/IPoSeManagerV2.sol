@@ -13,6 +13,16 @@ interface IPoSeManagerV2 {
     // #748 (#667 F5): owner-settable cap above which the v1 witness
     // typehash fallback is rejected. See PoSeManagerV2._validateWitnessQuorumV2.
     event V1SunsetEpochUpdated(uint64 newSunsetEpoch);
+    /// @notice #746 (#667 F1+F3) — emitted whenever the v2 witness typehash
+    ///         sunset cap is changed by `setV2SunsetEpoch`. Default 0 means
+    ///         "v2 fallback unlimited".
+    event V2SunsetEpochUpdated(uint64 newSunsetEpoch);
+
+    /// @notice #746 — legacy `submitBatchV2` (no-metadata) path is sunset.
+    ///         Callers must use `submitBatchV2WithMetadata` so the contract
+    ///         can independently verify the per-receipt witness signatures
+    ///         instead of trusting an aggregator-supplied batch root.
+    error LegacyBatchPathSunset();
     event BatchSubmittedV2(uint64 indexed epochId, bytes32 indexed batchId, bytes32 merkleRoot, uint32 witnessBitmap);
     /// @notice Emitted when a v2 batch is submitted with per-receipt metadata
     ///         (#667). `challengeIds`/`nodeIds`/`responseBodyHashes` are aligned

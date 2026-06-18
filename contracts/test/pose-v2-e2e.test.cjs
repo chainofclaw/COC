@@ -112,6 +112,21 @@ function computeRevealDigest(challengeId, targetNodeId, faultType, evidenceLeafH
 }
 
 /** Mirror: buildSummaryHash from batch-aggregator-v2.ts */
+// #746: minimal owner-empty-witness metadata for the post-LegacyBatchPathSunset
+// world. Fills challengeId / nodeId / responseBodyHash with the corresponding
+// leafHash placeholder (contract only length-checks these in owner-empty mode)
+// and resultCode with 0 (Ok). Witness-mode tests must construct full v3 metadata.
+function ownerEmptyMetadata(leafHashes) {
+  return {
+    challengeIds: leafHashes.slice(),
+    nodeIds: leafHashes.slice(),
+    responseBodyHashes: leafHashes.slice(),
+    leafHashes: leafHashes.slice(),
+    resultCodes: leafHashes.map(() => 0),
+    witnessReceiptIndex: new Array(32).fill(0xffff),
+  }
+}
+
 function buildSummaryHash(epochId, merkleRoot, sampleProofs) {
   let rolling = ethers.ZeroHash
   for (const proof of sampleProofs) {
@@ -253,9 +268,9 @@ describe("PoSe v2 E2E: Full Protocol Lifecycle", function () {
     }))
     const summaryHash = buildSummaryHash(epochId, merkleRoot, sampleProofs)
 
-    // Submit batch
-    const submitTx = await manager.submitBatchV2(
-      epochId, merkleRoot, summaryHash, sampleProofs, 0, []
+    // Submit batch (#746: via metadata path)
+    const submitTx = await manager.submitBatchV2WithMetadata(
+      epochId, merkleRoot, summaryHash, sampleProofs, 0, [], ownerEmptyMetadata(leafHashes)
     )
     const submitReceipt = await submitTx.wait()
     const batchEvent = extractEvent(manager, submitReceipt, "BatchSubmittedV2")
@@ -467,7 +482,7 @@ describe("PoSe v2 E2E: Full Protocol Lifecycle", function () {
     }))
     const summaryHash = buildSummaryHash(epochId, merkleRoot, sampleProofs)
 
-    const submitTx = await manager.submitBatchV2(epochId, merkleRoot, summaryHash, sampleProofs, 0, [])
+    const submitTx = await manager.submitBatchV2WithMetadata(epochId, merkleRoot, summaryHash, sampleProofs, 0, [], ownerEmptyMetadata(leafHashes.length ? leafHashes : [tsHash]))
     const submitReceipt = await submitTx.wait()
     const batchId = extractEvent(manager, submitReceipt, "BatchSubmittedV2").args[1]
 
@@ -562,7 +577,7 @@ describe("PoSe v2 E2E: Full Protocol Lifecycle", function () {
     const sampleProofs = [{ leaf: tsHash, merkleProof: buildMerkleProof(layers, 0), leafIndex: 0 }]
     const summaryHash = buildSummaryHash(epochId, merkleRoot, sampleProofs)
 
-    const submitTx = await manager.submitBatchV2(epochId, merkleRoot, summaryHash, sampleProofs, 0, [])
+    const submitTx = await manager.submitBatchV2WithMetadata(epochId, merkleRoot, summaryHash, sampleProofs, 0, [], ownerEmptyMetadata([tsHash]))
     const batchId = extractEvent(manager, await submitTx.wait(), "BatchSubmittedV2").args[1]
 
     // Build fault proof using TS helpers
@@ -698,10 +713,10 @@ describe("PoSe v2 E2E: Full Protocol Lifecycle", function () {
       const sampleProofs = [{ leaf: leafHash, merkleProof: buildMerkleProof(layers, 0), leafIndex: 0 }]
       const summary = buildSummaryHash(epochId, root, sampleProofs)
 
-      const batchTx = await manager.submitBatchV2(epochId, root, summary, sampleProofs, 0, [])
+      const batchTx = await manager.submitBatchV2WithMetadata(epochId, root, summary, sampleProofs, 0, [], ownerEmptyMetadata([leafHash]))
       const batchReceipt = await batchTx.wait()
       const batchId = extractEvent(manager, batchReceipt, "BatchSubmittedV2").args[1]
-      console.log("    submitBatchV2 gas:", batchReceipt.gasUsed.toString())
+      console.log("    submitBatchV2WithMetadata gas:", batchReceipt.gasUsed.toString())
 
       // openChallenge
       const faultType = 2

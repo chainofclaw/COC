@@ -7,6 +7,7 @@ import {PoSeTypes} from "./PoSeTypes.sol";
 import {PoSeTypesV2} from "./PoSeTypesV2.sol";
 import {PoSeManagerStorage} from "./PoSeManagerStorage.sol";
 import {MerkleProofLite} from "./MerkleProofLite.sol";
+import {WitnessDigestLib} from "./WitnessDigestLib.sol";
 import {EmissionSchedule} from "../token/EmissionSchedule.sol";
 
 interface ICOCToken {
@@ -279,67 +280,35 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage, UUPSUpgradeable {
         emit V1SunsetEpochUpdated(newSunsetEpoch);
     }
 
-    // --- Batch submission with witness quorum ---
+    /// @notice #746 (#667 F1+F3) — owner sets the highest epoch at which the
+    ///         v2 witness typehash fallback is still accepted. Value `0`
+    ///         means "unlimited" (initial state preserves current behaviour
+    ///         on upgrade); any positive value caps v2 fallback to
+    ///         `epochId <= v2SunsetEpoch`. Multisig tightens once the agent
+    ///         fleet finishes the v3 typehash migration (v3 binds the
+    ///         witness-computed `resultCode` so semantic rubber-stamping
+    ///         becomes structurally impossible).
+    function setV2SunsetEpoch(uint64 newSunsetEpoch) external onlyOwner {
+        v2SunsetEpoch = newSunsetEpoch;
+        emit V2SunsetEpochUpdated(newSunsetEpoch);
+    }
+
+    /// @notice #746 — legacy no-metadata batch submission. Callers MUST migrate
+    ///         to `submitBatchV2WithMetadata` so the contract can independently
+    ///         verify per-receipt witness signatures + the witness's Layer-7
+    ///         semantic result (v3 typehash) instead of trusting an
+    ///         aggregator-supplied batch root. Kept for ABI stability — runtime
+    ///         hard-reverts. 88780 upgrade landed PR-A on 2026-05-26 (#755);
+    ///         this is the final cut over.
     function submitBatchV2(
-        uint64 epochId,
-        bytes32 merkleRoot,
-        bytes32 summaryHash,
-        PoSeTypes.SampleProof[] calldata sampleProofs,
-        uint32 witnessBitmap,
-        bytes[] calldata witnessSignatures
-    ) external override returns (bytes32 batchId) {
-        if (merkleRoot == bytes32(0) || summaryHash == bytes32(0)) revert InvalidBatch();
-        uint64 currentEpoch = _currentEpoch();
-        if (epochId > currentEpoch) revert InvalidBatch();
-        if (epochFinalized[epochId]) revert EpochAlreadyFinalized();
-        if (sampleProofs.length == 0 || sampleProofs.length > type(uint16).max) revert InvalidBatch();
-
-        // Validate witness quorum.
-        // Bootstrap/transition submissions without witness signatures are owner-only.
-        _validateWitnessQuorum(epochId, witnessBitmap, witnessSignatures, merkleRoot);
-
-        batchId = _batchId(epochId, merkleRoot, summaryHash, msg.sender);
-        if (batches[batchId].merkleRoot != bytes32(0)) revert BatchAlreadySubmitted();
-        // One merkleRoot per epoch: blocks duplicate-root clones whose replayed
-        // witness signatures would otherwise bloat epochBatches unboundedly (#680).
-        if (epochMerkleRootUsed[epochId][merkleRoot]) revert BatchAlreadySubmitted();
-        epochMerkleRootUsed[epochId][merkleRoot] = true;
-
-        // Verify sample proofs (reuse v1 logic)
-        bytes32 sampleCommitment = bytes32(0);
-        uint32 lastLeafIndex = 0;
-        bool hasLastIndex = false;
-        for (uint256 i = 0; i < sampleProofs.length; i++) {
-            PoSeTypes.SampleProof calldata proof = sampleProofs[i];
-            if (proof.leaf == bytes32(0) || proof.merkleProof.length == 0) revert InvalidBatch();
-            if (hasLastIndex && proof.leafIndex <= lastLeafIndex) revert InvalidBatch();
-            if (batchSampledLeaf[batchId][proof.leaf]) revert InvalidBatch();
-            if (!MerkleProofLite.verify(proof.merkleProof, merkleRoot, proof.leaf)) revert InvalidBatch();
-
-            batchSampledLeaf[batchId][proof.leaf] = true;
-            sampleCommitment = keccak256(abi.encodePacked(sampleCommitment, proof.leafIndex, proof.leaf));
-            lastLeafIndex = proof.leafIndex;
-            hasLastIndex = true;
-        }
-
-        bytes32 expectedSummary = keccak256(abi.encodePacked(epochId, merkleRoot, sampleCommitment, uint32(sampleProofs.length)));
-        if (summaryHash != expectedSummary) revert InvalidBatch();
-
-        batches[batchId] = PoSeTypes.BatchRecord({
-            epochId: epochId,
-            merkleRoot: merkleRoot,
-            summaryHash: summaryHash,
-            aggregator: msg.sender,
-            submittedAtEpoch: currentEpoch,
-            disputeDeadlineEpoch: currentEpoch + DISPUTE_WINDOW_EPOCHS,
-            finalized: false,
-            disputed: false
-        });
-        batchSampleCount[batchId] = uint32(sampleProofs.length);
-        batchSampleCommitment[batchId] = sampleCommitment;
-        epochBatches[epochId].push(batchId);
-
-        emit BatchSubmittedV2(epochId, batchId, merkleRoot, witnessBitmap);
+        uint64 /* epochId */,
+        bytes32 /* merkleRoot */,
+        bytes32 /* summaryHash */,
+        PoSeTypes.SampleProof[] calldata /* sampleProofs */,
+        uint32 /* witnessBitmap */,
+        bytes[] calldata /* witnessSignatures */
+    ) external pure override returns (bytes32) {
+        revert LegacyBatchPathSunset();
     }
 
     /**
@@ -388,7 +357,11 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage, UUPSUpgradeable {
         if (numReceipts > MAX_RECEIPTS_PER_BATCH) revert MetadataLengthMismatch();
         if (metadata.challengeIds.length != numReceipts
             || metadata.nodeIds.length != numReceipts
-            || metadata.responseBodyHashes.length != numReceipts) {
+            || metadata.responseBodyHashes.length != numReceipts
+            // #746 (#667 F1+F3): `resultCodes` must align with leafHashes so
+            // `_validateWitnessQuorumV2` can build the v3 EIP-712 digest from
+            // the per-receipt resultCode the witness independently computed.
+            || metadata.resultCodes.length != numReceipts) {
             revert MetadataLengthMismatch();
         }
 
@@ -924,70 +897,24 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage, UUPSUpgradeable {
 
     // --- Internal helpers ---
 
+    /// @notice #746 — the legacy `submitBatchV2` / `_validateWitnessQuorum` path
+    ///         let witnesses sign the batch `merkleRoot` directly as both
+    ///         `challengeId` and `responseBodyHash`. This is the original
+    ///         rubber-stamp attack surface #667 / PR-A replaced with
+    ///         `submitBatchV2WithMetadata` + `_validateWitnessQuorumV2`. The
+    ///         88780 multisig upgrade landed PR-A on 2026-05-26 (#755 / r3
+    ///         batch); the migration window has elapsed. We now hard-cut the
+    ///         old path: keeping the dead code in the deployed bytecode is
+    ///         unsafe (attack surface) AND pushes PoSeManagerV2 over the
+    ///         EIP-170 deployment cap once #746 lands. Callers MUST use
+    ///         `submitBatchV2WithMetadata`.
     function _validateWitnessQuorum(
-        uint64 epochId,
-        uint32 witnessBitmap,
-        bytes[] calldata witnessSignatures,
-        bytes32 merkleRoot
-    ) internal view {
-        bytes32[] memory witnessSet = getWitnessSet(epochId);
-        uint256 m = witnessSet.length;
-
-        if (m == 0) {
-            if (msg.sender != owner) revert InvalidWitnessQuorum();
-            if (witnessBitmap != 0 || witnessSignatures.length != 0) revert InvalidWitnessQuorum();
-            return;
-        }
-
-        if (witnessBitmap == 0 && witnessSignatures.length == 0) {
-            if (!allowEmptyWitnessSubmission || msg.sender != owner) {
-                revert InvalidWitnessQuorum();
-            }
-            return;
-        }
-
-        uint256 required = (2 * m + 2) / 3; // ceil(2m/3)
-        uint256 count = 0;
-
-        for (uint256 i = 0; i < m && i < 32; i++) {
-            if (witnessBitmap & (1 << i) != 0) {
-                count += 1;
-            }
-        }
-
-        if (count < required) revert InvalidWitnessQuorum();
-
-        // Verify each set bit has a valid signature
-        uint256 sigIdx = 0;
-        for (uint256 i = 0; i < m && i < 32; i++) {
-            if (witnessBitmap & (1 << i) != 0) {
-                if (sigIdx >= witnessSignatures.length) revert InvalidWitnessQuorum();
-                // Verify witness signature over the batch merkle root
-                // #15: dynamic domain separator (block.chainid is read
-                // at call time) prevents pre-fork witness signatures
-                // being replayed against a post-fork chain that kept
-                // the same proxy address.
-                bytes32 witnessHash = keccak256(
-                    abi.encodePacked(
-                        "\x19\x01",
-                        _computeDomainSeparator(),
-                        keccak256(abi.encode(
-                            PoSeTypesV2.WITNESS_TYPEHASH,
-                            merkleRoot, // challengeId field used as batch root
-                            witnessSet[i], // nodeId = witness nodeId
-                            merkleRoot, // responseBodyHash = merkle root
-                            uint8(i) // witnessIndex
-                        ))
-                    )
-                );
-                address recovered = _recoverSigner(witnessHash, witnessSignatures[sigIdx]);
-                // Witness must be the operator of the witness node
-                if (recovered == address(0) || recovered != nodeOperator[witnessSet[i]]) {
-                    revert InvalidWitnessQuorum();
-                }
-                sigIdx += 1;
-            }
-        }
+        uint64 /* epochId */,
+        uint32 /* witnessBitmap */,
+        bytes[] calldata /* witnessSignatures */,
+        bytes32 /* merkleRoot */
+    ) internal pure {
+        revert LegacyBatchPathSunset();
     }
 
     /// @notice #667 — independent witness quorum verification used by
@@ -1056,41 +983,26 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage, UUPSUpgradeable {
                 uint16 receiptIdx = metadata.witnessReceiptIndex[i];
                 if (receiptIdx >= numReceipts) revert BadReceiptIndex();
 
-                // (c) Try v2 typehash first (binds epochId). Fall back to v1
-                //     during the rollout window. PR-E will drop the v1 path.
-                //     `verifiedDigest` holds whichever digest actually
-                //     recovered the operator — it is the canonical identity of
-                //     this attestation and is reused for the anti-replay key.
+                // (c) Try v3 → v2 → v1 typehash via helper. Each fallback is
+                //     gated by an owner-settable sunset epoch
+                //     (`v2SunsetEpoch` / `v1SunsetEpoch`). Helper is
+                //     extracted to keep this function under the Solidity
+                //     stack-depth limit.
                 address operator = nodeOperator[witnessSet[i]];
-                bytes calldata sig = witnessSignatures[sigIdx];
-                bytes32 verifiedDigest = _buildWitnessDigestV2(
-                    metadata.challengeIds[receiptIdx],
-                    witnessSet[i],
-                    metadata.responseBodyHashes[receiptIdx],
-                    uint8(i),
-                    epochId
-                );
-                address recovered = _recoverSigner(verifiedDigest, sig);
-                if (recovered != operator) {
-                    // #748 (#667 F5): gate the v1 fallback on the owner-
-                    // configured sunset epoch. When `v1SunsetEpoch == 0`
-                    // the cap is disabled (preserves pre-#748 behaviour).
-                    // When non-zero, signatures with epochId beyond the
-                    // sunset fall straight through to InvalidWitnessQuorum
-                    // — protects against the cross-epoch v1 replay window
-                    // that exists until PR-E removes v1 entirely.
-                    uint64 sunset = v1SunsetEpoch;
-                    if (sunset != 0 && epochId > sunset) revert InvalidWitnessQuorum();
-                    verifiedDigest = _buildWitnessDigestV1(
-                        metadata.challengeIds[receiptIdx],
+                bytes32 verifiedDigest;
+                {
+                    address recovered;
+                    (verifiedDigest, recovered) = _recoverWitnessSigner(
                         witnessSet[i],
-                        metadata.responseBodyHashes[receiptIdx],
-                        uint8(i)
+                        receiptIdx,
+                        uint8(i),
+                        epochId,
+                        metadata,
+                        witnessSignatures[sigIdx]
                     );
-                    recovered = _recoverSigner(verifiedDigest, sig);
-                }
-                if (recovered == address(0) || recovered != operator) {
-                    revert InvalidWitnessQuorum();
+                    if (recovered == address(0) || recovered != operator) {
+                        revert InvalidWitnessQuorum();
+                    }
                 }
 
                 // (c-bis) #7: reject a second contribution from the same
@@ -1123,56 +1035,61 @@ contract PoSeManagerV2 is IPoSeManagerV2, PoSeManagerStorage, UUPSUpgradeable {
         }
     }
 
-    /// @notice EIP-712 digest builder — v1 typehash (legacy, no epochId).
-    ///         Retained during the versioned-typehash rollout for backwards
-    ///         compatibility with witnesses still signing the old shape.
-    function _buildWitnessDigestV1(
-        bytes32 challengeId,
+    /// @notice #746 — try v3 → v2 → v1 typehash recovery for a single witness
+    ///         bit. Each fallback is gated by the matching owner-settable
+    ///         sunset epoch; default 0 = unlimited preserves pre-fix
+    ///         behaviour. Returns the verified digest (used by the caller
+    ///         as the anti-replay key) and the recovered signer address
+    ///         (or address(0) if all three paths failed). Digest builders
+    ///         live in `WitnessDigestLib` so this contract stays under the
+    ///         EIP-170 24576-byte deployment cap.
+    function _recoverWitnessSigner(
         bytes32 nodeId,
-        bytes32 responseBodyHash,
-        uint8 witnessIndex
-    ) internal view returns (bytes32) {
-        // #15: dynamic domain separator — see initialize() / domainSeparator()
-        return keccak256(
-            abi.encodePacked(
-                "\x19\x01",
-                _computeDomainSeparator(),
-                keccak256(abi.encode(
-                    PoSeTypesV2.WITNESS_TYPEHASH,
-                    challengeId,
-                    nodeId,
-                    responseBodyHash,
-                    witnessIndex
-                ))
-            )
-        );
-    }
-
-    /// @notice EIP-712 digest builder — v2 typehash. Adds `epochId` so a
-    ///         witness signature is permanently bound to the epoch in which
-    ///         it was collected (defence-in-depth against cross-epoch replay).
-    function _buildWitnessDigestV2(
-        bytes32 challengeId,
-        bytes32 nodeId,
-        bytes32 responseBodyHash,
+        uint16 receiptIdx,
         uint8 witnessIndex,
-        uint64 epochId
-    ) internal view returns (bytes32) {
-        // #15: dynamic domain separator — see initialize() / domainSeparator()
-        return keccak256(
-            abi.encodePacked(
-                "\x19\x01",
-                _computeDomainSeparator(),
-                keccak256(abi.encode(
-                    PoSeTypesV2.WITNESS_TYPEHASH_V2,
-                    challengeId,
-                    nodeId,
-                    responseBodyHash,
-                    witnessIndex,
-                    epochId
-                ))
-            )
+        uint64 epochId,
+        PoSeTypesV2.ReceiptBatchMetadata calldata metadata,
+        bytes calldata sig
+    ) internal view returns (bytes32 verifiedDigest, address recovered) {
+        bytes32 challengeId = metadata.challengeIds[receiptIdx];
+        bytes32 bodyHash = metadata.responseBodyHashes[receiptIdx];
+        bytes32 ds = _computeDomainSeparator();
+        address operator = nodeOperator[nodeId];
+
+        // v3 — binds resultCode (#746). Always tried first.
+        verifiedDigest = WitnessDigestLib.buildV3(
+            ds, challengeId, nodeId, bodyHash,
+            metadata.resultCodes[receiptIdx],
+            witnessIndex, epochId
         );
+        recovered = _recoverSigner(verifiedDigest, sig);
+        if (recovered == operator) return (verifiedDigest, recovered);
+
+        // v2 — binds epochId only (#667). Gated by v2SunsetEpoch (#746).
+        {
+            uint64 sunset2 = v2SunsetEpoch;
+            if (sunset2 != 0 && epochId > sunset2) {
+                return (verifiedDigest, address(0));
+            }
+        }
+        verifiedDigest = WitnessDigestLib.buildV2(
+            ds, challengeId, nodeId, bodyHash, witnessIndex, epochId
+        );
+        recovered = _recoverSigner(verifiedDigest, sig);
+        if (recovered == operator) return (verifiedDigest, recovered);
+
+        // v1 — legacy, no epochId. Gated by v1SunsetEpoch (#748).
+        {
+            uint64 sunset1 = v1SunsetEpoch;
+            if (sunset1 != 0 && epochId > sunset1) {
+                return (verifiedDigest, address(0));
+            }
+        }
+        verifiedDigest = WitnessDigestLib.buildV1(
+            ds, challengeId, nodeId, bodyHash, witnessIndex
+        );
+        recovered = _recoverSigner(verifiedDigest, sig);
+        return (verifiedDigest, recovered);
     }
 
     /// @notice Rebuild a Merkle root from declared leaves using the same

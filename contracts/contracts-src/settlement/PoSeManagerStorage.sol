@@ -105,7 +105,19 @@ abstract contract PoSeManagerStorage is Initializable {
     // the agent fleet finishes the v2 typehash migration.
     uint64 public v1SunsetEpoch;
 
+    // --- #746 (#667 F1+F3) — v2 witness typehash sunset cap ---
+    //
+    // Same shape as `v1SunsetEpoch`. `_validateWitnessQuorumV2` now tries
+    // the v3 typehash (which binds `resultCode` — closes the F1 semantic
+    // rubber-stamp and F3 leaf-binding gaps) first; v2 and v1 are
+    // accepted as fallbacks gated by `v2SunsetEpoch` and `v1SunsetEpoch`
+    // respectively. Default 0 = unlimited preserves pre-#746 behaviour
+    // on upgrade (witness sigs that don't bind resultCode keep settling).
+    // Multisig tightens once the agent fleet finishes the v3 migration.
+    uint64 public v2SunsetEpoch;
+
     // UUPS storage gap (base class) — append-only state from now on.
-    // Reduced from 50 → 49 when `v1SunsetEpoch` was added in #748 (#667 F5).
-    uint256[49] private __gap;
+    // Reduced from 50 → 49 when `v1SunsetEpoch` was added in #748 (#667 F5),
+    // then 49 → 48 when `v2SunsetEpoch` was added in #746 (#667 F1+F3).
+    uint256[48] private __gap;
 }
