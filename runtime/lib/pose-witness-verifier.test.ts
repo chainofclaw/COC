@@ -346,3 +346,112 @@ test("verifyPushedReceipt: rejects self-signed forged receipt from attacker EOA"
   assert.equal(result.ok, false);
   if (!result.ok) assert.match(result.error, /does not recover/);
 });
+
+// ── #746 — Layer-7 verifier (semantic verification) ─────────────────
+
+test("verifyPushedReceipt: #746 — passes resultCode through when layer7Verifier is configured", async () => {
+  const r = await buildSignedReceipt({});
+  const result = await verifyPushedReceipt(
+    {
+      challengeId: r.challengeId,
+      nodeId: r.nodeId,
+      responseBodyHash: r.bodyHash,
+      responseBody: r.body,
+      responseAtMs: r.responseAtMs,
+      nodeSig: r.nodeSig,
+      tipHash: r.tipHash,
+      tipHeight: r.tipHeight,
+    },
+    {
+      chainId: CHAIN_ID,
+      verifyingContract: VERIFYING_CONTRACT,
+      contractReader: fakeReader({ operator: r.operator }),
+      // Witness's independent Layer-7 result. Could be any uint8.
+      layer7Verifier: async () => 5,
+    },
+  );
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(result.resultCode, 5);
+  }
+});
+
+test("verifyPushedReceipt: #746 — fails closed when layer7Verifier throws", async () => {
+  const r = await buildSignedReceipt({});
+  const result = await verifyPushedReceipt(
+    {
+      challengeId: r.challengeId,
+      nodeId: r.nodeId,
+      responseBodyHash: r.bodyHash,
+      responseBody: r.body,
+      responseAtMs: r.responseAtMs,
+      nodeSig: r.nodeSig,
+      tipHash: r.tipHash,
+      tipHeight: r.tipHeight,
+    },
+    {
+      chainId: CHAIN_ID,
+      verifyingContract: VERIFYING_CONTRACT,
+      contractReader: fakeReader({ operator: r.operator }),
+      layer7Verifier: async () => {
+        throw new Error("rpc down");
+      },
+    },
+  );
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.status, 502);
+    assert.match(result.error, /layer-7 verification failed/);
+  }
+});
+
+test("verifyPushedReceipt: #746 — rejects when layer7Verifier returns out-of-range result", async () => {
+  const r = await buildSignedReceipt({});
+  const result = await verifyPushedReceipt(
+    {
+      challengeId: r.challengeId,
+      nodeId: r.nodeId,
+      responseBodyHash: r.bodyHash,
+      responseBody: r.body,
+      responseAtMs: r.responseAtMs,
+      nodeSig: r.nodeSig,
+      tipHash: r.tipHash,
+      tipHeight: r.tipHeight,
+    },
+    {
+      chainId: CHAIN_ID,
+      verifyingContract: VERIFYING_CONTRACT,
+      contractReader: fakeReader({ operator: r.operator }),
+      layer7Verifier: async () => 999, // beyond uint8
+    },
+  );
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.match(result.error, /non-uint8 resultCode/);
+  }
+});
+
+test("verifyPushedReceipt: #746 — when layer7Verifier is NOT configured, result.resultCode is undefined", async () => {
+  const r = await buildSignedReceipt({});
+  const result = await verifyPushedReceipt(
+    {
+      challengeId: r.challengeId,
+      nodeId: r.nodeId,
+      responseBodyHash: r.bodyHash,
+      responseBody: r.body,
+      responseAtMs: r.responseAtMs,
+      nodeSig: r.nodeSig,
+      tipHash: r.tipHash,
+      tipHeight: r.tipHeight,
+    },
+    {
+      chainId: CHAIN_ID,
+      verifyingContract: VERIFYING_CONTRACT,
+      contractReader: fakeReader({ operator: r.operator }),
+    },
+  );
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(result.resultCode, undefined);
+  }
+});

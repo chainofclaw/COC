@@ -54,10 +54,33 @@ export interface PushVerifyOpts {
   contractReader: ContractReader
   /** For deterministic tests — production calls `Date.now`. */
   nowMs?: () => number
+  /**
+   * #746 — optional Layer-7 semantic verifier. When provided, runs after
+   * the cryptographic push-verify checks pass and returns the witness's
+   * independently-computed `resultCode`. The witness then signs that
+   * resultCode into the v3 EIP-712 digest (`WITNESS_TYPES_V3`).
+   *
+   * When omitted, push-verify still succeeds cryptographically but no
+   * `resultCode` is produced — the caller will only sign v1+v2 (which
+   * leaves the F1/F3 semantic gap open, gated by `v2SunsetEpoch`).
+   *
+   * Implementations should return a numeric `ResultCode` matching
+   * `services/common/pose-types-v2.ts`'s `ResultCode` enum (uint8 range).
+   * Throw to fail-closed — the witness refuses to sign.
+   */
+  layer7Verifier?: (input: PushVerifyInput) => Promise<number>
 }
 
 export type PushVerifyResult =
-  | { ok: true; recoveredOperator: string }
+  | {
+      ok: true
+      recoveredOperator: string
+      /**
+       * #746 — present when `layer7Verifier` was configured and ran.
+       * Witness signs the v3 typehash binding this `resultCode`.
+       */
+      resultCode?: number
+    }
   | { ok: false; status: number; error: string }
 
 /**
@@ -150,5 +173,23 @@ export async function verifyPushedReceipt(
     }
   }
 
-  return { ok: true, recoveredOperator: recovered }
+  // (4) #746 — Layer-7 semantic verification. Runs only when the caller
+  //     wired in a verifier; the witness signs whatever resultCode it
+  //     computes into the v3 EIP-712 digest. Fail-closed: if the verifier
+  //     throws, refuse the attestation entirely rather than silently
+  //     falling back to "no resultCode" (which would let the v3 path
+  //     degrade to v2 — gated by v2SunsetEpoch, possibly accepted).
+  let resultCode: number | undefined
+  if (opts.layer7Verifier) {
+    try {
+      resultCode = await opts.layer7Verifier(input)
+    } catch (err) {
+      return { ok: false, status: 502, error: "layer-7 verification failed" }
+    }
+    if (typeof resultCode !== "number" || !Number.isInteger(resultCode) || resultCode < 0 || resultCode > 255) {
+      return { ok: false, status: 502, error: "layer-7 verifier returned non-uint8 resultCode" }
+    }
+  }
+
+  return { ok: true, recoveredOperator: recovered, ...(resultCode !== undefined ? { resultCode } : {}) }
 }
