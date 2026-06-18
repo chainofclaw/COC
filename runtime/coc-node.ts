@@ -19,7 +19,7 @@ import { readBoundedBody } from "./lib/pose-body-reader.ts";
 import { createNodeSigner, createNodeSignerV2, buildReceiptSignMessage } from "../node/src/crypto/signer.ts";
 import { keccak256Hex } from "../services/relayer/keccak256.ts";
 import { createLogger } from "../node/src/logger.ts";
-import { buildDomain, RECEIPT_TYPES, WITNESS_TYPES, WITNESS_TYPES_V2 } from "../node/src/crypto/eip712-types.ts";
+import { buildDomain, RECEIPT_TYPES, WITNESS_TYPES, WITNESS_TYPES_V2, WITNESS_TYPES_V3 } from "../node/src/crypto/eip712-types.ts";
 
 const log = createLogger("coc-node");
 
@@ -158,6 +158,74 @@ if (poseWitnessRequireVerified && !poseWitnessReaderOrNull) {
   throw new Error("COC_POSE_WITNESS_REQUIRE_VERIFIED=true but l2RpcUrl/poseManagerV2Address not configured");
 }
 
+// #746 — Layer-7 semantic verifier toggle. When enabled the witness runs
+// `layer7VerifyForWitness` after push-verify succeeds and signs the v3
+// typehash binding the computed `resultCode`. When disabled (default for
+// the rollout window) only v1+v2 are produced; the contract's v3 → v2 → v1
+// fallback path still accepts those during the soft-sunset window.
+const poseWitnessLayer7Enabled = (() => {
+  const raw = process.env.COC_POSE_WITNESS_LAYER7_VERIFY?.trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes";
+})();
+
+// PoSe v2 ResultCode enum — kept in sync with services/common/pose-types-v2.ts.
+const RESULT_CODE = {
+  Ok: 0,
+  Timeout: 1,
+  InvalidSig: 2,
+  StorageProofFail: 3,
+  RelayWitnessFail: 4,
+  TipMismatch: 5,
+  NonceMismatch: 6,
+  WitnessQuorumFail: 7,
+  InvalidStorageAudit: 8,
+} as const;
+
+/**
+ * #746 — minimal Layer-7 verifier for the witness path. Covers the uptime
+ * surface that the prod 88780 PoSe v2 pipeline exercises today:
+ *
+ *   1. Re-fetch the block at `tipHeight` from the witness's own RPC.
+ *   2. Compare the reported `tipHash` against what the witness sees.
+ *
+ * StorageProof and RelayResult verifiers are larger lifts (IPFS chunk
+ * fetch + Merkle replay; relay path replay) and are tracked separately —
+ * for now those receipts get the `Ok` resultCode IFF the cryptographic
+ * push-verify already passed, on the theory that "the witness has not
+ * seen a contradicting result locally" is still a tightening over the
+ * pre-#746 rubber-stamp.
+ */
+async function layer7VerifyForWitness(input: {
+  responseBody: Record<string, unknown>;
+  tipHash: string;
+  tipHeight: bigint;
+}): Promise<number> {
+  // Only the uptime path knows how to verify the body content vs RPC
+  // independently. For storage/relay we have neither the chunk bytes
+  // nor the relay state on this node — fall back to Ok (cryptographic
+  // push-verify already ran).
+  const challengeType =
+    typeof input.responseBody?.challengeType === "string"
+      ? (input.responseBody.challengeType as string).toLowerCase()
+      : "";
+  if (challengeType !== "uptime") {
+    return RESULT_CODE.Ok;
+  }
+  const blockNumber = Number(input.tipHeight);
+  if (!Number.isFinite(blockNumber) || blockNumber < 0) {
+    return RESULT_CODE.TipMismatch;
+  }
+  const ourHash = await fetchBlockHash(blockNumber);
+  if (!ourHash) {
+    // RPC failure / block not yet available. Throw to fail closed —
+    // we'd rather refuse to sign than silently report Ok.
+    throw new Error("layer-7 verifier: RPC eth_getBlockByNumber returned no hash");
+  }
+  return ourHash.toLowerCase() === input.tipHash.toLowerCase()
+    ? RESULT_CODE.Ok
+    : RESULT_CODE.TipMismatch;
+}
+
 function resolveRuntimeNodePrivateKey(): string {
   const canonical = process.env.COC_NODE_KEY?.trim();
   const legacy = process.env.COC_NODE_PK?.trim();
@@ -220,6 +288,35 @@ async function signWitnessAttestationV2(
     challengeId,
     nodeId,
     responseBodyHash,
+    witnessIndex,
+    epochId,
+  });
+}
+
+/**
+ * #746 — sign the v3 (`WitnessAttestationV3`) typehash that binds the
+ * attestation to `resultCode` (in addition to `epochId`). The witness must
+ * have independently computed `resultCode` by running the Layer-7 verifier
+ * (`ReceiptVerifierV2.verify`) on the pushed receipt — see
+ * `verifyPushedReceiptSemantics` for the implementation. Witnesses on
+ * coc-node v0.4+ return v1+v2+v3 sigs during rollout; the contract tries
+ * v3 first, then v2 (gated by v2SunsetEpoch), then v1 (gated by
+ * v1SunsetEpoch).
+ */
+async function signWitnessAttestationV3(
+  challengeId: string,
+  nodeId: string,
+  responseBodyHash: string,
+  resultCode: number,
+  witnessIndex: number,
+  epochId: bigint,
+): Promise<string> {
+  if (!nodeSignerV2) throw new Error("v2 signer not available");
+  return nodeSignerV2.eip712.signTypedData(WITNESS_TYPES_V3, {
+    challengeId,
+    nodeId,
+    responseBodyHash,
+    resultCode,
     witnessIndex,
     epochId,
   });
@@ -556,13 +653,29 @@ const server = http.createServer((req, res) => {
             verifyingContract,
             freshnessWindowMs: poseWitnessFreshnessMs,
             contractReader: poseWitnessReaderOrNull,
+            // #746 — when the layer-7 toggle is on, run the witness's
+            // independent semantic verifier (currently uptime tipHash via
+            // local RPC). Returns the `ResultCode` the witness signs into
+            // the v3 EIP-712 digest.
+            ...(poseWitnessLayer7Enabled
+              ? {
+                  layer7Verifier: async (input) =>
+                    layer7VerifyForWitness({
+                      responseBody: input.responseBody,
+                      tipHash: input.tipHash,
+                      tipHeight: input.tipHeight,
+                    }),
+                }
+              : {}),
           },
         )
           .then(verifyResult => {
             if (!verifyResult.ok) {
               return json(res, verifyResult.status, { error: verifyResult.error });
             }
-            return signAndRespond();
+            // #746 — pass through the resultCode (if the layer-7 verifier ran)
+            // so signAndRespond can produce a v3 typehash signature binding it.
+            return signAndRespond(verifyResult.resultCode);
           })
           .catch(error => {
             log.error("witness push-verification failed", { error: String(error) });
@@ -582,7 +695,7 @@ const server = http.createServer((req, res) => {
       });
       return signAndRespond();
 
-      function signAndRespond(): void {
+      function signAndRespond(resultCode?: number): void {
       const signV1 = signWitnessAttestation(
         fields.challengeId,
         fields.nodeId,
@@ -603,8 +716,23 @@ const server = http.createServer((req, res) => {
             fields.epochId,
           )
         : Promise.resolve<string | null>(null);
-      Promise.all([signV1, signV2])
-        .then(([witnessSig, witnessSigV2]) => {
+      // #746 — produce v3 signature when push-verify yielded a Layer-7
+      // semantic result. Without `resultCode` we cannot bind it into the
+      // EIP-712 digest, so the v3 path is only emitted when we ran the
+      // verifier ourselves (push path) — bookkeeping the caller can
+      // distinguish by checking `witnessSigV3` presence.
+      const signV3 = (fields.epochId !== undefined && resultCode !== undefined)
+        ? signWitnessAttestationV3(
+            fields.challengeId,
+            fields.nodeId,
+            fields.responseBodyHash,
+            resultCode,
+            fields.witnessIndex,
+            fields.epochId,
+          )
+        : Promise.resolve<string | null>(null);
+      Promise.all([signV1, signV2, signV3])
+        .then(([witnessSig, witnessSigV2, witnessSigV3]) => {
           return json(res, 200, {
             challengeId: fields.challengeId,
             nodeId: fields.nodeId,
@@ -613,6 +741,8 @@ const server = http.createServer((req, res) => {
             attestedAtMs: BigInt(Date.now()).toString(),
             witnessSig,
             ...(witnessSigV2 ? { witnessSigV2 } : {}),
+            ...(witnessSigV3 ? { witnessSigV3 } : {}),
+            ...(resultCode !== undefined ? { resultCode } : {}),
           });
         })
         .catch((error) => {

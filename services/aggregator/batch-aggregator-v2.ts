@@ -143,17 +143,25 @@ export class BatchAggregatorV2 {
       nodeIds: receipts.map((r) => r.receipt.nodeId),
       responseBodyHashes: receipts.map((r) => r.receipt.responseBodyHash),
       leafHashes,
+      // #746 — pull resultCode from the evidenceLeaf (set by ReceiptVerifierV2
+      // when the verifier ran semantic checks). Falls back to 0 (Ok) so
+      // pre-#746 receipts still produce a valid metadata payload; on-chain
+      // semantics for those degenerate to "the witness signed nothing about
+      // resultCode" — i.e. the v3 digest won't match and the contract will
+      // fall through to v2 (which doesn't bind resultCode, gated by sunset).
+      resultCodes: receipts.map((r) => r.evidenceLeaf.resultCode),
       witnessReceiptIndex,
     }
   }
 
   /**
    * Collect witness signatures aligned with set bits in `combinedBitmap`
-   * (ascending bit order). Prefers v2-typehash signatures (`witnessSigV2`)
-   * when present; falls back to v1 (`witnessSig`) for backwards compatibility
-   * during the rollout window. Throws if a required signature is missing —
-   * the contract would `revert InvalidWitnessQuorum` and the relayer would
-   * waste gas, so fail loudly here instead.
+   * (ascending bit order). Prefers v3 typehash (`witnessSigV3` — binds
+   * resultCode, #746), then v2 (`witnessSigV2` — binds epochId, #667),
+   * then v1 (`witnessSig`, legacy). Contract tries the same order on-chain.
+   * Throws if a required signature is missing — the contract would
+   * `revert InvalidWitnessQuorum` and the relayer would waste gas, so
+   * fail loudly here instead.
    */
   private collectWitnessSignatures(
     receipts: VerifiedReceiptV2[],
@@ -174,7 +182,7 @@ export class BatchAggregatorV2 {
           `witness attestation missing for bit ${bit} on receipt ${receiptIdx} (challengeId=${receipt.challenge.challengeId})`,
         )
       }
-      signatures.push(attestation.witnessSigV2 ?? attestation.witnessSig)
+      signatures.push(attestation.witnessSigV3 ?? attestation.witnessSigV2 ?? attestation.witnessSig)
     }
     return signatures
   }

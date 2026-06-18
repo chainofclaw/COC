@@ -87,6 +87,21 @@ export interface WitnessAttestation {
    * the versioned-typehash rollout window; the contract accepts either.
    */
   witnessSigV2?: `0x${string}`
+  /**
+   * Optional v3 typehash signature (#746). Adds `resultCode` on top of v2
+   * so the witness signature cryptographically pins the Layer-7 verifier
+   * result the witness independently computed. Witnesses on coc-node
+   * v0.4+ produce all three versions during rollout; aggregator prefers
+   * v3 when present.
+   */
+  witnessSigV3?: `0x${string}`
+  /**
+   * Optional Layer-7 verifier result (#746). When the witness ran the
+   * verifier callbacks itself (verifyUptimeResult / verifyStorageProof /
+   * verifyRelayResult), this is its independently-computed ResultCode.
+   * Aggregator uses this for `ReceiptBatchMetadata.resultCodes[]`.
+   */
+  resultCode?: ResultCode
 }
 
 /**
@@ -106,6 +121,13 @@ export interface ReceiptBatchMetadata {
   nodeIds: Hex32[]
   responseBodyHashes: Hex32[]
   leafHashes: Hex32[]
+  /**
+   * #746 — per-receipt Layer-7 verifier result code, fed into the v3
+   * witness EIP-712 digest so the witness signature pins the result the
+   * witness independently computed. Must be `length == leafHashes.length`;
+   * validated on-chain by `submitBatchV2WithMetadata`.
+   */
+  resultCodes: number[]
   /** Fixed length 32 — matches Solidity `uint16[32]`. */
   witnessReceiptIndex: number[]
 }

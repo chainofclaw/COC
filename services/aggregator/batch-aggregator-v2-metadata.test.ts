@@ -47,7 +47,20 @@ function makeWitness(
   }
 }
 
-function makeReceipt(label: string, witnessBits: number[], v2Sig = true): VerifiedReceiptV2 {
+/** v3 variant — additionally carries a `witnessSigV3` (prefix cc...). */
+function makeWitnessV3(
+  bit: number,
+  challengeId: Hex32,
+  nodeId: Hex32,
+  responseBodyHash: Hex32,
+): WitnessAttestation {
+  return {
+    ...makeWitness(bit, challengeId, nodeId, responseBodyHash, true),
+    witnessSigV3: `0x${"cc".repeat(64)}${bit.toString(16).padStart(2, "0")}` as `0x${string}`,
+  }
+}
+
+function makeReceipt(label: string, witnessBits: number[], v2Sig = true, resultCode = 0): VerifiedReceiptV2 {
   const challengeId = hex32(label + "ch")
   const nodeId = hex32(label + "nd")
   const responseBodyHash = hex32(label + "rb")
@@ -92,7 +105,7 @@ function makeReceipt(label: string, witnessBits: number[], v2Sig = true): Verifi
       tipHash: hex32(label + "tp"),
       tipHeight: 1n,
       latencyMs: 1,
-      resultCode: 0,
+      resultCode,
       witnessBitmap: bitmap,
     },
     verifiedAtMs: 0n,
@@ -172,5 +185,36 @@ describe("BatchAggregatorV2 — #667 metadata + signatures", () => {
     const r = makeReceipt("z", [])
     r.witnessBitmap = 1 // claim bit 0 without the matching attestation
     assert.throws(() => agg.buildBatch(100n, [r]), /witness attestation missing for bit 0/)
+  })
+
+  // ── #746 — v3 + resultCodes coverage ────────────────────────────────────
+
+  it("#746: prefers v3 signature when present (over v2 and v1)", () => {
+    const challengeId = hex32("v3" + "ch")
+    const nodeId = hex32("v3" + "nd")
+    const responseBodyHash = hex32("v3" + "rb")
+    const r = makeReceipt("v3", [0])
+    // Replace the witness with one that carries v1+v2+v3 sigs.
+    r.witnesses = [makeWitnessV3(0, challengeId, nodeId, responseBodyHash)]
+    const batch = agg.buildBatch(100n, [r])
+    assert.equal(batch.witnessSignatures.length, 1)
+    assert.ok(
+      batch.witnessSignatures[0].toLowerCase().startsWith("0xcc"),
+      `expected v3 prefix, got ${batch.witnessSignatures[0].slice(0, 6)}`,
+    )
+  })
+
+  it("#746: metadata.resultCodes is aligned with leafHashes and reads from evidenceLeaf", () => {
+    // Three receipts with distinct resultCodes — aggregator must propagate
+    // them in metadata so the contract can rebuild the v3 EIP-712 digest
+    // using the same uint8 each witness signed.
+    const receipts = [
+      makeReceipt("ok", [0], true, /* resultCode */ 0),
+      makeReceipt("tip", [1], true, /* resultCode */ 5),
+      makeReceipt("rly", [2], true, /* resultCode */ 4),
+    ]
+    const batch = agg.buildBatch(100n, receipts)
+    assert.deepEqual(batch.metadata.resultCodes, [0, 5, 4])
+    assert.equal(batch.metadata.resultCodes.length, batch.metadata.leafHashes.length)
   })
 })

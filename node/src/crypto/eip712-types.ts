@@ -85,6 +85,30 @@ export const WITNESS_TYPES_V2 = {
   ],
 } as const
 
+/**
+ * #746 v3 witness attestation typehash. Adds `resultCode` so a witness
+ * signature is cryptographically pinned to the Layer-7 semantic result
+ * the witness independently computed (by running ReceiptVerifierV2's
+ * verifyUptimeResult / verifyStorageProof / verifyRelayResult callbacks
+ * on the pushed receipt). Closes F1 (semantic rubber-stamp) and F3
+ * (leaf binding): aggregator can no longer re-encode `EvidenceLeafV2.resultCode`
+ * because the witness signature now covers it directly.
+ *
+ * Witnesses on coc-node v0.4+ produce v1+v2+v3 signatures during the
+ * rollout window; the contract tries v3 first, then v2 (gated by
+ * v2SunsetEpoch), then v1 (gated by v1SunsetEpoch).
+ */
+export const WITNESS_TYPES_V3 = {
+  WitnessAttestationV3: [
+    { name: "challengeId", type: "bytes32" },
+    { name: "nodeId", type: "bytes32" },
+    { name: "responseBodyHash", type: "bytes32" },
+    { name: "resultCode", type: "uint8" },
+    { name: "witnessIndex", type: "uint8" },
+    { name: "epochId", type: "uint64" },
+  ],
+} as const
+
 export const EVIDENCE_LEAF_TYPES = {
   EvidenceLeaf: [
     { name: "epoch", type: "uint64" },
