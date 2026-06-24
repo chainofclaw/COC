@@ -8581,6 +8581,791 @@
           ]
         }
       }
+    },
+    "098510d23dd2fb8a3bc78a27301de6777e381a04c502967c5a8e43ed65665558": {
+      "address": "0xc9AB3664697ac71AB8d9B00943eB128535fd696b",
+      "txHash": "0x5b85b8f5fc564f74d32f79e83b916c26fc862498c54925e6250ea0f39363f919",
+      "layout": {
+        "solcVersion": "0.8.24",
+        "storage": [
+          {
+            "label": "owner",
+            "offset": 0,
+            "slot": "0",
+            "type": "t_address",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:15"
+          },
+          {
+            "label": "roles",
+            "offset": 0,
+            "slot": "1",
+            "type": "t_mapping(t_bytes32,t_mapping(t_address,t_bool))",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:16"
+          },
+          {
+            "label": "nodes",
+            "offset": 0,
+            "slot": "2",
+            "type": "t_mapping(t_bytes32,t_struct(NodeRecord)6493_storage)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:18"
+          },
+          {
+            "label": "nodeOperator",
+            "offset": 0,
+            "slot": "3",
+            "type": "t_mapping(t_bytes32,t_address)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:19"
+          },
+          {
+            "label": "operatorNodeCount",
+            "offset": 0,
+            "slot": "4",
+            "type": "t_mapping(t_address,t_uint8)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:20"
+          },
+          {
+            "label": "epochBatches",
+            "offset": 0,
+            "slot": "5",
+            "type": "t_mapping(t_uint64,t_array(t_bytes32)dyn_storage)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:22"
+          },
+          {
+            "label": "batches",
+            "offset": 0,
+            "slot": "6",
+            "type": "t_mapping(t_bytes32,t_struct(BatchRecord)6510_storage)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:23"
+          },
+          {
+            "label": "batchSampleCount",
+            "offset": 0,
+            "slot": "7",
+            "type": "t_mapping(t_bytes32,t_uint32)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:24"
+          },
+          {
+            "label": "batchSampleCommitment",
+            "offset": 0,
+            "slot": "8",
+            "type": "t_mapping(t_bytes32,t_bytes32)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:25"
+          },
+          {
+            "label": "batchSampledLeaf",
+            "offset": 0,
+            "slot": "9",
+            "type": "t_mapping(t_bytes32,t_mapping(t_bytes32,t_bool))",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:26"
+          },
+          {
+            "label": "usedReplayKeys",
+            "offset": 0,
+            "slot": "10",
+            "type": "t_mapping(t_bytes32,t_bool)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:29"
+          },
+          {
+            "label": "epochFinalized",
+            "offset": 0,
+            "slot": "11",
+            "type": "t_mapping(t_uint64,t_bool)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:32"
+          },
+          {
+            "label": "epochSettlementRoot",
+            "offset": 0,
+            "slot": "12",
+            "type": "t_mapping(t_uint64,t_bytes32)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:33"
+          },
+          {
+            "label": "epochValidBatchCount",
+            "offset": 0,
+            "slot": "13",
+            "type": "t_mapping(t_uint64,t_uint32)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:34"
+          },
+          {
+            "label": "unbondRequested",
+            "offset": 0,
+            "slot": "14",
+            "type": "t_mapping(t_bytes32,t_bool)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:35"
+          },
+          {
+            "label": "endpointCommitmentUsed",
+            "offset": 0,
+            "slot": "15",
+            "type": "t_mapping(t_bytes32,t_bool)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:38"
+          },
+          {
+            "label": "rewardPoolBalance",
+            "offset": 0,
+            "slot": "16",
+            "type": "t_uint256",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:42"
+          },
+          {
+            "label": "epochRewardsDistributed",
+            "offset": 0,
+            "slot": "17",
+            "type": "t_mapping(t_uint64,t_bool)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:42"
+          },
+          {
+            "label": "pendingRewards",
+            "offset": 0,
+            "slot": "18",
+            "type": "t_mapping(t_bytes32,t_uint256)",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:43"
+          },
+          {
+            "label": "v1SunsetEpoch",
+            "offset": 0,
+            "slot": "19",
+            "type": "t_uint64",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:108"
+          },
+          {
+            "label": "v2SunsetEpoch",
+            "offset": 8,
+            "slot": "19",
+            "type": "t_uint64",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:123"
+          },
+          {
+            "label": "__gap",
+            "offset": 0,
+            "slot": "20",
+            "type": "t_array(t_uint256)49_storage",
+            "contract": "PoSeManagerStorage",
+            "src": "contracts-src/settlement/PoSeManagerStorage.sol:129"
+          },
+          {
+            "label": "challengeNonces",
+            "offset": 0,
+            "slot": "69",
+            "type": "t_mapping(t_uint64,t_uint64)",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:44"
+          },
+          {
+            "label": "epochRewardRoots",
+            "offset": 0,
+            "slot": "70",
+            "type": "t_mapping(t_uint64,t_bytes32)",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:45"
+          },
+          {
+            "label": "rewardClaimed",
+            "offset": 0,
+            "slot": "71",
+            "type": "t_mapping(t_uint64,t_mapping(t_bytes32,t_bool))",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:46"
+          },
+          {
+            "label": "epochTotalReward",
+            "offset": 0,
+            "slot": "72",
+            "type": "t_mapping(t_uint64,t_uint256)",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:47"
+          },
+          {
+            "label": "epochSlashTotal",
+            "offset": 0,
+            "slot": "73",
+            "type": "t_mapping(t_uint64,t_uint256)",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:48"
+          },
+          {
+            "label": "epochTreasuryDelta",
+            "offset": 0,
+            "slot": "74",
+            "type": "t_mapping(t_uint64,t_uint256)",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:49"
+          },
+          {
+            "label": "challenges",
+            "offset": 0,
+            "slot": "75",
+            "type": "t_mapping(t_bytes32,t_struct(ChallengeRecord)6585_storage)",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:50"
+          },
+          {
+            "label": "epochNodeSlashed",
+            "offset": 0,
+            "slot": "76",
+            "type": "t_mapping(t_uint64,t_mapping(t_bytes32,t_uint256))",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:51"
+          },
+          {
+            "label": "challengeFaultConfirmed",
+            "offset": 0,
+            "slot": "77",
+            "type": "t_mapping(t_bytes32,t_bool)",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:52"
+          },
+          {
+            "label": "epochClaimedReward",
+            "offset": 0,
+            "slot": "78",
+            "type": "t_mapping(t_uint64,t_uint256)",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:53"
+          },
+          {
+            "label": "consumedFaultEvidence",
+            "offset": 0,
+            "slot": "79",
+            "type": "t_mapping(t_bytes32,t_bool)",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:54"
+          },
+          {
+            "label": "challengeFaultEpochPlusOne",
+            "offset": 0,
+            "slot": "80",
+            "type": "t_mapping(t_bytes32,t_uint64)",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:55"
+          },
+          {
+            "label": "pendingWithdrawals",
+            "offset": 0,
+            "slot": "81",
+            "type": "t_mapping(t_address,t_uint256)",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:56"
+          },
+          {
+            "label": "epochMerkleRootUsed",
+            "offset": 0,
+            "slot": "82",
+            "type": "t_mapping(t_uint64,t_mapping(t_bytes32,t_bool))",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:62"
+          },
+          {
+            "label": "epochBatchCursor",
+            "offset": 0,
+            "slot": "83",
+            "type": "t_mapping(t_uint64,t_uint256)",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:67"
+          },
+          {
+            "label": "challengeBondMin",
+            "offset": 0,
+            "slot": "84",
+            "type": "t_uint256",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:69"
+          },
+          {
+            "label": "insuranceBalance",
+            "offset": 0,
+            "slot": "85",
+            "type": "t_uint256",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:70"
+          },
+          {
+            "label": "DOMAIN_SEPARATOR",
+            "offset": 0,
+            "slot": "86",
+            "type": "t_bytes32",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:71"
+          },
+          {
+            "label": "allowEmptyWitnessSubmission",
+            "offset": 0,
+            "slot": "87",
+            "type": "t_bool",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:72"
+          },
+          {
+            "label": "initialized",
+            "offset": 1,
+            "slot": "87",
+            "type": "t_bool",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:75"
+          },
+          {
+            "label": "_challengeCounter",
+            "offset": 0,
+            "slot": "88",
+            "type": "t_uint256",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:76"
+          },
+          {
+            "label": "cocToken",
+            "offset": 0,
+            "slot": "89",
+            "type": "t_contract(ICOCToken)2251",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:79"
+          },
+          {
+            "label": "genesisEpoch",
+            "offset": 20,
+            "slot": "89",
+            "type": "t_uint64",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:80"
+          },
+          {
+            "label": "emissionEnabled",
+            "offset": 28,
+            "slot": "89",
+            "type": "t_bool",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:81"
+          },
+          {
+            "label": "foundationAddress",
+            "offset": 0,
+            "slot": "90",
+            "type": "t_address",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:82"
+          },
+          {
+            "label": "epochFinalizedAt",
+            "offset": 0,
+            "slot": "91",
+            "type": "t_mapping(t_uint64,t_uint256)",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:87"
+          },
+          {
+            "label": "epochSwept",
+            "offset": 0,
+            "slot": "92",
+            "type": "t_mapping(t_uint64,t_bool)",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:88"
+          },
+          {
+            "label": "_activeNodeIds",
+            "offset": 0,
+            "slot": "93",
+            "type": "t_array(t_bytes32)dyn_storage",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:95"
+          },
+          {
+            "label": "_activeNodeIndex",
+            "offset": 0,
+            "slot": "94",
+            "type": "t_mapping(t_bytes32,t_uint256)",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:96"
+          },
+          {
+            "label": "_witnessSigUsed",
+            "offset": 0,
+            "slot": "95",
+            "type": "t_mapping(t_bytes32,t_bool)",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:104"
+          },
+          {
+            "label": "__gap",
+            "offset": 0,
+            "slot": "96",
+            "type": "t_array(t_uint256)49_storage",
+            "contract": "PoSeManagerV2",
+            "src": "contracts-src/settlement/PoSeManagerV2.sol:1261"
+          }
+        ],
+        "types": {
+          "t_bool": {
+            "label": "bool",
+            "numberOfBytes": "1"
+          },
+          "t_struct(InitializableStorage)130_storage": {
+            "label": "struct Initializable.InitializableStorage",
+            "members": [
+              {
+                "label": "_initialized",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "_initializing",
+                "type": "t_bool",
+                "offset": 8,
+                "slot": "0"
+              }
+            ],
+            "numberOfBytes": "32"
+          },
+          "t_uint64": {
+            "label": "uint64",
+            "numberOfBytes": "8"
+          },
+          "t_address": {
+            "label": "address",
+            "numberOfBytes": "20"
+          },
+          "t_array(t_bytes32)dyn_storage": {
+            "label": "bytes32[]",
+            "numberOfBytes": "32"
+          },
+          "t_array(t_uint256)49_storage": {
+            "label": "uint256[49]",
+            "numberOfBytes": "1568"
+          },
+          "t_bytes32": {
+            "label": "bytes32",
+            "numberOfBytes": "32"
+          },
+          "t_bytes_storage": {
+            "label": "bytes",
+            "numberOfBytes": "32"
+          },
+          "t_contract(ICOCToken)2251": {
+            "label": "contract ICOCToken",
+            "numberOfBytes": "20"
+          },
+          "t_mapping(t_address,t_bool)": {
+            "label": "mapping(address => bool)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_address,t_uint256)": {
+            "label": "mapping(address => uint256)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_address,t_uint8)": {
+            "label": "mapping(address => uint8)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_address)": {
+            "label": "mapping(bytes32 => address)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_bool)": {
+            "label": "mapping(bytes32 => bool)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_bytes32)": {
+            "label": "mapping(bytes32 => bytes32)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_mapping(t_address,t_bool))": {
+            "label": "mapping(bytes32 => mapping(address => bool))",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_mapping(t_bytes32,t_bool))": {
+            "label": "mapping(bytes32 => mapping(bytes32 => bool))",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_struct(BatchRecord)6510_storage)": {
+            "label": "mapping(bytes32 => struct PoSeTypes.BatchRecord)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_struct(ChallengeRecord)6585_storage)": {
+            "label": "mapping(bytes32 => struct PoSeTypesV2.ChallengeRecord)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_struct(NodeRecord)6493_storage)": {
+            "label": "mapping(bytes32 => struct PoSeTypes.NodeRecord)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_uint256)": {
+            "label": "mapping(bytes32 => uint256)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_uint32)": {
+            "label": "mapping(bytes32 => uint32)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_uint64)": {
+            "label": "mapping(bytes32 => uint64)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_uint64,t_array(t_bytes32)dyn_storage)": {
+            "label": "mapping(uint64 => bytes32[])",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_uint64,t_bool)": {
+            "label": "mapping(uint64 => bool)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_uint64,t_bytes32)": {
+            "label": "mapping(uint64 => bytes32)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_uint64,t_mapping(t_bytes32,t_bool))": {
+            "label": "mapping(uint64 => mapping(bytes32 => bool))",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_uint64,t_mapping(t_bytes32,t_uint256))": {
+            "label": "mapping(uint64 => mapping(bytes32 => uint256))",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_uint64,t_uint256)": {
+            "label": "mapping(uint64 => uint256)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_uint64,t_uint32)": {
+            "label": "mapping(uint64 => uint32)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_uint64,t_uint64)": {
+            "label": "mapping(uint64 => uint64)",
+            "numberOfBytes": "32"
+          },
+          "t_struct(BatchRecord)6510_storage": {
+            "label": "struct PoSeTypes.BatchRecord",
+            "members": [
+              {
+                "label": "epochId",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "merkleRoot",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "1"
+              },
+              {
+                "label": "summaryHash",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "2"
+              },
+              {
+                "label": "aggregator",
+                "type": "t_address",
+                "offset": 0,
+                "slot": "3"
+              },
+              {
+                "label": "submittedAtEpoch",
+                "type": "t_uint64",
+                "offset": 20,
+                "slot": "3"
+              },
+              {
+                "label": "disputeDeadlineEpoch",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "4"
+              },
+              {
+                "label": "finalized",
+                "type": "t_bool",
+                "offset": 8,
+                "slot": "4"
+              },
+              {
+                "label": "disputed",
+                "type": "t_bool",
+                "offset": 9,
+                "slot": "4"
+              }
+            ],
+            "numberOfBytes": "160"
+          },
+          "t_struct(ChallengeRecord)6585_storage": {
+            "label": "struct PoSeTypesV2.ChallengeRecord",
+            "members": [
+              {
+                "label": "commitHash",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "challenger",
+                "type": "t_address",
+                "offset": 0,
+                "slot": "1"
+              },
+              {
+                "label": "bond",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "2"
+              },
+              {
+                "label": "commitEpoch",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "3"
+              },
+              {
+                "label": "revealDeadlineEpoch",
+                "type": "t_uint64",
+                "offset": 8,
+                "slot": "3"
+              },
+              {
+                "label": "revealed",
+                "type": "t_bool",
+                "offset": 16,
+                "slot": "3"
+              },
+              {
+                "label": "settled",
+                "type": "t_bool",
+                "offset": 17,
+                "slot": "3"
+              },
+              {
+                "label": "targetNodeId",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "4"
+              },
+              {
+                "label": "faultType",
+                "type": "t_uint8",
+                "offset": 0,
+                "slot": "5"
+              }
+            ],
+            "numberOfBytes": "192"
+          },
+          "t_struct(NodeRecord)6493_storage": {
+            "label": "struct PoSeTypes.NodeRecord",
+            "members": [
+              {
+                "label": "nodeId",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "pubkeyNode",
+                "type": "t_bytes_storage",
+                "offset": 0,
+                "slot": "1"
+              },
+              {
+                "label": "serviceFlags",
+                "type": "t_uint8",
+                "offset": 0,
+                "slot": "2"
+              },
+              {
+                "label": "serviceCommitment",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "3"
+              },
+              {
+                "label": "endpointCommitment",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "4"
+              },
+              {
+                "label": "bondAmount",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "5"
+              },
+              {
+                "label": "metadataHash",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "6"
+              },
+              {
+                "label": "registeredAtEpoch",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "7"
+              },
+              {
+                "label": "unlockEpoch",
+                "type": "t_uint64",
+                "offset": 8,
+                "slot": "7"
+              },
+              {
+                "label": "active",
+                "type": "t_bool",
+                "offset": 16,
+                "slot": "7"
+              }
+            ],
+            "numberOfBytes": "256"
+          },
+          "t_uint256": {
+            "label": "uint256",
+            "numberOfBytes": "32"
+          },
+          "t_uint32": {
+            "label": "uint32",
+            "numberOfBytes": "4"
+          },
+          "t_uint8": {
+            "label": "uint8",
+            "numberOfBytes": "1"
+          }
+        },
+        "namespaces": {
+          "erc7201:openzeppelin.storage.Initializable": [
+            {
+              "contract": "Initializable",
+              "label": "_initialized",
+              "type": "t_uint64",
+              "src": "@openzeppelin/contracts/proxy/utils/Initializable.sol:69",
+              "offset": 0,
+              "slot": "0"
+            },
+            {
+              "contract": "Initializable",
+              "label": "_initializing",
+              "type": "t_bool",
+              "src": "@openzeppelin/contracts/proxy/utils/Initializable.sol:73",
+              "offset": 8,
+              "slot": "0"
+            }
+          ]
+        }
+      }
     }
   }
 }

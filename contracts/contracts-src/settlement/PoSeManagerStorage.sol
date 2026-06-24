@@ -114,10 +114,15 @@ abstract contract PoSeManagerStorage is Initializable {
     // respectively. Default 0 = unlimited preserves pre-#746 behaviour
     // on upgrade (witness sigs that don't bind resultCode keep settling).
     // Multisig tightens once the agent fleet finishes the v3 migration.
+    //
+    // STORAGE LAYOUT: `v2SunsetEpoch` is a uint64 — it packs into the
+    // same 32-byte slot as `v1SunsetEpoch` (also uint64, 16 bytes of free
+    // padding remained). No new slot consumed, so `__gap[49]` stays.
     uint64 public v2SunsetEpoch;
 
     // UUPS storage gap (base class) — append-only state from now on.
-    // Reduced from 50 → 49 when `v1SunsetEpoch` was added in #748 (#667 F5),
-    // then 49 → 48 when `v2SunsetEpoch` was added in #746 (#667 F1+F3).
-    uint256[48] private __gap;
+    // Reduced from 50 → 49 when `v1SunsetEpoch` was added in #748 (#667 F5).
+    // `v2SunsetEpoch` (#746) packs into the same slot as `v1SunsetEpoch`
+    // so the gap stays at 49 — no additional slot consumed.
+    uint256[49] private __gap;
 }
