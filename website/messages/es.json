@@ -953,7 +953,7 @@
     },
     "canaryBanner": {
       "title": "Testnet canario 88780 en vivo",
-      "subtitle": "Red BFT de 6 validadores · contratos gen-5 UUPS · RPC público + faucet + explorer abiertos",
+      "subtitle": "Validadores dinámicos on-chain (impulsados por ValidatorRegistry, unión sin reinicio) · contratos gen-5 UUPS · RPC público + faucet + explorer abiertos",
       "cta": "Ver endpoints públicos"
     },
     "units": {

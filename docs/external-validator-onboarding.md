@@ -100,6 +100,16 @@ git clone https://github.com/chainofclaw/COC.git ~/coc && cd ~/coc
 npm install  # workspace install
 
 # Config — minimum viable
+#
+# NOTE: the `validators` / `peers` arrays below are only a BOOTSTRAP SEED so
+# your node can find a healthy peer to snap-sync from. They are NOT the
+# authoritative validator set — since 2026-06-10 that is driven on-chain by
+# ValidatorRegistry (see 88780-dynamic-validator-enablement-2026-06-10.md).
+# Once you stake (Step 3), every node's ValidatorRegistryReader picks you up
+# within ~30–60s with no manual peer coordination on either side. For the
+# current live seed peers, always copy from the canonical
+# `public-endpoints-88780.md` rather than this example (which may list a
+# scaled-out node). The five entries below are the live v1–v5 set.
 cat > /etc/coc/node-1.json <<EOF
 {
   "chainId": 88780,
@@ -109,19 +119,17 @@ cat > /etc/coc/node-1.json <<EOF
   "dataDir": "/var/lib/coc/node-1",
   "validators": [
     "0xde4e7889aa9007318ff261b1ee675f1305153590",
+    "0xb939e5a68abd2e000e78876bd86edd1cbba49eb9",
     "0xdefc8430388093fdfacb0a929fedc14d2e631d19",
     "0xcc64096600c1759d7aaea91166837a5873175867",
-    "0x5e773c9359a6bb416bdfffe0c9aac9f568bd11ae",
-    "0x919a0fd04d9ed960c9e26379aa18f11457e9e3e8",
-    "0xb939e5a68abd2e000e78876bd86edd1cbba49eb9"
+    "0x5e773c9359a6bb416bdfffe0c9aac9f568bd11ae"
   ],
   "peers": [
     {"id": "0xde4e7889aa9007318ff261b1ee675f1305153590", "url": "http://209.74.64.88:39780"},
+    {"id": "0xb939e5a68abd2e000e78876bd86edd1cbba49eb9", "url": "http://159.198.44.136:29780"},
     {"id": "0xdefc8430388093fdfacb0a929fedc14d2e631d19", "url": "http://199.192.16.79:29780"},
     {"id": "0xcc64096600c1759d7aaea91166837a5873175867", "url": "http://159.198.36.3:29780"},
-    {"id": "0x5e773c9359a6bb416bdfffe0c9aac9f568bd11ae", "url": "http://159.198.36.25:29780"},
-    {"id": "0x919a0fd04d9ed960c9e26379aa18f11457e9e3e8", "url": "http://34.139.57.20:29780"},
-    {"id": "0xb939e5a68abd2e000e78876bd86edd1cbba49eb9", "url": "http://159.198.44.136:29780"}
+    {"id": "0x5e773c9359a6bb416bdfffe0c9aac9f568bd11ae", "url": "http://159.198.36.25:29780"}
   ]
 }
 EOF

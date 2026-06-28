@@ -1,10 +1,25 @@
 # ValidatorRegistryReader Enablement on 88780 — Operations SOP
 
-**Status (2026-05-27):** Reader code is implemented, wired, and unit-tested
-(11 cases pass). 88780 nodes do **not** yet have the reader active — they're
-running with the static `validators` config. This document is the
+> **✅ EXECUTED IN PRODUCTION — 2026-06-10.** The reader is now **live on every
+> 88780 node**. The current validators (v1–v5) each staked 32 COC on-chain (B4)
+> and all nodes were brought up with `validatorRegistryAddress` set +
+> `pollIntervalMs = 30000`, fronted by an atomic restart (B5). On-chain
+> `getActiveValidators()` returns **5** and each node logged
+> `BFT validator set updated from ValidatorRegistry count=5`. The validator set
+> is now driven by the on-chain registry with zero-restart hot updates. See the
+> as-run deployment snapshot
+> [`88780-dynamic-validator-enablement-2026-06-10.md`](./88780-dynamic-validator-enablement-2026-06-10.md).
+> **The procedure below is retained as the reference SOP and rollback runbook.**
+> Note: it was written assuming 6 validators incl. obs-1; the as-run set was
+> **5 active** after obs-1 was scaled out, so substitute "5" for "6" throughout.
+> Devnet pre-validation (B3) confirmed stake → reader (5s poll) → BFT hot-update
+> with the node PID unchanged (true zero-restart).
+
+**Status (history, 2026-05-27):** Reader code is implemented, wired, and
+unit-tested (11 cases pass). 88780 nodes do **not** yet have the reader active —
+they're running with the static `validators` config. This document is the
 operational runbook for activating the reader, which is the core of Phase A
-"external validator onboarding" work in the [canary launch plan](../home/bob/.claude/plans/applyblock-delightful-hennessy.md).
+"external validator onboarding" work in the canary launch plan.
 
 ## What the reader does
 

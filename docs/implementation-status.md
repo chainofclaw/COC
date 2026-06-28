@@ -2,6 +2,16 @@
 
 This document maps the whitepaper scope to the current codebase and test coverage. It is intended as a concise engineering status report.
 
+> **Live on 88780 testnet (as of 2026-06-10):**
+> - **On-chain dynamic validator set** — `ValidatorRegistry` (`0x4441299c…`) +
+>   `ValidatorRegistryReader` is **enabled in production**. The BFT validator set
+>   is driven by `getActiveValidators()` with zero-restart hot updates; external
+>   operators join by staking 32 COC. Current set: 5 active (v1–v5), quorum 4/5.
+>   See `docs/88780-dynamic-validator-enablement-2026-06-10.md`.
+> - **PoSe v2 pipeline** — `coc-pose-witness` + `coc-agent` are **running** on
+>   v1–v5 (port 18780), actively producing challenges and witness receipts (no
+>   longer deployed-but-dormant).
+
 ## Legend
 - **Production-ready**: runtime-wired and hardened for sustained production use
 - **Runtime-wired**: present in code and connected to the runtime main path

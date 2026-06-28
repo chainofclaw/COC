@@ -953,7 +953,7 @@
     },
     "canaryBanner": {
       "title": "Canary testnet 88780 is live",
-      "subtitle": "6-validator BFT network · gen-5 UUPS contracts · public RPC + faucet + explorer open",
+      "subtitle": "On-chain dynamic validators (ValidatorRegistry-driven, zero-restart join) · gen-5 UUPS contracts · public RPC + faucet + explorer open",
       "cta": "Read the public endpoints"
     },
     "units": {
@@ -1235,20 +1235,35 @@
         {
           "date": "2026-04-13",
           "label": "Phase 1 end · All release blockers resolved",
-          "status": "active"
+          "status": "done"
         },
         {
           "date": "2026-05-13",
           "label": "Phase 2 end · 10–20 node invited beta",
-          "status": "upcoming"
+          "status": "done"
+        },
+        {
+          "date": "2026-05-20",
+          "label": "gen-5 UUPS upgradeable contract redeploy",
+          "status": "done"
+        },
+        {
+          "date": "2026-06-10",
+          "label": "On-chain dynamic validators live · ValidatorRegistry-driven, zero-restart join",
+          "status": "done"
         },
         {
           "date": "2026-06-13",
-          "label": "Day 90 · COC Prowl Public Testnet v1",
+          "label": "Day 90 · Canary testnet 88780 open for external validators",
+          "status": "active"
+        },
+        {
+          "date": "2026 Q3",
+          "label": "Canary go-live announcement (all 11 launch gates green, ~late July)",
           "status": "upcoming"
         },
         {
-          "date": "2026 Q2-Q3",
+          "date": "2026 Q3-Q4",
           "label": "Mainnet genesis (after Go/No-Go)",
           "status": "upcoming"
         }

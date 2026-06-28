@@ -40,6 +40,7 @@ Status legend:
 - **BFT commit blockHash binding** — Implemented (Audit) — `COC/node/src/bft.ts`
 - **BFT equivocation detection** — Implemented (Phase 30) — `COC/node/src/bft.ts`
 - **Validator governance** — Implemented (Phase 22 + 26) — `COC/node/src/validator-governance.ts`, `COC/node/src/chain-engine-persistent.ts`
+- **On-chain dynamic validator set (ValidatorRegistry + reader, zero-restart)** — **Live on 88780 (2026-06-10)** — `COC/runtime/lib/validator-registry-reader.ts`, `COC/node/src/index.ts`, `COC/contracts/contracts-src/governance/ValidatorRegistry.sol` (proxy `0x4441299c…`); see `docs/88780-dynamic-validator-enablement-2026-06-10.md`
 - **Stake-weighted proposer** — Implemented (Phase 26) — `COC/node/src/chain-engine-persistent.ts`
 - **Block signature/stateRoot** — Implemented (Phase 26) — `COC/node/src/blockchain-types.ts`
 - **StateRoot verification (post-EVM)** — Implemented (M7) — `COC/node/src/chain-engine.ts`
