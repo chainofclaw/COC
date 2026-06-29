@@ -20,8 +20,8 @@
 | **EVM compatibility** | Paris hardfork (`solc 0.8.24`) |
 | **Block time** | ~2.1 s (BFT early-commits optimization) |
 | **Block gas limit** | ~30,000,000 |
-| **Validator count** | 6 (currently single-operator; external operators welcome — see below) |
-| **Quorum** | ⌈2/3 × N⌉ = 4 of 6 |
+| **Validator count** | On-chain dynamic via `ValidatorRegistry.getActiveValidators()` — **5 active** as of 2026-06-10 (currently single-operator; external operators welcome — see below). Max 21 (`MAX_VALIDATORS`) |
+| **Quorum** | ⌈2/3 × N⌉ (currently 4 of 5) |
 | **Native token symbol** | COC |
 | **Native token decimals** | 18 |
 

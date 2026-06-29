@@ -953,7 +953,7 @@
     },
     "canaryBanner": {
       "title": "Canary 測試網 88780 已上線",
-      "subtitle": "6 個 validator BFT 網絡 · gen-5 UUPS 合約 · 公開 RPC + faucet + explorer 已開放",
+      "subtitle": "鏈上動態 validator（ValidatorRegistry 驅動，零重啟加入）· gen-5 UUPS 合約 · 公開 RPC + faucet + explorer 已開放",
       "cta": "查看公開端點"
     },
     "units": {
@@ -1235,20 +1235,35 @@
         {
           "date": "2026-04-13",
           "label": "Phase 1 結束 · 發佈阻斷項全部修復",
-          "status": "active"
+          "status": "done"
         },
         {
           "date": "2026-05-13",
           "label": "Phase 2 結束 · 邀請制 Beta 10-20 節點",
-          "status": "upcoming"
+          "status": "done"
+        },
+        {
+          "date": "2026-05-20",
+          "label": "gen-5 UUPS 可升級合約重部署",
+          "status": "done"
+        },
+        {
+          "date": "2026-06-10",
+          "label": "鏈上動態 validator 上線 · ValidatorRegistry 驅動，零重啟加入",
+          "status": "done"
         },
         {
           "date": "2026-06-13",
-          "label": "Day 90 · COC Prowl Public Testnet v1",
+          "label": "Day 90 · Canary 試驗網 88780 對外部 validator 開放",
+          "status": "active"
+        },
+        {
+          "date": "2026 Q3",
+          "label": "Canary 上線公告（11 個上線 gate 全綠，約 7 月下旬）",
           "status": "upcoming"
         },
         {
-          "date": "2026 Q2-Q3",
+          "date": "2026 Q3-Q4",
           "label": "主網創世（Go/No-Go 決策後）",
           "status": "upcoming"
         }

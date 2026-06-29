@@ -19,8 +19,8 @@
 | **EVM 兼容** | Paris hardfork (`solc 0.8.24`) |
 | **出块时间** | ~2.1 秒(BFT early-commits 优化) |
 | **区块 gas 上限** | ~30,000,000 |
-| **Validator 数** | 6(当前单运营方;欢迎外部 operator,见下) |
-| **Quorum** | ⌈2/3 × N⌉ = 6 中 4 |
+| **Validator 数** | 链上动态,经 `ValidatorRegistry.getActiveValidators()` —— 截至 2026-06-10 **5 个 active**(当前单运营方;欢迎外部 operator,见下)。上限 21(`MAX_VALIDATORS`) |
+| **Quorum** | ⌈2/3 × N⌉(当前 5 中 4) |
 | **原生代币符号** | COC |
 | **原生代币 decimals** | 18 |
 

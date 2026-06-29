@@ -4,7 +4,24 @@
 **Audience**: maintainers, operators, future security auditors.
 **Companion documents**: [r3-2-prod-candidate-testnet-88780.md](r3-2-prod-candidate-testnet-88780.md) (SOP) /
 [88780-redeploy-2026-05-19.md](88780-redeploy-2026-05-19.md) (gen-4 deploy log) /
-[88780-redeploy-gen5-uups-2026-05-20.md](88780-redeploy-gen5-uups-2026-05-20.md) (gen-5 UUPS migration).
+[88780-redeploy-gen5-uups-2026-05-20.md](88780-redeploy-gen5-uups-2026-05-20.md) (gen-5 UUPS migration) /
+[88780-dynamic-validator-enablement-2026-06-10.md](88780-dynamic-validator-enablement-2026-06-10.md) (dynamic validator + PoSe v2 bring-up).
+
+> **UPDATE 2026-06-10 — Stage B0 + dynamic validators done; launch ETA recalibrated.**
+> Two blockers in this retrospective are now resolved:
+> - **Stage B0 (PoSe v2 pipeline)** — `coc-pose-witness` + `coc-agent` are now
+>   **running on v1–v5** (port 18780). The "6 nodes only run the chain engine,
+>   PoSe witness has no runtime target" caveat below (§5 / Stage B) **no longer
+>   holds**; the off-chain #667/#750 paths now have a live target. Stage B
+>   (G3 node strict mode) is therefore unblocked.
+> - **ValidatorRegistryReader (canary Gate 1)** — enabled in production; v1–v5
+>   staked 32 COC, validator set now on-chain-driven with zero-restart hot
+>   updates (5 active, quorum 4/5).
+> The **Stage H public-announcement ETA of 2026-06-14 has slipped** — ops infra
+> (Cloudflare-fronted RPC, faucet refill, Grafana deploy) + the 30-day
+> clean-record soak had not started by that date. The recalibrated go-live is
+> **~late July 2026**; the authoritative live tracker is now the 11-gate
+> [canary-launch-checklist-88780.md](canary-launch-checklist-88780.md).
 
 ---
 

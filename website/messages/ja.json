@@ -953,7 +953,7 @@
     },
     "canaryBanner": {
       "title": "Canary テストネット 88780 稼働中",
-      "subtitle": "6 validator BFT ネットワーク · gen-5 UUPS 契約 · 公開 RPC + faucet + explorer オープン",
+      "subtitle": "オンチェーン動的 validator（ValidatorRegistry 駆動、再起動なしで参加）· gen-5 UUPS 契約 · 公開 RPC + faucet + explorer オープン",
       "cta": "公開エンドポイントを見る"
     },
     "units": {

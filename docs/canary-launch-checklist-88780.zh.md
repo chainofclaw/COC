@@ -17,15 +17,18 @@
 
 ### 架构与代码
 
-1. **☐ canary 准备 plan 中所有 HIGH 优先级项已关闭**
-   *证据*:见父 plan
-   `/home/bob/.claude/plans/applyblock-delightful-hennessy.md` § A.1
-   (含 ValidatorRegistryReader 运营启用 + 灾难恢复 Runbook)。
+1. **☑ canary 准备 plan 中所有 HIGH 优先级项已关闭**
+   *证据*:ValidatorRegistryReader 运营启用**已完成**(2026-06-10)—— 见
+   [`88780-dynamic-validator-enablement-2026-06-10.zh.md`](./88780-dynamic-validator-enablement-2026-06-10.zh.md)
+   与 [`validator-registry-reader-enablement-88780.md`](./validator-registry-reader-enablement-88780.md)。
    *负责*:核心团队
-   *当前*:ValidatorRegistryReader 代码 + 测试覆盖已交付(PR #756);
-   88780 运营启用待办 — 6 个现有 validator 必须各自在链上
-   `stake(nodeId, pubkeyNode)` 32 COC,reader 看到非空 active 集合后才能翻
-   `COC_VALIDATOR_REGISTRY_ADDRESS` env on 每节点。
+   *当前*:**2026-06-10 已关闭。** 当前 validator(v1–v5)各自链上
+   `stake(nodeId, pubkeyNode)` 32 COC(B4),全节点设 `validatorRegistryAddress`
+   拉起(B5)。链上 `getActiveValidators()` 返回 **5 active**;节点日志
+   `BFT validator set updated from ValidatorRegistry count=5`。validator 集合现
+   由链上驱动并零重启热更新 —— 外部 operator 通过质押加入,无需改配置或协调重启。
+   (reader 代码 + 11 单元测试早在 PR #756 交付;devnet stake→reader→BFT 路径在
+   B3 已验证。)剩余的 HIGH 项灾难恢复 Runbook dry-run 单列为 Gate 7。
 
 2. **☐ 最近 30 天连续出块无人工干预**
    *证据*:Grafana dashboard `coc-overview` 面板 "Block height per node, 30d 回溯"
@@ -117,18 +120,35 @@
 
 ## Burn-down
 
-上线需 11 个全 ☑。当前:1 ☑ / 1 🟡 / 9 ☐。
+上线需 11 个全 ☑。当前:**2 ☑ / 1 🟡 / 8 ☐**(Gate 1 于 2026-06-10 关闭;Gate 4 此前已关)。
 
 建议顺序(最快上线路径):
-1. Gates 4 + 7 + 11 可在本 sprint 文档级搞定
-2. Gate 1 需要运营启用 PR(无代码,只是配置 + env on 每节点)
+1. ~~Gate 1 需要运营启用(配置 + env on 每节点)~~ —— **✅ 2026-06-10 已关闭**
+   (动态 validator 上线,v1–v5 已质押,reader 已启用)
+2. Gates 7 + 11 可在本 sprint 文档级搞定(Gate 4 已 ☑)
 3. Gates 8 + 9 + 10 是 ops infra sprint(Cloudflare 前置 public RPC,faucet refill cron,
    Grafana JSON + alert SOP)
-4. Gate 6(外部 operator)是 validation 里程碑 — 依赖 gates 1, 7, 11 全绿
-5. Gates 2, 3 是时间门(30 天清白记录)— gates 1, 8, 10 关后第二天起时钟
+4. Gate 6(外部 operator)是 validation 里程碑 — 依赖 gates 7, 11 全绿(Gate 1 的 reader
+   已使质押自动加入)
+5. Gates 2, 3 是时间门(30 天清白记录)— ops-infra gates(8, 10)关后第二天起时钟
 6. Gate 5 需要真实 report — 在 bounty live + 索引后通常在 30 天窗口内自然关闭
 
-预计日历最低:**6-8 周** sprint 起点起算,以 30 天清白记录 gate + ops infra 建设为主。
+### 校准时间表(从 2026-06-10 起)
+
+关键路径是 **30 天清白记录窗口**,而它必须等 ops-infra gate 起来后才能开始。原
+audit-sprint 的 2026-06-14 目标已顺延,因为 ops infra(Gate 8/9)+ 30 天窗口当时
+尚未启动。
+
+| 阶段 | 内容 | 现实 ETA |
+|---|---|---|
+| 已完成(本会话) | Gate 1 —— 链上动态 validator 上线(v1–v5 已质押,reader 已启用) | ✅ 2026-06-10 |
+| 第 1–2 周 | ops infra:Gate 8(Cloudflare 前置 RPC)、Gate 9(faucet refill cron)、Gate 10(Grafana 导入 dry-run + Alertmanager URL)、Gate 7(DR 6 场景 devnet dry-run)、Gate 11(docs 站点上线) | ~2026-06-24 |
+| 30 天窗口 | Gates 2 + 3 —— 30 天连续出块 + 零 equivocation,时钟从 ops infra 关闭日起算 | ~2026-07-24 |
+| 窗口内 | Gate 5(首份外部安全报告)、Gate 6(邀请外部 operator 质押 + BFT 纳入) | 窗口内 |
+| 公开发布 | 全 11 gate ☑ → 公告(Blog / Twitter / Discord) | **~2026 年 7 月下旬**(从原 6-8 周估计校准) |
+
+预计日历最低:**~6 周**(从 2026-06-10 起),以 30 天清白记录 gate 为主(它现在要等
+ops-infra 建设在 ~2026-06-24 完成后才能开始)。
 
 ## 不发布的红线条件
 
@@ -137,7 +157,8 @@
 - [chainofclaw/COC issues](https://github.com/chainofclaw/COC/issues) 任何 `priority:critical` 未关
 - 链最近 7 天有过出块停滞
 - 任一 multisig signer 不可达(3-of-5 仍安全但缓冲已侵蚀)
-- 上线时 6 个当前 validator 中任何一个离线 > 1 小时
+- 活跃 validator 数(`ValidatorRegistry.getActiveValidators().length`,当前 5)
+  跌破 BFT quorum 下限,或上线时任一活跃 validator 离线 > 1 小时
 
 ## 上线后监控(头 30 天)
 

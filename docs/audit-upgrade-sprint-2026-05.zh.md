@@ -4,7 +4,21 @@
 **目标读者**:维护者、运维、未来的安全审计员。
 **配套文档**:[r3-2-prod-candidate-testnet-88780.md](r3-2-prod-candidate-testnet-88780.md)(SOP) /
 [88780-redeploy-2026-05-19.md](88780-redeploy-2026-05-19.md)(gen-4 部署日志) /
-[88780-redeploy-gen5-uups-2026-05-20.md](88780-redeploy-gen5-uups-2026-05-20.md)(gen-5 UUPS 转型)。
+[88780-redeploy-gen5-uups-2026-05-20.md](88780-redeploy-gen5-uups-2026-05-20.md)(gen-5 UUPS 转型) /
+[88780-dynamic-validator-enablement-2026-06-10.zh.md](88780-dynamic-validator-enablement-2026-06-10.zh.md)(动态 validator + PoSe v2 上线)。
+
+> **更新 2026-06-10 —— Stage B0 + 动态 validator 完成;上线 ETA 重新校准。**
+> 本回顾中的两个 blocker 现已解决:
+> - **Stage B0(PoSe v2 流水线)** —— `coc-pose-witness` + `coc-agent` 现已在
+>   **v1–v5 运行**(18780 端口)。下文 §5 / Stage B 中"6 节点只跑链引擎、PoSe
+>   witness 无运行目标"的告诫**不再成立**;#667/#750 的链下路径现有 live 目标。
+>   因此 Stage B(G3 节点严格模式)解除阻塞。
+> - **ValidatorRegistryReader(canary Gate 1)** —— 生产已启用;v1–v5 各质押
+>   32 COC,validator 集合现由链上驱动并零重启热更新(5 active,quorum 4/5)。
+> **Stage H 公告 ETA 2026-06-14 已顺延** —— 截至该日,ops 基础设施(Cloudflare
+> 前置 RPC、faucet 补水、Grafana 部署)与 30 天 clean-record soak 尚未启动。
+> 校准后的上线为 **~2026 年 7 月下旬**;权威 live 追踪以 11-gate
+> [canary-launch-checklist-88780.zh.md](canary-launch-checklist-88780.zh.md) 为准。
 
 ---
 

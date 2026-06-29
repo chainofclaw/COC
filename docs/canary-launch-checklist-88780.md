@@ -20,17 +20,22 @@ has explicit evidence linked — no "trust me, it's done" entries.
 
 ### Architecture & Code
 
-1. **☐ All HIGH-severity items from the canary readiness plan closed**
-   *Evidence*: see parent plan
-   `/home/bob/.claude/plans/applyblock-delightful-hennessy.md` § A.1 (this
-   includes ValidatorRegistryReader operational enablement and Disaster
-   Recovery Runbook).
+1. **☑ All HIGH-severity items from the canary readiness plan closed**
+   *Evidence*: ValidatorRegistryReader operational enablement is **done**
+   (2026-06-10) — see
+   [`88780-dynamic-validator-enablement-2026-06-10.md`](./88780-dynamic-validator-enablement-2026-06-10.md)
+   and [`validator-registry-reader-enablement-88780.md`](./validator-registry-reader-enablement-88780.md).
    *Owner*: core team
-   *Current*: ValidatorRegistryReader code + test coverage shipped (PR #756);
-   88780 operational enablement is pending — the 6 current validators must
-   each `stake(nodeId, pubkeyNode)` 32 COC on-chain so the reader sees a
-   non-empty active set before flipping the `COC_VALIDATOR_REGISTRY_ADDRESS`
-   env on each node.
+   *Current*: **Closed 2026-06-10.** The current validators (v1–v5) each
+   `stake(nodeId, pubkeyNode)` 32 COC on-chain (B4), and every node was brought
+   up with `validatorRegistryAddress` set (B5). On-chain
+   `getActiveValidators()` returns **5 active**; nodes log
+   `BFT validator set updated from ValidatorRegistry count=5`. The validator set
+   is now on-chain-driven with zero-restart hot updates — external operators
+   join by staking, no config edits or coordinated restart. (Reader code + 11
+   unit tests shipped earlier in PR #756; devnet stake→reader→BFT path verified
+   in B3.) The remaining HIGH-severity plan item, the Disaster Recovery Runbook
+   dry-run, is tracked separately as Gate 7.
 
 2. **☐ Last 30 days continuous block production without manual intervention**
    *Evidence*: Grafana dashboard `coc-overview` panel "Block height per
@@ -142,18 +147,35 @@ has explicit evidence linked — no "trust me, it's done" entries.
 
 ## Burn-down
 
-To go live, all 11 gates must be ☑. Current count: 1 ☑ / 1 🟡 / 9 ☐.
+To go live, all 11 gates must be ☑. Current count: **2 ☑ / 1 🟡 / 8 ☐**
+(Gate 1 closed 2026-06-10; Gate 4 closed earlier).
 
 Suggested order (fastest path to launch):
-1. Gates 4 + 7 + 11 are docs-shippable inside this sprint
-2. Gate 1 needs the operational enablement PR (no code, just config + env on each node)
+1. ~~Gate 1 needs the operational enablement (config + env on each node)~~ —
+   **✅ closed 2026-06-10** (dynamic validators live, v1–v5 staked, reader enabled)
+2. Gates 7 + 11 are docs-shippable inside this sprint (Gate 4 already ☑)
 3. Gates 8 + 9 + 10 are the ops infra sprint (Cloudflare in front of public RPC, faucet refill cron, Grafana JSON + alert SOP)
-4. Gate 6 (external operator) is the validation milestone — depends on gates 1, 7, 11 being green
-5. Gates 2, 3 are time-gated (30-day clean record) — start the clock the day after gates 1, 8, 10 close
+4. Gate 6 (external operator) is the validation milestone — depends on gates 7, 11 being green (Gate 1's reader already makes a stake auto-join)
+5. Gates 2, 3 are time-gated (30-day clean record) — start the clock the day after the ops-infra gates (8, 10) close
 6. Gate 5 needs a real report — usually closes naturally during the 30-day window if bounty is live + indexed
 
-Estimated calendar minimum: **6-8 weeks** from sprint start, dominated by
-the 30-day clean record gate + ops infra build-out.
+### Calibrated timeline (from 2026-06-10)
+
+Critical path is the **30-day clean-record window**, which cannot start until
+the ops-infra gates are up. The original audit-sprint target of 2026-06-14
+slipped because ops infra (Gate 8/9) + the 30-day window had not started.
+
+| Phase | Content | Realistic ETA |
+|---|---|---|
+| Done (this session) | Gate 1 — on-chain dynamic validators live (v1–v5 staked, reader enabled) | ✅ 2026-06-10 |
+| Weeks 1–2 | Ops infra: Gate 8 (Cloudflare-fronted RPC), Gate 9 (faucet refill cron), Gate 10 (Grafana import dry-run + Alertmanager URLs), Gate 7 (DR 6-scenario devnet dry-run), Gate 11 (docs site live) | ~2026-06-24 |
+| 30-day window | Gates 2 + 3 — 30 days continuous block production + zero equivocation, clock starts the day ops infra closes | ~2026-07-24 |
+| Within window | Gate 5 (first external security report), Gate 6 (invite an external operator to stake + BFT-include) | inside the window |
+| Public launch | All 11 gates ☑ → announcement (Blog / Twitter / Discord) | **~late July 2026** (recalibrated from the original 6-8 week estimate) |
+
+Estimated calendar minimum: **~6 weeks** from 2026-06-10, dominated by the
+30-day clean-record gate (which now cannot begin until the ops-infra build-out
+completes around 2026-06-24).
 
 ## Don't ship if any of these are red on launch-eve
 
@@ -163,7 +185,9 @@ A list of conditions that revert the launch even if all 11 gates are ☑:
   [chainofclaw/COC issues](https://github.com/chainofclaw/COC/issues)
 - Chain block production has stalled in the last 7 days
 - A multisig signer is unreachable (3-of-5 still safe but cushion eroded)
-- Any of the 6 current validators is offline > 1 hour at the time of launch
+- Active validator count (`ValidatorRegistry.getActiveValidators().length`,
+  currently 5) has dropped below the BFT quorum floor, or any active validator
+  is offline > 1 hour at the time of launch
 
 ## Post-launch monitoring (first 30 days)
 
