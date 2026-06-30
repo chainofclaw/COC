@@ -1,0 +1,19 @@
+{
+  "chainId": 88780,
+  "multisig": "0x3c055D83a9aA12Bba4a2ed53F8970DF4081eBC7E",
+  "calls": [
+    {
+      "name": "setV2SunsetEpoch (#746 PR-5 — observation window waived per ops decision 2026-07-01)",
+      "target": "0x256eb949C50d5F2af8699191b1Bc043203263549",
+      "value": "0",
+      "signature": "setV2SunsetEpoch(uint64)",
+      "args": ["495236"],
+      "issue": "#746",
+      "pr": "PR-5",
+      "verify": {
+        "signature": "v2SunsetEpoch() view returns (uint64)",
+        "expected": "495236"
+      }
+    }
+  ]
+}
