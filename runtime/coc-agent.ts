@@ -33,7 +33,11 @@ import { createLogger } from "../node/src/logger.ts";
 import { createNodeSigner, createNodeSignerV2, buildReceiptSignMessage } from "../node/src/crypto/signer.ts";
 import { buildDomain, CHALLENGE_TYPES, RECEIPT_TYPES, REWARD_MANIFEST_TYPES } from "../node/src/crypto/eip712-types.ts";
 import { buildSignedPosePayload } from "../node/src/pose-http.ts";
-import { collectBatchWitnessSignatures, collectWitnesses } from "./lib/witness-collector.ts";
+import {
+  collectBatchWitnessSignatures,
+  collectWitnesses,
+  type WitnessNodeConfig,
+} from "./lib/witness-collector.ts";
 import { ContractReader } from "./lib/contract-reader.ts";
 import { extractPendingV1Epoch, extractPendingV2Epoch, pruneStoreByEpoch } from "./lib/pending-retention.ts";
 import { buildPrometheusMetrics, shouldWriteMetrics, writeMetricsSnapshot, writePrometheusMetrics, type RuntimeMetricsSnapshot } from "./lib/runtime-metrics.ts";
@@ -229,6 +233,77 @@ const contractReader = useV2 ? new ContractReader({
 
 const v2WitnessNodes = config.witnessNodes ?? [];
 const v2RequiredWitnesses = config.requiredWitnesses ?? 0;
+
+// #772 — off-chain / on-chain witnessSet mismatch cache.
+//
+// The contract's `_validateWitnessQuorumV2` recovers each sig against
+// `nodeOperator[witnessSet[i]]`, where `witnessSet = getWitnessSet(epochId)`
+// is a per-epoch PRNG-selected subset of size ~ceil(sqrt(activeCount)).
+// The pre-#772 pipeline broadcast to `config.witnessNodes` using each
+// entry's static `witnessIndex` — that index-space has no relationship
+// to the contract's dynamic subset positioning, so recovered signers
+// never sat at the expected slots and every batch reverted
+// `InvalidWitnessQuorum()`.
+//
+// Fix (Option A per #772): resolve the witnessSet on-chain per epoch,
+// map each nodeId to its endpoint via the existing operator-address
+// resolver, and assign `witnessIndex = position in getWitnessSet(...)`.
+// Cache per epoch to avoid an eth_call for every receipt.
+const dynamicWitnessSetCache = new Map<number, WitnessNodeConfig[]>();
+const DYNAMIC_WITNESS_CACHE_MAX = 4;
+
+async function computeDynamicWitnessNodesForEpoch(epochId: number): Promise<WitnessNodeConfig[]> {
+  // Local devnet / offline fallback: no on-chain manager wired ⇒ keep the
+  // static config behaviour so single-node tests still exercise the
+  // pipeline.
+  if (!poseV2Contract) return v2WitnessNodes;
+  const cached = dynamicWitnessSetCache.get(epochId);
+  if (cached) return cached;
+  let witnessSet: `0x${string}`[];
+  try {
+    const raw = (await poseV2Contract.getWitnessSet(BigInt(epochId))) as string[];
+    witnessSet = raw.map((x) => x.toLowerCase() as `0x${string}`);
+  } catch (err) {
+    log.warn("dynamic witnessSet lookup failed, using config fallback", {
+      epochId,
+      error: String(err),
+    });
+    return v2WitnessNodes;
+  }
+  // Shared bearer token — the fleet uses a single witness auth token
+  // (see memory: r3 sprint stored the same token across every host).
+  // Falling through to `undefined` is safe for auth-off setups.
+  const sharedAuthToken =
+    v2WitnessNodes.find((w) => typeof w.authToken === "string" && w.authToken.length > 0)?.authToken;
+
+  const dynamicNodes: WitnessNodeConfig[] = [];
+  for (let idx = 0; idx < witnessSet.length && idx < 32; idx++) {
+    const nodeId = witnessSet[idx];
+    const url = resolveNodeEndpointStrict(nodeId);
+    if (!url) {
+      // Endpoint unknown for this nodeId — usually because the operator's
+      // host is offline (e.g. obs-1 post-2026-06-10). We simply skip; the
+      // contract's `_validateWitnessQuorumV2` treats a missing bit as
+      // "not counted", so as long as the remaining live members reach
+      // the ⌈2m/3⌉ threshold the batch still settles.
+      log.warn("dynamic witness node has no reachable endpoint — skipped for this epoch", {
+        epochId,
+        nodeId,
+        witnessIndex: idx,
+      });
+      continue;
+    }
+    dynamicNodes.push({ url, witnessIndex: idx, authToken: sharedAuthToken });
+  }
+
+  dynamicWitnessSetCache.set(epochId, dynamicNodes);
+  // Cap cache size — chain moves forward; old epochs never come back.
+  if (dynamicWitnessSetCache.size > DYNAMIC_WITNESS_CACHE_MAX) {
+    const oldestKey = Math.min(...dynamicWitnessSetCache.keys());
+    dynamicWitnessSetCache.delete(oldestKey);
+  }
+  return dynamicNodes;
+}
 // Production default: strict (false). Set to true only for dev/test environments.
 const allowEmptyBatchWitnessSubmission = config.allowEmptyBatchWitnessSubmission ?? false;
 const v2TipTolerance = config.tipToleranceBlocks ?? 10;
@@ -1135,9 +1210,14 @@ async function tryChallengeV2(nodeId: string, kind: keyof typeof ChallengeType):
     // silently fall back to the legacy rubber-stamp path. Pushing the
     // fields keeps the agent's behaviour identical regardless of which
     // mode each witness operator chose.
-    const witnessResult = v2WitnessNodes.length > 0
+    // #772 — resolve the witnessSet on-chain per epoch and translate it to
+    // WitnessNodeConfig entries whose `witnessIndex` matches the contract's
+    // slot position, not the static `runtime-pose.json` layout. See
+    // `computeDynamicWitnessNodesForEpoch` for the rationale.
+    const dynamicWitnessNodes = await computeDynamicWitnessNodesForEpoch(currentEpoch);
+    const witnessResult = dynamicWitnessNodes.length > 0
       ? await collectWitnesses(
-          { witnessNodes: v2WitnessNodes, requiredWitnesses: v2RequiredWitnesses, timeoutMs: 5000 },
+          { witnessNodes: dynamicWitnessNodes, requiredWitnesses: v2RequiredWitnesses, timeoutMs: 5000 },
           challenge.challengeId,
           nodeId as any,
           responseBodyHash,
