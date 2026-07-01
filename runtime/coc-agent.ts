@@ -668,8 +668,12 @@ const TICK_HANG_TIMEOUT_MS = 5 * 60 * 1000;
 let lastTickOverlapLogAtMs = 0;
 let tickOverlapSuppressedSinceLastLog = 0;
 let selfNodeRegistered = false;
+// #772 layer 3 — seed the chain-clock offset before computing the first
+// epoch, so we start aligned with the contract instead of the wall clock.
+await refreshChainClockOffset();
 let currentEpoch = currentEpochId();
 log.info("endpoint fingerprint mode", { mode: endpointFingerprintMode });
+log.info("chain clock offset seeded", { offsetMs: chainClockOffsetMs, epochId: currentEpoch });
 
 if (agentMetricsPort > 0) {
   try {
@@ -884,6 +888,12 @@ async function tick(): Promise<void> {
   tickStartedAtMs = Date.now();
   try {
     await refreshLatestBlock();
+    // #772 layer 3 — keep the agent's epoch pinned to the chain's clock
+    // BEFORE any epoch decision (rollover, quorum lookup, batch submit).
+    // Otherwise `currentEpochId()` returns wall-time epochs that the
+    // contract's `_currentEpoch()` (block.timestamp / 3600) hasn't
+    // reached yet, and every submit reverts with InvalidBatch().
+    await refreshChainClockOffset();
     await refreshSelfNodeStatus();
     const nowEpoch = currentEpochId();
     const nowMs = Date.now();
@@ -2154,9 +2164,43 @@ function resolveNodeEndpointStrict(nodeId: string): string | null {
   return nodeEndpointMap.get(nodeId.toLowerCase()) ?? null;
 }
 
+// #772 layer 3 — the contract computes its epoch from `block.timestamp`,
+// not from wall clock. On 88780 the chain has run slower than real time
+// (block cadence lag + validator clock drift), producing a persistent
+// ~2.8 h skew as of 2026-07-01. If the agent submits a batch with
+// `epochId = floor(Date.now() / 3600 000)` and the tx is mined against
+// `block.timestamp / 3600 < epochId`, the contract rejects with
+// `InvalidBatch()` (PoSeManagerV2.sol:344, `epochId > _currentEpoch()`).
+// Sync the agent's clock to the last observed on-chain timestamp so
+// submissions land in an epoch the contract also considers current.
+//
+// The offset is refreshed by `refreshChainClockOffset()` — called at
+// startup and periodically before epoch decisions. Between refreshes
+// the offset is stable so `currentEpochId()` stays synchronous
+// (required by existing callers).
+let chainClockOffsetMs = 0; // wall_ms − chain_ms; positive when chain lags
+
+async function refreshChainClockOffset(): Promise<void> {
+  if (!poseV2Contract) return; // devnet / offline — keep wall-clock behaviour
+  const provider = (poseV2Contract as unknown as {
+    runner?: { provider?: { getBlock?: (tag: string) => Promise<{ timestamp: number } | null> } };
+  }).runner?.provider;
+  if (!provider?.getBlock) return;
+  try {
+    const block = await provider.getBlock("latest");
+    if (!block?.timestamp) return;
+    chainClockOffsetMs = Date.now() - Number(block.timestamp) * 1000;
+  } catch {
+    // Silent: don't destabilise the tick loop on a transient RPC blip;
+    // the previous offset stays in effect.
+  }
+}
+
 function currentEpochId(): number {
-  const now = Date.now();
-  return Math.floor(now / (60 * 60 * 1000));
+  // Use chain-adjusted clock so `agentEpoch <= contract._currentEpoch()`
+  // even when the chain lags wall time.
+  const chainNowMs = Date.now() - chainClockOffsetMs;
+  return Math.floor(chainNowMs / (60 * 60 * 1000));
 }
 
 function normalizeInt(raw: unknown, fallback: number): number {
