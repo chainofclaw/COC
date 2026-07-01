@@ -312,9 +312,19 @@ const poseV2Abi = [
   "event NodeRegistered(bytes32 indexed nodeId, address indexed operator, uint8 serviceFlags, uint256 bondAmount)",
   "function initEpochNonce(uint64 epochId)",
   "function submitBatchV2(uint64 epochId, bytes32 merkleRoot, bytes32 summaryHash, tuple(bytes32 leaf, bytes32[] merkleProof, uint32 leafIndex)[] sampleProofs, uint32 witnessBitmap, bytes[] witnessSignatures) returns (bytes32 batchId)",
-  // #667 — `submitBatchV2WithMetadata`. ReceiptBatchMetadata struct fields:
-  //   challengeIds[]; nodeIds[]; responseBodyHashes[]; leafHashes[]; witnessReceiptIndex[32]
-  "function submitBatchV2WithMetadata(uint64 epochId, bytes32 merkleRoot, bytes32 summaryHash, tuple(bytes32 leaf, bytes32[] merkleProof, uint32 leafIndex)[] sampleProofs, uint32 witnessBitmap, bytes[] witnessSignatures, tuple(bytes32[] challengeIds, bytes32[] nodeIds, bytes32[] responseBodyHashes, bytes32[] leafHashes, uint16[32] witnessReceiptIndex) metadata) returns (bytes32 batchId)",
+  // #746 PR-2 (#767) added `uint8[] resultCodes` to ReceiptBatchMetadata
+  // (aligned with leafHashes) so the contract can rebuild the v3 EIP-712
+  // digest that binds the witness's independently-computed ResultCode.
+  // Selector changed from 0xef5f1192 (r3, 5-field) to 0x77fd36b0 (r4,
+  // 6-field). The aggregator writes `resultCodes` in its metadata output
+  // and the r4 upgrade (2026-06-30, multisig txId=10) sunset the 5-field
+  // selector, so this ABI declaration MUST include `resultCodes` or every
+  // submit reverts require(false) at the EVM dispatcher.
+  // (#772 root-cause layer 2 — PR-2 shipped the aggregator/output half
+  // but missed this dispatch-half.)
+  //   challengeIds[]; nodeIds[]; responseBodyHashes[]; leafHashes[];
+  //   resultCodes[]; witnessReceiptIndex[32]
+  "function submitBatchV2WithMetadata(uint64 epochId, bytes32 merkleRoot, bytes32 summaryHash, tuple(bytes32 leaf, bytes32[] merkleProof, uint32 leafIndex)[] sampleProofs, uint32 witnessBitmap, bytes[] witnessSignatures, tuple(bytes32[] challengeIds, bytes32[] nodeIds, bytes32[] responseBodyHashes, bytes32[] leafHashes, uint8[] resultCodes, uint16[32] witnessReceiptIndex) metadata) returns (bytes32 batchId)",
   "function getActiveNodeCount() view returns (uint256)",
   "function getActiveNodeIds(uint256 offset, uint256 limit) view returns (bytes32[])",
   "function getWitnessSet(uint64 epochId) view returns (bytes32[])",
@@ -1465,6 +1475,9 @@ async function flushBatchV2(epochId: number, receipts: VerifiedReceiptV2[]): Pro
               nodeIds: batch.metadata.nodeIds,
               responseBodyHashes: batch.metadata.responseBodyHashes,
               leafHashes: batch.metadata.leafHashes,
+              // #746 PR-2 — aligned with leafHashes; contract rebuilds the
+              // v3 EIP-712 digest from this to bind the ResultCode.
+              resultCodes: batch.metadata.resultCodes,
               witnessReceiptIndex: batch.metadata.witnessReceiptIndex,
             },
           ),
