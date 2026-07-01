@@ -668,8 +668,14 @@ const TICK_HANG_TIMEOUT_MS = 5 * 60 * 1000;
 let lastTickOverlapLogAtMs = 0;
 let tickOverlapSuppressedSinceLastLog = 0;
 let selfNodeRegistered = false;
-// #772 layer 3 — seed the chain-clock offset before computing the first
-// epoch, so we start aligned with the contract instead of the wall clock.
+// #772 layer 3 storage — declared here (near the other startup-time
+// bindings) so the module-top `currentEpochId()` call below can read
+// it without hitting TDZ. `refreshChainClockOffset()` and
+// `currentEpochId()` themselves live near the bottom of the file
+// alongside the other helper functions.
+let chainClockOffsetMs = 0; // wall_ms − chain_ms; positive when chain lags
+// Seed the offset before computing the first epoch, so we start
+// aligned with the contract instead of the wall clock.
 await refreshChainClockOffset();
 let currentEpoch = currentEpochId();
 log.info("endpoint fingerprint mode", { mode: endpointFingerprintMode });
@@ -2178,8 +2184,13 @@ function resolveNodeEndpointStrict(nodeId: string): string | null {
 // startup and periodically before epoch decisions. Between refreshes
 // the offset is stable so `currentEpochId()` stays synchronous
 // (required by existing callers).
-let chainClockOffsetMs = 0; // wall_ms − chain_ms; positive when chain lags
-
+//
+// NOTE: the storage lives near the top of the module (see the
+// declaration next to the other startup-time `let` bindings). This
+// function block just holds the read/write helpers. Colocating the
+// `let` with the functions would put the module-top `let currentEpoch
+// = currentEpochId()` (which reads this storage) in the TDZ, hard-
+// crashing the agent at boot.
 async function refreshChainClockOffset(): Promise<void> {
   if (!poseV2Contract) return; // devnet / offline — keep wall-clock behaviour
   const provider = (poseV2Contract as unknown as {
