@@ -696,9 +696,15 @@ const server = http.createServer((req, res) => {
       return signAndRespond();
 
       function signAndRespond(resultCode?: number): void {
+      // #772 layer 5 — the contract's `_recoverWitnessSigner` binds the
+      // WITNESS's own nodeId (`witnessSet[i]`) into every digest version,
+      // not the prover's. Challengers on post-#772 code pass it as
+      // `witnessNodeId`; legacy callers omit it and get the (contract-
+      // rejected) prover-nodeId signature for wire compatibility.
+      const digestNodeId = fields.witnessNodeId ?? fields.nodeId;
       const signV1 = signWitnessAttestation(
         fields.challengeId,
-        fields.nodeId,
+        digestNodeId,
         fields.responseBodyHash,
         fields.witnessIndex,
       );
@@ -710,7 +716,7 @@ const server = http.createServer((req, res) => {
       const signV2 = fields.epochId !== undefined
         ? signWitnessAttestationV2(
             fields.challengeId,
-            fields.nodeId,
+            digestNodeId,
             fields.responseBodyHash,
             fields.witnessIndex,
             fields.epochId,
@@ -724,7 +730,7 @@ const server = http.createServer((req, res) => {
       const signV3 = (fields.epochId !== undefined && resultCode !== undefined)
         ? signWitnessAttestationV3(
             fields.challengeId,
-            fields.nodeId,
+            digestNodeId,
             fields.responseBodyHash,
             resultCode,
             fields.witnessIndex,
@@ -743,6 +749,9 @@ const server = http.createServer((req, res) => {
             ...(witnessSigV2 ? { witnessSigV2 } : {}),
             ...(witnessSigV3 ? { witnessSigV3 } : {}),
             ...(resultCode !== undefined ? { resultCode } : {}),
+            // #772 layer 5 — echo which nodeId went into the digest so
+            // the collector can assert the binding it asked for.
+            ...(fields.witnessNodeId ? { witnessNodeId: fields.witnessNodeId } : {}),
           });
         })
         .catch((error) => {

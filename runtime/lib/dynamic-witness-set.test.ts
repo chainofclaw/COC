@@ -173,3 +173,60 @@ test("#772: witness that echoes a different witnessIndex is rejected (guards aga
   assert.equal(result.bitmap, 0b01, `expected 0b01 after collision rejection, got ${result.bitmap.toString(2)}`)
   assert.equal(result.attestations.length, 1)
 })
+
+// ── #772 layer 5 — witnessNodeId digest binding ─────────────────────
+
+test("#772 layer 5: collectWitnesses forwards witnessNodeId from WitnessNodeConfig.nodeId", async () => {
+  const witnessSet: Hex32[] = [
+    ("0x" + "11".repeat(32)) as Hex32,
+    ("0x" + "33".repeat(32)) as Hex32,
+  ]
+  const dynamicNodes = buildDynamicWitnessNodes(witnessSet, () => "http://witness.example")
+    .map((n, i) => ({ ...n, nodeId: witnessSet[i] }))
+
+  const seenBodies: Array<Record<string, unknown>> = []
+  const requestFn = async (_url: string, _method: string, body?: unknown) => {
+    const req = body as { challengeId: string; nodeId: string; responseBodyHash: string; witnessIndex: number; witnessNodeId?: string }
+    seenBodies.push(req)
+    return {
+      status: 200,
+      json: {
+        challengeId: req.challengeId,
+        nodeId: req.nodeId,
+        responseBodyHash: req.responseBodyHash,
+        witnessIndex: req.witnessIndex,
+        attestedAtMs: 1,
+        witnessSig: ("0x" + "ab".repeat(65)) as `0x${string}`,
+      },
+    }
+  }
+
+  await collectWitnesses(
+    { witnessNodes: dynamicNodes, requiredWitnesses: 2, timeoutMs: 500 },
+    CHALLENGE_ID,
+    NODE_ID,
+    RESPONSE_BODY_HASH,
+    requestFn,
+  )
+
+  assert.equal(seenBodies.length, 2)
+  // The contract binds witnessSet[i] into the digest — the request MUST
+  // carry each witness's own nodeId, distinct from the prover NODE_ID.
+  assert.equal(seenBodies[0].witnessNodeId, witnessSet[0])
+  assert.equal(seenBodies[1].witnessNodeId, witnessSet[1])
+  for (const b of seenBodies) assert.equal(b.nodeId, NODE_ID, "prover nodeId unchanged for push-verify")
+})
+
+test("#772 layer 5: legacy config without nodeId omits witnessNodeId (wire compat)", async () => {
+  const dynamicNodes: WitnessNodeConfig[] = [{ url: "http://w", witnessIndex: 0 }]
+  let sawField: unknown = "sentinel"
+  const requestFn = async (_u: string, _m: string, body?: unknown) => {
+    sawField = (body as Record<string, unknown>).witnessNodeId
+    return { status: 200, json: null }
+  }
+  await collectWitnesses(
+    { witnessNodes: dynamicNodes, requiredWitnesses: 0, timeoutMs: 500 },
+    CHALLENGE_ID, NODE_ID, RESPONSE_BODY_HASH, requestFn,
+  )
+  assert.equal(sawField, undefined)
+})

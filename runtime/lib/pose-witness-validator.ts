@@ -27,6 +27,18 @@ export interface PoseWitnessFields {
    */
   epochId?: bigint;
   /**
+   * #772 layer 5 — optional witness-side nodeId for the EIP-712 digest.
+   * The contract's `_recoverWitnessSigner` binds `witnessSet[i]` (the
+   * WITNESS's own nodeId) into the v1/v2/v3 digests — NOT the prover's
+   * nodeId that lives in the top-level `nodeId` field (which is still
+   * needed for Push-verification of the prover's receipt sig). When the
+   * challenger supplies `witnessNodeId`, the witness signs over it;
+   * when absent (legacy caller) the prover nodeId is signed as before,
+   * which the contract will reject — that pre-#772 behaviour is kept
+   * only for wire compatibility.
+   */
+  witnessNodeId?: string;
+  /**
    * #667 (audit follow-up, 2026-05-26) — optional Push-verification
    * fields. When all five are present, the witness re-derives
    * `responseBodyHash` from `responseBody` and ecrecovers the prover's
@@ -117,6 +129,16 @@ export function validatePoseWitnessPayload(payload: unknown): ValidateResult {
     epochId = parsed;
   }
 
+  // #772 layer 5 — optional witnessNodeId (32-byte hex). See the field
+  // doc on PoseWitnessFields for why this exists alongside `nodeId`.
+  let witnessNodeId: string | undefined;
+  if (p.witnessNodeId !== undefined && p.witnessNodeId !== null) {
+    if (typeof p.witnessNodeId !== "string" || !HEX32_RE.test(p.witnessNodeId)) {
+      return { ok: false, status: 400, error: "witnessNodeId must match 0x-prefixed 32-byte hex" };
+    }
+    witnessNodeId = p.witnessNodeId;
+  }
+
   // #667 (audit follow-up, 2026-05-26) — Push-verification fields. All
   // five must appear together or none at all; partial sets are a strict
   // 400 to avoid downgrade attacks where a malicious caller omits one
@@ -181,6 +203,7 @@ export function validatePoseWitnessPayload(payload: unknown): ValidateResult {
       responseBodyHash: p.responseBodyHash.toLowerCase(),
       witnessIndex: p.witnessIndex,
       epochId,
+      witnessNodeId: witnessNodeId?.toLowerCase(),
       responseBody,
       responseAtMs,
       nodeSig,

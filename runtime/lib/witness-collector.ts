@@ -10,6 +10,16 @@ export interface WitnessNodeConfig {
   url: string
   witnessIndex: number
   authToken?: string
+  /**
+   * #772 layer 5 — the witness's OWN on-chain nodeId (its position-i
+   * entry in `getWitnessSet(epochId)`). The contract binds THIS value
+   * into the EIP-712 digest (`_recoverWitnessSigner(witnessSet[i], …)`),
+   * not the prover's nodeId. When set, `collectWitnesses` forwards it as
+   * `witnessNodeId` so the witness server signs the contract-expected
+   * digest. Absent for legacy static configs (signatures then bind the
+   * prover nodeId and the contract rejects them).
+   */
+  nodeId?: Hex32
 }
 
 export interface WitnessEndpointConfig {
@@ -82,6 +92,9 @@ export async function collectWitnesses(
       // the witness server returns a `witnessSigV2` alongside the v1
       // signature. The aggregator prefers v2 when building the batch.
       if (epochId !== undefined) body.epochId = epochId.toString()
+      // #772 layer 5 — tell the witness which nodeId the contract will
+      // bind into the digest (the witness's own witnessSet[i] entry).
+      if (w.nodeId) body.witnessNodeId = w.nodeId
       // #667 (audit follow-up, 2026-05-26) — push the prover's signed
       // receipt fields when available so the witness can run
       // Push-verification before signing. Stringify tipHeight/responseAtMs

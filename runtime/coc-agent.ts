@@ -293,7 +293,11 @@ async function computeDynamicWitnessNodesForEpoch(epochId: number): Promise<Witn
       });
       continue;
     }
-    dynamicNodes.push({ url, witnessIndex: idx, authToken: sharedAuthToken });
+    // #772 layer 5 — include the witness's own nodeId so the collector
+    // forwards it as `witnessNodeId` and the witness signs the digest
+    // the contract actually reconstructs (`witnessSet[i]`, not the
+    // prover's nodeId).
+    dynamicNodes.push({ url, witnessIndex: idx, authToken: sharedAuthToken, nodeId });
   }
 
   dynamicWitnessSetCache.set(epochId, dynamicNodes);
